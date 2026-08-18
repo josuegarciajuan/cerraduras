@@ -1,0 +1,22 @@
+[Unit]
+Description=Cerraduras Hotel — WS-VB6 Bridge
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/cerraduras/ws-vb6
+Environment="PHP_CLI_SERVER_WORKERS=8"
+ExecStart=/usr/bin/php -S 0.0.0.0:8081 -t public public/index.php
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+MemoryMax=256M
+WatchdogSec=30
+
+StandardOutput=append:/root/cerraduras/ws-vb6/logs/php-server.log
+StandardError=append:/root/cerraduras/ws-vb6/logs/php-server.log
+
+[Install]
+WantedBy=multi-user.target

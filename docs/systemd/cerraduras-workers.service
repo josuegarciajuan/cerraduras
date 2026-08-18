@@ -1,0 +1,28 @@
+[Unit]
+Description=Cerraduras Hotel — Background Workers
+After=cerraduras-api.service cerraduras-wsvb6.service
+Wants=cerraduras-api.service cerraduras-wsvb6.service
+
+[Service]
+Type=forking
+User=root
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/usr/bin/bash -c '\
+  nohup bash -c "while true; do php bin/exit-scan.php >> logs/exit-scan.log 2>&1; sleep 2; done" & \
+  nohup bash -c "while true; do php bin/overstay-scan.php >> logs/overstay-scan.log 2>&1; sleep 60; done" & \
+  nohup bash -c "while true; do php bin/outbox-worker.php >> logs/outbox-worker.log 2>&1; sleep 30; done" & \
+  nohup bash -c "while true; do php bin/anomaly-scanner.php >> logs/anomaly-scanner.log 2>&1; sleep 5; done" & \
+  nohup bash -c "while true; do node bin/tuya-presence-poller.js >> logs/presence-poller.log 2>&1; sleep 3; done" & \
+  nohup bash -c "while true; do cd bin/tuya-pulsar-consumer && node index.js >> ../../logs/pulsar-consumer.log 2>&1; sleep 60; done" & \
+  echo "Workers started"'
+ExecStop=/usr/bin/pkill -f 'php.*bin/exit-scan' || true
+ExecStop=/usr/bin/pkill -f 'php.*bin/overstay-scan' || true
+ExecStop=/usr/bin/pkill -f 'php.*bin/outbox-worker' || true
+ExecStop=/usr/bin/pkill -f 'php.*bin/anomaly-scanner' || true
+ExecStop=/usr/bin/pkill -f 'tuya-presence-poller' || true
+ExecStop=/usr/bin/pkill -f 'tuya-pulsar-consumer' || true
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

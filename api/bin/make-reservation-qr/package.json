@@ -1,0 +1,9 @@
+{
+  "name": "make-reservation-qr",
+  "version": "1.0.0",
+  "description": "Genera QR de reserva desde la API y renderiza PNG",
+  "private": true,
+  "dependencies": {
+    "qrcode": "^1.5.3"
+  }
+}

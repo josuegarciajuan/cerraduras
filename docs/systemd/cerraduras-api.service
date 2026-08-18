@@ -1,0 +1,24 @@
+[Unit]
+Description=Cerraduras Hotel — API REST
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/cerraduras/api
+Environment="PHP_CLI_SERVER_WORKERS=8"
+ExecStart=/usr/bin/php -d opcache.file_cache=/tmp/opcache-cache -d opcache.file_cache_only=1 -S 0.0.0.0:8080 -t public public/index.php
+ExecReload=/bin/kill -USR1 $MAINPID
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+MemoryMax=256M
+WatchdogSec=30
+
+# Logs: journalctl -u cerraduras-api -f
+StandardOutput=append:/root/cerraduras/api/logs/php-server.log
+StandardError=append:/root/cerraduras/api/logs/php-server.log
+
+[Install]
+WantedBy=multi-user.target

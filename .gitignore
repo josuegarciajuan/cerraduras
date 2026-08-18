@@ -1,0 +1,45 @@
+# Environment
+.env
+*.env
+!.env.example
+.env_bck
+*.env.bak.*
+.env.bak.*
+
+# Dependencies
+/vendor/
+**/vendor/
+node_modules/
+**/node_modules/
+
+# Logs
+*.log
+**/logs/*
+!**/logs/.gitkeep
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temp
+/tmp/
+**/tmp/
+*.tmp
+
+# Backups
+*.bak
+*.bak-*
+*.orig
+*.rej
+*~
+
+# Dev-only secrets
+**/seeds/dev_api_keys.txt
+
+# PHP / tests
+.phpunit.result.cache
+coverage/

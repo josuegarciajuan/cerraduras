@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulador de Presencia — ZY-M100-5</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --card2: #1a1a26;
+    --green: #00e676;
+    --green-glow: rgba(0,230,118,0.15);
+    --red: #ff5252;
+    --red-glow: rgba(255,82,82,0.15);
+    --orange: #ff9100;
+    --orange-glow: rgba(255,145,0,0.15);
+    --blue: #448aff;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --border: rgba(255,255,255,0.06);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .container {
+    width: 100%;
+    max-width: 520px;
+    padding: 20px;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .header h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .header .subtitle {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Slider Card (primary) ── */
+  .slider-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 36px 30px 28px;
+    text-align: center;
+    transition: border-color 0.4s, box-shadow 0.4s;
+  }
+  .slider-card.has-presence {
+    border-color: rgba(0,230,118,0.25);
+    box-shadow: 0 0 40px var(--green-glow);
+  }
+  .slider-card.no-presence {
+    border-color: rgba(255,82,82,0.2);
+    box-shadow: 0 0 40px var(--red-glow);
+  }
+  .slider-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+  .range-display {
+    font-size: 3rem;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: -0.03em;
+    margin-bottom: 6px;
+    transition: color 0.3s;
+  }
+  .has-presence .range-display { color: var(--green); }
+  .no-presence .range-display { color: var(--red); }
+  .range-unit {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+  }
+  .presence-hint {
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-bottom: 18px;
+    transition: color 0.3s;
+  }
+  .has-presence .presence-hint { color: var(--green); }
+  .no-presence .presence-hint  { color: var(--red); }
+  .status-badge {
+    display: inline-block;
+    padding: 6px 18px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin-bottom: 20px;
+    transition: all 0.3s;
+  }
+  .has-presence .status-badge {
+    background: rgba(0,230,118,0.12);
+    color: var(--green);
+    border: 1px solid rgba(0,230,118,0.3);
+  }
+  .no-presence .status-badge {
+    background: rgba(255,82,82,0.12);
+    color: var(--red);
+    border: 1px solid rgba(255,82,82,0.3);
+  }
+  .status-badge.sending {
+    background: rgba(255,145,0,0.12);
+    color: var(--orange);
+    border: 1px solid rgba(255,145,0,0.3);
+  }
+
+  /* ── Slider ── */
+  .slider-wrapper {
+    position: relative;
+    padding: 0 4px;
+  }
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--red) 0%, var(--orange) 50%, var(--green) 100%);
+    outline: none;
+    cursor: pointer;
+    margin: 8px 0 12px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    box-shadow: 0 0 12px rgba(255,255,255,0.2);
+    transition: box-shadow 0.2s;
+  }
+  input[type=range]::-webkit-slider-thumb:hover {
+    box-shadow: 0 0 20px rgba(255,255,255,0.35);
+  }
+  input[type=range]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .range-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Info grid ── */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 24px;
+  }
+  .info-item {
+    background: var(--card2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 14px;
+    text-align: center;
+  }
+  .info-item .info-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .info-item .info-value {
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Refresh bar ── */
+  .refresh-bar {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .secondary-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 22px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    border-radius: 50px;
+    border: 2px solid rgba(255,255,255,0.12);
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    transition: all 0.25s;
+    outline: none;
+  }
+  .secondary-btn:hover:not(:disabled) {
+    border-color: var(--blue);
+    color: var(--blue);
+    box-shadow: 0 0 16px rgba(68,138,255,0.15);
+    background: rgba(68,138,255,0.06);
+  }
+  .secondary-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .refresh-icon {
+    font-size: 1.1rem;
+    display: inline-block;
+    transition: transform 0.6s;
+  }
+  .secondary-btn.spinning .refresh-icon {
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .footer {
+    margin-top: 20px;
+    text-align: center;
+  }
+  .footer .last-update {
+    font-size: 0.73rem;
+    color: var(--text-dim);
+  }
+
+  .error-banner {
+    background: rgba(255,82,82,0.1);
+    border: 1px solid rgba(255,82,82,0.25);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 14px;
+    color: var(--red);
+    font-size: 0.82rem;
+    display: none;
+  }
+  .error-banner.show { display: block; }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--text-dim);
+    border-top-color: var(--orange);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>Simulador de Presencia</h1>
+    <div class="subtitle">ZY-M100-5 · Habitación 1</div>
+  </div>
+
+  <!-- ── PRIMARY: Range Slider ── -->
+  <div class="slider-card no-presence" id="sliderCard">
+    <div class="slider-label">Rango de detección</div>
+    <div class="range-display" id="rangeDisplay">0.00</div>
+    <div class="range-unit">metros</div>
+    <div class="presence-hint" id="presenceHint">Sin presencia</div>
+    <div class="status-badge sending" id="statusBadge" style="display:none;">
+      <span class="spinner"></span> Enviando…
+    </div>
+    <div class="slider-wrapper">
+      <input type="range" id="rangeSlider" min="0" max="200" value="0" step="5">
+      <div class="range-labels">
+        <span>0 m</span>
+        <span>0.5 m</span>
+        <span>1.0 m</span>
+        <span>1.5 m</span>
+        <span>2.0 m</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Info grid (updated on sensor query) ── -->
+  <div class="info-grid">
+    <div class="info-item">
+      <div class="info-label">far_detection</div>
+      <div class="info-value" id="farValue">---</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">sensitivity</div>
+      <div class="info-value" id="sensValue">---</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">Estado presencia</div>
+      <div class="info-value" id="presenceState">---</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">Distancia</div>
+      <div class="info-value" id="closestDist">---</div>
+    </div>
+  </div>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <!-- ── SECONDARY: Refresh button ── -->
+  <div class="refresh-bar">
+    <button class="secondary-btn" id="refreshBtn" title="Consultar estado real del sensor">
+      <span class="refresh-icon">&#x21bb;</span> Refrescar sensor
+    </button>
+  </div>
+
+  <div class="footer">
+    <div class="last-update" id="lastUpdate">Mueve el slider para simular presencia</div>
+  </div>
+</div>
+
+<script>
+  const DEVICE_ID = 'bf98d27d79685e38a2wbda';
+  const ROOM_ID = 1;
+  const API_COOLDOWN = 5000; // 5s mínimo entre llamadas a Tuya
+
+  let pending = false;
+  let _lastApiCall = 0;
+  let _sliderTimer = null;
+
+  // DOM refs
+  const slider      = document.getElementById('rangeSlider');
+  const rangeDisplay = document.getElementById('rangeDisplay');
+  const presenceHint = document.getElementById('presenceHint');
+  const sliderCard  = document.getElementById('sliderCard');
+  const statusBadge = document.getElementById('statusBadge');
+  const farVal      = document.getElementById('farValue');
+  const sensVal     = document.getElementById('sensValue');
+  const presSt      = document.getElementById('presenceState');
+  const distEl      = document.getElementById('closestDist');
+  const errEl       = document.getElementById('errorBanner');
+  const updEl       = document.getElementById('lastUpdate');
+  const refBtn      = document.getElementById('refreshBtn');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.add('show');
+    setTimeout(() => errEl.classList.remove('show'), 5000);
+  }
+
+  function formatTime() {
+    return new Date().toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  }
+
+  function metersFromCm(cm) {
+    return (cm / 100).toFixed(2);
+  }
+
+  function updateSliderUI(valueCm) {
+    const meters = metersFromCm(valueCm);
+    rangeDisplay.textContent = meters;
+    if (valueCm === 0) {
+      presenceHint.textContent = 'Sin presencia';
+      sliderCard.className = 'slider-card no-presence';
+    } else {
+      presenceHint.textContent = 'Con presencia';
+      sliderCard.className = 'slider-card has-presence';
+    }
+  }
+
+  // ── Set range (debounced) ──
+  async function applyRange(valueCm) {
+    if (pending) return;
+    pending = true;
+    slider.disabled = true;
+    statusBadge.style.display = 'inline-block';
+    statusBadge.className = 'status-badge sending';
+
+    const sensitivity = valueCm > 0 ? 9 : 0;
+
+    try {
+      const resp = await fetch('/dashboard-api/simula/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          far_detection: valueCm,
+          sensitivity: sensitivity
+        })
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.error || 'HTTP ' + resp.status);
+      }
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Comando falló');
+
+      // Actualizar info grid con los valores que acabamos de enviar
+      farVal.textContent = valueCm;
+      sensVal.textContent = sensitivity;
+      presSt.textContent = valueCm > 0 ? 'presence' : 'none';
+      distEl.textContent = valueCm > 0 ? '< ' + valueCm + ' cm' : '0 cm';
+      updEl.textContent = 'Rango aplicado: ' + formatTime();
+
+      // F35: Inyectar presencia directamente (bypass Tuya webhook)
+      // para que el dashboard lo refleje en <1s en lugar de 3-16s.
+      fetch('/dashboard-api/simula/inject-presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ far_detection: valueCm, room_id: ROOM_ID })
+      }).catch(() => {}); // fire-and-forget; non-critical
+
+      statusBadge.style.display = 'none';
+    } catch (e) {
+      showError('Error al aplicar rango: ' + e.message);
+      statusBadge.style.display = 'none';
+    } finally {
+      pending = false;
+      slider.disabled = false;
+    }
+  }
+
+  // Debounced slider handler
+  slider.addEventListener('input', () => {
+    const valueCm = parseInt(slider.value);
+    updateSliderUI(valueCm);
+  });
+
+  slider.addEventListener('change', () => {
+    const valueCm = parseInt(slider.value);
+    updateSliderUI(valueCm);
+    _lastApiCall = Date.now(); // track cooldown
+    applyRange(valueCm);
+  });
+
+  // ── Query sensor (secondary) ──
+  async function fetchStatus() {
+    const now = Date.now();
+    if (now - _lastApiCall < API_COOLDOWN) {
+      showError('Espera ' + Math.ceil((API_COOLDOWN - (now - _lastApiCall)) / 1000) + 's antes de volver a consultar');
+      return;
+    }
+    _lastApiCall = now;
+
+    try {
+      const resp = await fetch('/dashboard-api/simula/status');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+
+      farVal.textContent = data.far_detection ?? '---';
+      sensVal.textContent = data.sensitivity ?? '---';
+      presSt.textContent = (data.effective_presence || data.presence_state) ?? '---';
+      distEl.textContent = (data.target_dis_closest != null) ? data.target_dis_closest + ' cm' : '---';
+
+      // Sync slider with actual sensor value
+      const actualFar = data.far_detection ?? 0;
+      slider.value = actualFar;
+      updateSliderUI(actualFar);
+
+      updEl.textContent = 'Última consulta: ' + formatTime();
+    } catch (e) {
+      showError('Error al consultar sensor: ' + e.message);
+      farVal.textContent = 'error';
+      sensVal.textContent = 'error';
+      presSt.textContent = 'error';
+      distEl.textContent = '---';
+      updEl.textContent = 'Sensor no disponible';
+    }
+  }
+
+  refBtn.addEventListener('click', async () => {
+    if (pending) return;
+    pending = true;
+    refBtn.disabled = true;
+    refBtn.classList.add('spinning');
+    try {
+      await fetchStatus();
+    } finally {
+      pending = false;
+      refBtn.disabled = false;
+      refBtn.classList.remove('spinning');
+    }
+  });
+
+  // ── Init: no auto-fetch, show hint ──
+  updEl.textContent = 'Mueve el slider para simular presencia';
+</script>
+
+</body>
+</html>

@@ -1,0 +1,2790 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cerraduras — Test Room</title>
+<script src="/assets/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #141422;
+    --surface2: #1c1c30;
+    --text: #e0e0e8;
+    --text-dim: #707088;
+    --green: #00e676;
+    --red: #ff5252;
+    --yellow: #ffd740;
+    --blue: #448aff;
+    --cyan: #18ffff;
+    --orange: #ff9100;
+    --purple: #d500f9;
+    --rad: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── ZONE 1: Installer bar ── */
+  #zone1 { background:var(--surface); border-bottom:1px solid rgba(255,255,255,0.06); padding:0; overflow:visible; max-height:135px; transition:max-height 0.4s ease; }
+  #zone1.collapsed { max-height:30px; }
+  #zone1-toggle { display:flex; align-items:center; justify-content:space-between; padding:4px 14px; cursor:pointer; user-select:none; font-size:0.7rem; color:var(--text-dim); border-bottom:1px solid rgba(255,255,255,0.04); }
+  #zone1-toggle:hover { background:var(--surface2); }
+  #zone1-toggle .arrow { transition:transform 0.3s; }
+  #zone1.collapsed #zone1-toggle .arrow { transform:rotate(-90deg); }
+  #zone1-inner { display:grid; grid-template-columns:0.65fr 2.35fr; gap:6px; padding:5px 14px; }
+  @media (max-width:700px) { #zone1-inner { grid-template-columns:1fr; } }
+  .mirame-card { background:var(--surface2); border-radius:6px; padding:4px 8px; border:2px solid transparent; transition:border-color 0.6s; display:flex; flex-wrap:wrap; align-items:center; gap:5px; font-size:0.65rem; }
+  .mirame-card.recent { border-color:var(--blue); animation:pulse-border 1.5s infinite; }
+  .mirame-card.stable { border-color:var(--cyan); }
+  .mirame-card .chip { font-family:'JetBrains Mono',monospace; font-size:0.65rem; color:var(--cyan); }
+  .mirame-card .room-badge { display:inline-block; padding:1px 6px; border-radius:8px; font-size:0.6rem; font-weight:600; }
+  .mirame-card .room-badge.assigned { background:rgba(0,230,118,0.15); color:var(--green); }
+  .mirame-card .room-badge.unassigned { background:rgba(255,215,64,0.15); color:var(--yellow); }
+  .mirame-card .actions { display:flex; gap:3px; margin-left:auto; }
+  .mirame-empty { color:var(--text-dim); font-style:italic; padding:4px; text-align:center; font-size:0.65rem; }
+  .btn { padding:5px 12px; border-radius:5px; border:none; cursor:pointer; font-weight:600; font-size:0.72rem; transition:opacity 0.2s; }
+  .btn:hover { opacity:0.85; }
+  .btn-config { background:var(--blue); color:#fff; }
+  .btn-clear { background:var(--red); color:#fff; }
+  .btn-reset { background:var(--orange); color:#000; }
+  .btn-sim { background:var(--green); color:#000; }
+
+  /* ── Modal ── */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; display:none; justify-content:center; align-items:center; }
+  .modal-overlay.open { display:flex; }
+  .modal-box { background:var(--surface); border:1px solid rgba(255,255,255,0.1); border-radius:var(--rad); padding:24px; max-width:440px; width:90%; max-height:80vh; overflow-y:auto; }
+  .modal-box h2 { font-size:1.1rem; color:var(--cyan); margin-bottom:16px; }
+  .modal-box .pack-items { margin:12px 0; }
+  .modal-box .pack-item { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:0.82rem; border-bottom:1px solid rgba(255,255,255,0.03); }
+  .modal-box .pack-item .check { color:var(--green); font-weight:700; }
+  .modal-box .modal-actions { display:flex; gap:8px; margin-top:16px; justify-content:flex-end; }
+  .modal-box select { width:100%; padding:8px; border-radius:6px; background:var(--surface2); color:var(--text); border:1px solid rgba(255,255,255,0.15); font-size:0.85rem; margin-top:8px; }
+  .modal-box label { font-size:0.8rem; color:var(--text-dim); display:block; margin-top:12px; }
+
+  /* ── ZONE 2: State bar (fixed height, compact) ── */
+  #zone2 { height:44px; padding:4px 20px 0; text-align:center; transition:background-color 0.6s; overflow:hidden; }
+  #zone2 .state-main { display:flex; align-items:center; justify-content:center; gap:6px; }
+  #zone2 .state-name { font-size:0.95rem; font-weight:800; letter-spacing:-0.3px; line-height:1; white-space:nowrap; }
+  #zone2 .state-desc { font-size:0.72rem; color:var(--text-dim); margin-top:1px; line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:90vw; margin-left:auto; margin-right:auto; }
+  #zone2 .state-icon { font-size:1.25rem; }
+
+  /* ── MAIN: Zone 3 + 4 ── */
+  #main-flex { display:flex; gap:0; min-height:350px; padding:0 20px; }
+  @media (max-width:768px) { #main-flex { flex-direction:column; padding:0 8px; } }
+
+  /* ── ZONE 3: Croquis ── */
+  #zone3 { flex:0 0 63%; background:var(--surface); border-radius:var(--rad); border:1px solid rgba(255,255,255,0.06); position:relative; overflow:hidden; }
+  #zone3 svg { width:100%; height:100%; display:block; }
+
+  /* ── ZONE 4: Data panel ── */
+  #zone4 { flex:0 0 37%; min-width:240px; padding:12px 8px 12px 0; display:flex; flex-direction:column; gap:8px; }
+  @media (max-width:768px) { #zone4 { width:100%; flex:none; flex-direction:column; } #zone4 .panel-card { width:100%; } }
+  .panel-card { background:var(--surface); border:1px solid rgba(255,255,255,0.06); border-radius:var(--rad); padding:10px; }
+  .panel-card h3 { font-size:0.65rem; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); margin-bottom:6px; }
+  .panel-card .row { display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:0.78rem; border-bottom:1px solid rgba(255,255,255,0.03); }
+  .panel-card .row .label { color:var(--text-dim); }
+  .panel-card .row .value { font-weight:600; }
+  .val-green { color:var(--green); }
+  .val-red { color:var(--red); }
+  .val-orange { color:var(--orange); }
+  .val-yellow { color:var(--yellow); }
+  .val-purple { color:var(--purple); }
+  .val-cyan { color:var(--cyan); }
+  .progress-bar { height:6px; background:rgba(255,255,255,0.08); border-radius:3px; margin-top:8px; overflow:hidden; }
+  .progress-fill { height:100%; border-radius:3px; transition:width 1s linear,background-color 1s; }
+  .progress-fill.ok { background:var(--green); }
+  .progress-fill.warn { background:var(--orange); }
+  .progress-fill.danger { background:var(--red); }
+  .devices-list { font-size:0.75rem; }
+  .devices-list .dev-row { display:flex; justify-content:space-between; padding:3px 0; color:var(--text-dim); }
+  .devices-list .dev-row .dot { width:6px; height:6px; border-radius:50%; display:inline-block; margin-right:6px; }
+  .devices-list .dev-row .dot.green { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .devices-list .dev-row .dot.gray { background:var(--text-dim); }
+
+  /* ── ZONE 5: Timeline ── */
+  #zone5 { background:var(--surface); border-top:1px solid rgba(255,255,255,0.06); margin:0 20px 20px; border-radius:0 0 var(--rad) var(--rad); overflow:hidden; }
+  #zone5-header { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; cursor:pointer; user-select:none; }
+  #zone5-header:hover { background:var(--surface2); }
+  #zone5-body { max-height:220px; overflow-y:auto; transition:max-height 0.3s; }
+  #zone5.collapsed #zone5-body { max-height:0; }
+  .event-row { display:flex; align-items:center; padding:8px 16px; font-size:0.78rem; border-bottom:1px solid rgba(255,255,255,0.03); border-left:3px solid transparent; transition:background 0.3s; }
+  .event-row.new { background:rgba(255,215,64,0.06); }
+  .event-row.kind-OPEN     { border-left-color:var(--green); }
+  .event-row.kind-AUTO_LOCK{ border-left-color:var(--purple); }
+  .event-row.kind-DENIED   { border-left-color:var(--red); }
+  .event-row.kind-MANUAL_LOCK{ border-left-color:var(--yellow); }
+  .event-row.kind-QR_VALIDATE{ border-left-color:var(--blue); }
+  .event-row .e-time { min-width:55px; font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--text-dim); }
+  .event-row .e-icon { margin:0 8px; font-size:1rem; width:20px; text-align:center; }
+  .event-row .e-detail { flex:1; }
+  .event-row .e-detail .e-kind { font-weight:600; }
+  .event-row .e-detail .e-meta { font-size:0.7rem; color:var(--text-dim); }
+  .event-row .e-result { font-weight:700; font-size:0.7rem; min-width:30px; text-align:right; }
+  .event-row .e-result.OK { color:var(--green); }
+  .event-row .e-result.FAIL { color:var(--red); }
+  .event-expand { padding:8px 16px 8px 100px; font-size:0.7rem; color:var(--text-dim); background:var(--surface2); display:none; }
+  .event-expand.open { display:block; }
+
+  /* ── QR toast ── */
+  #qr-toast { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:99; pointer-events:none; transition:opacity 0.3s; opacity:0; }
+  #qr-toast.show { opacity:1; }
+  #qr-toast .toast-inner { font-size:5rem; font-weight:900; padding:20px 40px; border-radius:20px; text-align:center; animation:toast-pop 0.5s ease; }
+  #qr-toast .toast-inner.ok { color:var(--green); text-shadow:0 0 40px var(--green); }
+  #qr-toast .toast-inner.fail { color:var(--red); text-shadow:0 0 40px var(--red); animation:toast-shake 0.5s ease; }
+  #qr-toast .toast-msg { display:block; font-size:1rem; font-weight:400; margin-top:8px; }
+
+  @keyframes toast-pop { 0% { transform:scale(0.3); opacity:0; } 60% { transform:scale(1.1); } 100% { transform:scale(1); opacity:1; } }
+  @keyframes toast-shake { 0%,100% { transform:translateX(0); } 20% { transform:translateX(-12px); } 40% { transform:translateX(12px); } 60% { transform:translateX(-8px); } 80% { transform:translateX(8px); } }
+  @keyframes pulse-border { 0%,100% { border-color:var(--blue); box-shadow:0 0 8px rgba(68,138,255,0.4); } 50% { border-color:var(--cyan); box-shadow:0 0 16px rgba(24,255,255,0.6); } }
+
+  /* ── NEW: radar ripple ── */
+  @keyframes radar-ripple { 0% { r:4px; opacity:0.6; } 100% { r:90px; opacity:0; } }
+  @keyframes polling-pulse-slow   { 0%,100% { opacity:0.2; r:4px; } 50% { opacity:0.9; r:7px; } }
+  @keyframes polling-pulse-medium { 0%,100% { opacity:0.2; r:4px; } 50% { opacity:0.9; r:7px; } }
+  @keyframes polling-pulse-fast   { 0%,100% { opacity:0.2; r:4px; } 50% { opacity:0.9; r:7px; } }
+  @keyframes polling-pulse-vfast  { 0%,100% { opacity:0.2; r:4px; } 50% { opacity:0.9; r:7px; } }
+  @keyframes qr-flash-overlay { 0% { opacity:0.9; } 100% { opacity:0; } }
+  @keyframes latch-click { 0%,100% { transform:translateX(0); } 50% { transform:translateX(3px); } }
+  @keyframes thumbsup-pop { 0% { transform:scale(0.3); opacity:0; } 60% { transform:scale(1.3); opacity:1; } 100% { transform:scale(1); opacity:1; } }
+  @keyframes moni-idle-sway { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-1px); } }
+  @keyframes fade-in-glow { from { opacity:0; } to { opacity:1; } }
+
+  /* ── Phase label ── */
+  #phase-label { text-align:center; padding:4px 20px 10px; font-size:0.75rem; color:var(--cyan); font-weight:600; letter-spacing:0.5px; transition:color 0.4s; }
+
+  .no-stay { color:var(--text-dim); font-style:italic; }
+
+  /* ── MOBILE: Installer-first responsive (max-width:768px) ── */
+  @media (max-width:768px) {
+    body { padding-bottom: 32px; }
+
+    /* Zone 1: installer bar — bigger room selector, more spacing */
+    #zone1:not(.collapsed) { max-height: 320px; }
+    #zone1-inner { gap: 10px; padding: 8px 12px; }
+    #room-selector { font-size: 1rem !important; padding: 12px 8px !important; }
+    #reset-room-btn { font-size: 0.88rem !important; padding: 10px 16px !important; }
+    #mirame-list { font-size: 0.78rem !important; }
+
+    /* Zone 2: state bar — compact, fixed height */
+    #zone2 { height:46px; padding:5px 12px 0; }
+    #zone2 .state-name { font-size: 1.0rem; }
+    #zone2 .state-desc { font-size: 0.65rem; }
+
+    /* Zone 3: SVG diagram — edge-to-edge, proportional */
+    #zone3 {
+      flex: none;
+      width: calc(100% + 16px);
+      margin-left: -8px;
+      height: auto;
+      aspect-ratio: 600 / 430;
+      border-radius: 0;
+    }
+
+    /* Zone 4 panels: larger fonts */
+    .panel-card { padding: 14px; }
+    .panel-card h3 { font-size: 0.82rem; margin-bottom: 10px; }
+    .panel-card .row { font-size: 0.92rem; padding: 5px 0; }
+
+    /* Buttons: full-width, touch-friendly (min 44px) */
+    .btn { padding: 11px 16px; font-size: 0.88rem; min-height: 44px; }
+    #qr-test-panel .btn { width: 100%; margin-bottom: 4px; }
+    #qr-test-panel > div:has(.btn) { flex-direction: column; }
+
+    /* ── QR test panel: stack vertically, large QR ── */
+    /* QR + info: column instead of row */
+    #qr-test-active > div:first-of-type {
+      flex-direction: column !important;
+      align-items: center !important;
+      gap: 14px !important;
+    }
+    /* QR canvas container: responsive square */
+    #qr-test-canvas {
+      width: 100% !important;
+      max-width: 280px !important;
+      height: auto !important;
+      aspect-ratio: 1;
+      padding: 10px !important;
+    }
+    /* Inner canvas/img: fill container, maintain quality */
+    #qr-test-canvas canvas,
+    #qr-test-canvas img {
+      width: 100% !important;
+      height: auto !important;
+      max-width: 256px;
+    }
+    /* QR info text: centered, larger */
+    #qr-test-active > div:first-of-type > div[style*="flex:1"] {
+      text-align: center;
+      width: 100%;
+    }
+    #qr-test-jti { font-size: 12px !important; }
+    #qr-test-exp, #qr-test-status, #qr-test-stay { font-size: 13px !important; }
+    /* Duration selector */
+    #qr-test-panel label { font-size: 0.85rem !important; }
+    #qr-test-duration { font-size: 0.85rem !important; padding: 8px !important; margin-top: 2px; }
+
+    /* Selects in general: touch-friendly */
+    select { font-size: 0.92rem !important; padding: 9px 6px !important; }
+
+    /* Devices list */
+    .devices-list { font-size: 0.85rem; }
+    .devices-list .dev-row { padding: 5px 0; }
+
+    /* Timeline */
+    .event-row { padding: 10px 12px; font-size: 0.82rem; }
+    .event-row .e-time { min-width: 50px; }
+
+    /* Modal */
+    .modal-box { padding: 18px; width: 94%; }
+  }
+
+</style>
+</head>
+<body>
+
+<!-- ──────────────── ZONE 1: Installer Bar ──────────────── -->
+<div id="zone1">
+  <div id="zone1-toggle" onclick="toggleZone1()">
+    <span><span class="arrow">▼</span> <strong>Panel Instalador</strong></span>
+    <span id="zone1-meta" style="font-size:0.65rem; color:var(--text-dim)"></span>
+  </div>
+  <div id="zone1-inner">
+    <div>
+      <strong style="font-size:0.72rem">📟 Packs con Mírame activo</strong>
+      <div id="mirame-list" class="mirame-empty" style="font-size:0.7rem;padding:6px">Esperando pulsación del botón físico...</div>
+    </div>
+    <div>
+      <strong style="font-size:0.72rem">🏨 Habitación a visualizar</strong>
+      <div style="margin-top:4px;display:flex;gap:4px;align-items:center">
+        <select id="room-selector" onchange="onRoomSelect()" style="flex:1;padding:6px;border-radius:5px;background:var(--surface2);color:var(--text);border:1px solid rgba(255,255,255,0.15);font-size:0.8rem"></select>
+        <button class="btn btn-reset" id="reset-room-btn" onclick="resetRoom()" style="white-space:nowrap;padding:6px 14px;font-size:0.78rem">🔄 Reset</button>
+      </div>
+      <div id="pack-indicator" style="margin-top:3px;font-size:0.65rem"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────── MODAL: Configurar Pack ──────── -->
+<div class="modal-overlay" id="config-modal">
+  <div class="modal-box">
+    <h2>⚙️ Configurar Pack</h2>
+    <div id="modal-warning" style="display:none;background:rgba(255,215,64,0.1);border:1px solid var(--yellow);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:0.75rem;color:var(--yellow)"></div>
+    <div><strong style="color:var(--cyan)" id="modal-pack-name">Pack detectado</strong></div>
+    <div style="font-size:0.7rem;color:var(--text-dim);margin-top:2px" id="modal-chip-id"></div>
+    <div class="pack-items" id="modal-pack-items"></div>
+    <label>Asignar a habitación:</label>
+    <select id="modal-room-select" onchange="onModalRoomChange()"></select>
+    <div class="modal-actions">
+      <button class="btn" style="background:var(--surface2);color:var(--text)" onclick="closeConfigModal()">Cancelar</button>
+      <button class="btn btn-config" id="modal-assign-btn" onclick="confirmAssignPack()">✅ Asignar</button>
+    </div>
+    <div id="modal-feedback" style="font-size:0.7rem;margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- ──────────────── ZONE 2: State Bar ──────────────── -->
+<div id="zone2">
+  <div class="state-main">
+    <span id="state-icon" class="state-icon">⏳</span>
+    <div class="state-name" id="state-name">Conectando...</div>
+  </div>
+  <div class="state-desc" id="state-desc"></div>
+</div>
+
+<!-- ──────────────── ZONE 3+4: Croquis + Panel ──────────────── -->
+<div id="main-flex">
+  <div id="zone3">
+    <svg viewBox="0 0 600 430" xmlns="http://www.w3.org/2000/svg" id="room-svg">
+      <defs>
+        <filter id="glow-yellow"><feGaussianBlur stdDeviation="8" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <filter id="glow-green"><feGaussianBlur stdDeviation="6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <filter id="glow-red"><feGaussianBlur stdDeviation="6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+
+      <!-- Pasillo exterior -->
+      <rect x="55" y="335" width="490" height="60" fill="none" stroke="rgba(255,255,255,0.05)" stroke-dasharray="4,4" rx="2"/>
+      <text x="300" y="410" text-anchor="middle" fill="var(--text-dim)" font-size="10">PASILLO</text>
+
+      <!-- Paredes habitación -->
+      <rect x="80" y="18" width="440" height="310" fill="rgba(20,20,34,0.9)" stroke="rgba(255,255,255,0.15)" stroke-width="4" rx="2"/>
+      <text x="300" y="38" text-anchor="middle" fill="var(--text-dim)" font-size="10" id="room-label-svg">HABITACIÓN</text>
+
+      <!-- Puerta (gap en pared inferior) -->
+      <rect x="250" y="324" width="85" height="4" fill="rgba(255,255,255,0.12)"/>
+
+      <!-- Puerta (animable) - bisagra a la derecha -->
+      <g id="door-group" style="transform-origin:335px 326px">
+        <line id="door-line" x1="252" y1="326" x2="335" y2="326" stroke="rgba(255,82,82,0.8)" stroke-width="4" stroke-linecap="round"/>
+      </g>
+
+      <!-- Pestillo (dentro, izq de puerta) -->
+      <g id="latch-group">
+        <rect id="latch" x="242" y="312" width="8" height="13" fill="rgba(255,82,82,0.8)" rx="2"/>
+      </g>
+      <text x="246" y="334" text-anchor="middle" fill="var(--text-dim)" font-size="7">PESTILLO</text>
+
+      <!-- Lector QR (fuera, debajo de puerta) -->
+      <g id="qr-reader-group">
+        <rect x="265" y="342" width="55" height="24" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.2)" stroke-width="1.5" rx="3"/>
+        <rect id="qr-screen" x="269" y="346" width="47" height="14" fill="#111" rx="2"/>
+        <!-- QR flash overlay (triggered on scan success) -->
+        <rect id="qr-flash" x="269" y="346" width="47" height="14" fill="white" rx="2" opacity="0" style="pointer-events:none"/>
+        <text id="qr-status-text" x="293" y="356" text-anchor="middle" fill="var(--green)" font-size="8" font-weight="700">ESCANEABLE</text>
+        <line id="qr-laser" x1="271" y1="353" x2="314" y2="353" stroke="var(--green)" stroke-width="1.5" opacity="0.6">
+          <animate attributeName="y1" values="348;360;348" dur="1.5s" repeatCount="indefinite"/>
+          <animate attributeName="y2" values="348;360;348" dur="1.5s" repeatCount="indefinite"/>
+        </line>
+      </g>
+      <text x="293" y="375" text-anchor="middle" fill="var(--text-dim)" font-size="7">LECTOR QR</text>
+
+      <!-- Bombilla (centro techo) -->
+      <g id="bulb-group">
+        <circle id="bulb-glass" cx="300" cy="128" r="16" fill="#444" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+        <rect id="bulb-base" x="295" y="143" width="10" height="5" fill="rgba(255,255,255,0.2)" rx="1"/>
+        <circle id="bulb-glow" cx="300" cy="128" r="45" fill="rgba(255,215,64,0.08)" opacity="0"/>
+        <text id="bulb-symbol" x="300" y="133" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="12">💡</text>
+      </g>
+      <text x="300" y="162" text-anchor="middle" fill="var(--text-dim)" font-size="7">LUZ (Switch)</text>
+
+      <!-- Sensor presencia (esquina sup-dcha techo) -->
+      <g id="presence-sensor-group">
+        <rect x="470" y="30" width="28" height="10" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" stroke-width="1" rx="2"/>
+        <text x="484" y="37" text-anchor="middle" fill="var(--text-dim)" font-size="5.5">PRESENCIA</text>
+        <polygon id="presence-cone" points="478,40 440,250 516,250" fill="rgba(255,145,0,0.05)" stroke="rgba(255,145,0,0.1)" stroke-width="1"/>
+        <!-- Radar ripple circles (hidden by default, triggered on polling) — pool of 6 for continuous waves -->
+        <circle id="radar-ripple-1" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <circle id="radar-ripple-2" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <circle id="radar-ripple-3" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <circle id="radar-ripple-4" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <circle id="radar-ripple-5" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <circle id="radar-ripple-6" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
+        <!-- Polling indicator dot near sensor -->
+        <circle id="polling-dot" cx="508" cy="38" r="4" fill="rgba(0,230,118,0.3)" style="display:none"/>
+      </g>
+
+      <!-- Sensor puerta (junto a marco) -->
+      <rect x="235" y="302" width="7" height="9" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1" rx="1"/>
+      <text x="238" y="298" text-anchor="middle" fill="var(--text-dim)" font-size="5.5">PUERTA</text>
+
+      <!-- Monigote (animable) -->
+      <g id="monigote-group" style="transition:transform 0.12s cubic-bezier(0.4,0,0.2,1)">
+        <!-- Sombra -->
+        <ellipse id="moni-shadow" cx="0" cy="22" rx="10" ry="3" fill="rgba(0,0,0,0.3)"/>
+        <!-- Cuerpo -->
+        <circle id="moni-head" cx="0" cy="-14" r="7" fill="rgba(255,255,255,0.9)" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <!-- Overlay: emoji face (replaces head when presence confirmed) -->
+        <text id="moni-face" x="0" y="-10" text-anchor="middle" font-size="14" style="display:none">😊</text>
+        <!-- Overlay: checkmark (presence confirmed, above head) -->
+        <text id="moni-check" x="0" y="-24" text-anchor="middle" fill="#00e676" font-size="16" font-weight="bold" style="display:none">✓</text>
+        <text id="moni-thumbsup" x="0" y="-26" text-anchor="middle" fill="#ffd740" font-size="20" font-weight="bold" style="display:none;filter:drop-shadow(0 0 8px #ffd740)">👍</text>
+        <text id="moni-question" x="0" y="-24" text-anchor="middle" fill="var(--red)" font-size="16" font-weight="bold" style="display:none">?</text>
+        <line id="moni-body" x1="0" y1="-7" x2="0" y2="6" stroke="rgba(255,255,255,0.9)" stroke-width="3" stroke-linecap="round"/>
+        <line id="moni-arm-l" x1="0" y1="-4" x2="-10" y2="2" stroke="rgba(255,255,255,0.8)" stroke-width="2.5" stroke-linecap="round"/>
+        <line id="moni-arm-r" x1="0" y1="-4" x2="10" y2="2" stroke="rgba(255,255,255,0.8)" stroke-width="2.5" stroke-linecap="round"/>
+        <line id="moni-leg-l" x1="0" y1="5" x2="-8" y2="16" stroke="rgba(255,255,255,0.8)" stroke-width="2.5" stroke-linecap="round"/>
+        <line id="moni-leg-r" x1="0" y1="5" x2="8" y2="16" stroke="rgba(255,255,255,0.8)" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+      <!-- Countdown (verification window — visible when exit_deadline is active) -->
+      <g id="countdown-group" style="display:none">
+        <circle cx="300" cy="240" r="30" fill="rgba(0,0,0,0.6)" stroke="rgba(255,255,255,0.08)" stroke-width="3"/>
+        <circle id="countdown-arc" cx="300" cy="240" r="27" fill="none" stroke="rgba(255,215,64,0.7)" stroke-width="3"
+                stroke-dasharray="169.65" stroke-dashoffset="0" stroke-linecap="round"
+                transform="rotate(-90 300 240)" style="transition:stroke-dashoffset 1s linear"/>
+        <text id="countdown-text" x="300" y="246" text-anchor="middle" fill="#ffd740" font-size="28" font-weight="bold" font-family="'SF Mono','Fira Code',monospace">30</text>
+        <text id="countdown-label" x="300" y="280" text-anchor="middle" fill="rgba(255,215,64,0.5)" font-size="8">ventana presencia</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- ════════════ ZONE 4: Data Panel ════════════ -->
+  <div id="zone4">
+    <div class="panel-card" id="devices-panel">
+      <h3>📊 Dispositivos</h3>
+      <button id="btn-refresh-devices" onclick="refreshDeviceStatus()" title="Consultar estado real de los dispositivos (vía Tuya API)" style="display:none;width:100%;padding:6px 10px;margin:4px 0 8px 0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:500;transition:all 0.2s">🔄 Comprobar dispositivos</button>
+      <div id="devices-content" class="devices-list">Cargando...</div>
+    </div>
+    <div class="panel-card" id="qr-test-panel">
+      <h3>🧪 QR de pruebas</h3>
+      <div id="qr-test-content">
+        <div class="no-stay" id="qr-test-empty">Sin QR activo</div>
+        <div id="qr-test-active" style="display:none">
+          <div style="display:flex;align-items:center;gap:16px;margin-top:8px">
+            <div id="qr-test-canvas" style="width:138px;height:138px;background:white;border-radius:8px;padding:6px;display:flex;align-items:center;justify-content:center"></div>
+            <div style="flex:1">
+              <div><span class="label">JTI:</span> <span id="qr-test-jti" style="font-family:monospace;font-size:10px">—</span></div>
+              <div><span class="label">Expira:</span> <span id="qr-test-exp" style="font-size:11px">—</span></div>
+              <div><span class="label">Estado:</span> <span id="qr-test-status" style="font-size:11px">—</span></div>
+              <div><span class="label">Estancia:</span> <span id="qr-test-stay" style="font-size:11px">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sim" id="qr-test-create-btn" onclick="createTestQr()" style="flex:1;min-width:100px">➕ Crear QR</button>
+        <button class="btn btn-reset" id="qr-test-reset-btn" onclick="resetTestQr()" style="flex:1;min-width:100px;display:none">🔄 Generar nuevo QR</button>
+      </div>
+      <div style="margin-top:4px">
+        <label style="font-size:0.65rem;color:var(--text-dim);display:flex;align-items:center;gap:4px">
+          Duración: <select id="qr-test-duration" style="background:var(--surface2);color:var(--text);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:2px 4px;font-size:0.65rem">
+            <option value="30">30 min</option>
+            <option value="60" selected>60 min</option>
+            <option value="120">2 h</option>
+            <option value="240">4 h</option>
+            <option value="480">8 h</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="panel-card" id="estancia-panel">
+      <h3>⏱️ Estancia</h3>
+      <div id="stay-content" class="no-stay">Sin estancia activa</div>
+    </div>
+    <div class="panel-card" id="sensor-panel">
+      <h3>📡 Sensores</h3>
+      <div id="sensor-content">
+        <div class="row"><span class="label">🚪 Puerta</span><span class="value" id="s-door">...</span></div>
+        <div class="row"><span class="label">🔋 Batería sensor</span><span class="value" id="s-battery">...</span></div>
+        <div class="row"><span class="label">🧑 Presencia</span><span class="value" id="s-presence">...</span></div>
+        <div class="row"><span class="label">🔒 Cerradura</span><span class="value" id="s-lock">...</span></div>
+        <div class="row"><span class="label">💡 Luz</span><span class="value" id="s-switch">...</span></div>
+        <div class="row"><span class="label">⏳ Cooldown</span><span class="value" id="s-cooldown">—</span></div>
+      </div>
+    </div>
+    <div class="panel-card" id="system-status-panel">
+      <h3>⚙️ Estado del Sistema</h3>
+      <div id="system-status-content" style="font-size:0.7rem;color:var(--text-dim)">Cargando...</div>
+    </div>
+    <div class="panel-card" id="no-pack-card" style="display:none;flex:1;align-items:center;justify-content:center;text-align:center;min-height:200px">
+      <div>
+        <div style="font-size:5rem;line-height:1;color:var(--red);opacity:0.5">✗</div>
+        <div style="font-size:0.85rem;color:var(--text-dim);margin-top:8px">Habitación sin pack</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase label (between croquis and timeline) -->
+<div id="phase-label">—</div>
+
+<!-- ──────────────── ZONE 5: Timeline ──────────────── -->
+<div id="zone5">
+  <div id="zone5-header" onclick="toggleZone5()">
+    <strong style="font-size:0.8rem">📋 Timeline de eventos</strong>
+    <span style="font-size:0.7rem;color:var(--text-dim)"><span id="zone5-arrow">▼</span> <span id="event-count">0 eventos</span></span>
+  </div>
+  <div id="zone5-body">
+    <div id="timeline-inner" style="padding:4px 0; color:var(--text-dim); text-align:center">Esperando eventos...</div>
+  </div>
+</div>
+
+<script>
+// ╔══════════════════════════════════════════════════════════╗
+// ║             STATE MACHINE & CONFIGURATION               ║
+// ╚══════════════════════════════════════════════════════════╝
+
+let currentRoomId = 1;
+let currentState = 'LOADING';
+let lastEventIds = new Set();
+let selectedPackId = null;
+let roomList = [];
+let qrData = { scannable:false, consumed:false, revoked:false, expired:false, jti:'', expires_at:'' };
+let qrTestData = null; // {jti, qr_text, expires_at, stay_id, scannable, consumed, revoked, expired}
+let _lastHasPack = null;
+let previousDoor = null;
+let previousPresence = null;
+let previousStayStatus = null; // F31: track EXITED transition
+let lastLiveData = {}; // F28: stored raw /live data for sensor-driven SVG rendering
+
+// Poll management: anti-overlap guard, throttling timestamps
+let _pollGuard = false;
+let _pollTimer = null;
+let _isHidden = false;     // Page Visibility API — pause heavy polling when tab hidden
+let _lastMiramePoll = 0;
+let _lastDeviceFetch = 0;
+let _deviceCache = null;  // shared between pack indicator & devices panel
+let _lastQrConsumed = false;
+let _qrConsumedAt = 0;    // client-clock timestamp (skew-immune QR detection)
+let _sensorsEverSeen = false;    // true once /live returns real (non-UNKNOWN) sensor data
+let _graceTimer = null;          // 5s timeout — forces _sensorsEverSeen=true after grace period
+let _offlinePollTimer = null;    // interval for auto-rechecking offline devices
+let _offlineDeviceIds = new Set(); // device IDs currently being polled every 10s
+
+// ── NEW: Presence-driven features (F34 panel choreography) ──
+let _presenceDetectedDuringOpen = false; // track if presence was seen during door-open period
+let _lastKnownPollingFreq = 0;          // 0=stopped, 3=fast, 4=vfast, 6=medium, 10=slow
+let _lastKnownPresence = 'UNKNOWN';    // track presence for ripple color updates
+let _radarRippleTimers = [];            // timer handles for radar ripple cleanup
+let _rippleIndex = 0;                   // round-robin counter for ripple pool (1-6)
+let _displayedPhase = '';               // cache for phase label
+let _idleAnimActive = false;            // idle sway animation active flag
+let _idleAnimTimer = null;              // idle animation interval handle
+let _idleAnimTick = 0;                  // counter for idle sine wave
+let _qrFlashTimer = null;               // timer for QR flash cleanup
+let _previousRenderState = null;        // for latch click transition detection
+let _currentStateMonigotePos = 'OUTSIDE'; // current monigote position name
+let _lastTimelineFingerprint = '';     // F33x: skip innerHTML rebuild when events unchanged
+
+// SSE (Server-Sent Events) for real-time updates — replaces main polling loop
+let _eventSource = null;         // EventSource instance
+let _sseConnected = false;      // true while SSE stream is active
+let _sseFallbackActive = false; // true when SSE failed and polling fallback is running
+let _sseReconnectTimeout = null; // delayed reconnect timer
+let _pollShouldStop = false;      // F33x: flag to stop leaked poll cycle when SSE reconnects
+
+// Independent polling timers for device-status + mirame panels
+// These run regardless of SSE state (SSE only covers door/state events)
+let _deviceTimer = null;        // interval for device-status polling
+let _mirameTimer = null;        // interval for mirame (installer panel)
+let _systemStatusTimer = null;  // interval for system-status (background processes)
+// _lastDeviceFetch and _lastMiramePoll (above) are reused as throttle guards
+
+const MONIGOTE_POS = {
+  OUTSIDE:     { tx:158, ty:338 },  // outside, in hallway
+  NEAR_QR:     { tx:200, ty:345 },  // approached QR reader — QR created, ready to scan
+  AT_QR:       { tx:225, ty:352 },  // right at QR reader — just after scanning
+  CROSSING:    { tx:292, ty:310 },
+  INSIDE:      { tx:300, ty:200 },
+  EXITING:     { tx:292, ty:306 },
+  WAITING:     { tx:292, ty:308 }   // at door threshold during verification
+};
+
+// 21 states: name → { icon, desc, bgColor, monigote, door, bulb, phase }
+const STATES = {
+  LOADING:             { icon:'⏳', desc:'Conectando con la API...',         bg:'rgba(20,20,34,0.6)',     moni:'OUTSIDE', door:'closed', bulb:false, phase:'Inicializando' },
+  ESPERANDO:           { icon:'🏨', desc:'Habitación lista. Sin reservas.',  bg:'rgba(20,20,34,0.6)',     moni:'OUTSIDE', door:'closed', bulb:false, phase:'Habitación libre' },
+  SIN_CONFIGURAR:      { icon:'❓', desc:'Sensores sin datos. Revisar HW.',  bg:'rgba(120,120,120,0.15)', moni:'OUTSIDE', door:'closed', bulb:false, phase:'Sensores sin configurar' },
+  LIMPIEZA:            { icon:'🧹', desc:'Personal de limpieza en curso.',   bg:'rgba(24,255,255,0.08)',  moni:'INSIDE',  door:'closed', bulb:true,  phase:'Limpieza en curso' },
+  FUERA_SERVICIO:      { icon:'🚫', desc:'Habitación fuera de servicio.',    bg:'rgba(255,82,82,0.12)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'Fuera de servicio' },
+  ESPERANDO_HUESPED:   { icon:'🛎️', desc:'Reserva activa. QR listo.',        bg:'rgba(68,138,255,0.1)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'Reserva activa — sin QR aún' },
+  QR_DISPONIBLE:       { icon:'📱', desc:'QR escaneable. Acércate al lector.',bg:'rgba(0,230,118,0.12)',  moni:'NEAR_QR', door:'closed', bulb:false, phase:'QR disponible — acércate al lector' },
+  QR_OK:               { icon:'✅', desc:'QR validado. Acceso concedido.',   bg:'rgba(0,230,118,0.15)',   moni:'AT_QR',   door:'opening',bulb:false, phase:'QR validado ✓ — abriendo puerta' },
+  QR_ESPERANDO:        { icon:'🚶', desc:'QR validado. Esperando apertura...', bg:'rgba(0,230,118,0.08)', moni:'AT_QR', door:'closed', bulb:false, phase:'QR validado — esperando apertura' },
+  QR_RECHAZADO:        { icon:'❌', desc:'QR inválido, expirado o revocado.',bg:'rgba(255,82,82,0.15)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'QR rechazado ✗' },
+  ANOMALIA_RP:         { icon:'⚠️', desc:'Puerta abierta sin huésped activo.',bg:'rgba(255,145,0,0.12)',  moni:'OUTSIDE', door:'open',   bulb:false, phase:'Anomalía: puerta abierta sin huésped' },
+  OCUPADA:             { icon:'🟢', desc:'Huésped dentro. Luz encendida.',   bg:'rgba(0,230,118,0.08)',   moni:'INSIDE',  door:'closed', bulb:true,  phase:'Huésped dentro — habitación ocupada' },
+  HUESPED_EN_PUERTA:   { icon:'🚶', desc:'Huésped cruzando la puerta.',      bg:'rgba(255,215,64,0.08)',  moni:'CROSSING',door:'open',   bulb:true,  phase:'Huésped cruzando la puerta — entrando' },
+  HUESPED_HA_SALIDO:   { icon:'👋', desc:'Huésped fuera. Habitación vacía.', bg:'rgba(255,215,64,0.05)',  moni:'OUTSIDE', door:'closed', bulb:false, phase:'Huésped ha salido' },
+  ANTI_REENTRADA:      { icon:'⏳', desc:'Anti-reentrada activa. Espera...',  bg:'rgba(213,0,249,0.1)',    moni:'INSIDE',  door:'closed', bulb:true,  phase:'Anti-reentrada activa' },
+  ANOMALIA_PA:         { icon:'⚠️', desc:'Puerta abierta sin presencia.',     bg:'rgba(255,145,0,0.15)',   moni:'INSIDE',  door:'open',   bulb:true,  phase:'Anomalía: puerta abierta sin presencia' },
+  SALIDA_DETECTADA:    { icon:'🚪', desc:'Salida detectada. Cerrando...',     bg:'rgba(255,215,64,0.08)',  moni:'EXITING',  door:'open',  bulb:false, phase:'Salida detectada' },
+  VERIFICANDO_PRESENCIA:{ icon:'⏳', desc:'Puerta cerrada. Comprobando presencia...', bg:'rgba(255,215,64,0.10)', moni:'WAITING', door:'closed', bulb:true,  phase:'Verificando presencia — cuenta atrás' },
+  PUERTA_ABIERTA:      { icon:'🚪', desc:'Puerta abierta. ¿Sale el huésped?', bg:'rgba(255,215,64,0.12)',  moni:'WAITING', door:'open',   bulb:true,  phase:'Puerta abierta — posible salida' },
+  EXCESO_TIEMPO:       { icon:'⏰', desc:'Tiempo excedido. Posible deuda.',   bg:'rgba(255,82,82,0.18)',   moni:'INSIDE',  door:'closed', bulb:true,  phase:'Exceso de tiempo — deuda' },
+  SENSORES_DESCONECTADOS:{ icon:'📡', desc:'Sensores sin respuesta.',         bg:'rgba(120,120,120,0.12)', moni:'OUTSIDE', door:'closed', bulb:false, phase:'Sensores desconectados' }
+};
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║    SENSOR-DRIVEN SVG RENDERING (runs EVERY poll cycle)  ║
+// ║    Decoupled from applyState() so door/bulb/cone/QR     ║
+// ║    update even when the abstract state doesn't change.   ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function renderSensorSvg() {
+  const io = lastLiveData.iot_session || {};
+  const realDoor = io.door_state || 'UNKNOWN';
+  const cooldown = lastLiveData.cooldown_until && new Date(lastLiveData.cooldown_until + 'Z') > new Date();
+  const sw = lastLiveData.switch_state || {};
+  const presence = io.presence_state || 'UNKNOWN';
+  const stay = lastLiveData.active_stay;
+
+  // ── Door animation ──
+  const doorG = document.getElementById('door-group');
+  const doorLine = document.getElementById('door-line');
+  const latch = document.getElementById('latch');
+  const latchGroup = document.getElementById('latch-group');
+
+  if (realDoor === 'OPEN') {
+    // rota +80deg → la puerta abre hacia dentro de la habitación (hacia arriba en SVG)
+    doorG.style.transform = 'rotate(80deg)';
+    doorG.style.transition = 'transform 0.15s ease';
+    doorLine.setAttribute('stroke','rgba(0,230,118,0.8)');
+    latch.setAttribute('fill','rgba(255,82,82,0.8)');
+  } else if (cooldown) {
+    doorG.style.transform = 'rotate(0deg)';
+    doorG.style.transition = 'transform 0.15s ease';
+    doorLine.setAttribute('stroke','rgba(213,0,249,0.7)');
+    latch.setAttribute('fill','rgba(213,0,249,0.8)');
+  } else {
+    doorG.style.transform = 'rotate(0deg)';
+    doorG.style.transition = 'transform 0.15s ease';
+    doorLine.setAttribute('stroke','rgba(255,82,82,0.6)');
+    latch.setAttribute('fill','rgba(255,82,82,0.8)');
+  }
+
+  // Pestillo turns green on QR_OK until door physically opens
+  if (currentState === 'QR_OK' && realDoor !== 'OPEN') {
+    latch.setAttribute('fill','rgba(0,230,118,0.8)');
+  }
+
+  // Latch click animation on key state transitions
+  if (currentState !== _previousRenderState && (currentState === 'QR_OK' || currentState === 'QR_RECHAZADO'
+      || currentState === 'VERIFICANDO_PRESENCIA' || currentState === 'OCUPADA' || currentState === 'QR_DISPONIBLE')) {
+    if (latchGroup) { latchGroup.style.animation = 'latch-click 0.2s ease'; setTimeout(() => { if (latchGroup) latchGroup.style.animation = 'none'; }, 220); }
+  }
+
+  // ── Bulb / light (with fade transition) ──
+  const bulbGlass = document.getElementById('bulb-glass');
+  const bulbGlow = document.getElementById('bulb-glow');
+  const bulbSymbol = document.getElementById('bulb-symbol');
+  // Bulb is ON when door is physically open (guest entering/exiting) or
+  // when presence is confirmed inside the room. This ties the SVG bulb
+  // to real sensor state, not to the last commanded switch action.
+  const bulbShouldBeOn = stay && (realDoor === 'OPEN' || presence === 'PRESENT');
+
+  if (bulbShouldBeOn) {
+    bulbGlass.setAttribute('fill','#ffd740');
+    bulbGlass.setAttribute('filter','url(#glow-yellow)');
+    bulbGlow.setAttribute('opacity','1');
+    bulbGlow.style.animation = 'fade-in-glow 0.5s ease';
+    bulbSymbol.setAttribute('fill','rgba(0,0,0,0.6)');
+    bulbSymbol.textContent = '💡';
+  } else {
+    bulbGlass.setAttribute('fill','#444');
+    bulbGlass.setAttribute('filter','none');
+    bulbGlow.setAttribute('opacity','0');
+    bulbGlow.style.animation = 'none';
+    bulbSymbol.setAttribute('fill','rgba(255,255,255,0.3)');
+    bulbSymbol.textContent = '💡';
+  }
+
+  // ── Presence cone ──
+  const cone = document.getElementById('presence-cone');
+  if (io.presence_state === 'PRESENT') {
+    cone.setAttribute('fill','rgba(0,230,118,0.12)');
+    cone.setAttribute('stroke','rgba(0,230,118,0.35)');
+  } else {
+    cone.setAttribute('fill','rgba(255,82,82,0.08)');
+    cone.setAttribute('stroke','rgba(255,82,82,0.20)');
+  }
+
+  // ── Polling indicator dot ──
+  updatePollingIndicator();
+
+  // ── QR screen ──
+  updateQrScreen();
+
+  _previousRenderState = currentState;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  NEW: POLLING INDICATOR, RADAR RIPPLE, QR FLASH, IDLE  ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function updatePollingIndicator() {
+  const dot = document.getElementById('polling-dot');
+  if (!dot) return;
+  const freq = _lastKnownPollingFreq;
+  if (freq <= 0) { dot.style.display = 'none'; dot.style.animation = 'none'; return; }
+  dot.style.display = '';
+  let animName, duration;
+  if (freq <= 3)       { animName = 'polling-pulse-vfast';  duration = '0.6s'; }
+  else if (freq <= 4)  { animName = 'polling-pulse-fast';   duration = '0.8s'; }
+  else if (freq <= 6)  { animName = 'polling-pulse-medium'; duration = '1.2s'; }
+  else                 { animName = 'polling-pulse-slow';   duration = '2.0s'; }
+  dot.style.animation = animName + ' ' + duration + ' ease-in-out infinite';
+  if (freq <= 3)       dot.setAttribute('fill','rgba(255,82,82,0.9)');
+  else if (freq <= 4)  dot.setAttribute('fill','rgba(255,145,0,0.8)');
+  else if (freq <= 6)  dot.setAttribute('fill','rgba(255,215,64,0.7)');
+  else                 dot.setAttribute('fill','rgba(0,230,118,0.5)');
+}
+
+/**
+ * Immediately stop and hide all radar ripple animations.
+ * Called on room reset, room switch, and when frequency drops to zero.
+ */
+function hideRadarRipples() {
+  _radarRippleTimers.forEach(t => clearTimeout(t));
+  _radarRippleTimers = [];
+  for (let i = 1; i <= 6; i++) {
+    const r = document.getElementById('radar-ripple-' + i);
+    if (r) { r.style.display = 'none'; r.style.animation = 'none'; }
+  }
+}
+
+/**
+ * Update color of existing radar ripples without restarting the animation.
+ * No longer called automatically — color is set per-ripple in triggerRadarRipple() now.
+ * Kept as utility for external use if needed.
+ */
+function updateRadarRippleColor(presence) {
+  const rippleColor = (presence === 'PRESENT') ? 'rgba(0,230,118,0.6)' : 'rgba(255,82,82,0.6)';
+  for (let i = 1; i <= 6; i++) {
+    const r = document.getElementById('radar-ripple-' + i);
+    if (r) r.setAttribute('stroke', rippleColor);
+  }
+}
+
+function triggerRadarRipple(presence) {
+  const freq = _lastKnownPollingFreq;
+  if (freq <= 0) return;
+  // Do NOT cancel existing ripple timers — let them decay naturally.
+  // Round-robin across the 6-circle pool.
+  _rippleIndex = (_rippleIndex % 6) + 1;
+  const r = document.getElementById('radar-ripple-' + _rippleIndex);
+  if (!r) return;
+  // Color: green when presence detected, red when absent/unknown
+  const rippleColor = (presence === 'PRESENT') ? 'rgba(0,230,118,0.6)' : 'rgba(255,82,82,0.6)';
+  let rippleMs;
+  if (freq <= 3)  rippleMs = 1500;
+  else if (freq <= 4)  rippleMs = 2000;
+  else if (freq <= 6)  rippleMs = 3000;
+  else                 rippleMs = 5000;
+  r.style.display = '';
+  r.setAttribute('r','4'); r.setAttribute('opacity','0.6');
+  r.setAttribute('stroke', rippleColor);
+  r.style.animation = 'none'; void r.offsetWidth;
+  r.style.animation = 'radar-ripple ' + (rippleMs/1000) + 's ease-out forwards';
+  const t = setTimeout(() => { r.style.display = 'none'; }, rippleMs + 100);
+  _radarRippleTimers.push(t);
+  // F33x: cap ripple timer array — only keep last 50 handles
+  if (_radarRippleTimers.length > 50) _radarRippleTimers.shift();
+}
+
+function triggerQrFlash() {
+  const flash = document.getElementById('qr-flash');
+  if (!flash) return;
+  flash.style.animation = 'none'; void flash.offsetWidth;
+  flash.style.animation = 'qr-flash-overlay 0.3s ease-out forwards';
+  if (_qrFlashTimer) clearTimeout(_qrFlashTimer);
+  _qrFlashTimer = setTimeout(() => { flash.style.animation = 'none'; flash.setAttribute('opacity','0'); }, 400);
+}
+
+function startIdleAnimation() {
+  if (_idleAnimActive) return;
+  _idleAnimActive = true; _idleAnimTick = 0;
+  const moni = document.getElementById('monigote-group');
+  if (!moni) return;
+  // F33x: kill CSS transition during idle animation — 50ms setInterval already
+  // provides smooth movement; the 120ms CSS transition fights it causing jank.
+  moni.style.transition = 'none';
+  _idleAnimTimer = setInterval(() => {
+    if (!_idleAnimActive) { clearInterval(_idleAnimTimer); _idleAnimTimer = null; return; }
+    const pos = MONIGOTE_POS[_currentStateMonigotePos] || MONIGOTE_POS.OUTSIDE;
+    const sway = Math.sin(_idleAnimTick * 0.05) * 1.2;
+    moni.style.transform = 'translate(' + pos.tx + 'px,' + (pos.ty + sway) + 'px)';
+    _idleAnimTick++;
+  }, 50);
+}
+function stopIdleAnimation() {
+  _idleAnimActive = false;
+  if (_idleAnimTimer) { clearInterval(_idleAnimTimer); _idleAnimTimer = null; }
+  // F33x: restore CSS transition for state-driven position changes
+  const moni = document.getElementById('monigote-group');
+  if (moni) moni.style.transition = 'transform 0.12s cubic-bezier(0.4,0,0.2,1)';
+}
+
+function updatePhaseLabel(stateName) {
+  const s = STATES[stateName];
+  const phase = s ? (s.phase || stateName) : stateName;
+  if (phase === _displayedPhase) return;
+  _displayedPhase = phase;
+  const el = document.getElementById('phase-label');
+  if (el) el.textContent = '▶ ' + phase;
+}
+
+function updatePollingFrequency(stateName, door, presence, stayStatus, exitDeadline) {
+  let freq = 0;
+  if ((stateName === 'QR_OK' || stateName === 'HUESPED_EN_PUERTA') && door === 'OPEN') {
+    freq = _presenceDetectedDuringOpen ? 10 : 6;
+  }
+  if (stateName === 'PUERTA_ABIERTA' && door === 'OPEN') freq = 10;
+  if (stateName === 'VERIFICANDO_PRESENCIA' && exitDeadline && door === 'CLOSED' && presence === 'ABSENT') {
+    freq = stayStatus === 'OCCUPIED' ? 4 : 3;
+  }
+  if (stateName === 'VERIFICANDO_PRESENCIA' && !exitDeadline) freq = 4;
+  // Exit transition: keep scanning to verify room is truly empty
+  if (stateName === 'SALIDA_DETECTADA' || stateName === 'HUESPED_HA_SALIDO') freq = 10;
+  if (stateName === 'OCUPADA' || stateName === 'ESPERANDO' || stateName === 'ESPERANDO_HUESPED' || stateName === 'QR_DISPONIBLE') freq = 0;
+  _lastKnownPollingFreq = freq;
+  if (freq <= 0) {
+    hideRadarRipples();
+  } else {
+    // Emit a fresh ripple on EVERY poll tick while frequency > 0,
+    // so the user sees continuous waves at the real polling rate.
+    triggerRadarRipple(presence);
+  }
+  updatePollingIndicator();
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              STATE DERIVATION LOGIC                     ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function deriveState(data) {
+  const status = data.status || 'FREE';
+  const io = data.iot_session || {};
+  const door = io.door_state || 'UNKNOWN';
+  const presence = io.presence_state || 'UNKNOWN';
+  const stay = data.active_stay;
+  const stayStatus = stay ? stay.status : null;
+  const cooldown = data.cooldown_until && new Date(data.cooldown_until + 'Z') > new Date();
+  const exitDeadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
+
+  // Track presence detected during door-open (E6a vs E6b decision)
+  const doorWasOpen = (previousDoor === 'OPEN');
+  const doorIsOpen = (door === 'OPEN');
+  if (doorIsOpen && presence === 'PRESENT' && previousPresence !== 'PRESENT') _presenceDetectedDuringOpen = true;
+  if (!doorIsOpen && doorWasOpen && currentState === 'OCUPADA') _presenceDetectedDuringOpen = false;
+
+  // Recent events — extracted early so anomaly block below can use recentQrBroad
+  const recentQR = (data.recent_events || []).find(e => e.kind === 'QR_VALIDATE' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000);
+  const recentDenied = (data.recent_events || []).find(e => e.kind === 'DENIED' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000);
+  const recentQrBroad = (data.recent_events || []).find(e => e.kind === 'QR_VALIDATE' && e.result === 'OK' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 120000);
+
+  // F35: Check server-detected anomalies — only fire when sensor state matches the anomaly.
+  // Moved AFTER recentQrBroad so entry flow (recent QR) suppresses presence anomalies.
+  const anomalies = data.anomalies || [];
+  if (anomalies.length > 0) {
+    const hasA3 = anomalies.some(a => a.anomaly_type === 'A3');
+    const hasA7 = anomalies.some(a => a.anomaly_type === 'A7');
+    const hasPresenceAnomaly = anomalies.some(a => ['A1','A2','A6'].includes(a.anomaly_type));
+    // A3 (door_open_without_qr): only relevant if door is actually OPEN
+    if (hasA3 && door === 'OPEN') return 'ANOMALIA_RP';
+    // A7 (door_open_without_presence): door OPEN + no presence
+    if (hasA7 && door === 'OPEN' && presence === 'ABSENT') return 'ANOMALIA_RP';
+    // A1/A2/A6 (presence anomalies): only fire if presence PRESENT AND NOT during active
+    // entry flow (recent QR scan means guest is entering, presence is expected at the door).
+    if (hasPresenceAnomaly && presence === 'PRESENT' && !recentQrBroad) return 'ANOMALIA_PA';
+  }
+
+  // QR state overrides
+  if (recentDenied) return 'QR_RECHAZADO';
+
+  // F31: PUERTA_ABIERTA — door opened after guest has entered
+  if (stayStatus === 'OCCUPIED' && stay && stay.first_entry_at
+      && door === 'OPEN'
+      && !recentQrBroad) return 'PUERTA_ABIERTA';
+
+  // F31: VERIFICANDO_PRESENCIA — door closed, no presence. BUT if presence WAS seen (E6a), skip to OCUPADA.
+  if (exitDeadline && door === 'CLOSED' && presence === 'ABSENT' && stayStatus === 'OCCUPIED') {
+    if (!_presenceDetectedDuringOpen) return 'VERIFICANDO_PRESENCIA';
+  }
+
+  // F31: Hold window
+  const lastCloseAt = io.last_close_at ? new Date(io.last_close_at) : null;
+  const gapSecs = data.gap_seconds || 15;
+  if (stayStatus === 'OCCUPIED' && door === 'CLOSED' && presence === 'PRESENT'
+      && lastCloseAt && (new Date() - lastCloseAt) < (gapSecs + 10) * 1000) {
+    const freshPresent = (data.recent_presence || []).find(e =>
+      e.sensor === 'PRESENCE' && e.value === 'PRESENT'
+      && new Date(e.occurred_at + 'Z').getTime() > lastCloseAt.getTime()
+    );
+    if (!freshPresent && !_presenceDetectedDuringOpen) return 'VERIFICANDO_PRESENCIA';
+  }
+
+  // QR_OK — only while the door has NOT physically opened yet AND was never open before.
+  // Once PROXIMITY OPEN arrives, HUESPED_EN_PUERTA (line ~911) takes over
+  // and advances the monigote from AT_QR to CROSSING.
+  // The previousDoor guard prevents QR_OK from re-firing when the door closes
+  // after being opened — in that case the verification countdown should run instead.
+  if (recentQR && recentQR.result === 'OK' && (stayStatus === 'OCCUPIED' || status === 'RESERVED')) {
+    if (door !== 'OPEN' && previousDoor !== 'OPEN') return 'QR_OK';
+  }
+
+  // GROUP D: admin states
+  if (status === 'OVERSTAY') return 'EXCESO_TIEMPO';
+  if (status === 'CLEANING') return 'LIMPIEZA';
+  if (status === 'OUT_OF_SERVICE') return 'FUERA_SERVICIO';
+
+  if (stayStatus === 'EXITED' && previousStayStatus === 'OCCUPIED') return 'HUESPED_HA_SALIDO';
+  if (status === 'FREE' && previousStayStatus === 'OCCUPIED') return 'SALIDA_DETECTADA';
+
+  // UNKNOWN sensors
+  if (!_sensorsEverSeen && (door === 'UNKNOWN' || presence === 'UNKNOWN')) return 'LOADING';
+  if (door === 'UNKNOWN' && presence === 'UNKNOWN' && status === 'FREE') {
+    const anyDeviceOnline = _deviceCache && _deviceCache.online > 0;
+    if (!anyDeviceOnline) return 'SIN_CONFIGURAR';
+  }
+  if (door === 'UNKNOWN' || presence === 'UNKNOWN') {
+    if (status === 'OCCUPIED' || status === 'RESERVED') {
+      // If door is CLOSED and was previously OPEN (entry exit-in-progress),
+      // or a recent QR scan is active, don't block on UNKNOWN sensors —
+      // let the OCCUPIED group handle the verification countdown.
+      const entryInProgress = (door === 'CLOSED' && (previousDoor === 'OPEN' || recentQrBroad));
+      if (!entryInProgress) {
+        const anyDeviceOnline = _deviceCache && _deviceCache.online > 0;
+        if (!anyDeviceOnline) return 'SENSORES_DESCONECTADOS';
+      }
+    }
+  }
+
+  if (cooldown && (status === 'OCCUPIED' || status === 'RESERVED')) return 'ANTI_REENTRADA';
+
+  // GROUP A: FREE
+  if (!stay) {
+    if (status === 'FREE' && door === 'OPEN') return 'ANOMALIA_RP';
+    return 'ESPERANDO';
+  }
+
+  // GROUP B: RESERVED — NEW: QR_DISPONIBLE when QR is scannable
+  if (stayStatus === 'RESERVED') {
+    if (door === 'OPEN') return 'ANOMALIA_RP';
+    if (qrData.scannable && !qrData.consumed && !qrData.revoked && !qrData.expired) return 'QR_DISPONIBLE';
+    return 'ESPERANDO_HUESPED';
+  }
+
+  // GROUP C: OCCUPIED — E6a: presence seen during open → straight to OCUPADA (only after door closes)
+  if (stayStatus === 'OCCUPIED') {
+    // Door still open → monigote stays at door, never advances to INSIDE yet
+    if (door === 'OPEN') return 'HUESPED_EN_PUERTA';
+    // Door sensor not yet reporting (e.g. PROXIMITY event pending after QR validation).
+    // Show "esperando apertura" instead of defaulting to OCUPADA.
+    if (door === 'UNKNOWN' && recentQrBroad) return 'QR_ESPERANDO';
+    // Door closed + presence was detected during open (E6a shortcut)
+    if (_presenceDetectedDuringOpen && door === 'CLOSED') return 'OCUPADA';
+    // Door closed + presence confirmed → guest is inside
+    if (presence === 'PRESENT') return 'OCUPADA';
+    // Door closed + no presence → verification needed
+    // Also handles UNKNOWN (sensor not yet initialised) as equivalent to ABSENT
+    if (door === 'CLOSED' && (presence === 'ABSENT' || presence === 'UNKNOWN')) {
+      // Door was previously open → guest at door, verify presence (entry & exit)
+      // Also handles initial state (previousDoor === null) — first SSE/poll cycle
+      if (previousDoor === 'OPEN' || previousDoor === null) return 'VERIFICANDO_PRESENCIA';
+      // Door never opened after QR → still waiting for PROXIMITY OPEN to arrive
+      if (recentQrBroad) return 'QR_ESPERANDO';
+      return 'VERIFICANDO_PRESENCIA';
+    }
+    return 'OCUPADA';
+  }
+
+  return 'ESPERANDO';
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              APPLY STATE TO UI                         ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function applyState(stateName) {
+  const s = STATES[stateName] || STATES.ESPERANDO;
+  const roomForPack = roomList.find(r => r.id == currentRoomId);
+  const hasPack = !!(roomForPack && roomForPack.pack_id);
+  const packTransition = _lastHasPack !== null && _lastHasPack !== hasPack;
+  _lastHasPack = hasPack;
+  if (currentState === stateName && stateName !== 'LOADING' && hasPack && !packTransition) return;
+  const prev = currentState;
+  currentState = stateName;
+
+  // Zone 2
+  document.getElementById('state-icon').textContent = s.icon;
+  document.getElementById('state-name').textContent = stateName.replace(/_/g,' ');
+  document.getElementById('state-desc').textContent = s.desc;
+  document.getElementById('zone2').style.backgroundColor = s.bg;
+
+  // Phase label
+  updatePhaseLabel(stateName);
+
+  // Monigote
+  const moni = document.getElementById('monigote-group');
+  const pos = MONIGOTE_POS[s.moni] || MONIGOTE_POS.OUTSIDE;
+  _currentStateMonigotePos = s.moni;
+  if (stateName !== 'OCUPADA') stopIdleAnimation();
+  moni.style.transform = `translate(${pos.tx}px,${pos.ty}px)`;
+  moni.style.opacity = (stateName === 'FUERA_SERVICIO' || stateName === 'SIN_CONFIGURAR') ? '0.3' : '1';
+
+  // Room label SVG
+  document.getElementById('room-label-svg').textContent = 'HABITACIÓN ' + (document.getElementById('room-selector').options[document.getElementById('room-selector').selectedIndex]?.text || '');
+
+  // ═══ PACK OVERRIDES ═══
+  if (!hasPack) {
+    document.getElementById('state-name').textContent = 'HABITACIÓN SIN PACK';
+    document.getElementById('state-name').style.color = 'var(--red)';
+    document.getElementById('state-desc').textContent = 'Asigna un pack a esta habitación';
+    document.getElementById('state-icon').textContent = '📦';
+    document.getElementById('zone2').style.backgroundColor = 'rgba(255,82,82,0.12)';
+    document.getElementById('devices-panel').style.display = 'none';
+    document.getElementById('qr-test-panel').style.display = 'none';
+    document.getElementById('estancia-panel').style.display = 'none';
+    document.getElementById('sensor-panel').style.display = 'none';
+    document.getElementById('reset-room-btn').style.display = 'none';
+    document.getElementById('no-pack-card').style.display = 'flex';
+    moni.style.transform = 'translate(300px,210px)';
+    moni.style.opacity = '1';
+    document.getElementById('moni-arm-l').setAttribute('x2','6');
+    document.getElementById('moni-arm-l').setAttribute('y2','-2');
+    document.getElementById('moni-arm-r').setAttribute('x2','-6');
+    document.getElementById('moni-arm-r').setAttribute('y2','0');
+    document.getElementById('moni-question').style.display = '';
+    document.getElementById('moni-face').style.display = 'none';
+    document.getElementById('moni-check').style.display = 'none';
+    document.getElementById('moni-thumbsup').style.display = 'none';
+    document.getElementById('moni-head').setAttribute('fill','rgba(255,255,255,0.9)');
+    document.getElementById('moni-head').setAttribute('stroke','rgba(255,255,255,0.5)');
+    document.getElementById('door-group').style.transform = 'rotate(0deg)';
+    document.getElementById('door-line').setAttribute('stroke','rgba(255,82,82,0.6)');
+    document.getElementById('latch').setAttribute('fill','rgba(255,82,82,0.8)');
+    document.getElementById('bulb-glass').setAttribute('fill','#444');
+    document.getElementById('bulb-glow').setAttribute('opacity','0');
+    document.getElementById('presence-cone').setAttribute('fill','rgba(255,82,82,0.08)');
+    document.getElementById('presence-cone').setAttribute('stroke','rgba(255,82,82,0.20)');
+    document.getElementById('phase-label').textContent = '▶ Sin pack asignado';
+    _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples(); updatePollingIndicator(); stopIdleAnimation();
+
+    qrData = { scannable:false, consumed:false, revoked:false, expired:false, jti:'', expires_at:'' };
+    qrTestData = null;
+    updateQrScreen();
+  } else {
+    document.getElementById('state-name').style.color = '';
+    document.getElementById('devices-panel').style.display = '';
+    document.getElementById('qr-test-panel').style.display = '';
+    document.getElementById('estancia-panel').style.display = '';
+    document.getElementById('sensor-panel').style.display = '';
+    document.getElementById('reset-room-btn').style.display = '';
+    document.getElementById('no-pack-card').style.display = 'none';
+
+    // ── Monigote overlays ──
+    const io = lastLiveData.iot_session || {};
+    const insideWithPresence = (stateName === 'OCUPADA' && (io.presence_state === 'PRESENT'));
+    const verifying = (stateName === 'VERIFICANDO_PRESENCIA');
+    const doorOpenPostEntry = (stateName === 'PUERTA_ABIERTA');
+    const exitDetected = (stateName === 'HUESPED_HA_SALIDO' || stateName === 'SALIDA_DETECTADA');
+    const qrValidated = (stateName === 'QR_OK');
+    const moniFace = document.getElementById('moni-face');
+    const moniCheck = document.getElementById('moni-check');
+    const moniQuestion = document.getElementById('moni-question');
+    const moniThumbsup = document.getElementById('moni-thumbsup');
+    const moniHead = document.getElementById('moni-head');
+    const armR = document.getElementById('moni-arm-r');
+    const armL = document.getElementById('moni-arm-l');
+
+    // Reset arms to default
+    armR.setAttribute('x2','10'); armR.setAttribute('y2','2');
+    armL.setAttribute('x2','-10'); armL.setAttribute('y2','2');
+    armR.setAttribute('stroke','rgba(255,255,255,0.8)');
+    armR.setAttribute('stroke-width','2.5');
+    moniThumbsup.style.animation = '';
+
+    if (insideWithPresence) {
+      moniFace.style.display = '';
+      moniCheck.style.display = '';
+      moniHead.setAttribute('fill','#ffd740');
+      moniHead.setAttribute('stroke','rgba(255,215,64,0.7)');
+      moniQuestion.style.display = 'none';
+      moniThumbsup.style.display = 'none';
+    } else if (qrValidated) {
+      // 👍 Thumbs up — right arm raised outward and up, golden glow
+      moniFace.style.display = 'none';
+      moniCheck.style.display = 'none';
+      moniThumbsup.style.display = '';
+      moniThumbsup.style.animation = 'thumbsup-pop 0.4s ease';
+      moniHead.setAttribute('fill','#00e676');
+      moniHead.setAttribute('stroke','rgba(0,230,118,0.7)');
+      moniQuestion.style.display = 'none';
+      armR.setAttribute('x2','12'); armR.setAttribute('y2','-15');
+      armR.setAttribute('stroke','#ffd740');
+      armR.setAttribute('stroke-width','3');
+      if (prev !== 'QR_OK') triggerQrFlash();
+    } else if (verifying || doorOpenPostEntry) {
+      moniFace.style.display = 'none';
+      moniCheck.style.display = 'none';
+      moniHead.setAttribute('fill','rgba(255,215,64,0.6)');
+      moniHead.setAttribute('stroke','rgba(255,215,64,0.4)');
+      moniQuestion.style.display = '';
+      moniThumbsup.style.display = 'none';
+    } else if (exitDetected) {
+      moniFace.style.display = 'none';
+      moniCheck.style.display = 'none';
+      moniHead.setAttribute('fill','rgba(255,82,82,0.6)');
+      moniHead.setAttribute('stroke','rgba(255,82,82,0.4)');
+      moniQuestion.style.display = 'none';
+      moniThumbsup.style.display = 'none';
+    } else {
+      moniFace.style.display = 'none';
+      moniCheck.style.display = 'none';
+      moniHead.setAttribute('fill','rgba(255,255,255,0.9)');
+      moniHead.setAttribute('stroke','rgba(255,255,255,0.5)');
+      moniQuestion.style.display = 'none';
+      moniThumbsup.style.display = 'none';
+    }
+
+    // Idle animation for OCUPADA
+    if (stateName === 'OCUPADA' && !_idleAnimActive) startIdleAnimation();
+    else if (stateName !== 'OCUPADA') stopIdleAnimation();
+  }
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║         QR SCREEN SVG UPDATE (standalone)              ║
+// ║  Called both from applyState() and async QR fetch      ║
+// ║  to avoid the 10s lag caused by applyState early-return ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function updateQrScreen() {
+  const qrScreen = document.getElementById('qr-screen');
+  const qrStatusText = document.getElementById('qr-status-text');
+  const qrLaser = document.getElementById('qr-laser');
+  if (!qrScreen || !qrStatusText) return;
+  if (qrData.scannable && !qrData.consumed && !qrData.revoked && !qrData.expired) {
+    qrScreen.setAttribute('fill','#0a2e0a');
+    qrStatusText.setAttribute('fill','var(--green)');
+    qrStatusText.textContent = 'ESCANEABLE';
+    if (qrLaser) { qrLaser.setAttribute('stroke','var(--green)'); qrLaser.style.display = ''; }
+  } else if (qrData.consumed) {
+    qrScreen.setAttribute('fill','#2e0a0a');
+    qrStatusText.setAttribute('fill','var(--red)');
+    qrStatusText.textContent = 'CONSUMIDO';
+    if (qrLaser) qrLaser.style.display = 'none';
+  } else if (qrData.revoked) {
+    qrScreen.setAttribute('fill','#2e0a0a');
+    qrStatusText.setAttribute('fill','var(--red)');
+    qrStatusText.textContent = 'REVOCADO';
+    if (qrLaser) qrLaser.style.display = 'none';
+  } else if (qrData.expired) {
+    qrScreen.setAttribute('fill','#2e1a00');
+    qrStatusText.setAttribute('fill','var(--orange)');
+    qrStatusText.textContent = 'EXPIRADO';
+    if (qrLaser) qrLaser.style.display = 'none';
+  } else {
+    qrScreen.setAttribute('fill','#111');
+    qrStatusText.setAttribute('fill','var(--text-dim)');
+    qrStatusText.textContent = 'SIN QR';
+    if (qrLaser) qrLaser.style.display = 'none';
+  }
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              QR TOAST (scan feedback)                  ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function showQrToast(ok, msg) {
+  // Remove any existing toast
+  const old = document.getElementById('qr-toast');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'qr-toast';
+  el.className = 'show';
+  el.innerHTML = `<div class="toast-inner ${ok?'ok':'fail'}">${ok?'✓':'✗'}<span class="toast-msg">${msg||''}</span></div>`;
+  document.body.appendChild(el);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 2000);
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              ZONE TOGGLE HELPERS                       ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function toggleZone1() { document.getElementById('zone1').classList.toggle('collapsed'); }
+function toggleZone5() { document.getElementById('zone5').classList.toggle('collapsed'); }
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              DATA FETCHING & UPDATES                   ║
+// ╚══════════════════════════════════════════════════════════╝
+
+async function fetchRooms() {
+  try {
+    const res = await fetch('/dashboard-api/rooms');
+    if (!res.ok) return;
+    roomList = await res.json();
+    const sel = document.getElementById('room-selector');
+    const currentVal = sel.value; // preserve selection
+    sel.innerHTML = '';
+    roomList.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      const label = r.code;
+      const statusText = r.pack_id ? r.status : 'sin pack';
+      opt.textContent = `${label} (${statusText})`;
+      sel.appendChild(opt);
+    });
+    if (currentVal && roomList.find(r => r.id == currentVal)) sel.value = currentVal;
+    else if (roomList.length > 0) sel.value = currentRoomId;
+  } catch(e) { console.error('fetchRooms:', e); }
+}
+
+async function fetchMirame() {
+  try {
+    const res = await fetch('/dashboard-api/mirame');
+    if (!res.ok) return;
+    const devices = await res.json();
+    const list = document.getElementById('mirame-list');
+    if (!devices || devices.length === 0) {
+      list.className = 'mirame-empty';
+      list.textContent = 'Esperando pulsación del botón físico...';
+    } else {
+      list.className = '';
+      list.innerHTML = devices.map(d => {
+        const isRecent = d.identified_at && (new Date(d.identified_at + 'Z').getTime() > Date.now() - 30000);
+        const roomLabel = d.room_id ? 'Hab. '+d.room_code : 'Sin asignar';
+        const roomClass = d.room_id ? 'assigned' : 'unassigned';
+        const packName = d.pack_name ? `📦 ${d.pack_name}` : 'Sin pack';
+        return `<div class="mirame-card ${isRecent?'recent':'stable'}">
+          <span class="chip">${d.external_id||'n/a'}</span>
+          <span class="room-badge ${roomClass}">${roomLabel}</span>
+          <span style="font-size:0.6rem;color:var(--text-dim)">${packName}</span>
+          <span class="actions">
+            <button class="btn btn-config" onclick="openConfigModal(${d.id},'${d.external_id}',${currentRoomId},${d.pack_id||0},'${(d.pack_name||'').replace(/'/g,"\\'")}')">⚙️ Configurar</button>
+            <button class="btn btn-clear" onclick="clearMirame(${d.id})">🗑️</button>
+          </span>
+          ${isRecent ? '<span style="font-size:0.6rem;color:var(--blue);width:100%">⬤ Recién identificado</span>' : ''}
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('zone1-meta').textContent = devices.length > 0 ? `${devices.length} pack(s) activo(s)` : '';
+  } catch(e) { console.error('fetchMirame:', e); }
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              MODAL: Configurar Pack                     ║
+// ╚══════════════════════════════════════════════════════════╝
+
+let modalDeviceId = null;
+let modalExternalId = null;
+let modalCurrentRoomId = null;
+let modalPackId = null;
+let modalPackName = '';
+
+// Helper: render device list in the config modal
+// mode: 'checking' | 'done' | 'error'
+// resultsMap: { device_id: { online, kind, checked_via, error } }
+function renderModalDevices(devices, mode, resultsMap) {
+  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+  if (mode === 'checking') {
+    return devices.map(d => {
+      return `<div class="pack-item"><span class="check" style="color:var(--text-dim)">⏳</span> ${kindName(d.kind)} <span style="font-size:0.6rem;color:var(--text-dim)">⏱ comprobando...</span></div>`;
+    }).join('');
+  }
+  if (mode === 'error') {
+    return devices.map(d => {
+      return `<div class="pack-item"><span class="check" style="color:var(--orange)">⚠️</span> ${kindName(d.kind)} <span style="font-size:0.6rem;color:var(--text-dim)">error al comprobar</span></div>`;
+    }).join('');
+  }
+  // mode === 'done' — show real results
+  return devices.map(d => {
+    const r = (resultsMap && resultsMap[d.id]) || {};
+    const online = r.online || d.online;
+    const icon = online ? '✅' : '❌';
+    const color = online ? 'var(--green)' : 'var(--red)';
+    const via = r.checked_via ? ` · vía ${r.checked_via}` : '';
+    const label = online ? 'activo' : (r.error ? `error: ${r.error}` : 'offline');
+    return `<div class="pack-item"><span class="check" style="color:${color}">${icon}</span> ${kindName(d.kind)} <span style="font-size:0.6rem;color:var(--text-dim)">${(d.external_id||'').substring(0,10)}… — ${label}${via}</span></div>`;
+  }).join('');
+}
+
+async function openConfigModal(deviceId, externalId, currentRoomId, packId, packName) {
+  modalDeviceId = deviceId;
+  modalExternalId = externalId;
+  modalCurrentRoomId = currentRoomId || 0;
+  modalPackId = packId || 0;
+  modalPackName = packName || '';
+
+  document.getElementById('modal-chip-id').textContent = 'ESP32: ' + externalId;
+  document.getElementById('modal-feedback').textContent = '';
+  document.getElementById('modal-warning').style.display = 'none';
+  const assignBtn = document.getElementById('modal-assign-btn');
+  assignBtn.textContent = '✅ Asignar';
+  assignBtn.disabled = false;
+
+  // Fetch real pack detail with device online status
+  const itemsEl = document.getElementById('modal-pack-items');
+  if (modalPackId > 0) {
+    try {
+      const res = await fetch(`/dashboard-api/pack-detail?pack_id=${modalPackId}`);
+      const data = await res.json();
+      const pack = data.pack || {};
+      document.getElementById('modal-pack-name').textContent = `📦 ${pack.name || 'Desconocido'} (${pack.code || ''})`;
+      document.getElementById('modal-pack-name').style.color = 'var(--cyan)';
+
+      if (!data.devices || data.devices.length === 0) {
+        itemsEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.75rem;padding:8px 0">Sin dispositivos en este pack</div>';
+      } else {
+        // Show initial state and start checking
+        const deviceIds = data.devices.map(d => d.id);
+        itemsEl.innerHTML = renderModalDevices(data.devices, 'checking');
+        // Ping all devices via Tuya (one-shot, user-triggered)
+        try {
+          const pingRes = await fetch('/dashboard-api/ping-all-devices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_ids: deviceIds }),
+          });
+          const pingData = await pingRes.json();
+          if (pingData.ok) {
+            // Map results by device_id for quick lookup
+            const resultsMap = {};
+            (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
+            itemsEl.innerHTML = renderModalDevices(data.devices, 'done', resultsMap);
+          } else {
+            itemsEl.innerHTML = renderModalDevices(data.devices, 'error');
+          }
+        } catch (pingErr) {
+          console.error('[openConfigModal] ping error:', pingErr);
+          itemsEl.innerHTML = renderModalDevices(data.devices, 'error');
+        }
+      }
+    } catch(e) {
+      document.getElementById('modal-pack-name').textContent = 'Pack: error al cargar';
+      document.getElementById('modal-pack-name').style.color = 'var(--red)';
+      itemsEl.innerHTML = '<div style="color:var(--red);font-size:0.75rem">Error al obtener dispositivos</div>';
+    }
+  } else {
+    document.getElementById('modal-pack-name').textContent = 'Sin pack asociado';
+    document.getElementById('modal-pack-name').style.color = 'var(--yellow)';
+    itemsEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.75rem">Este RPI no pertenece a ningún pack registrado</div>';
+  }
+
+  // Populate room dropdown
+  const sel = document.getElementById('modal-room-select');
+  sel.innerHTML = roomList.map(r => {
+    const label = r.code;
+    const statusText = r.pack_id ? r.status : 'sin pack';
+    return `<option value="${r.id}" ${r.id==modalCurrentRoomId?'selected':''}>${label} (${statusText})</option>`;
+  }).join('');
+
+  // Check if target room already has a pack assigned
+  if (modalCurrentRoomId > 0) {
+    const targetRoom = roomList.find(r => r.id == modalCurrentRoomId);
+    if (targetRoom && targetRoom.pack_id) {
+      const existingPackName = targetRoom.pack_name || 'Pack #' + targetRoom.pack_id;
+      const roomLabel = targetRoom.code;
+      const warningEl = document.getElementById('modal-warning');
+      warningEl.style.display = 'block';
+      warningEl.innerHTML = `⚠️ <b>${roomLabel}</b> ya tiene el pack <b>${existingPackName}</b> asignado.<br>¿Quieres reemplazarlo?`;
+      assignBtn.textContent = '⚠️ Reemplazar';
+    }
+  }
+
+  document.getElementById('config-modal').classList.add('open');
+}
+
+function closeConfigModal() {
+  document.getElementById('config-modal').classList.remove('open');
+  modalDeviceId = null;
+  confirmMove = false;
+  const assignBtn = document.getElementById('modal-assign-btn');
+  if (assignBtn) { assignBtn.textContent = '✅ Asignar'; assignBtn.style.background = ''; }
+}
+
+function onModalRoomChange() {
+  const sel = document.getElementById('modal-room-select');
+  const newRoomId = parseInt(sel.value);
+  const targetRoom = roomList.find(r => r.id == newRoomId);
+  const warningEl = document.getElementById('modal-warning');
+  const assignBtn = document.getElementById('modal-assign-btn');
+
+  // Reset button
+  assignBtn.textContent = '✅ Asignar';
+  assignBtn.style.background = '';
+  confirmMove = false;
+
+  if (targetRoom && targetRoom.pack_id) {
+    const existingPackName = targetRoom.pack_name || 'Pack #' + targetRoom.pack_id;
+    const roomLabel = targetRoom.code;
+    warningEl.style.display = 'block';
+    warningEl.innerHTML = `⚠️ <b>${roomLabel}</b> ya tiene el pack <b>${existingPackName}</b> asignado.<br>¿Quieres reemplazarlo?`;
+    assignBtn.textContent = '⚠️ Reemplazar';
+  } else {
+    warningEl.style.display = 'none';
+    confirmMove = false;
+  }
+}
+
+let confirmMove = false; // flag: user confirmed pack move from another room
+
+async function confirmAssignPack() {
+  const sel = document.getElementById('modal-room-select');
+  const roomId = parseInt(sel.value);
+  const fb = document.getElementById('modal-feedback');
+  const assignBtn = document.getElementById('modal-assign-btn');
+  const warningEl = document.getElementById('modal-warning');
+  if (!roomId) { fb.textContent = 'Selecciona una habitación'; fb.style.color='var(--red)'; return; }
+
+  // ── Check if another room already has this pack ──
+  if (!confirmMove && modalPackId > 0) {
+    try {
+      const roomsRes = await fetch('/dashboard-api/rooms');
+      const rooms = await roomsRes.json();
+      const otherRoom = rooms.find(r => r.id !== roomId && r.pack_id === modalPackId);
+      if (otherRoom) {
+        const label = otherRoom.code;
+        warningEl.style.display = 'block';
+        warningEl.innerHTML = `⚠️ Este pack ya está asignado a <b>${label}</b>.<br>¿Quieres moverlo a la habitación seleccionada?`;
+        assignBtn.textContent = '⚠️ Sí, mover pack';
+        assignBtn.style.background = 'var(--orange)';
+        confirmMove = true;
+        fb.textContent = '';
+        return;
+      }
+    } catch(e) { /* continue without check */ }
+  }
+
+  // ── Proceed with assignment ──
+  confirmMove = false;
+  assignBtn.disabled = true;
+  assignBtn.textContent = '⏳ Vinculando...';
+  assignBtn.style.background = '';
+  fb.textContent = 'Asignando dispositivos y reseteando habitación...';
+  fb.style.color = 'var(--cyan)';
+  warningEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/dashboard-api/assign-and-reset', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({device_id:modalDeviceId, room_id:roomId})
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      fb.textContent = '✅ Vinculado! ' + data.devices_assigned + ' dispositivos asignados a ' + sel.options[sel.selectedIndex].text;
+      fb.style.color = 'var(--green)';
+      // Fire-and-forget: blink switch 3x
+      if (modalExternalId) {
+        fetch('/dashboard-api/blink-light', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({external_id:modalExternalId})
+        }).catch(()=>{});
+      }
+      // Update device panel immediately with checks from assign response
+      if (data.device_checks && data.device_checks.length > 0 && currentRoomId === roomId) {
+        const resultsMap = {};
+        data.device_checks.forEach(c => { resultsMap[c.device_id] = c; });
+        const devicesForPanel = data.device_checks.map(c => ({
+          id: c.device_id, kind: c.kind, external_id: c.external_id || '',
+          label: null, last_seen_at: c.last_seen_at, online: c.online,
+          _tuya_fallback: !c.online && c.error ? false : (c.checked_via === 'TUYA'),
+          meta_json: null
+        }));
+        const panelData = {
+          room_id: roomId, pack_id: data.pack_id, pack_code: '', pack_name: modalPackName,
+          online: devicesForPanel.filter(d => d.online).length,
+          offline: devicesForPanel.filter(d => !d.online).length,
+          total: devicesForPanel.length,
+          devices: devicesForPanel,
+        };
+        updateDevicesPanelFromCache(panelData);
+        updatePackIndicatorFromCache(panelData);
+      }
+      // Reload rooms and mirame after short delay to let DB settle
+      setTimeout(() => {
+        closeConfigModal();
+        fetchMirame();
+        fetchRooms();
+        // Refresh current room device panel if viewing the assigned room
+        if (currentRoomId === roomId) {
+          fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`).catch(()=>{});
+          updatePackIndicator();
+        }
+        // Reload page to update all panels
+        window.location.reload();
+      }, 1200);
+    } else {
+      fb.textContent = '❌ Error: ' + (data.error || 'falló la vinculación');
+      fb.style.color = 'var(--red)';
+      assignBtn.disabled = false;
+      assignBtn.textContent = '✅ Asignar';
+    }
+  } catch(e) {
+    fb.textContent = '❌ Error de red: ' + e.message;
+    fb.style.color = 'var(--red)';
+    assignBtn.disabled = false;
+    assignBtn.textContent = '✅ Asignar';
+  }
+}
+
+async function clearMirame(deviceId) {
+  try {
+    await fetch(`/dashboard-api/mirame/${deviceId}/clear`, {method:'POST'});
+    fetchMirame();
+  } catch(e) { console.error('clearMirame:', e); }
+}
+
+async function resetRoom() {
+  if (!confirm('¿Resetear habitación '+(document.getElementById('room-selector').options[document.getElementById('room-selector').selectedIndex]?.text||'')+'? Se perderá el QR activo y la habitación volverá a estado inicial.')) return;
+  const btn = document.getElementById('reset-room-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Reseteando...'; }
+  try {
+    const res = await fetch('/dashboard-api/rooms/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({room_id: currentRoomId})
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      qrTestData = null;
+      updateQrTestPanelNew();
+      showQrToast(true, 'Habitación reseteada');
+      lastEventIds.clear();
+      _presenceDetectedDuringOpen = false;
+    _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples(); updatePollingIndicator(); stopIdleAnimation();
+      await Promise.all([fetchRooms(), poll()]);
+      setTimeout(() => updatePackIndicator(), 200);
+    } else {
+      showQrToast(false, data.error || 'Error al resetear');
+    }
+  } catch(e) { showQrToast(false, 'Error: '+e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Reset'; }
+}
+
+async function updatePackIndicator() {
+  const el = document.getElementById('pack-indicator');
+  // Show pack name instantly from roomList (no fetch needed)
+  const room = roomList.find(r => r.id == currentRoomId);
+  if (!room || !room.pack_id) {
+    el.innerHTML = '<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:rgba(255,82,82,0.12);border:1px solid rgba(255,82,82,0.3);font-size:0.68rem"><span style="font-size:0.9rem">📦</span> Sin pack — usa <b>Mírame</b> para vincular</span>';
+    el.dataset.packId = '';
+    return;
+  }
+  const packName = room.pack_name || 'Pack #' + room.pack_id;
+  // Only show "cargando..." if pack changed; otherwise keep current value
+  if (el.dataset.packId != room.pack_id) {
+    el.innerHTML = `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:rgba(0,230,118,0.08);border:1px solid rgba(0,230,118,0.3);font-size:0.68rem;color:var(--green)">🟢 📦 <b>${packName}</b> · cargando...</span>`;
+  }
+
+  // Enrich with online count
+  try {
+    const res = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`);
+    if (!res.ok || !room.pack_id) return;
+    const ds = await res.json();
+    const online  = ds.online || 0;
+    const total   = ds.total || 0;
+    const allOk   = online === total;
+    const icon    = allOk ? '🟢' : '🟠';
+    const color   = allOk ? 'var(--green)' : 'var(--orange)';
+    const bg      = allOk ? 'rgba(0,230,118,0.08)' : 'rgba(255,145,0,0.08)';
+    const border  = allOk ? 'rgba(0,230,118,0.3)' : 'rgba(255,145,0,0.3)';
+    el.innerHTML = `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${bg};border:1px solid ${border};font-size:0.68rem;color:${color}">${icon} 📦 <b>${packName}</b> · ${online}/${total} online</span>`;
+    el.dataset.packId = room.pack_id;
+  } catch(e) { /* keep quick render */ }
+}
+
+// One-shot device ping when a room is selected or page loads.
+// Only triggers if the room has an assigned pack.
+// Debounces: won't re-ping the same room within 30 seconds.
+let _lastAutoPingRoomId = 0;
+let _lastAutoPingTime = 0;
+async function autoPingDevicesIfRoomHasPack(roomId) {
+  if (!roomId) return;
+  const room = roomList.find(r => r.id == roomId);
+  if (!room || !room.pack_id) {
+    // Room has no pack — clear device panel
+    document.getElementById('devices-content').innerHTML = '<span style="color:var(--text-dim)">Sin pack asignado</span>';
+    document.getElementById('btn-refresh-devices').style.display = 'none';
+    return;
+  }
+  // Debounce: don't ping same room+pack within 30s
+  const now = Date.now();
+  if (roomId === _lastAutoPingRoomId && (now - _lastAutoPingTime) < 30000) return;
+  _lastAutoPingRoomId = roomId;
+  _lastAutoPingTime = now;
+  // Fetch device status first to get device IDs
+  try {
+    const dsRes = await fetch(`/dashboard-api/device-status?room_id=${roomId}`);
+    const ds = await dsRes.json();
+    if (!ds.devices || ds.devices.length === 0) return;
+    const deviceIds = ds.devices.map(d => d.id);
+    // Ping all devices
+    const pingRes = await fetch('/dashboard-api/ping-all-devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: deviceIds }),
+    });
+    const pingData = await pingRes.json();
+    if (pingData.ok) {
+      // Merge ping results into device data and update panel
+      const resultsMap = {};
+      (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
+      const updatedDevices = ds.devices.map(d => {
+        const r = resultsMap[d.id] || {};
+        const online = r.hasOwnProperty('online') ? r.online : d.online;
+        // F33: carry _pending_check flag from COMMAND_QUEUED results to render "(comprobando...)"
+        const pendingCheck = r._pending_check === true;
+        return { ...d, online: online, last_seen_at: r.last_seen_at || d.last_seen_at, _tuya_fallback: r.checked_via === 'TUYA', _pending_check: pendingCheck };
+      });
+      const panelData = {
+        ...ds,
+        online: updatedDevices.filter(d => d.online).length,
+        offline: updatedDevices.filter(d => !d.online).length,
+        devices: updatedDevices,
+      };
+      updateDevicesPanelFromCache(panelData);
+      updatePackIndicatorFromCache(panelData);
+      _deviceCache = panelData;
+      // Force next poll to fetch fresh device-status (don't wait for throttle)
+      _lastDeviceFetch = 0;
+      manageOfflineDevicePoll(panelData);
+    }
+  } catch(e) {
+    console.warn('[autoPing] error:', e);
+  }
+}
+
+function onRoomSelect() {
+  const sel = document.getElementById('room-selector');
+  currentRoomId = parseInt(sel.value);
+  // Reset sensor grace flag for the new room
+  _sensorsEverSeen = false;
+  if (_graceTimer) { clearTimeout(_graceTimer); _graceTimer = null; }
+  _graceTimer = setTimeout(() => {
+    _sensorsEverSeen = true;
+    // Force re-evaluation: if state is still LOADING, re-process last known data
+    if (lastLiveData && Object.keys(lastLiveData).length && currentState === 'LOADING') {
+      const newState = deriveState(lastLiveData);
+      if (newState !== 'LOADING') {
+        applyState(newState);
+        renderSensorSvg();
+      }
+    }
+  }, 5000);
+  // Clear auto-polling for offline devices
+  if (_offlinePollTimer) { clearInterval(_offlinePollTimer); _offlinePollTimer = null; }
+  _offlineDeviceIds.clear();
+  _deviceCache = null;
+  // Reset throttle guards so independent timers fetch immediately for the new room
+  _lastDeviceFetch = 0;
+  _lastMiramePoll = 0;
+  lastEventIds.clear();
+  qrData = { scannable:false, consumed:false, revoked:false, expired:false, jti:'', expires_at:'' };
+  qrTestData = null;
+  updateQrTestPanelNew();
+  currentState = 'LOADING';
+  _presenceDetectedDuringOpen = false; _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples();
+  updatePollingIndicator(); stopIdleAnimation(); _displayedPhase = '';
+  document.getElementById('timeline-inner').innerHTML = '<div style="color:var(--text-dim);text-align:center">Cambiando a habitación '+sel.options[sel.selectedIndex]?.text+'...</div>';
+  updatePackIndicator();
+  // F33x: Restart independent panel timers for the new room
+  stopIndependentPolling();
+  startDevicePolling();
+  startMiramePolling();
+  startSystemStatusPolling();
+  // F33x: Reconnect SSE for the new room (disconnects old, connects new)
+  disconnectSSE();
+  connectSSE();
+  // Also trigger fast initial poll as a safety net (SSE may take a moment to connect)
+  setTimeout(() => { if (!_sseConnected) startPollingFallback(); }, 2000);
+  // Auto-ping devices if room has a pack
+  autoPingDevicesIfRoomHasPack(currentRoomId);
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              MAIN POLL LOOP                            ║
+// ╚══════════════════════════════════════════════════════════╝
+
+let _devicePollCounter = 0;
+
+function scheduleNextPoll(delayMs) {
+  // F33x: Only applies to polling fallback (SSE handles real-time normally).
+  // When tab is hidden, stretch polling to 3s (not 10s) to keep updates
+  // reasonably responsive while saving some resources.
+  if (_isHidden && delayMs < 3000) delayMs = 3000;
+  if (_pollTimer) clearTimeout(_pollTimer);
+  _pollTimer = setTimeout(poll, delayMs || 500);
+}
+
+async function poll() {
+  // This declaration is overridden by the poll() defined in the
+  // "POLLING FALLBACK" section below (with processLiveData + cache:no-store).
+  // JavaScript hoists the later declaration.
+}
+// (Old poll body removed — now using shared processLiveData + fast polling)
+// (See "POLLING FALLBACK" section below for the active implementation)
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   SHARED DATA PROCESSOR (SSE + polling fallback)       ║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Process live data payload — shared between SSE events and polling fallback.
+ * Extracted from poll() to avoid code duplication.
+ */
+function processLiveData(data) {
+  // F28: store raw data for sensor-driven SVG rendering (door, bulb)
+  lastLiveData = data;
+
+  // Track whether we've ever seen real (non-UNKNOWN) sensor data
+  const io = data.iot_session || {};
+  if (!_sensorsEverSeen) {
+    if (io.door_state !== 'UNKNOWN' || io.presence_state !== 'UNKNOWN') {
+      _sensorsEverSeen = true;
+    } else {
+      // Recent access events (QR_VALIDATE, OPEN, DENIED in last 30s)
+      // indicate the room is active. Allow state to progress beyond LOADING
+      // immediately, without waiting for the 5s grace timer.
+      const hasRecentActivity = (data.recent_events || []).some(e =>
+        new Date(e.occurred_at + 'Z').getTime() > Date.now() - 30000
+      );
+      if (hasRecentActivity) _sensorsEverSeen = true;
+    }
+  }
+
+  // Parse QR status from /live response
+  const qs = data.qr_status;
+  if (qs) {
+    qrData = {
+      scannable: qs.scannable ?? false,
+      consumed:  qs.consumed  ?? false,
+      revoked:   qs.revoked   ?? false,
+      expired:   qs.expired   ?? false,
+      jti:       qs.jti       ?? '',
+      expires_at: qs.expires_at ?? ''
+    };
+    // Client-clock QR consumed detection (skew-immune)
+    if (qrData.consumed && !_lastQrConsumed) { _qrConsumedAt = Date.now(); }
+    _lastQrConsumed = qrData.consumed;
+
+    if (!qs.jti) {
+      qrTestData = null;
+      _qrConsumedAt = 0; _lastQrConsumed = false;
+    } else if (!qrTestData || qrTestData.jti !== qs.jti) {
+      qrTestData = {
+        jti: qs.jti, qr_text: qs.qr_text ?? null,
+        expires_at: qs.expires_at, stay_id: qs.stay_id ?? null,
+        scannable: qs.scannable ?? false, consumed: qs.consumed ?? false,
+        revoked: qs.revoked ?? false, expired: qs.expired ?? false
+      };
+    } else {
+      qrTestData.scannable = qs.scannable ?? qrTestData.scannable;
+      qrTestData.consumed  = qs.consumed  ?? qrTestData.consumed;
+      qrTestData.revoked   = qs.revoked   ?? qrTestData.revoked;
+      qrTestData.expired   = qs.expired   ?? qrTestData.expired;
+      if (qs.qr_text) qrTestData.qr_text = qs.qr_text;
+    }
+  }
+
+  // Derive and apply state
+  const newState = deriveState(data);
+  applyState(newState);
+
+  // F35: Detectar transición de presencia → resetear ondas inmediatamente
+  // (evita mezcla de colores viejo/nuevo durante hasta 10s)
+  const newPresence = io.presence_state || 'UNKNOWN';
+  if (previousPresence && previousPresence !== 'UNKNOWN' && newPresence !== 'UNKNOWN' && newPresence !== previousPresence) {
+    hideRadarRipples();
+  }
+
+  // Update polling frequency indicator based on current context
+  const exitDeadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
+  updatePollingFrequency(
+    newState,
+    io.door_state || 'UNKNOWN',
+    io.presence_state || 'UNKNOWN',
+    (data.active_stay && data.active_stay.status) || null,
+    exitDeadline
+  );
+
+  // ALWAYS render sensor SVG (door/bulb/cone/QR)
+  // Must be called AFTER applyState so currentState reflects QR_OK etc.
+  renderSensorSvg();
+
+  // Toast detection
+  const recentQR = (data.recent_events || []).find(e =>
+    (e.kind === 'QR_VALIDATE' || e.kind === 'OPEN') && !lastEventIds.has(e.id) && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000
+  );
+  const recentDenied = (data.recent_events || []).find(e =>
+    e.kind === 'DENIED' && !lastEventIds.has(e.id) && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000
+  );
+
+  if (recentQR && recentQR.result === 'OK') showQrToast(true, 'Acceso concedido');
+  if (recentQR && recentQR.result === 'FAIL') showQrToast(false, recentQR.reason || 'Acceso denegado');
+  if (recentDenied) showQrToast(false, recentDenied.reason || 'Acceso denegado');
+
+  // QR updates
+  updateQrScreen();
+  updateQrTestPanelNew();
+
+  // Cheap panels: always refresh
+  updateStayPanel(data);
+  updateSensorPanel(data);
+  updateTimeline(data);
+
+  // Track seen event IDs
+  (data.recent_events || []).forEach(e => lastEventIds.add(e.id));
+  if (lastEventIds.size > 200) {
+    const ids = (data.recent_events || []).map(e => e.id);
+    lastEventIds = new Set(ids);
+  }
+
+  // F31: store previous sensor and stay states for transition detection
+  const ioForPrev = data.iot_session || {};
+  previousDoor     = ioForPrev.door_state || 'UNKNOWN';
+  previousPresence = ioForPrev.presence_state || 'UNKNOWN';
+  previousStayStatus = (data.active_stay && data.active_stay.status) || null;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   SSE (SERVER-SENT EVENTS) — REAL-TIME DASHBOARD       ║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Connect to the SSE event stream for the current room.
+ * Auto-reconnects on failure (EventSource built-in behavior).
+ * Falls back to polling if SSE is unavailable.
+ */
+function connectSSE() {
+  // Clean up any existing connection
+  disconnectSSE();
+
+  _sseConnected = false;
+
+  const url = `/dashboard-api/event-stream?room_id=${currentRoomId}`;
+  _eventSource = new EventSource(url);
+
+  _eventSource.addEventListener('connected', function(e) {
+    _sseConnected = true;
+    _sseFallbackActive = false;
+    _pollShouldStop = true; // F33x: kill any leaked poll cycle
+    if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
+    updateSseIndicator(true);
+    console.log('[SSE] Connected to room ' + currentRoomId);
+  });
+
+  _eventSource.addEventListener('state', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if ((data.room_id || 0) !== currentRoomId) return; // stale event from previous room
+      processLiveData(data);
+    } catch(err) {
+      console.error('[SSE] Failed to parse state event:', err);
+    }
+  });
+
+  _eventSource.addEventListener('close', function(e) {
+    console.log('[SSE] Server closed stream:', e.data);
+    _sseConnected = false;
+    updateSseIndicator(false);
+    disconnectSSE();
+    // Switch to polling fallback
+    startPollingFallback();
+  });
+
+  _eventSource.onerror = function(e) {
+    // EventSource auto-reconnects by default. Only switch to polling
+    // if the connection has been down for more than 5 seconds.
+    if (_sseConnected) {
+      console.warn('[SSE] Connection error (will auto-reconnect)');
+      _sseConnected = false;
+      updateSseIndicator(false);
+      // Start fallback polling immediately while SSE reconnects
+      startPollingFallback();
+    }
+  };
+
+  _eventSource.onopen = function() {
+    // onopen fires when the connection is (re-)established.
+    // The 'connected' event from the server gives us a more reliable signal.
+    // Keep this as a secondary confirmation.
+    if (!_sseConnected) {
+      _sseConnected = true;
+      _sseFallbackActive = false;
+      _pollShouldStop = true; // F33x: kill any leaked poll cycle
+      if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
+      updateSseIndicator(true);
+    }
+  };
+}
+
+function disconnectSSE() {
+  if (_eventSource) {
+    _eventSource.close();
+    _eventSource = null;
+  }
+  _sseConnected = false;
+  updateSseIndicator(false);
+  if (_sseReconnectTimeout) { clearTimeout(_sseReconnectTimeout); _sseReconnectTimeout = null; }
+}
+
+/**
+ * Minimal visual indicator in the header showing SSE connection status.
+ * Green dot = real-time, yellow = polling fallback.
+ */
+function updateSseIndicator(connected) {
+  let dot = document.getElementById('sse-indicator');
+  if (!dot) {
+    dot = document.createElement('span');
+    dot.id = 'sse-indicator';
+    dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle;transition:background 0.3s';
+    const header = document.querySelector('#zone2-label') || document.getElementById('state-name');
+    if (header && header.parentNode) header.parentNode.appendChild(dot);
+  }
+  if (dot) {
+    dot.style.background = connected ? 'rgba(0,230,118,0.9)' : 'rgba(255,215,64,0.8)';
+    dot.title = connected ? 'Tiempo real (SSE)' : 'Polling (fallback)';
+  }
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   INDEPENDENT PANEL POLLING (device-status + mirame)   ║
+// ║   Runs regardless of SSE state. SSE covers door/state, ║
+// ║   these timers cover device liveness + installer panel.║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Poll device-status on a dynamic throttle (10s when offline, 30s when all green).
+ * Completely independent from SSE/polling fallback.
+ */
+function startDevicePolling() {
+  if (_deviceTimer) clearInterval(_deviceTimer);
+  _deviceTimer = setInterval(() => {
+    const hasOfflineOrPending = _deviceCache && (_deviceCache.devices || []).some(
+      d => !d.online || d._pending_check
+    );
+    const devicePollMs = hasOfflineOrPending ? 10000 : 30000;
+    if (Date.now() - _lastDeviceFetch > devicePollMs) {
+      _lastDeviceFetch = Date.now();
+      fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`, { cache: 'no-store' })
+        .then(r => r.json())
+        .then(ds => {
+          if ((ds.room_id || 0) !== currentRoomId) return;
+          _deviceCache = ds;
+          updateDevicesPanelFromCache(ds);
+          updatePackIndicatorFromCache(ds);
+          manageOfflineDevicePoll(ds);
+        }).catch(() => { _deviceCache = null; });
+    }
+  }, 2000);
+}
+
+/**
+ * Poll mirame (installer "Mírame" button panel) every 2s.
+ * Independent from SSE — the installer panel is not latency-critical.
+ */
+function startMiramePolling() {
+  if (_mirameTimer) clearInterval(_mirameTimer);
+  _mirameTimer = setInterval(() => {
+    fetchMirame();
+  }, 2000);
+}
+
+/**
+ * Stop all independent panel polling timers (used on room switch).
+ */
+function stopIndependentPolling() {
+  if (_deviceTimer) { clearInterval(_deviceTimer); _deviceTimer = null; }
+  if (_mirameTimer) { clearInterval(_mirameTimer); _mirameTimer = null; }
+  if (_systemStatusTimer) { clearInterval(_systemStatusTimer); _systemStatusTimer = null; }
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   SYSTEM STATUS (background process health)             ║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Poll /dashboard-api/system-status every 30s.
+ * Shows green/red indicators for key background processes.
+ */
+function startSystemStatusPolling() {
+  if (_systemStatusTimer) clearInterval(_systemStatusTimer);
+  fetchSystemStatus(); // immediate first fetch
+  _systemStatusTimer = setInterval(fetchSystemStatus, 30000);
+}
+
+async function fetchSystemStatus() {
+  try {
+    const res = await fetch('/dashboard-api/system-status', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderSystemStatus(data);
+  } catch(e) {
+    console.warn('[SystemStatus] fetch error:', e);
+    document.getElementById('system-status-content').innerHTML =
+      '<span style="color:var(--red)">Error al consultar</span>';
+  }
+}
+
+function renderSystemStatus(data) {
+  const el = document.getElementById('system-status-content');
+  if (!el) return;
+  const keys = Object.keys(data);
+  if (keys.length === 0) {
+    el.innerHTML = '<span style="color:var(--text-dim)">Sin datos</span>';
+    return;
+  }
+  let html = '';
+  keys.forEach(key => {
+    const s = data[key];
+    const dot = s.online ? '🟢' : '🔴';
+    const color = s.online ? 'var(--green)' : 'var(--red)';
+    html += `<div class="row" style="justify-content:space-between;padding:2px 0;font-size:0.7rem">
+      <span>${dot} ${s.label}</span>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   POLLING FALLBACK (SSE unavailable)                   ║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Start fast polling fallback when SSE is unavailable.
+ * Uses 1s interval (vs original 2s) for acceptable responsiveness.
+ */
+function startPollingFallback() {
+  if (_sseFallbackActive) return;
+  _sseFallbackActive = true;
+  _pollShouldStop = false; // F33x: allow this poll cycle to run
+  console.log('[Fallback] Switching to polling (SSE unavailable)');
+  // Cancel any existing poll timer
+  if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
+  // Start fast polling
+  poll();
+}
+
+/**
+ * Fast polling version of the original poll().
+ * Fetches /live with cache-busting headers and uses the shared
+ * processLiveData() for rendering.
+ */
+async function poll() {
+  if (_pollGuard) { scheduleNextPoll(100); return; }
+  _pollGuard = true;
+
+  try {
+    const controller = new AbortController();
+    const fetchTimer = setTimeout(() => controller.abort(), 8000);
+    let res;
+    try {
+      res = await fetch(`/api/v1/rooms/${currentRoomId}/live`, {
+        signal: controller.signal,
+        cache: 'no-store'
+      });
+    } finally {
+      clearTimeout(fetchTimer);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    processLiveData(data);
+
+    // Note: device-status and mirame are handled by independent timers
+    // (startDevicePolling / startMiramePolling) — see init().
+
+  } catch(e) {
+    console.error('Poll error:', e);
+    const badge = document.getElementById('state-name');
+    if (badge) badge.textContent = 'Error de conexión';
+  }
+
+  _pollGuard = false;
+
+  // SSE fallback mode: fast 1s polling (not the original 2s)
+  // F33x: if SSE reconnected while this poll was in-flight, stop the cycle
+  if (_pollShouldStop) {
+    _pollShouldStop = false;
+    console.log('[Fallback] Poll cycle stopped — SSE is back');
+    return;
+  }
+  const interval = _sseFallbackActive ? 1000 : 2000;
+  scheduleNextPoll(interval);
+}
+
+function updateQrPanel() {
+  // QR status now integrated into qrTestPanel. qrData still used for state machine.
+}
+
+
+function updateStayPanel(data) {
+  const el = document.getElementById('stay-content');
+  const stay = data.active_stay;
+  if (!stay) {
+    el.className = 'no-stay';
+    el.textContent = 'Sin estancia activa';
+    return;
+  }
+  el.className = '';
+  const now = new Date();
+  const entry = stay.first_entry_at ? new Date(stay.first_entry_at + 'Z') : null;
+  const elapsed = entry ? Math.floor((now - entry) / 60000) : 0;
+  const pct = stay.duracion_minutos > 0 ? Math.min(100, (elapsed / stay.duracion_minutos) * 100) : 0;
+  const barClass = pct > 100 ? 'danger' : (pct > 80 ? 'warn' : 'ok');
+  el.innerHTML = `
+    <div class="row"><span class="label">Habitación</span><span class="value">${data.code || '?'}</span></div>
+    <div class="row"><span class="label">ID</span><span class="value">${stay.id}</span></div>
+    <div class="row"><span class="label">Estado</span><span class="value ${stay.status==='OCCUPIED'?'val-green':stay.status==='OVERSTAY'?'val-red':'val-cyan'}">${stay.status}</span></div>
+    <div class="row"><span class="label">Duración</span><span class="value">${stay.duracion_minutos} min</span></div>
+    ${entry ? `<div class="row"><span class="label">Entrada</span><span class="value">${entry.toLocaleTimeString('es-ES')}</span></div>` : ''}
+    ${elapsed >= 0 ? `<div class="row"><span class="label">Transcurrido</span><span class="value">${elapsed} min</span></div>` : ''}
+    <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${pct}%"></div></div>
+  `;
+}
+
+function updateSensorPanel(data) {
+  const io = data.iot_session || {};
+  const door = io.door_state || 'UNKNOWN';
+  const presence = io.presence_state || 'UNKNOWN';
+  const cooldown = data.cooldown_until && new Date(data.cooldown_until + 'Z') > new Date();
+  const status = data.status;
+  const stay = data.active_stay;
+
+  const doorEl = document.getElementById('s-door');
+  doorEl.textContent = door;
+  doorEl.className = 'value ' + (door==='OPEN'?'val-green':door==='CLOSED'?'val-red':'val-orange');
+
+  const presEl = document.getElementById('s-presence');
+  presEl.textContent = presence;
+  presEl.className = 'value ' + (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange');
+
+  const lockEl = document.getElementById('s-lock');
+  if (cooldown) { lockEl.textContent = 'ANTI-REENTRADA'; lockEl.className = 'value val-purple'; }
+  else if (status === 'OCCUPIED' || status === 'RESERVED') { lockEl.textContent = 'PERMITIDO'; lockEl.className = 'value val-green'; }
+  else if (status === 'EXITED') { lockEl.textContent = 'CERRADO (salida)'; lockEl.className = 'value val-red'; }
+  else { lockEl.textContent = 'CERRADO'; lockEl.className = 'value val-red'; }
+
+  const swEl = document.getElementById('s-switch');
+  const sw = data.switch_state || {};
+  const hasSwitch = sw.id;
+  const switchOn = sw.last_command === 'ON';
+  swEl.textContent = hasSwitch ? (switchOn ? 'ON' : 'OFF') : 'No instalado';
+  swEl.className = 'value ' + (hasSwitch ? (switchOn ? 'val-yellow' : 'val-red') : 'val-orange');
+
+  // F36: Battery sensor door (MC400D)
+  const battEl = document.getElementById('s-battery');
+  const batt = data.battery;
+  if (batt && batt.device_id) {
+    const pct = batt.pct;
+    const st = batt.state;
+    if (pct !== null && pct !== undefined) {
+      battEl.innerHTML = '🔋 ' + pct + '% <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+batt.device_id+')">🔄</button>';
+      battEl.className = 'value ' + (st==='critical'?'val-red':st==='low'?'val-yellow':'val-green');
+    } else {
+      battEl.innerHTML = '— <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+batt.device_id+')">🔄</button>';
+      battEl.className = 'value val-orange';
+    }
+  } else {
+    battEl.textContent = 'No disponible';
+    battEl.className = 'value val-orange';
+  }
+
+  const cdEl = document.getElementById('s-cooldown');
+  // F31: Show exit countdown when exit_deadline is active
+  const exitDl = data.exit_deadline ? new Date(data.exit_deadline) : null;
+  const lastCloseAt = io.last_close_at ? new Date(io.last_close_at) : null;
+  const gapSecs = data.gap_seconds || 15;
+
+  if (exitDl && exitDl > new Date()) {
+    const sec = Math.max(0, Math.floor((exitDl - new Date()) / 1000));
+    cdEl.textContent = '⏳ ' + sec + 's (salida)';
+    cdEl.className = 'value val-yellow';
+  } else if (stay && stay.status === 'OCCUPIED' && door === 'CLOSED'
+             && presence === 'PRESENT' && lastCloseAt
+             && (new Date() - lastCloseAt) < (gapSecs + 10) * 1000) {
+    // F31: Verification hold — waiting for presence sensor to clear after door close
+    const holdLeft = Math.max(0, Math.floor(((lastCloseAt.getTime() + (gapSecs + 10) * 1000) - Date.now()) / 1000));
+    cdEl.textContent = '⏳ verificando (' + holdLeft + 's)';
+    cdEl.className = 'value val-yellow';
+  } else if (cooldown) {
+    const until = new Date(data.cooldown_until + 'Z');
+    const sec = Math.max(0, Math.floor((until - new Date()) / 1000));
+    cdEl.textContent = sec + 's';
+    cdEl.className = 'value val-purple';
+  } else {
+    cdEl.textContent = '—';
+    cdEl.className = 'value';
+  }
+}
+
+function updateQrTestPanelNew() {
+  const emptyEl = document.getElementById('qr-test-empty');
+  const activeEl = document.getElementById('qr-test-active');
+  const createBtn = document.getElementById('qr-test-create-btn');
+  const resetBtn = document.getElementById('qr-test-reset-btn');
+  const statusEl = document.getElementById('qr-test-status');
+  const jtiEl = document.getElementById('qr-test-jti');
+  const expEl = document.getElementById('qr-test-exp');
+  const stayEl = document.getElementById('qr-test-stay');
+  const canvas = document.getElementById('qr-test-canvas');
+
+  if (!qrTestData || !qrTestData.jti) {
+    // State: BLANK — no test QR
+    // Show white canvas placeholder if room has a pack
+    const roomForQr = roomList.find(r => r.id == currentRoomId);
+    const hasPackForQr = roomForQr && roomForQr.pack_id;
+    if (hasPackForQr) {
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (activeEl) { activeEl.style.display = ''; if (canvas) { canvas.dataset.rendered = ''; canvas.innerHTML = ''; } }
+    } else {
+      if (emptyEl) emptyEl.style.display = '';
+      if (activeEl) activeEl.style.display = 'none';
+    }
+    if (createBtn) createBtn.style.display = '';
+    if (resetBtn) resetBtn.style.display = 'none';
+    return;
+  }
+
+  // State: QR exists
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (activeEl) activeEl.style.display = '';
+  if (createBtn) createBtn.style.display = 'none';
+  if (resetBtn) resetBtn.style.display = '';
+
+  // Update text fields
+  if (jtiEl) jtiEl.textContent = (qrTestData.jti || '').substring(0, 20) + '...';
+  if (expEl) expEl.textContent = qrTestData.expires_at ? new Date(qrTestData.expires_at).toLocaleString('es-ES') : '—';
+  const roomForQrLabel = roomList.find(r => r.id == currentRoomId);
+  const roomLabel = roomForQrLabel ? roomForQrLabel.code : '';
+  if (stayEl) stayEl.textContent = roomLabel || (qrTestData.stay_id ? '#' + qrTestData.stay_id : '—');
+
+  // Status
+  let statusText, statusColor;
+  if (qrTestData.revoked) {
+    statusText = 'REVOCADO'; statusColor = 'val-red';
+  } else if (qrTestData.consumed) {
+    statusText = 'CONSUMIDO'; statusColor = 'val-red';
+  } else if (qrTestData.expired) {
+    statusText = 'EXPIRADO'; statusColor = 'val-orange';
+  } else {
+    statusText = 'ESCANEABLE'; statusColor = 'val-green';
+  }
+  if (statusEl) {
+    statusEl.textContent = statusText;
+    statusEl.className = statusColor;
+  }
+
+  // Render QR code if qr_text changed
+  if (qrTestData.qr_text && (!canvas.dataset.rendered || canvas.dataset.text !== qrTestData.qr_text)) {
+    canvas.innerHTML = '';
+    if (typeof QRCode !== 'undefined') {
+      const qrSize = window.innerWidth <= 768 ? 260 : 138;
+      new QRCode(canvas, {text: qrTestData.qr_text, width: qrSize, height: qrSize, correctLevel: QRCode.CorrectLevel.M});
+    } else {
+      console.warn('QRCode library not loaded — check /assets/qrcode.min.js');
+      canvas.innerHTML = '<span style="color:#999;font-size:11px">QR no disponible</span>';
+    }
+    canvas.dataset.rendered = '1';
+    canvas.dataset.text = qrTestData.qr_text;
+  }
+}
+
+async function createTestQr() {
+  const dur = parseInt(document.getElementById('qr-test-duration')?.value || '60');
+  const btn = document.getElementById('qr-test-create-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Creando...'; }
+
+  try {
+    const res = await fetch('/dashboard-api/qr-test/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({room_id: currentRoomId, duracion_minutos: dur})
+    });
+    const data = await res.json();
+    if (res.ok) {
+      qrTestData = {
+        jti: data.jti,
+        qr_text: data.qr_text,
+        expires_at: data.expires_at,
+        stay_id: data.stay_id,
+        scannable: true,
+        consumed: false,
+        revoked: false,
+        expired: false
+      };
+      updateQrTestPanelNew();
+      showQrToast(true, 'QR de pruebas creado');
+    } else {
+      showQrToast(false, data.error || 'Error al crear QR');
+    }
+  } catch(e) {
+    showQrToast(false, 'Error de red: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '➕ Crear QR'; }
+    // Trigger poll to refresh state machine
+    setTimeout(poll, 500);
+  }
+}
+
+async function resetTestQr() {
+  const dur = parseInt(document.getElementById('qr-test-duration')?.value || '60');
+  const btn = document.getElementById('qr-test-reset-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
+
+  try {
+    const res = await fetch('/dashboard-api/qr-test/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({room_id: currentRoomId, duracion_minutos: dur})
+    });
+    const data = await res.json();
+    if (res.ok) {
+      qrTestData = {
+        jti: data.jti,
+        qr_text: data.qr_text,
+        expires_at: data.expires_at,
+        stay_id: data.stay_id,
+        scannable: true,
+        consumed: false,
+        revoked: false,
+        expired: false
+      };
+      updateQrTestPanelNew();
+      showQrToast(true, 'QR reseteado y nuevo QR creado');
+    } else {
+      showQrToast(false, data.error || 'Error al resetear');
+    }
+  } catch(e) {
+    showQrToast(false, 'Error de red: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Generar nuevo QR'; }
+    setTimeout(poll, 500);
+  }
+}
+
+
+function updateDevicesPanel(data) {
+  const el = document.getElementById('devices-content');
+  // Fetch device status for this room (includes online/offline)
+  fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`)
+    .then(r => r.json())
+    .then(result => {
+      const devices = result.devices || [];
+      if (!devices || devices.length === 0) {
+        el.innerHTML = '<span style="color:var(--text-dim)">Sin dispositivos</span>';
+        document.getElementById('btn-refresh-devices').style.display = 'none';
+        return;
+      }
+      const packLabel = result.pack_name || 'Sin pack';
+      const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
+      const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+      el.innerHTML = devices.map(d => {
+        const name = d.label || kindName(d.kind);
+        const idShort = (d.external_id||'').substring(0,6);
+        // Determine dot color: gray for never-seen, amber for pending check, green for online, red for offline
+        let dotColor, statusLabel;
+        if (d._pending_check) {
+          dotColor = 'var(--amber, #f0a030)';
+          statusLabel = '(comprobando...)';
+        } else if (d.last_seen_at === null || d.last_seen_at === undefined) {
+          dotColor = 'var(--text-dim)';
+          statusLabel = '(sin datos)';
+        } else if (d.online) {
+          dotColor = 'var(--green)';
+          // F33: SCANNER/LOCK verified via command-queue vs inherited from RPI
+          if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) {
+            statusLabel = '(vía ESP32, no verificado)';
+          } else {
+            statusLabel = d._inherited ? '(vía ESP32)' : d._tuya_fallback ? '(vía Tuya)' : '';
+          }
+        } else {
+          dotColor = 'var(--red)';
+          statusLabel = '(offline)';
+        }
+        return `
+        <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} | last_seen: ${d.last_seen_at||'nunca'} ${statusLabel}">
+          <span><span class="dot" style="background:${dotColor};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
+          <span style="font-family:mono;font-size:0.65rem;color:var(--text-dim)">${idShort}…</span>
+        </div>`;
+   }).join('') + `<div style="margin-top:6px;font-size:0.7rem;color:${packColor}">Pack: ${packLabel}</div>
+     <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online} online · 🔴 ${result.offline} offline</div>`;
+     // Show refresh button if there are devices
+     document.getElementById('btn-refresh-devices').style.display = 'inline-block';
+    })
+         .catch(() => { el.innerHTML = 'Error'; });
+}
+
+// ═══════════════════════════════════════════════════════
+// Cache-based variants (shared device-status fetch from poll loop)
+// ═══════════════════════════════════════════════════════
+
+function updateDevicesPanelFromCache(result) {
+  const el = document.getElementById('devices-content');
+  const devices = result.devices || [];
+  if (!devices || devices.length === 0) {
+    el.innerHTML = '<span style="color:var(--text-dim)">Sin dispositivos</span>';
+    document.getElementById('btn-refresh-devices').style.display = 'none';
+    return;
+  }
+  const packLabel = result.pack_name || 'Sin pack';
+  const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
+  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+  el.innerHTML = devices.map(d => {
+    const name = d.label || kindName(d.kind);
+    const idShort = (d.external_id||'').substring(0,6);
+    let dotColor, statusLabel;
+    if (d._pending_check) {
+      dotColor = 'var(--amber, #f0a030)'; statusLabel = '(comprobando...)';
+    } else if (d.last_seen_at === null || d.last_seen_at === undefined) {
+      dotColor = 'var(--text-dim)'; statusLabel = '(sin datos)';
+    } else if (d.online) {
+      dotColor = 'var(--green)';
+      // F33: SCANNER/LOCK verified via command-queue vs inherited from RPI
+      if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) {
+        statusLabel = '(vía ESP32, no verificado)';
+      } else {
+        statusLabel = d._inherited ? '(vía ESP32)' : d._tuya_fallback ? '(vía Tuya)' : '';
+      }
+    } else {
+      dotColor = 'var(--red)'; statusLabel = '(offline)';
+    }
+    return `
+    <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} | last_seen: ${d.last_seen_at||'nunca'} ${statusLabel}">
+      <span><span class="dot" style="background:${dotColor};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
+      <span style="font-family:mono;font-size:0.65rem;color:var(--text-dim)">${idShort}…</span>
+    </div>`;
+  }).join('') + `<div style="margin-top:6px;font-size:0.7rem;color:${packColor}">Pack: ${packLabel}</div>
+    <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online} online · 🔴 ${result.offline} offline</div>`;
+  // Show refresh button if there are devices
+  document.getElementById('btn-refresh-devices').style.display = 'inline-block';
+}
+
+function updatePackIndicatorFromCache(ds) {
+  const el = document.getElementById('pack-indicator');
+  const room = roomList.find(r => r.id == currentRoomId);
+  if (!room || !room.pack_id) {
+    el.innerHTML = '<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:rgba(255,82,82,0.12);border:1px solid rgba(255,82,82,0.3);font-size:0.68rem"><span style="font-size:0.9rem">📦</span> Sin pack — usa <b>Mírame</b> para vincular</span>';
+    el.dataset.packId = '';
+    return;
+  }
+  const packName = room.pack_name || 'Pack #' + room.pack_id;
+  const online  = ds.online || 0;
+  const total   = ds.total || 0;
+  const allOk   = online === total;
+  const icon    = allOk ? '🟢' : '🟠';
+  const color   = allOk ? 'var(--green)' : 'var(--orange)';
+  const bg      = allOk ? 'rgba(0,230,118,0.08)' : 'rgba(255,145,0,0.08)';
+  const border  = allOk ? 'rgba(0,230,118,0.3)' : 'rgba(255,145,0,0.3)';
+  el.innerHTML = `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${bg};border:1px solid ${border};font-size:0.68rem;color:${color}">${icon} 📦 <b>${packName}</b> · ${online}/${total} online</span>`;
+  el.dataset.packId = room.pack_id;
+}
+
+// ═══════════════════════════════════════════════════════
+// Auto-polling: rechecks offline devices every 10s
+// until they come back online. Only for devices that should
+// be online (have a pack assigned and are showing red).
+// RPI is excluded — only ESP32 heartbeat can verify it.
+// ═══════════════════════════════════════════════════════
+
+function manageOfflineDevicePoll(ds) {
+  const devices = ds.devices || [];
+  const currentSet = new Set();
+
+  for (const d of devices) {
+    // Skip if already pending check (amber), already online (green), or RPI
+    if (d._pending_check) continue;
+    if (d.online) continue;
+    if (d.kind === 'RPI') continue; // only ESP32 heartbeat can verify RPI
+
+    currentSet.add(d.id);
+  }
+
+  // Merge with existing set: remove devices that are now online, add new offline
+  _offlineDeviceIds = currentSet;
+
+  if (_offlineDeviceIds.size > 0) {
+    if (!_offlinePollTimer) {
+      _offlinePollTimer = setInterval(_recheckOfflineDevices, 10000);
+      // Run one immediate check too
+      _recheckOfflineDevices();
+    }
+  } else {
+    if (_offlinePollTimer) {
+      clearInterval(_offlinePollTimer);
+      _offlinePollTimer = null;
+    }
+  }
+}
+
+async function _recheckOfflineDevices() {
+  if (_offlineDeviceIds.size === 0) {
+    if (_offlinePollTimer) { clearInterval(_offlinePollTimer); _offlinePollTimer = null; }
+    return;
+  }
+
+  try {
+    const deviceIds = Array.from(_offlineDeviceIds);
+    const pingRes = await fetch('/dashboard-api/ping-all-devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: deviceIds }),
+    });
+    const pingData = await pingRes.json();
+
+    if (pingData.ok) {
+      // Merge ping results into device data
+      const resultsMap = {};
+      (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
+
+      // Refresh device cache from last known data
+      const ds = _deviceCache || { devices: [], online: 0, offline: 0, total: 0, room_id: currentRoomId };
+
+      let newOfflineIds = new Set();
+      const updatedDevices = (ds.devices || []).map(d => {
+        const r = resultsMap[d.id] || {};
+        if (!r.hasOwnProperty('device_id')) return d; // not in ping results
+
+        const online = r.hasOwnProperty('online') && r.online !== null ? r.online : d.online;
+        const pendingCheck = r._pending_check === true;
+
+        // If device is now online or pending, remove from recheck list
+        if (!online && !pendingCheck && d.kind !== 'RPI') {
+          newOfflineIds.add(d.id);
+        }
+
+        return {
+          ...d,
+          online: online !== null ? online : d.online,
+          last_seen_at: r.last_seen_at || d.last_seen_at,
+          _tuya_fallback: r.checked_via === 'TUYA',
+          _pending_check: pendingCheck,
+        };
+      });
+
+      _offlineDeviceIds = newOfflineIds;
+      _deviceCache = { ...ds, devices: updatedDevices,
+        online: updatedDevices.filter(d => d.online).length,
+        offline: updatedDevices.filter(d => !d.online).length,
+      };
+
+      updateDevicesPanelFromCache(_deviceCache);
+      updatePackIndicatorFromCache(_deviceCache);
+
+      if (_offlineDeviceIds.size === 0 && _offlinePollTimer) {
+        clearInterval(_offlinePollTimer);
+        _offlinePollTimer = null;
+      }
+    }
+  } catch (e) {
+    console.warn('[recheckOfflineDevices] ping error:', e);
+    // Don't clear timer on error — keep retrying
+  }
+}
+
+async function refreshDeviceStatus() {
+  const btn = document.getElementById('btn-refresh-devices');
+  btn.disabled = true;
+  btn.textContent = '⏳ Comprobando...';
+  const room = roomList.find(r => r.id == currentRoomId);
+  if (!room) { btn.disabled = false; btn.textContent = '🔄 Comprobar dispositivos'; return; }
+
+  try {
+    // Get all devices for the current room
+    const dsResp = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`);
+    const ds = await dsResp.json();
+    const devices = ds.devices || [];
+
+    if (devices.length === 0) {
+      btn.textContent = '✅ Comprobar dispositivos'; setTimeout(() => { btn.textContent = '🔄 Comprobar dispositivos'; }, 2000);
+      btn.disabled = false;
+      return;
+    }
+
+    // Batch ping all devices via single API call
+    const deviceIds = devices.map(d => d.id);
+    const pingRes = await fetch('/dashboard-api/ping-all-devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: deviceIds }),
+    });
+    const pingData = await pingRes.json();
+
+    if (pingData.ok) {
+      // Merge ping results into device data and update panel
+      const resultsMap = {};
+      (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
+      const updatedDevices = devices.map(d => {
+        const r = resultsMap[d.id] || {};
+        const online = r.hasOwnProperty('online') ? r.online : d.online;
+        const via = r.checked_via;
+        return { ...d, online: online, last_seen_at: r.last_seen_at || d.last_seen_at, _tuya_fallback: via === 'TUYA' };
+      });
+      const panelData = {
+        ...ds,
+        online: updatedDevices.filter(d => d.online).length,
+        offline: updatedDevices.filter(d => !d.online).length,
+        devices: updatedDevices,
+      };
+      updateDevicesPanelFromCache(panelData);
+      updatePackIndicatorFromCache(panelData);
+      _deviceCache = panelData;
+      manageOfflineDevicePoll(panelData);
+      btn.textContent = '✅ Comprobar dispositivos';
+    } else {
+      btn.textContent = '❌ Comprobar dispositivos';
+      console.error('[refreshDeviceStatus] ping failed:', pingData);
+    }
+    setTimeout(() => { btn.textContent = '🔄 Comprobar dispositivos'; }, 2000);
+  } catch (e) {
+    console.error('[refreshDeviceStatus]', e);
+    btn.textContent = '❌ Comprobar dispositivos';
+    setTimeout(() => { btn.textContent = '🔄 Comprobar dispositivos'; }, 2000);
+  }
+  btn.disabled = false;
+}
+
+function updateTimeline(data) {
+  const events = data.recent_events || [];
+  const el = document.getElementById('timeline-inner');
+  const countEl = document.getElementById('event-count');
+  if (countEl) countEl.textContent = events.length + ' eventos';
+
+  // F33x: compute lightweight fingerprint — skip innerHTML rebuild if unchanged
+  const fp = events.length + '|' + (events.length > 0 ? (events[0].id + '|' + events[0].occurred_at) : '');
+  if (fp === _lastTimelineFingerprint) return;
+  _lastTimelineFingerprint = fp;
+
+  if (events.length === 0) { el.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:16px">Sin eventos</div>'; return; }
+
+  el.innerHTML = events.map(ev => {
+    const isNew = !lastEventIds.has(ev.id);
+    const time = ev.occurred_at ? new Date(ev.occurred_at + 'Z').toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+    const icon = {OPEN:'🔓', AUTO_LOCK:'🔒', DENIED:'🚫', MANUAL_LOCK:'🔒', QR_VALIDATE:'📱'}[ev.kind] || '📌';
+    const label = {OPEN:'Apertura', AUTO_LOCK:'Cierre auto', DENIED:'Denegado', MANUAL_LOCK:'Cierre manual', QR_VALIDATE:'QR validado'}[ev.kind] || ev.kind;
+    return `<div class="event-row kind-${ev.kind} ${isNew?'new':''}" onclick="toggleEventDetail(this)" data-detail='${encodeURIComponent(JSON.stringify(ev))}'>
+      <span class="e-time">${time}</span>
+      <span class="e-icon">${icon}</span>
+      <span class="e-detail">
+        <span class="e-kind">${label}</span>
+        <span class="e-meta">${ev.provider||''}${ev.reason?' · '+ev.reason:''}${ev.meta?.device_id?' · '+ev.meta.device_id:''}</span>
+      </span>
+      <span class="e-result ${ev.result}">${ev.result}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleEventDetail(row) {
+  const existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('event-expand')) {
+    existing.classList.toggle('open');
+    if (!existing.classList.contains('open')) existing.remove();
+    return;
+  }
+  const raw = row.getAttribute('data-detail');
+  const ev = JSON.parse(decodeURIComponent(raw));
+  const metaStr = ev.meta ? JSON.stringify(ev.meta, null, 2) : '—';
+  const div = document.createElement('div');
+  div.className = 'event-expand open';
+  div.innerHTML = `<strong>Kind:</strong> ${ev.kind} · <strong>Result:</strong> ${ev.result} · <strong>Provider:</strong> ${ev.provider}<br>
+    <strong>Reason:</strong> ${ev.reason||'—'} · <strong>Correlation:</strong> ${(ev.correlation_id||'').substring(0,14)}...<br>
+    <strong>Meta:</strong> <pre style="margin:4px 0;font-size:0.65rem">${metaStr}</pre>`;
+  row.after(div);
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║         COUNTDOWN (presence verification window)       ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function updateCountdown() {
+  const el = document.getElementById('countdown-text');
+  const group = document.getElementById('countdown-group');
+  const arc = document.getElementById('countdown-arc');
+  const deadline = lastLiveData.exit_deadline ? new Date(lastLiveData.exit_deadline) : null;
+  const now = new Date();
+
+  if (!deadline || deadline <= now) {
+    group.style.display = 'none';
+    return;
+  }
+
+  const sec = Math.max(0, Math.floor((deadline - now) / 1000));
+  const io = lastLiveData.iot_session || {};
+  const presence = io.presence_state || 'UNKNOWN';
+
+  // Only show countdown when presence is ABSENT (verification window)
+  if (presence !== 'ABSENT' || io.door_state !== 'CLOSED') {
+    group.style.display = 'none';
+    return;
+  }
+
+  const gapSeconds = lastLiveData.gap_seconds || 15;
+  const totalSec = gapSeconds;
+  const elapsed = totalSec - sec;
+  const pct = Math.min(1.0, Math.max(0.0, elapsed / totalSec));
+  const circumference = 169.65; // 2*pi*27
+  const offset = circumference * (1 - pct);
+
+  group.style.display = '';
+  if (arc) {
+    arc.setAttribute('stroke-dashoffset', offset);
+    arc.setAttribute('stroke-dasharray', circumference);
+  }
+  // Blinking effect + circular arc
+  el.style.opacity = (Math.floor(now.getTime() / 500) % 2 === 0) ? '1' : '0.3';
+  el.textContent = sec;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║              INIT                                      ║
+// ╚══════════════════════════════════════════════════════════╝
+
+async function init() {
+  try {
+    currentRoomId = parseInt(new URLSearchParams(location.search).get('room')) || 1;
+    // Grace timer: after 5s, allow SENSORES_DESCONECTADOS to show even without real sensor data
+    _graceTimer = setTimeout(() => {
+      _sensorsEverSeen = true;
+      // Force re-evaluation: if state is still LOADING, re-process last known data
+      if (lastLiveData && Object.keys(lastLiveData).length && currentState === 'LOADING') {
+        const newState = deriveState(lastLiveData);
+        if (newState !== 'LOADING') {
+          applyState(newState);
+          renderSensorSvg();
+        }
+      }
+    }, 5000);
+    // F33x: Connect SSE for real-time updates (replaces polling for door/state events)
+    connectSSE();
+    // Independent panel polling: device-status + mirame run regardless of SSE state
+    startDevicePolling();
+    startMiramePolling();
+    startSystemStatusPolling();
+    // Precargas en background, sin bloquear la UI
+    Promise.all([fetchRooms(), fetchMirame()]).then(() => {
+      const sel = document.getElementById('room-selector');
+      if (sel && sel.options.length > 0) sel.value = currentRoomId;
+      // Auto-ping devices on page load if the selected room has a pack
+      autoPingDevicesIfRoomHasPack(currentRoomId);
+    }).catch(() => {});
+  } catch (e) {
+    console.error('init() failed:', e);
+    // Fallback to polling if SSE setup fails entirely
+    startPollingFallback();
+  }
+  // Page Visibility API: reduce polling when tab is hidden/backgrounded
+  // (SSE stays alive in background tabs natively; this only affects fallback polling)
+  document.addEventListener('visibilitychange', () => {
+    _isHidden = document.hidden;
+  });
+  // Countdown refresh (every 500ms for blinking) — light, keep as-is
+  setInterval(updateCountdown, 500);
+  // Rooms refresh (less frequent, keep for room selector)
+  setInterval(() => { fetchRooms(); }, 5000);
+}
+
+init();
+
+// F36: Refresh battery from dashboard sensor panel
+async function refreshDashboardBattery(deviceId) {
+  const battEl = document.getElementById('s-battery');
+  const orig = battEl ? battEl.innerHTML : null;
+  if (battEl) battEl.textContent = '⏳ Consultando...';
+  try {
+    const res = await fetch('/dashboard-api/battery-refresh', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device_id: deviceId})
+    });
+    const d = await res.json();
+    if (d.ok && battEl) {
+      const pct = d.battery_pct;
+      const st = d.state;
+      if (pct !== null && pct !== undefined) {
+        battEl.innerHTML = '🔋 ' + pct + '% <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
+        battEl.className = 'value ' + (st==='critical'?'val-red':st==='low'?'val-yellow':'val-green');
+      } else {
+        battEl.innerHTML = '— <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
+        battEl.className = 'value val-orange';
+      }
+    } else if (battEl) {
+      battEl.innerHTML = orig || '🔋 — <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
+    }
+  } catch(e) { if (battEl) battEl.innerHTML = orig || 'Error'; }
+}
+
+// Timeout guard: if after 10s the page is still "Conectando...", show error
+setTimeout(() => {
+  const badge = document.getElementById('state-name');
+  if (badge && badge.textContent === 'Conectando...') {
+    badge.textContent = 'Sin conexión';
+    const desc = document.getElementById('state-desc');
+    if (desc) desc.textContent = 'El servidor no responde. Recarga la página.';
+    // Show a manual retry mechanism: tapping the state-name reloads
+    badge.style.cursor = 'pointer';
+    badge.style.textDecoration = 'underline';
+    badge.title = 'Pulsa para recargar';
+    badge.addEventListener('click', () => location.reload());
+  }
+}, 10000);
+</script>
+</body>
+</html>
