@@ -52,13 +52,21 @@ final class DevicePackRepository
         return $pack;
     }
 
-    /** @return list<array{id:int, kind:string, external_id:string}> */
+    /** @return list<array{id:int, kind:string, external_id:string, label:?string, meta:?array, battery_pct:?int}> */
     private function resolveDevices(int $packId): array
     {
-        $stmt = $this->pdo->prepare('SELECT id, kind, external_id, label FROM devices WHERE pack_id = :pid ORDER BY kind');
+        $stmt = $this->pdo->prepare(
+            'SELECT id, kind, external_id, label, meta_json, battery_pct FROM devices WHERE pack_id = :pid ORDER BY kind'
+        );
         $stmt->bindValue(':pid', $packId, PDO::PARAM_INT);
         $stmt->execute();
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as &$r) {
+            $r['meta'] = !empty($r['meta_json']) ? json_decode($r['meta_json'], true) : null;
+            unset($r['meta_json']);
+            $r['battery_pct'] = $r['battery_pct'] !== null ? (int) $r['battery_pct'] : null;
+        }
+        return $rows;
     }
 
     public function insert(string $code, string $name): int

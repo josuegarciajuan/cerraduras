@@ -4,10 +4,15 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Cerraduras — Panel CRM</title>
 <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e1e4eb;--dim:#8b8fa3;--accent:#6c8ee0;--danger:#e0556a;--success:#4caf93;--warning:#e0b94e;--sw:240px;--nopack-bg:rgba(224,85,106,.08);}
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e1e4eb;--dim:#8b8fa3;--accent:#6c8ee0;--danger:#e0556a;--success:#4caf93;--warning:#e0b94e;--sw:240px;--nopack-bg:rgba(224,85,106,.08);--font-ui:'IBM Plex Sans',system-ui,sans-serif;--font-mono:'IBM Plex Mono',ui-monospace,monospace;--k-rpi:#e6b85c;--k-lock:#5ec2cf;--k-prox:#62c99b;--k-pres:#e0904f;--k-sw:#7d9ce8;--k-scan:#a8b2c3;--k-rpi-bg:rgba(230,184,92,.12);--k-lock-bg:rgba(94,194,207,.12);--k-prox-bg:rgba(98,201,155,.12);--k-pres-bg:rgba(224,144,79,.12);--k-sw-bg:rgba(125,156,232,.12);--k-scan-bg:rgba(168,178,195,.12);}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+.mono{font-family:var(--font-mono);letter-spacing:.2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .sidebar{width:var(--sw);min-width:var(--sw);background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 0;position:sticky;top:0;height:100vh;overflow-y:auto;z-index:10}
 .sidebar-header{padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:8px}
 .sidebar-header h2{font-size:18px}.sidebar-header .ui{font-size:12px;color:var(--dim);margin-top:4px}
@@ -65,6 +70,103 @@ tr:hover td{background:rgba(108,142,224,.05)}
 .an-cat-table .code{font-family:monospace;font-weight:700}
 /* F38: QR token display */
 .qr-token{font-family:monospace;font-size:10px;word-break:break-all;background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--accent);margin:10px 0;max-height:80px;overflow-y:auto;line-height:1.4;color:var(--accent)}
+/* ── Packs y Dispositivos (F25-UI) ───────────── */
+.fbar .grow{flex:1;min-width:220px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.legend-item{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim)}
+.legend-item i{width:8px;height:8px;border-radius:2px;background:var(--c)}
+.packs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.pack-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;transition:border-color .2s,transform .2s;animation:cardIn .45s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i)*60ms)}
+.pack-card:hover{border-color:#3a3f52;transform:translateY(-2px)}
+.pack-head{display:flex;align-items:flex-start;gap:10px}
+.pack-id{flex:1;min-width:0}
+.pack-code{font-family:var(--font-mono);font-size:11px;color:var(--dim);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-block}
+.pack-name{font-size:15px;font-weight:600;margin-top:6px}
+.room-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--accent);background:rgba(108,142,224,.13);border:1px solid rgba(108,142,224,.35);border-radius:20px;padding:3px 10px;white-space:nowrap;flex:none}
+.room-pill--none{color:var(--warning);background:rgba(224,185,78,.1);border:1px dashed rgba(224,185,78,.5)}
+.pack-sig{display:flex;gap:4px;height:14px;align-items:flex-end;padding:0 2px;animation:sigIn .5s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i)*60ms + 80ms)}
+.pack-sig i{width:4px;border-radius:1px;height:12px;opacity:.9}
+.pack-sig i:first-child{height:7px}.pack-sig i:last-child{height:9px}
+.pack-devs{list-style:none;display:flex;flex-direction:column;gap:2px;margin:0;padding:0}
+.pdev{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;border:1px solid transparent;transition:background .15s}
+.pdev:hover{background:rgba(108,142,224,.06)}
+.pdev-ic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--c);background:var(--c-bg,rgba(139,143,163,.12));flex:none}
+.pdev-ic svg{width:16px;height:16px}
+.pdev-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.pdev-lb{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pdev-id{font-size:10.5px;color:var(--dim)}
+.kchip{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.6px;color:var(--c);background:var(--c-bg);border:1px solid color-mix(in srgb,var(--c) 30%,transparent);border-radius:4px;padding:2px 6px;white-space:nowrap;flex:none}
+.pdev--empty{padding:14px 8px;text-align:center;color:var(--dim);font-size:12px;border:1px dashed var(--border);border-radius:8px}
+.pack-foot{display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);padding-top:10px;font-size:11px}
+.pack-foot .mono{color:var(--dim)}
+.pack-acts{margin-left:auto;display:flex;gap:6px}
+.kind-pills{display:flex;gap:6px;flex-wrap:wrap}
+.kind-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;color:var(--dim);background:var(--card);border:1px solid var(--border);cursor:pointer;transition:all .15s}
+.kind-pill:hover{color:var(--text);border-color:#3a3f52}
+.kind-pill.act{color:var(--c,var(--accent));border-color:var(--c,var(--accent));background:var(--c-bg,rgba(108,142,224,.12))}
+.kind-pill .mono{font-size:10px}
+.dv-group{margin-bottom:26px;animation:cardIn .4s cubic-bezier(.16,1,.3,1) both}
+.dv-group-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.dv-dot{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none;box-shadow:0 0 0 3px rgba(108,142,224,.18)}
+.dv-group-head h2{font-size:15px;font-weight:600}
+.dv-count{color:var(--dim);font-size:11px}
+.dv-bus{position:relative;display:flex;flex-direction:column;gap:10px;padding-left:22px}
+.dv-bus::before{content:'';position:absolute;left:9px;top:2px;bottom:2px;width:1px;background:linear-gradient(180deg,var(--border),rgba(42,45,58,.2));animation:railIn .6s cubic-bezier(.16,1,.3,1) both}
+.dv-group--bare .dv-bus::before{border-left:1px dashed var(--border);background:none}
+.dv-card{display:flex;gap:14px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;align-items:flex-start;position:relative;animation:cardIn .4s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i)*45ms);transition:border-color .2s,transform .2s}
+.dv-card:hover{border-color:#3a3f52;transform:translateY(-1px)}
+.dv-glyph{width:42px;height:42px;border-radius:10px;display:grid;place-items:center;flex:none;color:var(--c);background:var(--c-bg);border:1px solid color-mix(in srgb,var(--c) 28%,transparent)}
+.dv-glyph svg{width:22px;height:22px}
+.dv-body{flex:1;min-width:0}
+.dv-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;flex-wrap:wrap}
+.dv-id{font-size:10.5px;color:var(--dim);margin-top:3px}
+.dv-specs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.spec-chip{font-size:10.5px;color:var(--dim);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
+.spec-chip b{color:var(--text);font-weight:600}
+.spec-chip--bare{border-style:dashed;font-style:italic}
+.dv-side{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:none}
+.dv-acts{display:flex;gap:4px;opacity:0;transition:opacity .15s}
+.dv-card:hover .dv-acts,.dv-card:focus-within .dv-acts{opacity:1}
+.icon-btn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--dim);transition:all .15s}
+.icon-btn:hover{color:var(--text);border-color:#3a3f52}
+.icon-btn--danger:hover{color:var(--danger);border-color:var(--danger)}
+.icon-btn svg{width:14px;height:14px}
+.batt{display:inline-flex;align-items:center;gap:6px;flex:none}
+.batt svg{width:12px;height:12px;color:var(--dim)}
+.batt-track{width:34px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;display:inline-block}
+.batt-track b{display:block;height:100%;border-radius:2px;background:var(--dim);transition:width .4s cubic-bezier(.16,1,.3,1)}
+.batt em{font-style:normal;font-size:10.5px;color:var(--dim)}
+.batt--ok svg{color:var(--success)}.batt--ok .batt-track b{background:var(--success)}
+.batt--low svg{color:var(--warning)}.batt--low .batt-track b{background:var(--warning)}
+.batt--low svg,.batt--crit svg{animation:pulse 2s ease-in-out infinite}
+.batt--crit svg{color:var(--danger)}.batt--crit .batt-track b{background:var(--danger)}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:64px 20px;border:1px dashed var(--border);border-radius:14px;color:var(--dim);animation:cardIn .4s both}
+.empty-glyph{width:56px;height:56px;border-radius:14px;display:grid;place-items:center;margin-bottom:6px;color:var(--dim);background:var(--card);border:1px solid var(--border)}
+.empty-glyph svg{width:28px;height:28px}
+.empty h2{font-size:16px;color:var(--text);font-weight:600}
+.empty p{font-size:13px;max-width:42ch}
+.field--mono input{font-family:var(--font-mono);font-size:13px}
+.field-hint{font-size:11px;color:var(--dim);margin-top:4px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg-btn{padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--dim);background:var(--bg);border:1px solid var(--border);font-family:var(--font-mono);transition:all .15s}
+.seg-btn:hover{color:var(--text)}
+.seg-btn.act{color:var(--c);border-color:var(--c);background:var(--c-bg,rgba(108,142,224,.12))}
+.seg-btn[disabled]{opacity:.4;cursor:not-allowed}
+.dev-picker{max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:6px;display:flex;flex-direction:column;gap:2px}
+.chk-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .15s;background:none;border:none;color:var(--text);text-align:left;width:100%;font-size:12.5px}
+.chk-row:hover{background:rgba(108,142,224,.06)}
+.chk-row input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;flex:none}
+.chk-txt{flex:1;display:flex;flex-direction:column;font-size:12.5px;min-width:0}
+.chk-txt .mono{font-size:10.5px}
+.chk-cur{font-size:10px}
+.chk-row--add{justify-content:flex-start;border:1px dashed var(--border);margin-top:4px;color:var(--accent)}
+@keyframes cardIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes sigIn{from{opacity:0;transform:scaleX(.5);transform-origin:left}to{opacity:1;transform:scaleX(1)}}
+@keyframes railIn{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.btn:active,.seg-btn:active,.kind-pill:active,.icon-btn:active{transform:scale(.96)}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+@media (max-width:560px){.dv-card{flex-wrap:wrap}.dv-side{margin-left:0;align-items:flex-start;flex-direction:row;width:100%;justify-content:space-between}.dv-bus{padding-left:0}.dv-bus::before{display:none}}
 </style>
 </head>
 <body x-data="crm()" x-init="init()">
@@ -100,11 +202,12 @@ function crm(){return{
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,
   deviceStatus:{},deviceStatusTick:0,
+  devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',external_id:'',label:'',pack_id:null,meta:{}},
 
   async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);setInterval(()=>{this.checkAnomalyAlerts();this.computeWorkerAlerts()},15000)}catch(e){window.location.href='/panel/login'}},
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
-  async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[]}catch(e){}},
+  async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
   toastOk(m){this.toast={show:true,msg:m,type:'ok'};setTimeout(()=>this.toast.show=false,3000)},
   toastErr(m){this.toast={show:true,msg:m,type:'err'};setTimeout(()=>this.toast.show=false,4000)},
@@ -354,9 +457,225 @@ function crm(){return{
     if(s&&s.value){let v=JSON.parse(s.value);if(Array.isArray(v))this.enabledTypes=v}}
     catch(e){}
   },
-  devPage(){return'<div class="ph"><h1>🔌 Dispositivos</h1></div>';},
-  async loadDevices(){},
-  packPage(){return'<div class="ph"><h1>📦 Packs</h1><p>'+this.packs.length+'</p></div>';},
+  // ═══ Packs y Dispositivos — helpers y vistas (F25) ═══
+  DEV_KINDS:['RPI','LOCK','PROXIMITY','PRESENCE','SWITCH','SCANNER'],
+  KIND_COLOR:{RPI:'#e6b85c',LOCK:'#5ec2cf',PROXIMITY:'#62c99b',PRESENCE:'#e0904f',SWITCH:'#7d9ce8',SCANNER:'#a8b2c3'},
+  KIND_BG:{RPI:'rgba(230,184,92,.12)',LOCK:'rgba(94,194,207,.12)',PROXIMITY:'rgba(98,201,155,.12)',PRESENCE:'rgba(224,144,79,.12)',SWITCH:'rgba(125,156,232,.12)',SCANNER:'rgba(168,178,195,.12)'},
+  KIND_NAME:{RPI:'ESP32 lector QR',LOCK:'Cerradura',PROXIMITY:'Sensor puerta',PRESENCE:'Sensor presencia',SWITCH:'Interruptor luz',SCANNER:'Lector QR'},
+  KIND_META:{
+    RPI:{chip:{label:'Chip',ph:'ESP32-S3',mono:true}},
+    LOCK:{model:{label:'Modelo',ph:'WBR3/jtmspro',mono:true}},
+    PROXIMITY:{model:{label:'Modelo',ph:'MC400D',mono:true}},
+    PRESENCE:{provider:{label:'Proveedor',ph:'pending',mono:true}},
+    SWITCH:{model:{label:'Modelo',ph:'EAWCBT-J',mono:true},dp_code:{label:'DP code',ph:'switch',mono:true},note:{label:'Nota',ph:'Interruptor luz',mono:false}},
+    SCANNER:{model:{label:'Modelo',ph:'GM65',mono:true},interface:{label:'Interfaz',ph:'UART-RX2/TX2',mono:true}}
+  },
+  KIND_HINT:{RPI:'Lector de QR sobre ESP32, controla la cerradura',LOCK:'Cerradura electrónica (Tuya)',PROXIMITY:'Sensor magnético de puerta (MC400D)',PRESENCE:'Sensor de presencia interior',SWITCH:'Protector inteligente de luz (EAWCBT-J)',SCANNER:'Lector QR GM65 conectado al ESP32'},
+  glyph(k){
+    const s='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+    if(k==='RPI')return s+'<rect x="7" y="7" width="10" height="10" rx="1"/><path d="M12 7V4M12 20v-3M7 12H4M20 12h-3M10 7 8 5M14 7l2-2M10 17l-2 2M14 17l2 2"/></svg>';
+    if(k==='LOCK')return s+'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.3"/></svg>';
+    if(k==='PROXIMITY')return s+'<rect x="4" y="4" width="9" height="16" rx="1"/><path d="M13 12h7"/><path d="M16 9v6"/></svg>';
+    if(k==='PRESENCE')return s+'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="10.5" r="2"/><path d="M7.5 17.5c.7-2.2 2.5-3.3 4.5-3.3s3.8 1.1 4.5 3.3"/></svg>';
+    if(k==='SWITCH')return s+'<rect x="3" y="9" width="18" height="6" rx="3"/><circle cx="16.5" cy="12" r="2"/></svg>';
+    if(k==='SCANNER')return s+'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M7 12h10M12 7v10"/></svg>';
+    return s+'<circle cx="12" cy="12" r="8"/></svg>';
+  },
+  boltSvg(){return'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>'},
+  crosshairSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>'},
+  pencilSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>'},
+  trashSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>'},
+  boxSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>'},
+  plugSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M7 8h10v4a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>'},
+  kindChip(k){let c=this.KIND_COLOR[k]||'#8b8fa3',bg=this.KIND_BG[k]||'rgba(139,143,163,.12)';return'<span class="kchip" style="--c:'+c+';--c-bg:'+bg+'">'+k+'</span>'},
+  battHtml(pct,showPct){
+    if(pct===null||pct===undefined){
+      return showPct?'<span class="batt batt--unknown" title="Sin datos de batería">'+this.boltSvg()+'<i class="batt-track"></i><em class="mono">--</em></span>':'';
+    }
+    let st=pct>20?'ok':(pct>10?'low':'crit');
+    return'<span class="batt batt--'+st+'" title="Batería '+pct+'%">'+this.boltSvg()+'<i class="batt-track"><b style="width:'+pct+'%"></b></i>'+(showPct?'<em class="mono">'+pct+'%</em>':'')+'</span>';
+  },
+  specChips(k,meta){
+    let m=this.KIND_META[k]||{};let o=meta||{};let out=[];
+    for(let key in m){
+      let v=o[key];
+      if(v===undefined||v===null||v==='')continue;
+      out.push('<span class="spec-chip mono">'+key+': <b>'+this.esc(v)+'</b></span>');
+    }
+    return out.length?out.join(''):'<span class="spec-chip spec-chip--bare">Sin ficha técnica</span>';
+  },
+  packSigHtml(pack){
+    let devs=pack.devices||[];
+    if(!devs.length)return'';
+    return'<div class="pack-sig" role="img" aria-label="Composición: '+devs.length+' dispositivos">'+devs.map(d=>'<i style="background:'+(this.KIND_COLOR[d.kind]||'#8b8fa3')+'" title="'+this.esc(d.kind)+'"></i>').join('')+'</div>';
+  },
+  packDevRow(d){
+    let c=this.KIND_COLOR[d.kind]||'#8b8fa3',bg=this.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
+    return'<li class="pdev"><span class="pdev-ic" style="--c:'+c+';--c-bg:'+bg+'">'+this.glyph(d.kind)+'</span><span class="pdev-txt"><span class="pdev-lb">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+'</span><span class="pdev-id mono">'+this.esc(d.external_id||'')+'</span></span>'+this.kindChip(d.kind)+this.battHtml(d.battery_pct,false)+'</li>';
+  },
+  devCard(d,idx){
+    let c=this.KIND_COLOR[d.kind]||'#8b8fa3',bg=this.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
+    let batt='';
+    if(d.battery_pct!==null&&d.battery_pct!==undefined)batt=this.battHtml(d.battery_pct,true);
+    else if(d.kind==='PROXIMITY')batt=this.battHtml(null,true);
+    let loc=d.kind==='RPI'?'<button class="icon-btn" title="Localizar (parpadeo LED)" @click="identifyDevice('+d.id+')">'+this.crosshairSvg()+'</button>':'';
+    let acts='<div class="dv-acts">'+loc+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
+    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
+  },
+  deriveDevices(){
+    let out=[];
+    (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
+    this.devices=out;
+  },
+  async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}},
+  packPage(){
+    let q=(this.pkQ||'').toLowerCase();
+    let packs=this.packs.filter(p=>{
+      if(!q)return true;
+      let room=this.roomCodeById(p.room_id)||'';
+      return (p.name||'').toLowerCase().includes(q)||(p.code||'').toLowerCase().includes(q)||room.toLowerCase().includes(q);
+    });
+    packs.sort((a,b)=>{
+      let ar=a.room_id?this.roomCodeById(a.room_id):'zzz';
+      let br=b.room_id?this.roomCodeById(b.room_id):'zzz';
+      return ar.localeCompare(br)||(a.name||'').localeCompare(b.name||'');
+    });
+    let legend='<div class="legend">'+this.DEV_KINDS.map(k=>'<span class="legend-item" style="--c:'+this.KIND_COLOR[k]+'"><i></i>'+k+'</span>').join('')+'</div>';
+    let body=packs.length
+      ?'<div class="packs-grid">'+packs.map((p,i)=>{
+        let room=p.room_id?'<span class="room-pill">'+this.esc(this.roomCodeById(p.room_id))+'</span>':'<span class="room-pill room-pill--none" title="Asigna este pack desde la vista Habitaciones">Sin asignar</span>';
+        let devs=p.devices||[];
+        let list=devs.length?'<ul class="pack-devs">'+devs.map(d=>this.packDevRow(d)).join('')+'</ul>':'<div class="pdev pdev--empty">Ningún dispositivo en este pack · <button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Añadir</button></div>';
+        let up=(p.updated_at||'').replace('T',' ').substring(0,16);
+        return'<article class="pack-card" style="--i:'+i+'"><header class="pack-head"><div class="pack-id"><span class="pack-code mono">'+this.esc(p.code)+'</span><h3 class="pack-name">'+this.esc(p.name)+'</h3></div>'+room+'</header>'+this.packSigHtml(p)+list+'<footer class="pack-foot"><span class="mono">'+devs.length+' dispositivo'+(devs.length===1?'':'s')+'</span><span class="dim">'+up+'</span><span class="pack-acts"><button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Editar</button><button class="btn btn-d btn-xs" @click="deletePack('+p.id+')">Eliminar</button></span></footer></article>';
+      }).join('')+'</div>'
+      :'<div class="empty"><div class="empty-glyph">'+this.boxSvg()+'</div><h2>No hay packs todavía</h2><p>Crea tu primer pack para agrupar los dispositivos de una habitación.</p><button class="btn btn-p" @click="openPackForm()">+ Nuevo pack</button></div>';
+    return'<div class="ph"><h1>Packs de dispositivos</h1><p>Agrupaciones de hardware instalado por habitación</p></div>'
+      +'<div class="fbar"><input class="grow" type="search" placeholder="Buscar por nombre, código o habitación..." x-model="pkQ">'+legend+'<button class="btn btn-p" @click="openPackForm()">+ Nuevo pack</button></div>'+body;
+  },
+  devPage(){
+    let q=(this.devQ||'').toLowerCase();
+    let devs=this.devices.filter(d=>{
+      if(this.devKind!=='ALL'&&d.kind!==this.devKind)return false;
+      if(!q)return true;
+      let room=this.roomCodeById(d.room_id)||'';
+      return (d.label||'').toLowerCase().includes(q)||(d.external_id||'').toLowerCase().includes(q)||String(d.id).includes(q)||room.toLowerCase().includes(q);
+    });
+    let map={},groups=[];
+    devs.forEach(d=>{
+      let key=d.pack_id?('p'+d.pack_id):'none';
+      if(!map[key]){map[key]={pack_id:d.pack_id,pack_name:d.pack_id?d.pack_name:'Sin pack',room_id:d.room_id,devs:[]};groups.push(map[key])}
+      map[key].devs.push(d);
+    });
+    let pills='<div class="kind-pills">'+(['ALL'].concat(this.DEV_KINDS)).map(k=>{
+      let count=k==='ALL'?this.devices.length:this.devices.filter(d=>d.kind===k).length;
+      let st=k==='ALL'?'':';--c:'+this.KIND_COLOR[k]+';--c-bg:'+this.KIND_BG[k];
+      return'<button class="kind-pill'+(this.devKind===k?' act':'')+'" style="'+st+'" aria-pressed="'+(this.devKind===k)+'" @click="devKind=\''+k+'\'">'+(k==='ALL'?'Todos':k)+' <span class="mono">'+count+'</span></button>';
+    }).join('')+'</div>';
+    let groupsHtml=groups.length?groups.map((g,gi)=>{
+      let head='<header class="dv-group-head"><i class="dv-dot" style="--c:'+(g.pack_id?(this.KIND_COLOR[g.devs[0].kind]||'#6c8ee0'):'#8b8fa3')+'"></i><h2>'+this.esc(g.pack_name)+'</h2>'+(g.room_id?'<span class="room-pill">'+this.esc(this.roomCodeById(g.room_id))+'</span>':'')+'<span class="dv-count mono">'+g.devs.length+'</span></header>';
+      return'<section class="dv-group'+(g.pack_id?'':' dv-group--bare')+'">'+head+'<div class="dv-bus">'+g.devs.map((d,i)=>this.devCard(d,gi*100+i)).join('')+'</div></section>';
+    }).join(''):'';
+    let body=devs.length?groupsHtml:(this.devices.length?'<div class="empty"><h2>Sin resultados</h2><p>Ajusta la búsqueda o el filtro de tipo.</p></div>':'<div class="empty"><div class="empty-glyph">'+this.plugSvg()+'</div><h2>Aún no hay dispositivos</h2><p>Registra el primer dispositivo y asígnalo a un pack.</p><button class="btn btn-p" @click="openDeviceForm()">+ Nuevo dispositivo</button></div>');
+    return'<div class="ph"><h1>Dispositivos</h1><p>Inventario físico por pack y habitación</p></div>'
+      +'<div class="fbar"><input class="grow" type="search" placeholder="Buscar por etiqueta, ID externo o habitación..." x-model="devQ">'+pills+'<button class="btn btn-p" @click="openDeviceForm()">+ Nuevo dispositivo</button></div>'+body;
+  },
+  openPackForm(id){
+    let p=id?this.packs.find(x=>x.id===id):null;
+    this.pkForm={name:p?p.name:'',code:p?p.code:''};
+    this.pkSel=(p&&p.devices)?p.devices.map(d=>d.id):[];
+    let that=this;
+    let rows=this.devices.length?this.devices.map(d=>{
+      let c=that.KIND_COLOR[d.kind]||'#8b8fa3',bg=that.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
+      let cur=d.pack_id?'en '+that.esc(d.pack_code||d.pack_name):'sin pack';
+      let checked=that.pkSel.indexOf(d.id)>=0;
+      return'<label class="chk-row"><input type="checkbox"'+(checked?' checked':'')+' @change="togglePkDev('+d.id+')"><span class="pdev-ic" style="--c:'+c+';--c-bg:'+bg+'">'+that.glyph(d.kind)+'</span><span class="chk-txt"><span>'+that.esc(d.label||that.KIND_NAME[d.kind]||d.kind)+'</span><span class="mono dim">'+d.kind+' · '+that.esc(d.external_id)+'</span></span><span class="chk-cur dim">'+cur+'</span></label>';
+    }).join(''):'<div class="pdev pdev--empty">No hay dispositivos registrados. Créalos desde la vista Dispositivos.</div>';
+    rows+='<button type="button" class="chk-row chk-row--add" @click="openDeviceForm(null,'+(p?p.id:0)+')"><span class="pdev-ic" style="--c:var(--accent);--c-bg:rgba(108,142,224,.12)">＋</span><span class="chk-txt"><span>Añadir dispositivo nuevo…</span><span class="mono dim">Se creará dentro de este pack</span></span></button>';
+    let selCount=this.pkSel.length?' <span class="mono dim">('+this.pkSel.length+' seleccionado'+(this.pkSel.length===1?')':')s')+'</span>':'';
+    this.modal.content='<h2>'+(p?'Editar pack':'Nuevo pack')+'</h2>'
+      +'<div class="field"><label for="pkf_name">Nombre</label><input id="pkf_name" x-model="pkForm.name" placeholder="Pack recepción" autocomplete="off"><p class="field-hint">Nombre visible en todo el panel.</p></div>'
+      +'<div class="field field--mono"><label for="pkf_code">Código</label><input id="pkf_code" x-model="pkForm.code" placeholder="PK_RECEPCION" autocomplete="off"><p class="field-hint">Se autocompleta desde el nombre si se deja vacío. Único.</p></div>'
+      +'<div class="field"><label>Dispositivos del pack'+selCount+'</label><div class="dev-picker">'+rows+'</div><p class="field-hint">Marca los dispositivos que pertenecen a este pack. Un dispositivo solo puede estar en un pack: se moverá al guardar.</p></div>'
+      +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="savePack('+(p?p.id:0)+')">Guardar pack</button></div>';
+    this.modal.show=true;
+    if(this.$nextTick){this.$nextTick(()=>{let el=document.getElementById('pkf_name');if(el)el.focus()})}
+  },
+  togglePkDev(id){let i=this.pkSel.indexOf(id);if(i>=0)this.pkSel.splice(i,1);else this.pkSel.push(id)},
+  async savePack(id){
+    let name=this.pkForm.name.trim();let code=this.pkForm.code.trim()||name.toUpperCase().replace(/[^A-Za-z0-9]+/g,'_');
+    if(!name){this.toastErr('El nombre es obligatorio');return}
+    try{
+      let packId=id;
+      let body={name:name,code:code};
+      if(id){await this.api('/api/v1/device-packs/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+      else{let d=await this.api('/api/v1/device-packs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});packId=d.id}
+      let prev=(id?((this.packs.find(x=>x.id===id)||{}).devices||[]):[]).map(x=>x.id);
+      for(let did of prev){if(this.pkSel.indexOf(did)<0){await this.api('/api/v1/devices/'+did,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pack_id:null})})}}
+      for(let did of this.pkSel){if(prev.indexOf(did)<0){await this.api('/api/v1/devices/'+did,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pack_id:packId})})}}
+      this.modal.show=false;await this.loadPacks();this.toastOk(id?'Pack actualizado':'Pack creado');
+    }catch(e){this.toastErr(e.message)}
+  },
+  async deletePack(id){
+    if(!confirm('¿Eliminar el pack? Los dispositivos quedarán sin asignar.'))return;
+    try{await this.api('/api/v1/device-packs/'+id,{method:'DELETE'});this.modal.show=false;await this.loadPacks();this.toastOk('Pack eliminado')}
+    catch(e){this.toastErr(e.message)}
+  },
+  openDeviceForm(id,presetPackId){
+    let d=id?this.devices.find(x=>x.id===id):null;
+    let kind=d?d.kind:'RPI';
+    this.devForm={kind:kind,external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),meta:d&&d.meta?Object.assign({},d.meta):{}};
+    let that=this;
+    let seg=this.DEV_KINDS.map(k=>{
+      let dis=d?' disabled':'';
+      return'<button type="button" class="seg-btn'+(kind===k?' act':'')+'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
+    }).join('');
+    let packOpts='<option value="">Sin pack</option>'+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
+    let metaBlocks=this.DEV_KINDS.map(k=>{
+      let fields=that.KIND_META[k]||{};
+      return Object.keys(fields).map(key=>{
+        let f=fields[key];
+        return'<div class="field'+(f.mono?' field--mono':'')+'" x-show="devForm.kind===\''+k+'\'"><label for="dvf_'+k+'_'+key+'">'+f.label+'</label><input id="dvf_'+k+'_'+key+'" x-model="devForm.meta.'+key+'" placeholder="'+f.ph+'" autocomplete="off"></div>';
+      }).join('');
+    }).join('');
+    let hint=d?'<p class="field-hint">El tipo no se puede cambiar: es la identidad física del hardware.</p>':'<p class="field-hint">'+that.KIND_HINT[kind]+'</p>';
+    this.modal.content='<h2>'+(d?'Editar dispositivo':'Nuevo dispositivo')+'</h2>'
+      +'<div class="field"><label>Tipo de dispositivo</label><div class="seg" role="radiogroup" aria-label="Tipo de dispositivo">'+seg+'</div>'+hint+'</div>'
+      +'<div class="field field--mono"><label for="dvf_ext">ID externo</label><input id="dvf_ext" x-model="devForm.external_id" placeholder="wbr3-2f01" autocomplete="off"><p class="field-hint">Identificador físico del dispositivo (chip, MAC o ID de Tuya).</p></div>'
+      +'<div class="field"><label for="dvf_label">Etiqueta</label><input id="dvf_label" x-model="devForm.label" placeholder="Cerradura puerta 201" autocomplete="off"><p class="field-hint">Opcional. Nombre legible para el personal.</p></div>'
+      +'<div class="field"><label for="dvf_pack">Pack</label><select id="dvf_pack" x-model="devForm.pack_id">'+packOpts+'</select></div>'
+      +'<div id="dv-meta-fields">'+metaBlocks+'</div>'
+      +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveDevice('+(d?d.id:0)+')">Guardar dispositivo</button></div>';
+    this.modal.show=true;
+    if(this.$nextTick){this.$nextTick(()=>{let el=document.getElementById('dvf_ext');if(el)el.focus()})}
+  },
+  async saveDevice(id){
+    let f=this.devForm,k=f.kind;
+    if(!f.external_id||!f.external_id.trim()){this.toastErr('El ID externo es obligatorio');return}
+    let meta={};
+    Object.keys(this.KIND_META[k]||{}).forEach(key=>{let v=(f.meta||{})[key];if(v!==undefined&&v!==null&&String(v).trim()!=='')meta[key]=String(v).trim()});
+    try{
+      if(id){
+        let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,meta:meta};
+        await this.api('/api/v1/devices/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      }else{
+        let body={kind:k,external_id:f.external_id.trim(),pack_id:f.pack_id?parseInt(f.pack_id):null,meta:meta};
+        let d=await this.api('/api/v1/devices/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(f.label&&f.label.trim()){await this.api('/api/v1/devices/'+d.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:f.label.trim()})})}
+      }
+      this.modal.show=false;await this.loadPacks();this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
+    }catch(e){this.toastErr(e.message)}
+  },
+  async deleteDevice(id){
+    if(!confirm('¿Eliminar este dispositivo?'))return;
+    try{await this.api('/api/v1/devices/'+id,{method:'DELETE'});await this.loadPacks();this.toastOk('Dispositivo eliminado')}
+    catch(e){this.toastErr(e.message)}
+  },
+  async identifyDevice(id){
+    let d=this.devices.find(x=>x.id===id);if(!d)return;
+    try{await this.api('/api/v1/devices/identify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({external_id:d.external_id,state:true})});this.toastOk('Localizando '+this.esc(d.label||d.kind)+'…')}
+    catch(e){this.toastErr(e.message)}
+  },
   settingsPage(){return'<div class="ph"><h1>⚙️ Configuración</h1></div>';},
   async loadSettings(){},
   async loadDeviceStatus(){}
