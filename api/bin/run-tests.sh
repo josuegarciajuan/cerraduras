@@ -2342,6 +2342,32 @@ http_test GET  /api/v1/workers/inside  200  "Workers inside after close"  --key 
 # =============================================================================
 
 # =============================================================================
+
+# =============================================================================
+# BLOCK 30 — F39: Identificación de fábrica integrada
+# Trazabilidad: RF-39.1—RF-39.6, TSK-39.07
+# =============================================================================
+block "BLOCK 30 — F39: Identificación de fábrica integrada"
+FACTORY_KEY=$(get_key FACTORY-DEVICE)
+if [ -z "$FACTORY_KEY" ]; then
+  skip "F39 announcement HTTP tests" "FACTORY-DEVICE key is not available in seeds/dev_api_keys.txt"
+else
+  FACTORY_CHIP="f39$(date +%s%N | cut -c1-9)"
+  http_test POST /api/v1/factory-devices/announce 400 "Factory announcement rejects invalid chip before persistence" --key FACTORY-DEVICE --body '{"chip_id":"not-a-chip"}'
+  http_test POST /api/v1/factory-devices/announce 201 "Factory announcement creates PENDING" --key FACTORY-DEVICE --body "{\"chip_id\":\"$FACTORY_CHIP\"}"
+  http_test POST /api/v1/factory-devices/announce 200 "Factory announcement is idempotent" --key FACTORY-DEVICE --body "{\"chip_id\":\"$FACTORY_CHIP\"}"
+  FACTORY_ID=$(curl -s -H "X-API-Key: $ADMIN_KEY" "${API_BASE}/api/v1/factory-devices?status=PENDING" | python3 -c "import sys,json; print(next((x['id'] for x in json.load(sys.stdin)['data'] if x['chip_id']=='$FACTORY_CHIP'),' '))" 2>/dev/null)
+  if [ -n "$FACTORY_ID" ] && [ "$FACTORY_ID" != " " ]; then
+    http_test POST "/api/v1/factory-devices/$FACTORY_ID/claim" 403 "Announcement client cannot claim factory device" --key FACTORY-DEVICE --body '{}'
+    http_test POST "/api/v1/factory-devices/$FACTORY_ID/claim" 200 "Claim factory device" --key ADMIN-CLI --body '{}'
+    http_test POST "/api/v1/factory-devices/$FACTORY_ID/claim" 200 "Claim is idempotent" --key ADMIN-CLI --body '{}'
+    http_test POST /api/v1/factory-devices/announce 200 "Announcement preserves CLAIMED device" --key FACTORY-DEVICE --body "{\"chip_id\":\"$FACTORY_CHIP\"}"
+  else
+    fail "Factory device claim setup" "Created chip_id not found in PENDING list"
+  fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

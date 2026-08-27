@@ -97,7 +97,9 @@ use App\Http\Controllers\TimeSlotController;
 use App\Http\Controllers\WorkerRoleController;
 use App\Http\Controllers\WorkerController;
 use App\Http\Controllers\WorkerQrController;
+use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
+use App\Infrastructure\Persistence\FactoryDeviceRepository;
 use App\Support\Config;
 use App\Support\Idempotency\IdempotencyStore;
 use App\Support\Logger\Logger;
@@ -652,6 +654,10 @@ $workerService       = new WorkerService(
     $roomRepo
 );
 $workerController    = new WorkerController($workerService);
+
+// --- F39: Factory identification (isolated from operational devices) ---
+$factoryDeviceService = new \App\Domain\FactoryDevices\FactoryDeviceService(new FactoryDeviceRepository($pdo));
+$factoryDeviceController = new FactoryDeviceController($factoryDeviceService);
 
 // --- F38: Worker QR Validate ---
 
@@ -1478,6 +1484,11 @@ $router->delete('/api/v1/workers/{id}',       [$workerController, 'deactivate'],
 $router->post('/api/v1/workers/{id}/qr',    [$workerController, 'regenerateQr'],  $authFactory(['workers:write']));
 $router->get('/api/v1/workers/{id}/sessions', [$workerController, 'sessions'],      $authFactory(['workers:read']));
 $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],   $authFactory(['qr:validate']));
+
+// Factory firmware announces only its eFuse identity; no room or operational action.
+$router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce'], $authFactory(['factory:announce']));
+$router->get('/api/v1/factory-devices', [$factoryDeviceController, 'list'], $authFactory(['audit:read']));
+$router->post('/api/v1/factory-devices/{id}/claim', [$factoryDeviceController, 'claim'], $authFactory(['factory:claim']));
 
 // --- CRM Panel Controller ---
 $crmUserRepo    = new CrmUserRepository($pdo);

@@ -180,7 +180,8 @@ tr:hover td{background:rgba(108,142,224,.05)}
     <a :class="{active:p==='st'}" @click="nav('st')"><span class="ic">⏱️</span>Estancias</a>
     <a :class="{active:p==='qr'}" @click="nav('qr')"><span class="ic">🎫</span>QRs</a>
     <a :class="{active:p==='dbts'}" @click="nav('dbts')"><span class="ic">💰</span>Deudas</a>
-    <a :class="{active:p==='w'}" @click="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
+     <a :class="{active:p==='w'}" @click="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
+     <a :class="{active:p==='fd'}" @click="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
     <a :class="{active:p==='wr'}" @click="nav('wr')"><span class="ic">🏷️</span>Roles</a>
     <a :class="{active:p==='mon'}" @click="nav('mon')"><span class="ic">📋</span>Monitor</a>
     <a :class="{active:p==='us'}" @click="nav('us')"><span class="ic">👥</span>Usuarios</a>
@@ -198,7 +199,7 @@ tr:hover td{background:rgba(108,142,224,.05)}
 <script>
 function crm(){return{
   user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
-  workers:[],workerRoles:[],workersInside:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
+   workers:[],workerRoles:[],workersInside:[],factoryDevices:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,
   deviceStatus:{},deviceStatusTick:0,
@@ -208,7 +209,7 @@ function crm(){return{
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
   async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
-  nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
+   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='fd')this.loadFactoryDevices();if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
   toastOk(m){this.toast={show:true,msg:m,type:'ok'};setTimeout(()=>this.toast.show=false,3000)},
   toastErr(m){this.toast={show:true,msg:m,type:'err'};setTimeout(()=>this.toast.show=false,4000)},
   async logout(){await fetch('/api/v1/crm/logout',{method:'POST'});window.location.href='/panel/login'},
@@ -232,7 +233,11 @@ function crm(){return{
     this.workerAlerts=alerts;this.workerAlertCount=alerts.length;
   },
 
-  render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
+   render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'fd':return this.factoryPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
+
+    async loadFactoryDevices(){try{let d=await this.api('/api/v1/factory-devices?status=ALL');this.factoryDevices=d.data||[]}catch(e){this.toastErr(e.message)}},
+    async claimFactoryDevice(id){try{await this.api('/api/v1/factory-devices/'+id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});this.toastOk('Equipo reclamado');await this.loadFactoryDevices();await this.loadPacks()}catch(e){this.toastErr(e.message)}},
+    factoryPage(){let that=this;return'<div class="ph"><h1>🏭 Identificación de fábrica</h1><p>Equipos anunciados antes del montaje · '+this.factoryDevices.length+'</p></div><table><tr><th>chip_id</th><th>Estado</th><th>Dispositivo</th><th>Primer anuncio</th><th>Último anuncio</th><th></th></tr>'+this.factoryDevices.map(function(d){return'<tr><td><code>'+that.esc(d.chip_id)+'</code></td><td>'+that.statusBadge(d.status)+'</td><td>'+(d.device_id?'<code>RPI #'+d.device_id+'</code>':'<span class="dim">—</span>')+'</td><td>'+that.esc(d.first_announced_at)+'</td><td>'+that.esc(d.last_announced_at)+'</td><td>'+(d.status==='PENDING'?'<button class="btn btn-p btn-sm" @click="claimFactoryDevice('+d.id+')">Reclamar</button>':(d.device_id?'<button class="btn btn-o btn-sm" @click="nav(\'dv\')">Asignar pack</button>':'<span class="dim">Reclamado por '+that.esc(d.claimed_by||'—')+'</span>'))+'</td></tr>'}).join('')+'</table>'},
 
   // ── WORKERS PAGE ──
   workersPage(){
@@ -527,7 +532,7 @@ function crm(){return{
     (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
     this.devices=out;
   },
-  async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}},
+   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}if(!this.factoryDevices.length)await this.loadFactoryDevices();let unassigned=this.factoryDevices.filter(x=>x.device_id).map(x=>({id:x.device_id,room_id:null,pack_id:null,kind:'RPI',external_id:x.chip_id,label:'RPI '+x.chip_id,meta:{source:'factory_claim'},battery_pct:null}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
   packPage(){
     let q=(this.pkQ||'').toLowerCase();
     let packs=this.packs.filter(p=>{

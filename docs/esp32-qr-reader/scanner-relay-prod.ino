@@ -62,6 +62,11 @@ const char* API_KEY      = "8974517de1cfb1c3e6e8f2473c5f34a4cbd0252cb52ff6e1"; /
 #define IDENTIFY_PIN          4     // GPIO4, pulsador N.O. a GND
 #define IDENTIFY_DEBOUNCE_MS  50    // antirrebote
 
+// ── Fase 39: anuncio de inventario de fábrica ───────────────────────────────
+// El backend conserva el estado autoritativo; estos valores solo viven en RAM.
+#define FACTORY_ANNOUNCE_RETRY_MS   30000UL
+#define FACTORY_ANNOUNCE_TIMEOUT_MS 1000
+
 // ── Globales ──────────────────────────────────────────────────────────────
 EspUsbHost usb;
 String     scanned;
@@ -78,6 +83,11 @@ bool          relayPulsing = false;
 unsigned long ledOffAt = 0;
 unsigned long wifiDownSince = 0;
 
+// ── Fase 39: scheduler de anuncio integrado (efímero por arranque) ─────────
+bool          factoryAnnouncementEnabled = true;
+bool          factoryAnnouncementInFlight = false;
+unsigned long factoryNextAttemptAt = 0;
+
 // Identify button state
 bool       lastIdentifyState = HIGH;
 bool       identifyPending   = false;
@@ -93,6 +103,45 @@ String chipId() {
            (uint8_t)(mac >> 40), (uint8_t)(mac >> 32), (uint8_t)(mac >> 24),
            (uint8_t)(mac >> 16), (uint8_t)(mac >> 8),  (uint8_t)(mac));
   return String(buf);
+}
+
+// ── Fase 39: anunciar identidad eFuse sin afectar la operación productiva ──
+void announceFactoryDevice(unsigned long now) {
+  if (!factoryAnnouncementEnabled || factoryAnnouncementInFlight ||
+      WiFi.status() != WL_CONNECTED || now < factoryNextAttemptAt) {
+    return;
+  }
+
+  factoryAnnouncementInFlight = true;
+  factoryNextAttemptAt = now + FACTORY_ANNOUNCE_RETRY_MS;
+
+  String body;
+  body.reserve(64);
+  body = "{\"chip_id\":\"" + chipId() + "\"}";
+
+  HTTPClient http;
+  http.begin(String(API_BASE_URL) + "/api/v1/factory-devices/announce");
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", API_KEY);
+  http.setTimeout(FACTORY_ANNOUNCE_TIMEOUT_MS);
+
+  unsigned long startedAt = millis();
+  int code = http.POST(body);
+  String response = http.getString();
+  http.end();
+  factoryAnnouncementInFlight = false;
+
+  if (code >= 200 && code < 300 && response.indexOf("\"status\":\"CLAIMED\"") >= 0) {
+    factoryAnnouncementEnabled = false;
+    Serial.printf("[FACTORY] chip_id=%s CLAIMED (%lu ms); anuncios pausados hasta reinicio\n",
+                  chipId().c_str(), millis() - startedAt);
+  } else if (code >= 200 && code < 300 && response.indexOf("\"status\":\"PENDING\"") >= 0) {
+    Serial.printf("[FACTORY] chip_id=%s PENDING (%lu ms); reintento en %lu ms\n",
+                  chipId().c_str(), millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);
+  } else {
+    Serial.printf("[FACTORY] anuncio HTTP %d (%lu ms); reintento en %lu ms\n",
+                  code, millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);
+  }
 }
 
 // ── Feedback acústico: pulso corto de relé (clic audible, no abre) ──────────
@@ -705,6 +754,10 @@ void loop() {
   } else {
     wifiDownSince = 0;
   }
+
+  // ── Fase 39: inventario auxiliar, después de QR/USB/heartbeat/identify ──
+  // HTTPClient usa el timeout corto mínimo disponible; no hay delay ni bucle de espera.
+  announceFactoryDevice(now);
 
   yield();  // Fase 1: non-blocking (antes era delay(1))
 }

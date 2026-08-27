@@ -1104,3 +1104,116 @@ if ($value === PresenceEvent::VALUE_CLOSED) {
 - Los endpoints existentes de QR guest no se modifican
 - El comportamiento del huésped no cambia
 - Los workers no tienen impacto en time slots ni facturación
+
+---
+
+# Fase 39: Identificación de fábrica integrada en ESP32 productivo
+
+## 1. Alcance y principio de integración
+
+F39 modifica exclusivamente el sketch productivo
+`docs/esp32-qr-reader/scanner-relay-prod.ino`. Se elimina el concepto de
+firmware, modo de ejecución o sketch aislado de fábrica. La identificación es
+una responsabilidad auxiliar dentro del `loop()` existente y coexiste con QR,
+USB Host, relé, GPIO4/identify, watchdog, heartbeat y command queue.
+
+La integración no bifurca el arranque ni condiciona la operación de cerradura:
+el flujo WiFi existente (NVS + WiFiManager) permanece intacto y, cuando informa
+conectividad, habilita el scheduler de anuncio F39.
+
+## 2. Identidad estable
+
+`chip_id` se calcula en cada arranque desde `ESP.getEfuseMac()` como 12 dígitos
+hexadecimales lowercase sin separadores. Es la clave natural de
+`factory_devices` y coincide con `devices.external_id` del RPI que crea el
+claim. No se almacena como identidad mutable ni se deduce de WiFi.
+
+## 3. Máquina de estados no bloqueante en el sketch
+
+Se añaden estado efímero de RAM y timestamps, por ejemplo:
+
+```text
+factoryAnnouncementEnabled = true     // se reinicia a true en cada boot
+factoryAnnouncementInFlight = false
+factoryNextAttemptAt = 0
+```
+
+Flujo:
+
+```text
+setup():
+  ejecutar setup productivo existente, incluido WiFi/NVS/WiFiManager
+  calcular chip_id e inicializar scheduler F39 (sin consultar NVS de claim)
+
+loop():
+  ejecutar el loop productivo existente en su orden actual
+  si WiFi conectado y factoryAnnouncementEnabled y now >= factoryNextAttemptAt:
+      iniciar/realizar un intento acotado de announce
+      programar próximo intento, incluso ante error transportable
+      si respuesta válida status=PENDING: mantener enabled=true
+      si respuesta válida status=CLAIMED: factoryAnnouncementEnabled=false
+  yield/watchdog y resto de tareas continúan normalmente
+```
+
+El intento debe tener timeout acotado y no usar `delay()` ni bucles de espera.
+Si la librería HTTP disponible no permite una operación incremental real, el
+diseño de implementación debe usar el mínimo timeout soportado y preservar el
+presupuesto de loop; no se aceptan reintentos internos prolongados. Errores de
+red o JSON inválido solo cambian `factoryNextAttemptAt` y se registran en Serial.
+
+`CLAIMED` solo apaga `factoryAnnouncementEnabled` en RAM. No se escribe una
+bandera `factory_claimed` en NVS: cada boot, reflasheo o NVS wipe vuelve a
+consultar al backend mediante `announce`, que es el árbitro del estado.
+
+## 4. Modelo persistente y backend autoritativo
+
+```text
+factory_devices
+  id, chip_id UNIQUE NOT NULL, status PENDING|CLAIMED,
+  first_announced_at, last_announced_at,
+  claimed_at NULL, claimed_by NULL, device_id NULL,
+  created_at, updated_at
+```
+
+`announce(chip_id)` realiza insert-or-update atómico: inserta `PENDING` en la
+primera aceptación; después actualiza solo `last_announced_at`. Cuando el
+registro ya es `CLAIMED`, conserva status, auditoría y vínculo RPI. Ningún dato
+local del ESP32 puede rebajar o reemplazar ese estado.
+
+## 5. Claim manual y panel
+
+El panel lista `PENDING`, muestra `chip_id` y fechas, y expone una acción
+manual de claim. En una única transacción el backend: verifica el registro,
+cambia `PENDING → CLAIMED`, fija actor/fecha, crea o vincula exactamente un
+`devices` de tipo `RPI` con `external_id=chip_id`, `pack_id=null` y
+`room_id=null`, y audita la acción. No hay asociación automática a pack o
+habitación; esa configuración pertenece a fases operativas posteriores.
+
+## 6. Concurrencia, errores y no regresión
+
+- La unicidad de `chip_id` y el upsert protegen anuncios concurrentes y reintentos.
+- Claim y anuncio concurrentes preservan `CLAIMED`; un claim repetido es idempotente.
+- El scheduler se ejecuta después de que el código existente haya tenido oportunidad
+  de atender USB/QR y sus tareas periódicas, sin retornar prematuramente del loop.
+- F39 no modifica los contratos ni la semántica de QR, relé, GPIO4, watchdog,
+  heartbeats, command queue, sensores, rooms o stays.
+
+## 7. Seguridad y trazabilidad
+
+El endpoint de anuncio usa la autenticación de dispositivo existente y claim
+requiere autorización administrativa. No se añade una credencial de fábrica
+distinta al sketch. El log de auditoría incluye `chip_id`, estado previo/nuevo,
+actor y timestamp.
+
+## 8. Archivos previstos
+
+| Archivo | Cambio |
+|---------|--------|
+| `docs/esp32-qr-reader/scanner-relay-prod.ino` | `chip_id` eFuse + scheduler F39 no bloqueante integrado |
+| `api/migrations/0046_factory_devices.sql` | Registro `factory_devices` y vínculo RPI |
+| `api/src/Domain/FactoryDevices/*` | Entidad, servicio y repositorio idempotentes |
+| `api/src/Http/Controllers/FactoryDeviceController.php` | Anuncio, listado y claim |
+| `api/public/index.php` | Rutas y autorización |
+| `api/public/panel/index.html` | Cola `PENDING` y claim explícito |
+| `api/tests/Unit/FactoryDeviceTest.php` | Dominio, contrato firmware y regresión |
+| `api/bin/run-tests.sh` | BLOCK 30 de F39 |

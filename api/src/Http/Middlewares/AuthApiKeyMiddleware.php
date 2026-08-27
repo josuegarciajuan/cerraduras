@@ -134,6 +134,7 @@ final class AuthApiKeyMiddleware implements Middleware
                     'stays:read', 'stays:write',
                     'debts:read', 'debts:sync',
                     'audit:read',
+                    'factory:claim',
                     'sim:*',
                     'vb6-bridge:read', 'vb6-bridge:write',
                 ];
@@ -165,4 +166,3 @@ final class AuthApiKeyMiddleware implements Middleware
         }
     }
 }
-

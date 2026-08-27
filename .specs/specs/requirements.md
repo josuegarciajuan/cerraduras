@@ -274,3 +274,65 @@ Cada trabajador tiene un QR fijo que actúa como llave universal. El sistema deb
 - **RF-W9.1**: Alerta por tiempo excesivo: si un worker lleva más de X minutos (configurable, default 120) en una habitación, se genera una alerta visible en el panel.
 - **RF-W9.2**: Alerta por hora extraña: si un worker entra a una habitación fuera del horario laboral configurable (default: 22:00–07:00), se genera una alerta.
 - **RF-W9.3**: Las alertas deben ser visibles en el panel y registrarse en el sistema (audit_log o tabla específica).
+
+---
+
+# Fase 39: Identificación de fábrica integrada en ESP32 productivo
+
+## Contexto
+
+La identificación de fábrica se incorpora al sketch productivo existente
+`docs/esp32-qr-reader/scanner-relay-prod.ino`; no existe ni se distribuirá un
+firmware/sketch aislado para fábrica. Tras obtener WiFi mediante el flujo actual
+(NVS + WiFiManager), la placa se anuncia automáticamente al backend para poder
+ser identificada antes o después del montaje, sin asociarse automáticamente a
+una habitación o pack.
+
+El anuncio es trabajo auxiliar en segundo plano: mientras el backend responda
+`PENDING`, se reintenta periódicamente y nunca bloquea QR, USB Host, relé,
+GPIO4, watchdog, heartbeats ni command queue. `CLAIMED` detiene los anuncios
+solo durante el arranque actual. El backend, no NVS ni el firmware, conserva el
+estado autoritativo tras reflasheos, reinicios o borrados de NVS.
+
+## RF-39.1: Identificador físico estable
+
+- **RF-39.1.1**: El sketch productivo debe obtener `chip_id` exclusivamente de `ESP.getEfuseMac()`.
+- **RF-39.1.2**: El `chip_id` debe serializarse en formato hexadecimal determinista, lowercase, sin separadores, y ser igual en cada arranque de la misma placa.
+- **RF-39.1.3**: SSID, IP, MAC de interfaz WiFi y valores aleatorios no pueden ser la identidad principal.
+
+## RF-39.2: Activación automática integrada
+
+- **RF-39.2.1**: Se reutiliza el provisioning WiFi existente del sketch productivo (credenciales NVS + WiFiManager/AP cuando corresponda); F39 no introduce un modo WiFi ni AP de fábrica separado.
+- **RF-39.2.2**: Cuando WiFi esté conectado, el sketch debe programar automáticamente el primer anuncio sin requerir GPIO4, un QR, una habitación o intervención del operador.
+- **RF-39.2.3**: El anuncio debe ejecutarse como una máquina de estados temporizada y no bloqueante; conexiones, timeouts y reintentos no pueden usar esperas que impidan el loop operativo.
+
+## RF-39.3: Anuncio idempotente y ciclo `PENDING`
+
+- **RF-39.3.1**: El sketch debe enviar `chip_id` a `POST /api/v1/factory-devices/announce` y tratar cada envío como parte de una única alta lógica idempotente por `chip_id`.
+- **RF-39.3.2**: El primer anuncio crea o mantiene un registro `PENDING`; timeout, pérdida de red, reinicio o reintento no crean duplicados.
+- **RF-39.3.3**: Mientras una respuesta válida del backend indique `PENDING`, el sketch debe seguir programando anuncios periódicos durante ese arranque.
+- **RF-39.3.4**: Los fallos transportables o respuestas no concluyentes deben registrar diagnóstico y reintentarse con intervalo acotado, sin alterar el flujo operativo.
+- **RF-39.3.5**: El backend debe registrar como mínimo `chip_id`, `first_announced_at`, `last_announced_at` y `status`; anuncios repetidos preservan los datos de claim.
+
+## RF-39.4: `CLAIMED`, fuente autoritativa y claim manual
+
+- **RF-39.4.1**: Una respuesta válida `CLAIMED` debe detener los anuncios de F39 únicamente hasta que termine el arranque actual, sin detener ninguna capacidad productiva.
+- **RF-39.4.2**: El sketch no debe persistir `CLAIMED` como verdad de negocio ni usar NVS para omitir el anuncio de futuros arranques.
+- **RF-39.4.3**: Tras reflashear, borrar NVS o reiniciar, la placa debe volver a anunciar su mismo `chip_id`; el backend devuelve el estado persistente y sigue siendo la fuente autoritativa.
+- **RF-39.4.4**: El panel CRM debe listar registros `PENDING` por `chip_id` y permitir un claim manual y explícito.
+- **RF-39.4.5**: El claim cambia atómicamente `PENDING → CLAIMED`, registra actor y fecha, y crea o vincula un `devices.kind=RPI` con `external_id=chip_id`, sin pack ni habitación.
+- **RF-39.4.6**: Un anuncio posterior nunca rebaja `CLAIMED`; repetir el claim devuelve el estado existente sin modificar `claimed_at` ni `claimed_by`.
+
+## RF-39.5: No regresión del sketch productivo
+
+- **RF-39.5.1**: F39 no debe bloquear, desactivar ni cambiar el flujo de QR ni los callbacks USB.
+- **RF-39.5.2**: F39 no debe bloquear, desactivar ni cambiar relé, GPIO4/identify, watchdog, heartbeats o command queue.
+- **RF-39.5.3**: F39 no debe requerir, asignar ni inferir una habitación o pack desde el anuncio; el claim tampoco asigna pack ni habitación.
+- **RF-39.5.4**: El estado de fábrica es observacional y de inventario; no condiciona validación QR, apertura, sensores, sesiones, estancias ni comandos operativos.
+
+## RF-39.6: Persistencia, seguridad y trazabilidad
+
+- **RF-39.6.1**: `PENDING` y `CLAIMED` persisten exclusivamente en backend y sobreviven reinicios de servicio, reflasheos y NVS wipes de la placa.
+- **RF-39.6.2**: El registro conserva `chip_id`, `status`, `first_announced_at`, `last_announced_at`, `claimed_at`, `claimed_by` y el `device_id` RPI creado/vinculado por claim.
+- **RF-39.6.3**: El anuncio y claim reutilizan autenticación/autorización API existentes, sin incorporar secretos nuevos al sketch ni a estos documentos.
+- **RF-39.6.4**: El claim manual queda auditado con `chip_id`, estado anterior/posterior, actor y timestamp.

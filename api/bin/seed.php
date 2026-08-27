@@ -32,7 +32,8 @@ echo "[seed] Seeding api_clients ...\n";
 $clients = [
     ['VB6-MAIN',     'VB6',         'qr:issue,qr:revoke,rooms:read,rooms:state,time-slots:read,stays:read,stays:write,debts:read,presence:read', null],
     ['RPI-DEV',      'RPI',         'qr:validate', null],
-    ['ADMIN-CLI',    'ADMIN',       'audit:read,rooms:read,rooms:write,rooms:state,time-slots:read,time-slots:write,locks:open,locks:lock,locks:override,stays:read,stays:write,qr:revoke,debts:read,debts:sync,presence:read,presence:write,switches:write,sim:*', null],
+    ['FACTORY-DEVICE','RPI',        'factory:announce', null],
+    ['ADMIN-CLI',    'ADMIN',       'audit:read,factory:claim,rooms:read,rooms:write,rooms:state,time-slots:read,time-slots:write,locks:open,locks:lock,locks:override,stays:read,stays:write,qr:revoke,debts:read,debts:sync,presence:read,presence:write,switches:write,sim:*', null],
     ['TUYA-BRIDGE',  'TUYA_BRIDGE', 'presence:write', null],
     ['SIM-CLIENT',   'SIM',         'sim:*,presence:write', null],
     // NOTE: this is the API -> WS-VB6 outgoing credential (used by the outbox
