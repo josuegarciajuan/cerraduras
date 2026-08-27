@@ -1026,3 +1026,109 @@ Archivo a modificar: `docs/esp32-qr-reader/scanner-relay-prod.ino` (640 líneas)
 | W19 | Panel alertas workers | `panel/index.html` |
 | W20 | Tests unitarios | `tests/Unit/Worker*Test.php` |
 | W21 | Tests HTTP BLOCK 27 | `run-tests.sh` |
+
+---
+
+# Fase 39: Identificación de fábrica integrada en ESP32 productivo
+
+La Fase 38 de Workers conserva su numeración. F39 no crea ni modifica un
+firmware/sketch aislado: toda la lógica de placa se integra en
+`docs/esp32-qr-reader/scanner-relay-prod.ino` y debe preservar su operación.
+
+## TSK-39.01: Migración del registro de fábrica
+
+**Trazabilidad**: RF-39.3.5, RF-39.4.5, RF-39.6.1, RF-39.6.2
+**Archivos**: `api/migrations/0046_factory_devices.sql`, `api/bin/migrate.php`
+
+- [ ] Crear la tabla `factory_devices` con `chip_id` único y no nulo.
+- [ ] Añadir `status` restringido a `PENDING` o `CLAIMED`.
+- [ ] Añadir `first_announced_at`, `last_announced_at`, `claimed_at`, `claimed_by`, `device_id`, `created_at` y `updated_at`.
+- [ ] Registrar la migración siguiendo el mecanismo existente, sin modificar tablas de Workers.
+
+**Verificación**: Ejecutar la migración y comprobar la restricción única y la persistencia de todos los campos del claim.
+
+## TSK-39.02: Identificador eFuse y scheduler integrado
+
+**Trazabilidad**: RF-39.1.1, RF-39.1.2, RF-39.1.3, RF-39.5.1–RF-39.5.4
+**Archivo**: `docs/esp32-qr-reader/scanner-relay-prod.ino`
+
+- [ ] Obtener `chip_id` mediante `ESP.getEfuseMac()` y serializarlo lowercase, sin separadores y de forma determinista.
+- [ ] Añadir estado efímero en RAM para habilitación, intento en curso y próximo intento; inicializarlo en cada boot sin leer/escribir una bandera de claim en NVS.
+- [ ] Integrar el scheduler en el `loop()` productivo, sin retornos o esperas que priven de servicio a QR, USB, relé, GPIO4, watchdog, heartbeats o command queue.
+- [ ] No añadir credenciales ni identificadores alternativos como identidad del equipo.
+
+**Verificación**: Revisar `setup()`/`loop()` y probar dos reinicios: `chip_id` coincide, todas las funciones productivas siguen inicializadas y no existe `factory_claimed` persistido en NVS.
+
+## TSK-39.03: Anuncio automático no bloqueante tras WiFi
+
+**Trazabilidad**: RF-39.2.1–RF-39.2.3
+**Archivo**: `docs/esp32-qr-reader/scanner-relay-prod.ino`
+
+- [ ] Reutilizar el flujo NVS + WiFiManager existente; no crear AP ni modo WiFi específico de fábrica.
+- [ ] Tras detectar WiFi conectado, programar el anuncio automáticamente, sin depender de GPIO4, QR, habitación o pack.
+- [ ] Con `PENDING`, reintentar con intervalo acotado; con fallo de red/timeout, registrar y reprogramar sin bloquear.
+- [ ] Con `CLAIMED`, detener anuncios únicamente hasta el siguiente reinicio; no persistir ese resultado en NVS.
+
+**Verificación**: Conectar WiFi y comprobar anuncio automático. Durante PENDING, escanear QR, accionar identify y procesar heartbeat/command queue sin retrasos atribuibles a F39; reiniciar o borrar NVS y comprobar que se anuncia otra vez.
+
+## TSK-39.04: Endpoint de anuncio idempotente
+
+**Trazabilidad**: RF-39.3.1–RF-39.3.4, RF-39.6.3
+**Archivos**: `api/src/Domain/FactoryDevices/*`, `api/src/Http/Controllers/FactoryDeviceController.php`, `api/public/index.php`
+
+- [ ] Implementar `POST /api/v1/factory-devices/announce` validando `chip_id` hexadecimal.
+- [ ] Crear `PENDING` en el primer anuncio.
+- [ ] Hacer upsert transaccional por `chip_id` y actualizar únicamente `last_announced_at` en anuncios posteriores.
+- [ ] Conservar estado y campos del claim cuando el registro ya esté `CLAIMED`.
+
+**Verificación**: Enviar dos anuncios con el mismo `chip_id` y comprobar que existe un solo registro, con `created=true` solo en el primero.
+
+## TSK-39.05: Listado y claim manual desde panel
+
+**Trazabilidad**: RF-39.4.1–RF-39.4.6, RF-39.6.4
+**Archivos**: `api/src/Http/Controllers/FactoryDeviceController.php`, `api/public/index.php`, `api/public/panel/index.html`
+
+- [ ] Implementar `GET /api/v1/factory-devices?status=...` para el panel.
+- [ ] Implementar `POST /api/v1/factory-devices/{id}/claim` con autorización de administración.
+- [ ] Cambiar `PENDING` a `CLAIMED` atómicamente y registrar actor y fecha.
+- [ ] Hacer idempotente la repetición del claim sin cambiar `claimed_by` ni `claimed_at`.
+- [ ] Añadir al panel la cola de pendientes, el `chip_id` y una acción explícita de claim.
+- [ ] En el claim, crear o vincular un `devices.kind=RPI` con `external_id=chip_id`, `pack_id=null` y `room_id=null`; no asignar habitación, pack ni montaje.
+
+**Verificación**: Reclamar desde el panel, recargar la página y comprobar `CLAIMED` persistente; repetir la acción y comprobar que no cambia la auditoría.
+
+## TSK-39.06: Auditoría, autoridad backend y no regresión
+
+**Trazabilidad**: RF-39.4.1–RF-39.4.6, RF-39.5.1–RF-39.5.4, RF-39.6.1–RF-39.6.4
+**Archivos**: `api/src/Domain/FactoryDevices/*`, `api/src/Http/Controllers/FactoryDeviceController.php`, `docs/esp32-qr-reader/scanner-relay-prod.ino`
+
+- [ ] Registrar el claim con `chip_id`, estado anterior, estado nuevo, actor y timestamp.
+- [ ] Garantizar que el backend conserva `CLAIMED` tras anuncios posteriores, reflasheos y NVS wipes; el firmware nunca lo usa como estado persistente autoritativo.
+- [ ] Mantener el anuncio sin efectos sobre Workers, QR guest, QR worker, relé, GPIO4, habitaciones o estancias.
+- [ ] Documentar errores de autenticación, validación, recurso inexistente y conflictos sin filtrar datos sensibles.
+
+**Verificación**: Revisión de dependencias, rutas y loop para confirmar que F39 no cambia contratos de F38 ni bloquea el flujo productivo.
+
+## TSK-39.07: Tests de F39
+
+**Trazabilidad**: RF-39.1–RF-39.6
+**Archivos**: `api/tests/Unit/FactoryDeviceTest.php`, `api/bin/run-tests.sh`
+
+- [ ] Añadir tests unitarios para formato estable de `chip_id`, transición de estados, idempotencia, preservación de claim y creación/vínculo de RPI sin pack/habitación.
+- [ ] Añadir tests de contrato del sketch productivo: usa eFuse, no referencia `factory-identification.ino` ni persiste `factory_claimed`, y conserva los puntos de integración QR/USB/relé/GPIO4/watchdog/heartbeat/command queue.
+- [ ] Añadir tests HTTP para anuncio inicial PENDING, anuncio repetido, listado PENDING, claim manual, claim repetido, anuncio posterior CLAIMED y preservación del RPI sin pack/habitación.
+- [ ] Reemplazar el placeholder `# (PLACEHOLDER) BLOCK 30 — F39` con esos escenarios. Los tests stateful deben obtener claves desde `seeds/dev_api_keys.txt`, usar un `chip_id` único por ejecución y hacer SKIP explícito si falta el estado requerido.
+
+**Verificación**: Ejecutar `cd /root/cerraduras/api && bash bin/run-tests.sh` después de implementar esta tarea; debe finalizar con 0 failures.
+
+## Resumen de tareas F39
+
+| TSK | Descripción | Archivos principales |
+|-----|-------------|----------------------|
+| 39.01 | Migración y modelo persistente | `migrations/*factory_devices*`, `Domain/FactoryDevices/*` |
+| 39.02 | Identidad eFuse y scheduler integrado | `docs/esp32-qr-reader/scanner-relay-prod.ino` |
+| 39.03 | Anuncio automático no bloqueante tras WiFi | `scanner-relay-prod.ino` |
+| 39.04 | Anuncio idempotente | `FactoryDeviceController.php`, `index.php` |
+| 39.05 | Listado y claim manual | `FactoryDeviceController.php`, `panel/index.html` |
+| 39.06 | Auditoría y límites | `Domain/FactoryDevices/*`, controller |
+| 39.07 | Tests unitarios e HTTP | `FactoryDeviceTest.php`, `run-tests.sh` |

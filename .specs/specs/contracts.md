@@ -11,7 +11,7 @@ Estos contratos ya existen en la API. Se documentan aquí solo para referencia.
 ### 1. Validación QR
 ```
 POST /api/v1/qr/validate
-Header:  X-API-Key: 8974517de1cfb1c3e6e8f2473c5f34a4cbd0252cb52ff6e1
+Header:  X-API-Key: <API_KEY>
 Header:  Content-Type: application/json
 Body:    {"qr_text":"<token>","device_id":"<chipId>"}
 Response 200: {"allow":true,"stay_id":<int>,"room_id":<int>,"action":"open"}
@@ -67,7 +67,7 @@ Response 200: {"ok":true}
 
 ### Variables de configuración (sin cambios)
 - `API_BASE_URL` = `"http://92.113.151.136:8080"`
-- `API_KEY` = `"8974517de1cfb1c3e6e8f2473c5f34a4cbd0252cb52ff6e1"`
+- `API_KEY` = `"<API_KEY>"`
 - `RELAY_PIN` = 16, `OPEN_DURATION_MS` = 3000
 - `LED_PIN` = 2, `LED_ON_MS` = 4500
 - `IDENTIFY_PIN` = 4
@@ -669,3 +669,128 @@ Alerta activa | `worker-alert` | Rojo (#ff5252)
 - **RoleForm**: nombre, descripción, checklist de room_types con toggle
 - **WorkerQRModal**: modal con QR token (solo en creación/regeneración), botón copiar
 - **WorkerAlertsBadge**: badge numérico en navbar con dropdown de alertas activas
+
+---
+
+# Fase 39: Identificación de fábrica integrada en ESP32 productivo
+
+## 1. Registro de fábrica
+
+### 1.1 Anunciar ESP32
+
+```text
+POST /api/v1/factory-devices/announce
+Header: X-API-Key: <FACTORY_DEVICE_KEY>
+Header: Content-Type: application/json
+Body: { "chip_id": "a1b2c3d4e5f6" }
+```
+
+El `chip_id` es exactamente la representación lowercase, sin separadores, de los
+6 bytes de `ESP.getEfuseMac()` (12 caracteres hexadecimales). La operación es
+idempotente por `chip_id`.
+
+Primera aceptación:
+
+```json
+{
+  "data": {
+    "id": 12,
+    "chip_id": "a1b2c3d4e5f6",
+    "status": "PENDING",
+    "first_announced_at": "2026-08-26 10:00:00.000",
+    "last_announced_at": "2026-08-26 10:00:00.000",
+    "claimed_at": null,
+    "claimed_by": null,
+    "device_id": null
+  },
+  "created": true
+}
+```
+
+La primera aceptación devuelve `201`. Un reintento o anuncio repetido devuelve
+`200`, `created: false` y el registro existente. Si ya está `CLAIMED`, conserva
+`status`, `claimed_at` y `claimed_by`; nunca se rebaja ni se duplica.
+
+Errores: `400` para `chip_id` ausente o inválido y `401/403` para autenticación
+o autorización inválida.
+
+### 1.2 Listar pendientes para el panel
+
+```text
+GET /api/v1/factory-devices?status=PENDING
+Header: X-API-Key: <ADMIN-CLI>
+
+Response 200:
+{
+  "data": [
+    {
+      "id": 12,
+      "chip_id": "a1b2c3d4e5f6",
+      "status": "PENDING",
+      "first_announced_at": "2026-08-26 10:00:00.000",
+      "last_announced_at": "2026-08-26 10:00:00.000",
+      "device_id": null
+    }
+  ]
+}
+```
+
+El filtro acepta `PENDING`, `CLAIMED` o `ALL`; el panel usa `PENDING` para la
+cola de equipos por reclamar.
+
+### 1.3 Reclamar equipo
+
+```text
+POST /api/v1/factory-devices/12/claim
+Header: X-API-Key: <ADMIN-CLI>
+Header: Content-Type: application/json
+Body: {}
+
+Response 200:
+{
+  "data": {
+    "id": 12,
+    "chip_id": "a1b2c3d4e5f6",
+    "status": "CLAIMED",
+    "claimed_at": "2026-08-26 10:05:00.000",
+    "claimed_by": "<operator-id>",
+    "device_id": 34
+  }
+}
+```
+
+El actor se obtiene de la identidad autenticada del panel. Repetir el claim
+sobre un registro `CLAIMED` devuelve `200` con el estado persistente y no cambia
+el actor ni la fecha. El primer claim crea o vincula, en la misma transacción,
+un `devices.kind=RPI` con `external_id=chip_id`, `pack_id=null` y `room_id=null`,
+y guarda su id en `factory_devices.device_id`. Un identificador inexistente
+devuelve `404`.
+
+## 2. Contrato firmware integrado
+
+- El único sketch F39 es `docs/esp32-qr-reader/scanner-relay-prod.ino`; no hay
+  contrato para `factory-identification.ino` ni otro firmware aislado.
+- `chip_id` son los 6 bytes de `ESP.getEfuseMac()`, serializados como 12
+  caracteres hexadecimales lowercase sin separadores.
+- WiFiManager/NVS conservan su contrato productivo actual. Al detectar WiFi,
+  el scheduler integrado anuncia automáticamente sin requerir GPIO4, QR,
+  habitación o acción humana.
+- Mientras `status=PENDING`, programa reintentos periódicos acotados. Ante
+  timeout/error, programa el siguiente intento y continúa el loop; no bloquea
+  QR, USB, relé, GPIO4, watchdog, heartbeat ni command queue.
+- Ante `status=CLAIMED`, deshabilita anuncios solo en RAM hasta el final de ese
+  arranque. No persiste `factory_claimed` ni otro estado autoritativo en NVS.
+  En el siguiente boot, reflasheo o NVS wipe vuelve a anunciar para consultar
+  el backend, que decide el estado.
+- F39 no altera el comportamiento de QR, relé, GPIO4, heartbeat, locks,
+  sensores, sesiones, habitaciones o estancias.
+
+## 3. Estados persistentes
+
+| Estado | Entrada | Anuncio posterior | Acción válida |
+|--------|---------|-------------------|---------------|
+| `PENDING` | primer anuncio | permanece `PENDING`; firmware reintenta durante el boot | claim manual |
+| `CLAIMED` | claim manual | permanece `CLAIMED`; firmware detiene anuncio solo durante ese boot | claim idempotente, sin cambio |
+
+El registro de auditoría del claim incluye `chip_id`, `status_before`,
+`status_after`, `actor` y `created_at`.

@@ -97,6 +97,16 @@ bash bin/run-tests.sh
 
 ## Hardware
 
+### Identificación de fábrica integrada
+
+El único firmware productivo es
+`docs/esp32-qr-reader/scanner-relay-prod.ino`. Tras completar el provisioning
+WiFi existente, anuncia en segundo plano su `chip_id` eFuse al endpoint de
+inventario usando la credencial ya configurada del dispositivo. Un estado
+`PENDING` se reintenta con backoff temporizado; `CLAIMED` pausa únicamente los
+anuncios de ese arranque. El estado no se guarda en NVS, porque un reflasheo lo
+limpia y el backend es la fuente autoritativa.
+
 ### ESP32 + GM65 (lector QR)
 
 - Puerto UART: GPIO16 (RX2), GPIO17 (TX2)
