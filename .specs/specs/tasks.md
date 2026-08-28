@@ -1143,27 +1143,27 @@ firmware/sketch aislado: toda la lógica de placa se integra en
 - [ ] Añadir `api_clients.device_id` único nullable y conservar legacy.
 - [ ] Hacer transaccional la creación/reutilización del único RPI y el cliente.
 
-## TSK-40.02: Anuncio y claim
+## TSK-40.02: Anuncio y claim directo
 
-- [ ] Exigir HTTPS y recibir `chip_id` + `factory_key` en anuncio.
-- [ ] Validar hash en claim con label/pack opcionales sin devolver la clave.
-- [ ] Aplicar rate/error handling genérico y auditoría sin datos sensibles.
+- [x] Exigir HTTPS y recibir `chip_id` + `factory_key` en anuncio.
+- [x] Reclamar por id administrativo usando el hash registrado, con label/pack opcionales y sin recibir ni devolver la clave.
+- [x] Aplicar rate/error handling genérico y auditoría sin datos sensibles.
 
 ## TSK-40.03: Firmware productivo
 
 Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 
-- [ ] Eliminar API key compartida y generar/guardar una clave por placa en NVS separado.
-- [ ] Mostrarla por Serial/portal y usarla en anuncio y operación.
-- [ ] Mantener QR, USB, relé, GPIO4, watchdog, heartbeat y command queue.
+- [x] Eliminar API key compartida y generar/guardar una clave por placa en NVS separado.
+- [x] Conservarla en NVS y usarla en anuncio y operación, sin mostrarla por Serial/portal.
+- [x] Mantener QR, USB, relé, GPIO4, watchdog, heartbeat y command queue.
 
 ## TSK-40.04: Panel y compatibilidad
 
-- [ ] Formulario Fábrica con chip prellenado, clave, etiqueta y pack opcional.
-- [ ] No mostrar clave después del claim.
+- [x] Formulario Fábrica con chip informativo, etiqueta y pack opcional; enviar claim directo por id.
+- [x] No mostrar clave después del claim.
 - [ ] Validar `device_mismatch` donde exista binding sin romper legacy.
 
 ## TSK-40.05: Tests y regresión
 
-- [ ] Tests unitarios RED/GREEN por tarea pequeña y BLOCK 31 HTTP con claves dinámicas.
+- [x] Tests unitarios RED/GREEN por tarea pequeña y BLOCK 31 HTTP con claves dinámicas.
 - [ ] Ejecutar runner completo, PHP lint, `bash -n` y `git diff --check`.

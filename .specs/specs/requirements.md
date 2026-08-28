@@ -348,18 +348,19 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 - **RF-40.1.3**: El backend solo almacena el hash de `factory_key`; nunca persiste ni devuelve la clave plana.
 - **RF-40.1.4**: El anuncio es idempotente por `chip_id` y no modifica datos de claim existentes.
 
-## RF-40.2: Claim manual
+## RF-40.2: Claim directo administrativo
 
-- **RF-40.2.1**: El claim requiere `chip_id`, `factory_key`, `label` opcional y `pack_id` opcional.
-- **RF-40.2.2**: En una transacción se crea un `api_client` individual con el hash de la clave y se vincula `devices.api_client_id`.
-- **RF-40.2.3**: Un `api_client` individual solo puede estar vinculado a un device.
-- **RF-40.2.4**: La respuesta y el panel nunca muestran `factory_key` después del claim.
+- **RF-40.2.1**: El claim requiere únicamente autorización administrativa/sesión y el id del registro; acepta `label` y `pack_id` opcionales.
+- **RF-40.2.2**: Usa el `enrollment_key_hash` almacenado por el anuncio; el cliente nunca envía ni recibe `factory_key`.
+- **RF-40.2.3**: En una transacción se crea o reutiliza un `api_client` individual y se vincula `devices.api_client_id`; cada cliente solo puede vincularse a un device.
+- **RF-40.2.4**: El claim es idempotente; un registro sin hash o un binding incompatible se rechaza con conflicto.
+- **RF-40.2.5**: La respuesta y el panel nunca muestran `factory_key` después del claim.
 
 ## RF-40.3: Operación y compatibilidad
 
 - **RF-40.3.1**: El firmware usa la clave individual en anuncio y llamadas operativas, sin modificar QR, USB, relé, GPIO4, watchdog, heartbeat ni command queue.
 - **RF-40.3.2**: Las rutas que conocen el dispositivo devuelven `device_mismatch` cuando el binding no coincide; clientes legacy sin binding siguen funcionando.
 - **RF-40.3.3**: `clearNvsIfNewFirmware()` no borra el namespace de credenciales.
-- **RF-40.3.4**: WiFiManager muestra la clave copiable solo para el claim inicial.
+- **RF-40.3.4**: La credencial individual se conserva en NVS para anuncio y operación, pero nunca se muestra por Serial ni WiFiManager; `chip_id` permanece visible.
 - **RF-40.3.5**: TLS directo se determina por el runtime; `X-Forwarded-Proto` solo es válido desde `TRUSTED_PROXY_IPS` explícitamente configurados.
 - **RF-40.3.6**: El namespace NVS de credenciales no se borra al cambiar firmware; el portal solo se reabre mediante reset de fábrica explícito.

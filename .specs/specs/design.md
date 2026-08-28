@@ -1227,11 +1227,11 @@ vez y la almacena en `Preferences` bajo `device-credential`, separado de
 `cerraduras`. El fingerprint de firmware puede limpiar WiFi sin tocarla.
 
 El flujo es: `announce` recibe por HTTPS `{chip_id,factory_key}`, almacena solo
-su SHA-256 y devuelve estado; el panel hace `claim` por HTTPS con
-`chip_id,factory_key,label?,pack_id?`. En una transacción se valida el hash, se
-crea o reutiliza el único RPI, se crea un `api_client` individual y se vinculan
-ambos lados (`api_clients.device_id` y `devices.api_client_id`). La clave plana
-nunca se persiste ni se devuelve.
+su SHA-256 y devuelve estado; el panel hace `claim` administrativo directo por
+id con `{label?,pack_id?}`. El claim usa el hash registrado, crea o reutiliza el
+único RPI, crea o reutiliza su `api_client` individual y vincula ambos lados
+(`api_clients.device_id` y `devices.api_client_id`) dentro de una transacción.
+La clave plana nunca se persiste, se solicita al operador o se devuelve.
 
 `api_clients.device_id` es único y nullable para legacy. Las rutas operativas
 que conocen el dispositivo comparan el cliente autenticado con el binding y
@@ -1239,4 +1239,6 @@ devuelven `device_mismatch`; clientes legacy sin binding conservan su
 comportamiento. El claim idempotente conserva auditoría y no muestra la clave.
 El único sketch modificado es `scanner-relay-prod.ino`; usa la clave individual
 para anuncio y operación, conserva todas las funciones productivas y exige
-HTTPS. Si el servidor actual no publica TLS, el despliegue queda bloqueado.
+HTTPS para el anuncio. La credencial no se expone por Serial ni WiFiManager y
+`chip_id` sigue siendo visible. Si el servidor actual no publica TLS, el
+despliegue queda bloqueado.

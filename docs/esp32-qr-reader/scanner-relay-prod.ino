@@ -128,7 +128,6 @@ bool          factoryAnnouncementEnabled = true;
 bool          factoryAnnouncementInFlight = false;
 unsigned long factoryNextAttemptAt = 0;
 String        deviceFactoryKey;
-bool          factoryKeyShown = false;
 
 WiFiClientSecure &apiTlsClient() {
   static WiFiClientSecure client;
@@ -165,7 +164,6 @@ String loadOrCreateFactoryKey() {
   Preferences prefs;
   prefs.begin("device-cred", false);
   String key = prefs.getString("factory_key", "");
-  factoryKeyShown = prefs.getBool("factory_key_shown", false);
   if (key.length() == 0) {
     uint8_t randomBytes[24];
     for (size_t i = 0; i < sizeof(randomBytes); i += 4) {
@@ -183,14 +181,6 @@ String loadOrCreateFactoryKey() {
   return key;
 }
 
-void markFactoryKeyShown() {
-  Preferences prefs;
-  prefs.begin("device-cred", false);
-  prefs.putBool("factory_key_shown", true);
-  prefs.end();
-  factoryKeyShown = true;
-}
-
 void factoryResetProvisioning() {
   Preferences prefs;
   prefs.begin("cerraduras", false);
@@ -198,9 +188,8 @@ void factoryResetProvisioning() {
   prefs.end();
   Preferences credentials;
   credentials.begin("device-cred", false);
-  credentials.putBool("factory_key_shown", false);
   credentials.end();
-  Serial.println("[FACTORY-RESET] WiFi reiniciado; factory_key conservada y portal inicial reabierto");
+  Serial.println("[FACTORY-RESET] WiFi reiniciado; credencial individual conservada y portal reabierto");
 }
 
 void addDeviceAuth(HTTPClient &http) {
@@ -233,12 +222,10 @@ void announceFactoryDevice(unsigned long now) {
   factoryAnnouncementInFlight = false;
 
   if (code >= 200 && code < 300 && response.indexOf("\"status\":\"CLAIMED\"") >= 0) {
-    markFactoryKeyShown();
     factoryAnnouncementEnabled = false;
     Serial.printf("[FACTORY] chip_id=%s CLAIMED (%lu ms); anuncios pausados hasta reinicio\n",
                   chipId().c_str(), millis() - startedAt);
   } else if (code >= 200 && code < 300 && response.indexOf("\"status\":\"PENDING\"") >= 0) {
-    markFactoryKeyShown();
     Serial.printf("[FACTORY] chip_id=%s PENDING (%lu ms); reintento en %lu ms\n",
                   chipId().c_str(), millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);
   } else {
@@ -368,12 +355,6 @@ void startWiFiManager() {
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(300); // 5 minutos de timeout
-  WiFiManagerParameter *factoryKeyInfo = nullptr;
-  if (!factoryKeyShown) {
-    factoryKeyInfo = new WiFiManagerParameter("factory_key", "Clave individual (copiar para reclamar)", deviceFactoryKey.c_str(), 49);
-    wm.addParameter(factoryKeyInfo);
-  }
-
   // autoConnect: si no hay credenciales guardadas, inicia AP
   // Si hay credenciales guardadas pero fallaron, las usa y reinicia automáticamente.
   bool connected = wm.autoConnect(apSsid.c_str());
@@ -392,8 +373,6 @@ void startWiFiManager() {
   prefs.putString("ssid", WiFi.SSID());
   prefs.putString("pass", WiFi.psk());
   prefs.end();
-  if (!factoryKeyShown) markFactoryKeyShown();
-  delete factoryKeyInfo;
   Serial.printf("[WiFiManager] NVS guardado: SSID=%s\n", WiFi.SSID().c_str());
 }
 
@@ -452,7 +431,6 @@ void setup() {
   Serial.begin(115200);
   delay(3000);
   deviceFactoryKey = loadOrCreateFactoryKey();
-  if (!factoryKeyShown) Serial.println("[CRED] factory_key (copiar para claim inicial): " + deviceFactoryKey);
 
   relayOff();
   pinMode(IDENTIFY_PIN, INPUT_PULLUP);

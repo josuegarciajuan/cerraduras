@@ -39,6 +39,6 @@ final class FactoryDeviceController
         $body = JsonBody::require($request->jsonBody);
         $label = isset($body['label']) && is_string($body['label']) && trim($body['label']) !== '' ? trim($body['label']) : null;
         $packId = isset($body['pack_id']) && is_int($body['pack_id']) ? $body['pack_id'] : (isset($body['pack_id']) && ctype_digit((string)$body['pack_id']) ? (int)$body['pack_id'] : null);
-        return Response::json(200, ['data' => $this->service->claim((int)$request->routeParam('id'), JsonBody::string($body, 'chip_id'), JsonBody::string($body, 'factory_key', 128), $actor, $actorClientId, $label, $packId)]);
+        return Response::json(200, ['data' => $this->service->claim((int)$request->routeParam('id'), $actor, $actorClientId, $label, $packId)]);
     }
 }

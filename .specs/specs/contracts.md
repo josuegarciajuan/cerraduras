@@ -813,14 +813,15 @@ clave ni su hash. `201` es alta, `200` reintento, `400` formato inválido y
 
 ```text
 POST /api/v1/factory-devices/{id}/claim
-HTTPS obligatorio; CRM o scope factory:claim
-Body: { "chip_id": "a1b2c3d4e5f6", "factory_key": "<pegada desde portal>",
-        "label": "opcional", "pack_id": 12 }
+CRM/sesión administrativa o cliente con scope `factory:claim`
+Body: { "label": "opcional", "pack_id": 12 }
 ```
 
-La respuesta nunca contiene `factory_key`. Una clave inválida produce error
-genérico; registro inexistente `404`, binding incompatible `409` y datos
-inválidos `422`.
+El servidor obtiene el hash de enrollment del registro anunciado. La respuesta
+solo contiene metadatos y nunca contiene `factory_key` ni su hash. El claim es
+idempotente: registro inexistente `404`, registro sin hash `409
+enrollment_required`, binding incompatible `409 device_client_conflict` y
+datos inválidos `422`.
 
 ## Binding
 
