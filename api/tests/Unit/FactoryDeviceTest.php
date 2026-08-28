@@ -22,7 +22,7 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
         foreach ($this->items as $item) if ($item->chipId === $chipId) return $item;
         return null;
     }
-    public function announce(string $chipId): array
+    public function announce(string $chipId, string $enrollmentHash): array
     {
         $this->announceCalls++;
         $existing = $this->findByChipId($chipId);
@@ -45,7 +45,7 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
     {
         return array_values(array_filter($this->items, fn (FactoryDevice $item) => $status === 'ALL' || $item->status === $status));
     }
-    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null): ?FactoryDevice
+    public function claimAndAudit(int $id, string $chipId, string $enrollmentHash, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice
     {
         return $this->claim($id, $actor, $actorClientId);
     }
@@ -57,26 +57,28 @@ $passed = 0; $failed = 0;
 function checkFactory(bool $condition, string $message): void { global $passed, $failed; $condition ? $passed++ : $failed++; echo ($condition ? "PASS " : "FAIL ") . $message . "\n"; }
 
 echo "FactoryDeviceTest\n";
-$check = $service->announce('a1b2c3d4e5f6');
+$key = 'factory-key-for-test-only-0123456789';
+$check = $service->announce('a1b2c3d4e5f6', $key);
 checkFactory($check['created'] === true && $check['data']['chip_id'] === 'a1b2c3d4e5f6' && $check['data']['status'] === 'PENDING', 'accepts the canonical six-byte lowercase chip id format');
-$retry = $service->announce('112233445566');
+$retry = $service->announce('112233445566', $key);
 checkFactory($retry['created'] === true && count($repo->items) === 2, 'different chip ids remain distinct');
-$retry = $service->announce('a1b2c3d4e5f6');
+$retry = $service->announce('a1b2c3d4e5f6', $key);
 checkFactory($retry['created'] === false && count($repo->items) === 2, 'announcement is idempotent by chip id');
-$claimed = $service->claim(1, 'operator-1');
+$claimed = $service->claim(1, 'a1b2c3d4e5f6', $key, 'operator-1');
 checkFactory($claimed['status'] === 'CLAIMED' && $claimed['claimed_by'] === 'operator-1', 'claim changes pending to claimed');
-$again = $service->claim(1, 'operator-2');
+$again = $service->claim(1, 'a1b2c3d4e5f6', $key, 'operator-2');
 checkFactory($again['claimed_by'] === 'operator-1', 'repeated claim preserves audit actor');
-checkFactory($service->announce('a1b2c3d4e5f6')['data']['status'] === 'CLAIMED', 'later announcement never downgrades claimed state');
-try { $service->announce('not-a-chip'); checkFactory(false, 'rejects non-format chip id'); } catch (BadRequestException $e) { checkFactory(true, 'rejects non-format chip id'); }
-try { $service->announce('A1B2C3D4E5F6'); checkFactory(false, 'accepts only the firmware chip format'); } catch (BadRequestException $e) { checkFactory(true, 'accepts only the firmware chip format'); }
+checkFactory($service->announce('a1b2c3d4e5f6', $key)['data']['status'] === 'CLAIMED', 'later announcement never downgrades claimed state');
+try { $service->announce('not-a-chip', $key); checkFactory(false, 'rejects non-format chip id'); } catch (BadRequestException $e) { checkFactory(true, 'rejects non-format chip id'); }
+try { $service->announce('A1B2C3D4E5F6', $key); checkFactory(false, 'accepts only the firmware chip format'); } catch (BadRequestException $e) { checkFactory(true, 'accepts only the firmware chip format'); }
 checkFactory($repo->announceCalls === 4, 'invalid chip id does not reach repository');
-$service->claim(2, 'operator-1', 42);
-checkFactory($repo->claimActors[1] === ['operator-1', 42], 'claim preserves authenticated client identity');
+$service->claim(2, '112233445566', $key, 'operator-1', 42);
+checkFactory($repo->claimActors[2] === ['operator-1', 42], 'claim preserves authenticated client identity');
 $source = (string) file_get_contents(__DIR__ . '/../../src/Domain/FactoryDevices/FactoryDeviceRepositoryInterface.php');
 checkFactory(str_contains($source, 'claimAndAudit'), 'claim and audit use one repository transaction boundary');
 $routes = (string) file_get_contents(__DIR__ . '/../../public/index.php');
 checkFactory(str_contains($routes, 'factory-devices/{id}/claim\', [$factoryDeviceController, \'claim\'], $authFactory([\'factory:claim\'])'), 'claim requires dedicated authorization scope');
+checkFactory(str_contains($routes, 'factory-devices/announce\', [$factoryDeviceController, \'announce\']);'), 'announcement does not use a shared API key');
 $firmwarePath = __DIR__ . '/../../../docs/esp32-qr-reader/scanner-relay-prod.ino';
 $firmware = (string) file_get_contents($firmwarePath);
 checkFactory(
@@ -91,6 +93,14 @@ checkFactory(
     && !str_contains($firmware, 'factory_claimed')
     && !file_exists(__DIR__ . '/../../../docs/esp32-qr-reader/factory-identification.ino'),
     'factory announcement is integrated in production firmware without persistent claim state or isolated sketch'
+);
+checkFactory(
+    !str_contains($firmware, 'API_KEY')
+    && str_contains($firmware, 'device-cred')
+    && str_contains($firmware, 'esp_random()')
+    && str_contains($firmware, 'factory_key')
+    && str_contains($firmware, 'https://'),
+    'firmware uses a per-device NVS credential and HTTPS without shared key'
 );
 checkFactory(
     str_contains($firmware, 'usb.onKeyboard')

@@ -24,7 +24,7 @@ final class ApiClientRepository
     public function findActiveByKeyHash(string $sha256Hex): ?ApiClient
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active
+            'SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active, device_id
              FROM api_clients
              WHERE api_key_hash = :h AND active = 1
              LIMIT 1'
@@ -40,7 +40,7 @@ final class ApiClientRepository
     public function findById(int $id): ?ApiClient
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active FROM api_clients WHERE id = :id'
+            'SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active, device_id FROM api_clients WHERE id = :id'
         );
         $stmt->bindValue(':id', $id, PDO::PARAM_INT);
         $stmt->execute();
@@ -51,7 +51,7 @@ final class ApiClientRepository
     /** @return ApiClient[] */
     public function findAll(): array
     {
-        $stmt = $this->pdo->query('SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active FROM api_clients ORDER BY code');
+        $stmt = $this->pdo->query('SELECT id, code, kind, scopes_csv, ip_whitelist_csv, active, device_id FROM api_clients ORDER BY code');
         return array_map(fn($r) => $this->hydrate($r), $stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
@@ -68,6 +68,14 @@ final class ApiClientRepository
         if (empty($sets)) return;
         $sql = 'UPDATE api_clients SET ' . implode(', ', $sets) . ' WHERE id = :id';
         $this->pdo->prepare($sql)->execute($params);
+    }
+
+    public function findDeviceExternalId(int $deviceId): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT external_id FROM devices WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $deviceId]);
+        $value = $stmt->fetchColumn();
+        return $value === false ? null : (string) $value;
     }
 
     /**
@@ -95,6 +103,7 @@ final class ApiClientRepository
             $scopes,
             $whitelist,
             (bool) $row['active']
+            , isset($row['device_id']) && $row['device_id'] !== null ? (int) $row['device_id'] : null
         );
     }
 }

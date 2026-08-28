@@ -7,7 +7,7 @@ bash /root/cerraduras/start-all.sh
 ```
 
 Esto levanta:
-- **API** en `0.0.0.0:8080` → `http://92.113.151.136:8080/api/v1/health`
+- **API** en `0.0.0.0:8080` → `https://<api-host>/api/v1/health`
 - **WS-VB6** en `0.0.0.0:8081` → `http://92.113.151.136:8081/ws-vb6/v1/health`
 
 ## Requisitos previos (solo la primera vez)
@@ -28,7 +28,7 @@ pkill -f "php -S.*8081"
 
 | Servicio | URL |
 |---|---|
-| API | `http://92.113.151.136:8080/api/v1` |
+| API | `https://<api-host>/api/v1` |
 | WS-VB6 | `http://92.113.151.136:8081/ws-vb6/v1` |
 | Simulación | `http://92.113.151.136:8080/sim/rooms/{id}/door` |
 
@@ -73,7 +73,7 @@ A partir de ese momento, la caducidad vuelve a estar sellada en cada token.
 ## Base de datos
 
 ```bash
-mysql -u cerraduras_user -p'f83bdcfaf5fece29e91f968a' cerraduras_db
+mysql -u cerraduras_user -p cerraduras_db
 ```
 
 Migraciones: `php /root/cerraduras/api/bin/migrate.php`
@@ -102,10 +102,38 @@ bash bin/run-tests.sh
 El único firmware productivo es
 `docs/esp32-qr-reader/scanner-relay-prod.ino`. Tras completar el provisioning
 WiFi existente, anuncia en segundo plano su `chip_id` eFuse al endpoint de
-inventario usando la credencial ya configurada del dispositivo. Un estado
+inventario usando la credencial individual generada por la placa. Un estado
 `PENDING` se reintenta con backoff temporizado; `CLAIMED` pausa únicamente los
 anuncios de ese arranque. El estado no se guarda en NVS, porque un reflasheo lo
 limpia y el backend es la fuente autoritativa.
+
+### Credenciales individuales ESP32 (F40)
+
+El anuncio y el claim requieren TLS real. La API considera TLS directo solo si
+PHP recibe `HTTPS` activo o `SERVER_PORT=443`; detrás de un terminador solo se
+acepta `X-Forwarded-Proto=https` desde IPs listadas explícitamente en
+`TRUSTED_PROXY_IPS`. Un cliente directo no puede falsificar ese encabezado.
+El proxy debe eliminar/recrear el encabezado y el despliegue debe publicar un
+certificado válido antes de activar el firmware.
+
+La placa genera su clave una sola vez en el namespace NVS `device-cred`; el
+portal y Serial la muestran únicamente durante el provisioning inicial. Si una
+red ya guardada falla, el equipo no vuelve a abrir el portal automáticamente.
+Para reabrirlo, mantener GPIO4 pulsado durante el arranque: se limpia solo el
+namespace WiFi, nunca `device-cred`. El backend conserva únicamente el hash.
+El firmware productivo exige definir `CERRADURAS_API_CA_PEM` en la
+configuración protegida de compilación; usa `WiFiClientSecure` y CA/pinning,
+por lo que no existe una ruta HTTP alternativa. Ejemplo de build: añadir
+`-DCERRADURAS_API_CA_PEM=R"CERT(...certificado desplegado...)CERT"` sin
+commitear ese fichero/flag.
+
+Para migrar legacy, no se acepta cualquier clave para un chip ya conocido:
+provisiona de nuevo la placa y ejecuta el anuncio con su clave individual; si
+la fila legacy tiene `enrollment_key_hash` nulo, un operador debe migrarla con
+un procedimiento controlado de mantenimiento antes de reclamarla. Los
+clientes API legacy sin `device_id` siguen operando durante la transición;
+revócalos/desactívalos después de verificar QR, heartbeat e identify y de
+confirmar que cada RPI usa su cliente vinculado.
 
 ### ESP32 + GM65 (lector QR)
 

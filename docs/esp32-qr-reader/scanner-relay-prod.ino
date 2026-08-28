@@ -4,12 +4,14 @@
  *                          + FW version auto-wipe + LED/relay feedback
  *
  * WiFi:
- *   - Credenciales guardadas en NVS (Preferences).
- *   - Cada vez que se flashea (MD5 del binario cambia): wipe NVS automático.
+ *   - Credenciales WiFi guardadas en NVS (Preferences).
+ *   - Cada vez que se flashea (MD5 del binario cambia): wipe del namespace WiFi.
  *   - Al arrancar: intenta conectar con credenciales NVS.
  *   - Si no hay credenciales/NVS o falla conexión: WiFiManager (portal cautivo).
+ *   - El portal vuelve a abrirse solo manteniendo GPIO4 pulsado durante el arranque.
  *   - AP mode: "Cerraduras-Setup-<chipId>" (MAC de 12 chars, único por dispositivo).
  *   - Al conectar: LED 4.5s + CLIC relé (feedback), + blink-light API (luz habitación).
+ *   - Credencial individual generada una vez y almacenada en NVS separado.
  *
  * Flujo normal:
  *   1. Lee QR vía USB-Host (EspUsbHost) — no consume GPIO16/17.
@@ -40,13 +42,18 @@
 #include "EspUsbHost.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include "esp_task_wdt.h"  // Fase 1: watchdog timer
+#include "esp_system.h"
+
+#ifndef CERRADURAS_API_CA_PEM
+#error "Define CERRADURAS_API_CA_PEM with the deployed API CA/certificate before building"
+#endif
 
 // ── Configuración de la API (hardcodeada, no depende de WiFi) ───────────────
-const char* API_BASE_URL = "http://92.113.151.136:8080";
-const char* API_KEY      = "8974517de1cfb1c3e6e8f2473c5f34a4cbd0252cb52ff6e1"; // RPI-DEV
+const char* API_BASE_URL = "https://92.113.151.136:8080";
 
 // ── Relay ──────────────────────────────────────────────────────────────────
 #define RELAY_PIN         16    // GPIO16 (probado con test-relay.ino)
@@ -87,6 +94,22 @@ unsigned long wifiDownSince = 0;
 bool          factoryAnnouncementEnabled = true;
 bool          factoryAnnouncementInFlight = false;
 unsigned long factoryNextAttemptAt = 0;
+String        deviceFactoryKey;
+bool          factoryKeyShown = false;
+
+WiFiClientSecure &apiTlsClient() {
+  static WiFiClientSecure client;
+  static bool configured = false;
+  if (!configured) {
+    client.setCACert(CERRADURAS_API_CA_PEM);
+    configured = true;
+  }
+  return client;
+}
+
+void beginApiRequest(HTTPClient &http, const String &url) {
+  http.begin(apiTlsClient(), url);
+}
 
 // Identify button state
 bool       lastIdentifyState = HIGH;
@@ -105,6 +128,52 @@ String chipId() {
   return String(buf);
 }
 
+String loadOrCreateFactoryKey() {
+  Preferences prefs;
+  prefs.begin("device-cred", false);
+  String key = prefs.getString("factory_key", "");
+  factoryKeyShown = prefs.getBool("factory_key_shown", false);
+  if (key.length() == 0) {
+    uint8_t randomBytes[24];
+    for (size_t i = 0; i < sizeof(randomBytes); i += 4) {
+      uint32_t value = esp_random();
+      memcpy(randomBytes + i, &value, (sizeof(randomBytes) - i) < 4 ? (sizeof(randomBytes) - i) : 4);
+    }
+    char encoded[49];
+    for (size_t i = 0; i < sizeof(randomBytes); ++i) snprintf(encoded + (i * 2), 3, "%02x", randomBytes[i]);
+    encoded[48] = '\0';
+    key = String(encoded);
+    prefs.putString("factory_key", key);
+    Serial.println("[CRED] Credencial individual generada y guardada en NVS device-cred");
+  }
+  prefs.end();
+  return key;
+}
+
+void markFactoryKeyShown() {
+  Preferences prefs;
+  prefs.begin("device-cred", false);
+  prefs.putBool("factory_key_shown", true);
+  prefs.end();
+  factoryKeyShown = true;
+}
+
+void factoryResetProvisioning() {
+  Preferences prefs;
+  prefs.begin("cerraduras", false);
+  prefs.clear();
+  prefs.end();
+  Preferences credentials;
+  credentials.begin("device-cred", false);
+  credentials.putBool("factory_key_shown", false);
+  credentials.end();
+  Serial.println("[FACTORY-RESET] WiFi reiniciado; factory_key conservada y portal inicial reabierto");
+}
+
+void addDeviceAuth(HTTPClient &http) {
+  if (deviceFactoryKey.length() > 0) http.addHeader("X-API-Key", deviceFactoryKey);
+}
+
 // ── Fase 39: anunciar identidad eFuse sin afectar la operación productiva ──
 void announceFactoryDevice(unsigned long now) {
   if (!factoryAnnouncementEnabled || factoryAnnouncementInFlight ||
@@ -116,13 +185,12 @@ void announceFactoryDevice(unsigned long now) {
   factoryNextAttemptAt = now + FACTORY_ANNOUNCE_RETRY_MS;
 
   String body;
-  body.reserve(64);
-  body = "{\"chip_id\":\"" + chipId() + "\"}";
+  body.reserve(140);
+  body = "{\"chip_id\":\"" + chipId() + "\",\"factory_key\":\"" + deviceFactoryKey + "\"}";
 
   HTTPClient http;
-  http.begin(String(API_BASE_URL) + "/api/v1/factory-devices/announce");
+  beginApiRequest(http, String(API_BASE_URL) + "/api/v1/factory-devices/announce");
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-API-Key", API_KEY);
   http.setTimeout(FACTORY_ANNOUNCE_TIMEOUT_MS);
 
   unsigned long startedAt = millis();
@@ -132,10 +200,12 @@ void announceFactoryDevice(unsigned long now) {
   factoryAnnouncementInFlight = false;
 
   if (code >= 200 && code < 300 && response.indexOf("\"status\":\"CLAIMED\"") >= 0) {
+    markFactoryKeyShown();
     factoryAnnouncementEnabled = false;
     Serial.printf("[FACTORY] chip_id=%s CLAIMED (%lu ms); anuncios pausados hasta reinicio\n",
                   chipId().c_str(), millis() - startedAt);
   } else if (code >= 200 && code < 300 && response.indexOf("\"status\":\"PENDING\"") >= 0) {
+    markFactoryKeyShown();
     Serial.printf("[FACTORY] chip_id=%s PENDING (%lu ms); reintento en %lu ms\n",
                   chipId().c_str(), millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);
   } else {
@@ -249,6 +319,14 @@ bool connectWithNvs() {
   return false;
 }
 
+bool hasStoredWifi() {
+  Preferences prefs;
+  prefs.begin("cerraduras", true);
+  bool present = prefs.getString("ssid", "").length() > 0;
+  prefs.end();
+  return present;
+}
+
 // ── WiFiManager provisioning ────────────────────────────────────────────────
 void startWiFiManager() {
   String apSsid = "Cerraduras-Setup-" + chipId();
@@ -257,6 +335,11 @@ void startWiFiManager() {
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(300); // 5 minutos de timeout
+  WiFiManagerParameter *factoryKeyInfo = nullptr;
+  if (!factoryKeyShown) {
+    factoryKeyInfo = new WiFiManagerParameter("factory_key", "Clave individual (copiar para reclamar)", deviceFactoryKey.c_str(), 49);
+    wm.addParameter(factoryKeyInfo);
+  }
 
   // autoConnect: si no hay credenciales guardadas, inicia AP
   // Si hay credenciales guardadas pero fallaron, las usa y reinicia automáticamente.
@@ -276,6 +359,8 @@ void startWiFiManager() {
   prefs.putString("ssid", WiFi.SSID());
   prefs.putString("pass", WiFi.psk());
   prefs.end();
+  if (!factoryKeyShown) markFactoryKeyShown();
+  delete factoryKeyInfo;
   Serial.printf("[WiFiManager] NVS guardado: SSID=%s\n", WiFi.SSID().c_str());
 }
 
@@ -309,9 +394,9 @@ void sendIdentify(bool state) {
   body.reserve(200);  // Fase 1: pre-allocate to prevent heap fragmentation
   body = "{\"external_id\":\"" + id + "\",\"state\":" + (state ? "true" : "false") + "}";
   HTTPClient http;
-  http.begin(String(API_BASE_URL) + "/api/v1/devices/identify");
+  beginApiRequest(http, String(API_BASE_URL) + "/api/v1/devices/identify");
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-API-Key", API_KEY);
+  addDeviceAuth(http);
   http.setTimeout(1500);
   int code = http.POST(body);
   String resp = http.getString();
@@ -320,8 +405,9 @@ void sendIdentify(bool state) {
 
   if (code == 200) {
     HTTPClient hb;
-    hb.begin(String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
+    beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
     hb.addHeader("Content-Type", "application/json");
+    addDeviceAuth(hb);
     hb.setTimeout(2000);
     hb.POST("{\"external_id\":\"" + id + "\",\"sub_kind\":\"RPI\"}");
     hb.end();
@@ -332,10 +418,19 @@ void sendIdentify(bool state) {
 void setup() {
   Serial.begin(115200);
   delay(3000);
+  deviceFactoryKey = loadOrCreateFactoryKey();
+  if (!factoryKeyShown) Serial.println("[CRED] factory_key (copiar para claim inicial): " + deviceFactoryKey);
 
   relayOff();
   pinMode(IDENTIFY_PIN, INPUT_PULLUP);
   lastIdentifyState = digitalRead(IDENTIFY_PIN);
+  if (lastIdentifyState == LOW) {
+    Serial.println("[FACTORY-RESET] Botón mantenido durante arranque: esperando liberación...");
+    factoryResetProvisioning();
+    while (digitalRead(IDENTIFY_PIN) == LOW) delay(20);
+    delay(250);
+    ESP.restart();
+  }
 
   String id = chipId();
   Serial.println("\n==============================================");
@@ -362,10 +457,13 @@ void setup() {
   // Fase 1: pausar TWDT nativo durante provisioning (puede tardar hasta 5 min)
   esp_task_wdt_delete(NULL);
 
+  bool hadStoredWifi = hasStoredWifi();
   bool nvsConnected = connectWithNvs();
 
-  if (!nvsConnected) {
+  if (!nvsConnected && !hadStoredWifi) {
     startWiFiManager();
+  } else if (!nvsConnected) {
+    Serial.println("[WIFI] Credenciales existentes no conectan; portal bloqueado. Usa reset de fábrica explícito.");
   }
 
   // ── USB Host callbacks ──────────────────────────────────────────────
@@ -380,8 +478,9 @@ void setup() {
     scannerConnected = true;  // F33: track USB HID scanner presence
     if (ensureWiFi()) {
       HTTPClient hScan;
-      hScan.begin(String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
+      beginApiRequest(hScan, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hScan.addHeader("Content-Type", "application/json");
+      addDeviceAuth(hScan);
       hScan.setTimeout(3000);
       int sc = hScan.POST("{\"external_id\":\"" + chipId() + "\",\"sub_kind\":\"SCANNER\"}");
       String sr = hScan.getString();
@@ -478,7 +577,7 @@ void setup() {
   // ── Health check + blink (solo en WiFi NUEVA) ──────────────────────
   if (ensureWiFi()) {
     HTTPClient h;
-    h.begin(String(API_BASE_URL) + "/api/v1/health");
+    beginApiRequest(h, String(API_BASE_URL) + "/api/v1/health");
     h.setTimeout(4000);
     int c = h.GET();
     String healthResp = h.getString();
@@ -501,8 +600,9 @@ void setup() {
       blinkBody.reserve(120);  // Fase 1: pre-allocate
       blinkBody = "{\"external_id\":\"" + chipId() + "\"}";
       HTTPClient h2;
-      h2.begin(String(API_BASE_URL) + "/dashboard-api/blink-light");
+      beginApiRequest(h2, String(API_BASE_URL) + "/dashboard-api/blink-light");
       h2.addHeader("Content-Type", "application/json");
+      addDeviceAuth(h2);
       h2.setTimeout(15000);
       int bc = h2.POST(blinkBody);
       String blinkResp = h2.getString();
@@ -564,9 +664,9 @@ void loop() {
     Serial.printf("[QR-POST] Body JSON (%d bytes): %s\n", body.length(), body.c_str());
     Serial.printf("══════════════════════════════════════════\n");
     HTTPClient http;
-    http.begin(String(API_BASE_URL) + "/api/v1/qr/validate");
+    beginApiRequest(http, String(API_BASE_URL) + "/api/v1/qr/validate");
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-API-Key", API_KEY);
+    addDeviceAuth(http);
     http.setTimeout(4000);
 
     unsigned long qrStart = millis();
@@ -583,8 +683,9 @@ void loop() {
 
       if (ensureWiFi()) {
         HTTPClient hLock;
-        hLock.begin(String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
+        beginApiRequest(hLock, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
         hLock.addHeader("Content-Type", "application/json");
+        addDeviceAuth(hLock);
         hLock.setTimeout(3000);
         int lc = hLock.POST("{\"external_id\":\"" + id + "\",\"sub_kind\":\"LOCK\"}");
         String lr = hLock.getString();
@@ -610,7 +711,7 @@ void loop() {
 
     if (ensureWiFi()) {
       HTTPClient h;
-      h.begin(String(API_BASE_URL) + "/api/v1/health");
+      beginApiRequest(h, String(API_BASE_URL) + "/api/v1/health");
       h.setTimeout(4000);
       int hc = h.GET();
       String hr = h.getString();
@@ -622,8 +723,9 @@ void loop() {
       hbBody.reserve(250);  // Fase 1: pre-allocate
       hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"]}";
       HTTPClient hb;
-      hb.begin(String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
+      beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hb.addHeader("Content-Type", "application/json");
+      addDeviceAuth(hb);
       hb.setTimeout(3000);
       int hbCode = hb.POST(hbBody);
       String hbResp = hb.getString();
@@ -634,8 +736,9 @@ void loop() {
       if (hbCode == 200 && hbResp.indexOf("\"has_pending_commands\":true") > 0) {
         Serial.println("[F33] Polling pending commands...");
         HTTPClient cmdPoll;
-        cmdPoll.begin(String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
+        beginApiRequest(cmdPoll, String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
         cmdPoll.setTimeout(3000);
+        addDeviceAuth(cmdPoll);
         int cmdCode = cmdPoll.GET();
         String cmdResp = cmdPoll.getString();
         cmdPoll.end();
@@ -685,8 +788,9 @@ void loop() {
                                    "}}";
 
               HTTPClient cmdResult;
-              cmdResult.begin(String(API_BASE_URL) + "/dashboard-api/command-result");
+              beginApiRequest(cmdResult, String(API_BASE_URL) + "/dashboard-api/command-result");
               cmdResult.addHeader("Content-Type", "application/json");
+              addDeviceAuth(cmdResult);
               cmdResult.setTimeout(3000);
               int resCode = cmdResult.POST(resultBody);
               String resResp = cmdResult.getString();

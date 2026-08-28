@@ -72,6 +72,18 @@ final class AuthApiKeyMiddleware implements Middleware
             );
         }
 
+        if ($client->deviceId !== null) {
+            $body = $request->jsonBody ?? [];
+            $externalId = isset($body['external_id']) ? (string) $body['external_id']
+                : (isset($body['device_id']) ? (string) $body['device_id'] : (string) ($request->query('external_id', '') ?? ''));
+            if ($externalId !== '') {
+                $bound = $this->apiClientRepo->findDeviceExternalId($client->deviceId);
+                if ($bound === null || !hash_equals($bound, $externalId)) {
+                    throw new ForbiddenException('device_mismatch', 'Device mismatch');
+                }
+            }
+        }
+
         $request->withAttr('api_client', $client);
         return $next($request);
     }
