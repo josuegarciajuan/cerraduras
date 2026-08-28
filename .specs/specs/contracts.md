@@ -792,5 +792,41 @@ devuelve `404`.
 | `PENDING` | primer anuncio | permanece `PENDING`; firmware reintenta durante el boot | claim manual |
 | `CLAIMED` | claim manual | permanece `CLAIMED`; firmware detiene anuncio solo durante ese boot | claim idempotente, sin cambio |
 
+---
+
+# Fase 40: Credenciales individuales ESP32
+
+## Anuncio
+
+```text
+POST /api/v1/factory-devices/announce
+HTTPS obligatorio
+Content-Type: application/json
+Body: { "chip_id": "a1b2c3d4e5f6", "factory_key": "<clave generada por placa>" }
+```
+
+Responde solo metadatos (`chip_id`, `status`, fechas, `device_id`); nunca la
+clave ni su hash. `201` es alta, `200` reintento, `400` formato inválido y
+`401/403` credencial o transporte inválido.
+
+## Claim
+
+```text
+POST /api/v1/factory-devices/{id}/claim
+HTTPS obligatorio; CRM o scope factory:claim
+Body: { "chip_id": "a1b2c3d4e5f6", "factory_key": "<pegada desde portal>",
+        "label": "opcional", "pack_id": 12 }
+```
+
+La respuesta nunca contiene `factory_key`. Una clave inválida produce error
+genérico; registro inexistente `404`, binding incompatible `409` y datos
+inválidos `422`.
+
+## Binding
+
+Un `api_client` bound solo puede operar sobre su único RPI. La incompatibilidad
+devuelve `403` con código `device_mismatch`. Clientes legacy sin binding siguen
+autorizándose por scope hasta su migración.
+
 El registro de auditoría del claim incluye `chip_id`, `status_before`,
 `status_after`, `actor` y `created_at`.

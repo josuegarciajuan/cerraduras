@@ -1217,3 +1217,26 @@ actor y timestamp.
 | `api/public/panel/index.html` | Cola `PENDING` y claim explícito |
 | `api/tests/Unit/FactoryDeviceTest.php` | Dominio, contrato firmware y regresión |
 | `api/bin/run-tests.sh` | BLOCK 30 de F39 |
+
+---
+
+# Fase 40: Credenciales individuales ESP32
+
+El firmware genera una clave aleatoria con el generador del ESP32 una única
+vez y la almacena en `Preferences` bajo `device-credential`, separado de
+`cerraduras`. El fingerprint de firmware puede limpiar WiFi sin tocarla.
+
+El flujo es: `announce` recibe por HTTPS `{chip_id,factory_key}`, almacena solo
+su SHA-256 y devuelve estado; el panel hace `claim` por HTTPS con
+`chip_id,factory_key,label?,pack_id?`. En una transacción se valida el hash, se
+crea o reutiliza el único RPI, se crea un `api_client` individual y se vinculan
+ambos lados (`api_clients.device_id` y `devices.api_client_id`). La clave plana
+nunca se persiste ni se devuelve.
+
+`api_clients.device_id` es único y nullable para legacy. Las rutas operativas
+que conocen el dispositivo comparan el cliente autenticado con el binding y
+devuelven `device_mismatch`; clientes legacy sin binding conservan su
+comportamiento. El claim idempotente conserva auditoría y no muestra la clave.
+El único sketch modificado es `scanner-relay-prod.ino`; usa la clave individual
+para anuncio y operación, conserva todas las funciones productivas y exige
+HTTPS. Si el servidor actual no publica TLS, el despliegue queda bloqueado.

@@ -27,6 +27,8 @@ final class Request
     /** @var array<string,string> */
     public array $cookies = [];
     public string $remoteIp;
+    /** True only when PHP received a TLS request directly. */
+    public bool $isTls = false;
 
     public static function fromGlobals(): self
     {
@@ -73,6 +75,8 @@ final class Request
         }
 
         $r->remoteIp = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+        $r->isTls = (($_SERVER['HTTPS'] ?? '') !== '' && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+            || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
 
         $r->cookies = [];
         foreach ($_COOKIE as $k => $v) {

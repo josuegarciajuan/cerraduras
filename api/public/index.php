@@ -1486,7 +1486,7 @@ $router->get('/api/v1/workers/{id}/sessions', [$workerController, 'sessions'],  
 $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],   $authFactory(['qr:validate']));
 
 // Factory firmware announces only its eFuse identity; no room or operational action.
-$router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce'], $authFactory(['factory:announce']));
+$router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
 $router->get('/api/v1/factory-devices', [$factoryDeviceController, 'list'], $authFactory(['audit:read']));
 $router->post('/api/v1/factory-devices/{id}/claim', [$factoryDeviceController, 'claim'], $authFactory(['factory:claim']));
 

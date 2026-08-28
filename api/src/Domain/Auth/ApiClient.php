@@ -19,6 +19,7 @@ final class ApiClient
     /** @var list<string>|null null = any IP allowed */
     public ?array $ipWhitelist;
     public bool $active;
+    public ?int $deviceId;
 
     /**
      * @param list<string> $scopes
@@ -30,7 +31,8 @@ final class ApiClient
         string $kind,
         array $scopes,
         ?array $ipWhitelist,
-        bool $active
+        bool $active,
+        ?int $deviceId = null
     ) {
         $this->id = $id;
         $this->code = $code;
@@ -38,6 +40,7 @@ final class ApiClient
         $this->scopes = $scopes;
         $this->ipWhitelist = $ipWhitelist;
         $this->active = $active;
+        $this->deviceId = $deviceId;
     }
 
     /**
