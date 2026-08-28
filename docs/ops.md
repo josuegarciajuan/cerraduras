@@ -109,16 +109,18 @@ limpia y el backend es la fuente autoritativa.
 
 ### Credenciales individuales ESP32 (F40)
 
-El anuncio y el claim requieren TLS real. La API considera TLS directo solo si
+El anuncio requiere TLS real; el claim se protege mediante autorización
+administrativa/sesión. La API considera TLS directo solo si
 PHP recibe `HTTPS` activo o `SERVER_PORT=443`; detrás de un terminador solo se
 acepta `X-Forwarded-Proto=https` desde IPs listadas explícitamente en
 `TRUSTED_PROXY_IPS`. Un cliente directo no puede falsificar ese encabezado.
 El proxy debe eliminar/recrear el encabezado y el despliegue debe publicar un
 certificado válido antes de activar el firmware.
 
-La placa genera su clave una sola vez en el namespace NVS `device-cred`; el
-portal y Serial la muestran únicamente durante el provisioning inicial. Si una
-red ya guardada falla, el equipo no vuelve a abrir el portal automáticamente.
+La placa genera su clave una sola vez en el namespace NVS `device-cred`; se usa
+para anuncio y operación, pero nunca se muestra por Serial ni WiFiManager. El
+panel reclama por id de registro y no solicita la clave. Si una red ya guardada
+falla, el equipo no vuelve a abrir el portal automáticamente.
 Para reabrirlo, mantener GPIO4 pulsado durante el arranque: se limpia solo el
 namespace WiFi, nunca `device-cred`. El backend conserva únicamente el hash.
 El firmware productivo exige definir `CERRADURAS_API_CA_PEM` en la
