@@ -37,7 +37,11 @@ final class FactoryDeviceService
     public function claim(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): array
     {
         $device = $this->repository->findById($id);
-        if ($device === null) throw new NotFoundException('Factory device not found');
+        if ($device === null) {
+            $device = $this->repository->findClaimedById($id);
+            if ($device === null) throw new NotFoundException('Factory device not found');
+            return $device->toArray();
+        }
         $claimed = $this->repository->claimAndAudit($id, $actor, $actorClientId, $label, $packId);
         return ($claimed ?? $device)->toArray();
     }

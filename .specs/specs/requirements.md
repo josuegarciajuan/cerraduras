@@ -364,3 +364,10 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 - **RF-40.3.4**: La credencial individual se conserva en NVS para anuncio y operación, pero nunca se muestra por Serial ni WiFiManager; `chip_id` permanece visible.
 - **RF-40.3.5**: TLS directo se determina por el runtime; `X-Forwarded-Proto` solo es válido desde `TRUSTED_PROXY_IPS` explícitamente configurados.
 - **RF-40.3.6**: El namespace NVS de credenciales no se borra al cambiar firmware; el portal solo se reabre mediante reset de fábrica explícito.
+
+## RF-40.4: Finalización del claim y anuncios posteriores
+- **RF-40.4.1**: Un claim válido crea o vincula el RPI y su cliente API, registra auditoría y elimina la fila operativa de `factory_devices` dentro de la misma transacción.
+- **RF-40.4.2**: El borrado no elimina ni modifica `audit_log`, el RPI ni su cliente API.
+- **RF-40.4.3**: Un anuncio posterior para un `chip_id` vinculado a un RPI devuelve metadatos lógicos `CLAIMED` y no crea `PENDING`.
+- **RF-40.4.4**: Una credencial distinta se rechaza sin efectos laterales.
+- **RF-40.4.5**: Se preservan compatibilidad, autenticación, auditoría y no regresión.

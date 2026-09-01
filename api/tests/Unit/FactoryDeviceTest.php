@@ -7,6 +7,7 @@ use App\Domain\FactoryDevices\FactoryDevice;
 use App\Domain\FactoryDevices\FactoryDeviceRepositoryInterface;
 use App\Domain\FactoryDevices\FactoryDeviceService;
 use App\Support\Errors\BadRequestException;
+use App\Support\Errors\ForbiddenException;
 
 final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryInterface
 {
@@ -15,6 +16,7 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
     private int $nextId = 1;
     public int $announceCalls = 0;
     public array $claimActors = [];
+    public array $consumed = [];
 
     public function findById(int $id): ?FactoryDevice { return $this->items[$id] ?? null; }
     public function findByChipId(string $chipId): ?FactoryDevice
@@ -22,13 +24,19 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
         foreach ($this->items as $item) if ($item->chipId === $chipId) return $item;
         return null;
     }
+    public function findClaimedById(int $id): ?FactoryDevice { return $this->consumed[$id] ?? (($this->items[$id] ?? null)?->status === FactoryDevice::STATUS_CLAIMED ? $this->items[$id] : null); }
     public function announce(string $chipId, string $enrollmentHash): array
     {
         $this->announceCalls++;
         $existing = $this->findByChipId($chipId);
         if ($existing !== null) {
+            if ($existing->status === FactoryDevice::STATUS_CLAIMED && $enrollmentHash !== hash('sha256', str_repeat('a', 48))) throw new ForbiddenException('invalid_factory_credential', 'Factory credential rejected');
             $existing->lastAnnouncedAt = 'later';
             return [$existing, false];
+        }
+        foreach ($this->consumed as $claimed) if ($claimed->chipId === $chipId) {
+            if ($enrollmentHash !== hash('sha256', str_repeat('a', 48))) throw new ForbiddenException('invalid_factory_credential', 'Factory credential rejected');
+            return [$claimed, false];
         }
         $item = new FactoryDevice($this->nextId++, $chipId, FactoryDevice::STATUS_PENDING, 'first', 'first', null, null, 'created', 'created');
         $this->items[$item->id] = $item;
@@ -47,7 +55,9 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
     }
     public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice
     {
-        return $this->claim($id, $actor, $actorClientId);
+        $claimed = $this->claim($id, $actor, $actorClientId);
+        if ($claimed !== null && $claimed->status === FactoryDevice::STATUS_CLAIMED) { $this->consumed[$id] = $claimed; unset($this->items[$id]); }
+        return $claimed;
     }
 }
 
@@ -66,14 +76,16 @@ $retry = $service->announce('a1b2c3d4e5f6', $key);
 checkFactory($retry['created'] === false && count($repo->items) === 2, 'announcement is idempotent by chip id');
 $claimed = $service->claim(1, 'operator-1');
 checkFactory($claimed['status'] === 'CLAIMED' && $claimed['claimed_by'] === 'operator-1', 'claim changes pending to claimed');
+checkFactory(!isset($repo->items[1]) && $service->announce('a1b2c3d4e5f6', $key)['data']['status'] === 'CLAIMED', 'claimed announcement does not recreate a factory row');
+try { $service->announce('a1b2c3d4e5f6', str_repeat('b', 48)); checkFactory(false, 'rejects mismatched post-claim credential'); } catch (ForbiddenException $e) { checkFactory(true, 'rejects mismatched post-claim credential'); }
 $again = $service->claim(1, 'operator-2');
 checkFactory($again['claimed_by'] === 'operator-1', 'repeated claim preserves audit actor');
 checkFactory($service->announce('a1b2c3d4e5f6', $key)['data']['status'] === 'CLAIMED', 'later announcement never downgrades claimed state');
 try { $service->announce('not-a-chip', $key); checkFactory(false, 'rejects non-format chip id'); } catch (BadRequestException $e) { checkFactory(true, 'rejects non-format chip id'); }
 try { $service->announce('A1B2C3D4E5F6', $key); checkFactory(false, 'accepts only the firmware chip format'); } catch (BadRequestException $e) { checkFactory(true, 'accepts only the firmware chip format'); }
-checkFactory($repo->announceCalls === 4, 'invalid chip id does not reach repository');
+checkFactory($repo->announceCalls === 6, 'invalid chip id does not reach repository');
 $service->claim(2, 'operator-1', 42);
-checkFactory($repo->claimActors[2] === ['operator-1', 42], 'claim preserves authenticated client identity');
+checkFactory($repo->claimActors[1] === ['operator-1', 42], 'claim preserves authenticated client identity');
 $source = (string) file_get_contents(__DIR__ . '/../../src/Domain/FactoryDevices/FactoryDeviceRepositoryInterface.php');
 checkFactory(str_contains($source, 'claimAndAudit') && !str_contains($source, 'claimAndAudit(int $id, string $chipId'), 'claim and audit use one repository transaction boundary');
 $routes = (string) file_get_contents(__DIR__ . '/../../public/index.php');
@@ -117,5 +129,7 @@ $migration = (string) file_get_contents(__DIR__ . '/../../migrations/0046_factor
 checkFactory(str_contains($migration, 'device_id') && str_contains($migration, 'FOREIGN KEY'), 'factory claim links the created RPI device');
 $repository = (string) file_get_contents(__DIR__ . '/../../src/Infrastructure/Persistence/FactoryDeviceRepository.php');
 checkFactory(str_contains($repository, 'INSERT INTO devices') && str_contains($repository, 'pack_id') && str_contains($repository, 'room_id') && str_contains($repository, 'beginTransaction'), 'claim creates or links an unassigned RPI in the same transaction');
+checkFactory(str_contains($repository, 'DELETE FROM factory_devices') && str_contains($repository, 'INSERT INTO audit_log'), 'claim audits before consuming the factory row');
+checkFactory(str_contains($repository, 'FROM devices d') && str_contains($repository, 'api_clients c') && str_contains($repository, 'CLAIMED'), 'post-claim announce resolves the linked RPI as logical CLAIMED');
 
 exit($failed === 0 ? 0 : 1);

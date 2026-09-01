@@ -7,6 +7,7 @@ interface FactoryDeviceRepositoryInterface
 {
     public function findById(int $id): ?FactoryDevice;
     public function findByChipId(string $chipId): ?FactoryDevice;
+    public function findClaimedById(int $id): ?FactoryDevice;
     /** @return array{0:FactoryDevice,1:bool} */
     public function announce(string $chipId, string $enrollmentHash): array;
     public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice;
