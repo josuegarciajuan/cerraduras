@@ -14,6 +14,11 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
     public function findById(int $id): ?FactoryDevice { return $this->fetch('id = :id', [':id'=>$id]); }
     public function findByChipId(string $chipId): ?FactoryDevice { return $this->fetch('chip_id = :chip', [':chip'=>$chipId]); }
 
+    public function findClaimedById(int $id): ?FactoryDevice
+    {
+        return $this->fetchClaimFromAudit('entity_id = :id', [':id'=>(string)$id]);
+    }
+
     public function announce(string $chipId, string $enrollmentHash): array
     {
         $this->pdo->beginTransaction();
@@ -34,6 +39,11 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                 $device = $this->fetchForUpdate($existing->id);
                 $this->pdo->commit();
                 return [$device, false];
+            }
+            $claimed = $this->fetchClaimedByChip($chipId, $enrollmentHash);
+            if ($claimed !== null) {
+                $this->pdo->commit();
+                return [$claimed, false];
             }
             $stmt = $this->pdo->prepare("INSERT INTO factory_devices (chip_id,enrollment_key_hash,status,first_announced_at,last_announced_at)
                 VALUES (:chip,:hash,'PENDING',CURRENT_TIMESTAMP(3),CURRENT_TIMESTAMP(3))
@@ -96,7 +106,8 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                 $stmt->execute([':id'=>$id, ':actor'=>$actor, ':device_id'=>$deviceId]);
                 $device = $this->fetchForUpdate($id);
                 $audit = $this->pdo->prepare('INSERT INTO audit_log (actor_client_id,scope,action,entity,entity_id,correlation_id,payload_json) VALUES (:client,\'factory:claim\',\'claim\',\'factory_device\',:id,:corr,:payload)');
-                $audit->execute([':client'=>$actorClientId, ':id'=>(string)$id, ':corr'=>str_pad((string)$id,26,'0',STR_PAD_LEFT), ':payload'=>json_encode(['chip_id'=>$device->chipId,'status_before'=>$before,'status_after'=>'CLAIMED','actor'=>$actor])]);
+                $audit->execute([':client'=>$actorClientId, ':id'=>(string)$id, ':corr'=>str_pad((string)$id,26,'0',STR_PAD_LEFT), ':payload'=>json_encode(['chip_id'=>$device->chipId,'device_id'=>$deviceId,'status_before'=>$before,'status_after'=>'CLAIMED','actor'=>$actor])]);
+                $this->pdo->prepare('DELETE FROM factory_devices WHERE id=:id')->execute([':id'=>$id]);
             }
             $this->pdo->commit(); return $device;
         } catch (\Throwable $e) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $e; }
@@ -114,5 +125,24 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
     private function fetch(string $where, array $params): ?FactoryDevice { $s=$this->pdo->prepare('SELECT * FROM factory_devices WHERE '.$where.' LIMIT 1'); $s->execute($params); $r=$s->fetch(PDO::FETCH_ASSOC); return $r===false?null:$this->hydrate($r); }
     private function fetchForUpdate(int $id): ?FactoryDevice { $s=$this->pdo->prepare('SELECT * FROM factory_devices WHERE id=:id LIMIT 1 FOR UPDATE'); $s->execute([':id'=>$id]); $r=$s->fetch(PDO::FETCH_ASSOC); return $r===false?null:$this->hydrate($r); }
     private function fetchForUpdateByChip(string $chipId): ?FactoryDevice { $s=$this->pdo->prepare('SELECT * FROM factory_devices WHERE chip_id=:chip LIMIT 1 FOR UPDATE'); $s->execute([':chip'=>$chipId]); $r=$s->fetch(PDO::FETCH_ASSOC); return $r===false?null:$this->hydrate($r); }
+    private function fetchClaimedByChip(string $chipId, string $enrollmentHash): ?FactoryDevice
+    {
+        $s=$this->pdo->prepare("SELECT d.id AS device_id, d.external_id, c.api_key_hash FROM devices d JOIN api_clients c ON c.id=d.api_client_id WHERE d.kind='RPI' AND d.external_id=:chip LIMIT 1");
+        $s->execute([':chip'=>$chipId]); $r=$s->fetch(PDO::FETCH_ASSOC);
+        if ($r===false) return null;
+        if (!hash_equals((string)$r['api_key_hash'], $enrollmentHash)) throw new \App\Support\Errors\ForbiddenException('invalid_factory_credential', 'Factory credential rejected');
+        $claimed = $this->fetchClaimFromAudit('JSON_UNQUOTE(JSON_EXTRACT(payload_json, \'$.chip_id\')) = :chip', [':chip'=>$chipId], (int)$r['device_id']);
+        if ($claimed !== null) return $claimed;
+        $now = date('Y-m-d H:i:s.v');
+        return new FactoryDevice(0, $chipId, FactoryDevice::STATUS_CLAIMED, $now, $now, $now, null, $now, $now, (int)$r['device_id']);
+    }
+    private function fetchClaimFromAudit(string $where, array $params, ?int $deviceId=null): ?FactoryDevice
+    {
+        $s=$this->pdo->prepare("SELECT payload_json, occurred_at FROM audit_log WHERE entity='factory_device' AND action='claim' AND {$where} ORDER BY occurred_at DESC, id DESC LIMIT 1");
+        $s->execute($params); $r=$s->fetch(PDO::FETCH_ASSOC); if ($r===false) return null;
+        $p=json_decode((string)$r['payload_json'], true); if (!is_array($p) || !isset($p['chip_id'])) return null;
+        $at=(string)$r['occurred_at']; $resolvedDeviceId=$deviceId ?? (isset($p['device_id'])?(int)$p['device_id']:null);
+        return new FactoryDevice(0,(string)$p['chip_id'],FactoryDevice::STATUS_CLAIMED,$at,$at,$at,isset($p['actor'])?(string)$p['actor']:null,$at,$at,$resolvedDeviceId);
+    }
     private function hydrate(array $r): FactoryDevice { return new FactoryDevice((int)$r['id'],(string)$r['chip_id'],(string)$r['status'],(string)$r['first_announced_at'],(string)$r['last_announced_at'],$r['claimed_at']===null?null:(string)$r['claimed_at'],$r['claimed_by']===null?null:(string)$r['claimed_by'],(string)$r['created_at'],(string)$r['updated_at'],isset($r['device_id'])&&$r['device_id']!==null?(int)$r['device_id']:null); }
 }

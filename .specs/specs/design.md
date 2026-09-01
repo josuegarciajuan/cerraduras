@@ -1237,6 +1237,16 @@ La clave plana nunca se persiste, se solicita al operador o se devuelve.
 que conocen el dispositivo comparan el cliente autenticado con el binding y
 devuelven `device_mismatch`; clientes legacy sin binding conservan su
 comportamiento. El claim idempotente conserva auditoría y no muestra la clave.
+
+## Fase 40.4: Consumo del registro y anuncio lógico
+
+El claim se ejecuta en una única transacción: bloquear el pendiente, crear o
+reutilizar RPI y cliente API, escribir el audit log y eliminar finalmente la fila
+de `factory_devices`. El audit log es append-only y el borrado no toca el RPI ni
+el cliente. En un anuncio posterior, si falta la fila, se resuelve el RPI por
+`external_id` y se valida la credencial contra su cliente vinculado. Si coincide
+se devuelve una entidad efímera `CLAIMED` con `device_id` y datos auditados; si no
+coincide se devuelve `invalid_factory_credential` sin upsert ni modificación.
 El único sketch modificado es `scanner-relay-prod.ino`; usa la clave individual
 para anuncio y operación, conserva todas las funciones productivas y exige
 HTTPS para el anuncio. La credencial no se expone por Serial ni WiFiManager y

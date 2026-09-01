@@ -823,6 +823,14 @@ idempotente: registro inexistente `404`, registro sin hash `409
 enrollment_required`, binding incompatible `409 device_client_conflict` y
 datos inválidos `422`.
 
+## 3. Claim consumido y anuncio posterior
+
+Tras un claim exitoso, la fila `factory_devices` se elimina en la misma
+transacción, después de crear/vincular el RPI, vincular su cliente API y escribir
+la auditoría. `audit_log`, el RPI y el cliente API permanecen. Un anuncio
+posterior responde `200`, `created: false` y `data.status: "CLAIMED"` con
+`device_id`; una credencial distinta responde `403` sin recrear `PENDING`.
+
 ## Binding
 
 Un `api_client` bound solo puede operar sobre su único RPI. La incompatibilidad
