@@ -1171,14 +1171,14 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 ## TSK-40.06: Consumir el registro de fábrica al reclamar
 **Trazabilidad**: RF-40.4.1, RF-40.4.2
 **Archivos**: `api/src/Infrastructure/Persistence/FactoryDeviceRepository.php`
-- [ ] En una transacción crear/vincular RPI y cliente, auditar y borrar al final `factory_devices`.
-- [ ] Mantener audit log, RPI y cliente; cualquier conflicto hace rollback.
+- [x] En una transacción crear/vincular RPI y cliente, auditar y borrar al final `factory_devices`.
+- [x] Mantener audit log, RPI y cliente; cualquier conflicto hace rollback.
 **Verificación**: BD confirma ausencia de fila y permanencia de RPI, cliente y auditoría.
 
 ## TSK-40.07: Anuncio lógico CLAIMED tras consumo
 **Trazabilidad**: RF-40.4.3–RF-40.4.5
 **Archivos**: `api/src/Infrastructure/Persistence/FactoryDeviceRepository.php`, `api/tests/Unit/FactoryDeviceTest.php`, `api/bin/run-tests.sh`
-- [ ] Resolver RPI existente antes de crear `PENDING` y devolver metadatos efímeros `CLAIMED`.
-- [ ] Rechazar credencial incompatible sin efectos laterales.
-- [ ] Añadir regresiones unitarias y HTTP para repetición posterior y ausencia de fila.
+- [x] Resolver RPI existente antes de crear `PENDING` y devolver metadatos efímeros `CLAIMED`.
+- [x] Rechazar credencial incompatible sin efectos laterales.
+- [x] Añadir regresiones unitarias y HTTP para repetición posterior y ausencia de fila.
 **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` termina con 0 failures.
