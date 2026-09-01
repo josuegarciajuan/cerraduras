@@ -5,13 +5,18 @@
  *
  * WiFi:
  *   - Credenciales WiFi guardadas en NVS (Preferences).
- *   - Cada vez que se flashea (MD5 del binario cambia): wipe del namespace WiFi.
+ *   - Cada build nuevo (MD5 + __DATE__ + __TIME__) borra solo las claves WiFi
+ *     del namespace cerraduras y fuerza provisioning fresco; no borra device-cred.
  *   - Al arrancar: intenta conectar con credenciales NVS.
  *   - Si no hay credenciales/NVS o falla conexión: WiFiManager (portal cautivo).
  *   - El portal vuelve a abrirse solo manteniendo GPIO4 pulsado durante el arranque.
  *   - AP mode: "Cerraduras-Setup-<chipId>" (MAC de 12 chars, único por dispositivo).
  *   - Al conectar: LED 4.5s + CLIC relé (feedback), + blink-light API (luz habitación).
  *   - Credencial individual generada una vez y almacenada en NVS separado.
+ *
+ * BUILD/UPLOAD: recompilar y cargar este sketch en cada provisioning fresco.
+ * No editar un marcador manualmente ni cargar el mismo binario: el digest del
+ * sketch y __DATE__/__TIME__ forman el marcador automáticamente.
  *
  * Flujo normal:
  *   1. Lee QR vía USB-Host (EspUsbHost) — no consume GPIO16/17.
@@ -184,11 +189,11 @@ String loadOrCreateFactoryKey() {
 void factoryResetProvisioning() {
   Preferences prefs;
   prefs.begin("cerraduras", false);
-  prefs.clear();
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.remove("last_ssid");
+  prefs.remove("build_marker");
   prefs.end();
-  Preferences credentials;
-  credentials.begin("device-cred", false);
-  credentials.end();
   Serial.println("[FACTORY-RESET] WiFi reiniciado; credencial individual conservada y portal reabierto");
 }
 
@@ -263,12 +268,17 @@ bool clearNvsIfNewFirmware() {
   String fingerprint = currentMd5 + "-" + __DATE__ + "-" + __TIME__;
   Preferences prefs;
   prefs.begin("cerraduras", false);
-  String storedFp = prefs.getString("sketch_fp", "");
+  String storedFp = prefs.getString("build_marker", "");
 
   if (storedFp != fingerprint) {
     Serial.printf("[FW] Fingerprint cambiado (%s) — limpiando NVS\n", fingerprint.c_str());
-    prefs.clear();  // borra TODO el namespace: ssid, pass, sketch_fp, etc.
-    prefs.putString("sketch_fp", fingerprint);
+    // Solo WiFi/provisioning. Nunca usar clear(): las credenciales individuales
+    // viven en device-cred y cualquier metadata no relacionada debe sobrevivir.
+    prefs.remove("ssid");
+    prefs.remove("pass");
+    prefs.remove("last_ssid");
+    prefs.remove("build_marker");
+    prefs.putString("build_marker", fingerprint);
     prefs.end();
     delay(500);
     ESP.restart();

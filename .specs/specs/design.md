@@ -1222,6 +1222,17 @@ actor y timestamp.
 
 # Fase 40: Credenciales individuales ESP32
 
+## Correcciones de identidad, provisioning y consumo
+
+- `chip_id` solo usa los seis bytes bajos de `ESP.getEfuseMac()`, serializados con `%02x` en 12 caracteres lowercase. SSID, MAC WiFi, IP y credencial no son identidad.
+- `clearNvsIfNewFirmware()` conserva `device-cred` intacta y, en `cerraduras`, elimina solo `ssid`, `pass`, `last_ssid` y `build_marker`. El marcador combina `ESP.getSketchMD5()` con `__DATE__` y `__TIME__`.
+- El claim bloquea y resuelve un único RPI por `(kind, external_id)` y un único cliente por `device_id`; crea, vincula, audita y elimina la fila factory en una transacción. Un error revierte también cualquier cliente nuevo.
+- Tras consumir la fila, `announce()` valida la credencial contra el cliente del RPI y devuelve un DTO efímero `CLAIMED`; un claim repetido se reconstruye desde auditoría sin crear recursos.
+
+### Requisito de build/upload
+
+Hay que recompilar y cargar `scanner-relay-prod.ino` con el flujo Arduino/ESP32-S3-USB-OTG documentado en el sketch. No usar una carga sin recompilar ni editar el marcador manualmente.
+
 El firmware genera una clave aleatoria con el generador del ESP32 una única
 vez y la almacena en `Preferences` bajo `device-credential`, separado de
 `cerraduras`. El fingerprint de firmware puede limpiar WiFi sin tocarla.

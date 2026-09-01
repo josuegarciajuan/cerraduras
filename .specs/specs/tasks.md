@@ -1137,6 +1137,25 @@ firmware/sketch aislado: toda la lógica de placa se integra en
 
 # Fase 40: Credenciales individuales ESP32
 
+## TSK-40.08: Provisioning fresco sin destruir credenciales
+
+- [x] Borrar individualmente `ssid`, `pass`, `last_ssid` y `build_marker` en `cerraduras`, sin `prefs.clear()` ni acceso destructivo a `device-cred`.
+- [x] Documentar compilación/upload real para activar el marcador automático basado en digest/fecha/hora.
+- **Verificación**: test de contrato del sketch y revisión de NVS.
+
+## TSK-40.09: Unicidad y claim sin huérfanos
+
+- [x] Garantizar un RPI por eFuse y un cliente por dispositivo; cualquier conflicto revierte la transacción.
+- [x] Confirmar claim repetido desde RPI/auditoría sin filas ni clientes adicionales.
+- **Verificación**: tests unitarios/HTTP de unicidad, binding, rollback y `CLAIMED` posterior.
+
+## TSK-40.10: Cleanup y regresión BLOCK 31
+
+- [x] Limpiar automáticamente la fila factory aleatoria y los recursos RPI/cliente creados por el bloque, sin imprimir valores sensibles.
+- [x] Añadir regresiones de cleanup y ejecutar la suite completa, separando baseline de regresiones.
+- [x] Limpiar solo IDs vivos 8/9 y sus recursos test-owned enlazados, preservando auditoría.
+- **Verificación**: PHP lint, `bash -n`, `git diff --check` y `cd api && bash bin/run-tests.sh`.
+
 ## TSK-40.01: Migración y binding
 
 - [ ] Añadir hash de enrollment a `factory_devices`.

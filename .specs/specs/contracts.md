@@ -796,6 +796,12 @@ devuelve `404`.
 
 # Fase 40: Credenciales individuales ESP32
 
+## Correcciones de provisioning y claim
+
+El claim es indivisible: crea o vincula exactamente un `RPI` por `external_id=chip_id` y exactamente un `api_client` por `device_id`; ningún cliente puede quedar huérfano. Después de eliminar `factory_devices`, repetir el claim devuelve `200` con `CLAIMED` reconstruido desde RPI/auditoría, sin cambiar actor/fecha ni crear recursos.
+
+Cada build nuevo compara `build_marker = ESP.getSketchMD5() + "-" + __DATE__ + "-" + __TIME__`. Si cambia, elimina solo `ssid`, `pass`, `last_ssid` y `build_marker` de `Preferences("cerraduras")`, guarda el nuevo marcador y reinicia. Nunca usa `Preferences::clear()` ni modifica `Preferences("device-cred")`.
+
 ## Anuncio
 
 ```text

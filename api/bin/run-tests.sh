@@ -108,6 +108,39 @@ SAVED_STATUS=""
 SAVED_COOLDOWN=""
 SAVED_PRESENCE_CHECK_SAVE=""  # nombre distinto para no colisionar con test vars
 
+# Recursos exclusivos del test F40. Se limpian también si un caso intermedio
+# falla; no se imprimen credenciales ni se toca la auditoría histórica.
+FACTORY_CHIP=""
+FACTORY_CLEANED=false
+_cleanup_factory_test() {
+    [ -z "$FACTORY_CHIP" ] && return 0
+    [ "$FACTORY_CLEANED" = true ] && return 0
+    if ! db_exec "SELECT 1" > /dev/null 2>&1; then
+        echo "[TEST-RUNNER] ⚠ F40 cleanup omitido: BD no accesible"
+        return 0
+    fi
+    local rpi_id client_id
+    rpi_id=$($MYSQL -sN -e "SELECT id FROM devices WHERE kind='RPI' AND external_id='$FACTORY_CHIP' LIMIT 1" 2>/dev/null || true)
+    if [ -n "$rpi_id" ]; then
+        client_id=$($MYSQL -sN -e "SELECT api_client_id FROM devices WHERE id=$rpi_id LIMIT 1" 2>/dev/null || true)
+        $MYSQL -sN -e "DELETE FROM devices WHERE id=$rpi_id" 2>/dev/null || true
+        if [ -n "$client_id" ]; then
+            $MYSQL -sN -e "DELETE FROM api_clients WHERE id=$client_id AND code='RPI-$FACTORY_CHIP'" 2>/dev/null || true
+        fi
+    fi
+    $MYSQL -sN -e "DELETE FROM factory_devices WHERE chip_id='$FACTORY_CHIP'" 2>/dev/null || true
+    local remaining_factory remaining_rpi
+    remaining_factory=$($MYSQL -sN -e "SELECT COUNT(*) FROM factory_devices WHERE chip_id='$FACTORY_CHIP'" 2>/dev/null || echo 1)
+    remaining_rpi=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices WHERE kind='RPI' AND external_id='$FACTORY_CHIP'" 2>/dev/null || echo 1)
+    if [ "$remaining_factory" = 0 ] && [ "$remaining_rpi" = 0 ]; then
+        FACTORY_CLEANED=true
+        echo "[TEST-RUNNER] ✅ F40 cleanup completado (recursos propios; auditoría preservada)"
+    else
+        fail "F40 cleanup" "Quedaron recursos del chip de prueba"
+    fi
+}
+trap _cleanup_factory_test EXIT
+
 _save_room1_state() {
     if db_exec "SELECT 1" > /dev/null 2>&1; then
         SAVED_PACK_ID=$($MYSQL -sN -e "SELECT COALESCE(pack_id, 'NULL') FROM rooms WHERE id=1" 2>/dev/null || echo "NULL")
@@ -2371,6 +2404,10 @@ if [ -n "$FACTORY_ID" ] && [ "$FACTORY_ID" != " " ]; then
 else
   skip "Factory device claim setup" "Created chip_id not found in PENDING list"
 fi
+
+# F40 cleanup must complete before reporting the suite result; EXIT trap is a
+# safety net for interruptions during the stateful block.
+_cleanup_factory_test
 
 # =============================================================================
 # RESUMEN
