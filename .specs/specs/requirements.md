@@ -367,6 +367,11 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 
 ## RF-40.4: Finalización del claim y anuncios posteriores
 - **RF-40.4.1**: Un claim válido crea o vincula el RPI y su cliente API, registra auditoría y elimina la fila operativa de `factory_devices` dentro de la misma transacción.
+- **RF-40.4.2**: El claim no deja clientes API huérfanos; cada cliente creado queda vinculado a un único RPI o la transacción revierte completamente.
+- **RF-40.4.3**: No puede existir más de un RPI para el mismo `ESP.getEfuseMac()` ni más de un cliente vinculado al mismo dispositivo.
+- **RF-40.4.4**: Tras consumir la fila, un anuncio con credencial válida devuelve lógicamente `CLAIMED` sin recrear `PENDING`; una credencial inválida no tiene efectos laterales.
+- **RF-40.4.5**: Cada sketch nuevo borra únicamente `ssid`, `pass`, `last_ssid` y el marcador de build de `Preferences("cerraduras")`; conserva `device-cred`, `factory_key`, la identidad eFuse y otras claves.
+- **RF-40.4.6**: El marcador cambia automáticamente mediante digest del sketch y `__DATE__`/`__TIME__`; compilar y cargar el sketch real es el único requisito, sin editar constantes.
 - **RF-40.4.2**: El borrado no elimina ni modifica `audit_log`, el RPI ni su cliente API.
 - **RF-40.4.3**: Un anuncio posterior para un `chip_id` vinculado a un RPI devuelve metadatos lógicos `CLAIMED` y no crea `PENDING`.
 - **RF-40.4.4**: Una credencial distinta se rechaza sin efectos laterales.

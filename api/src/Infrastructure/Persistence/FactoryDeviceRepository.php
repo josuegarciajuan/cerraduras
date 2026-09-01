@@ -83,11 +83,14 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                     $this->pdo->prepare('UPDATE api_clients SET device_id=:device WHERE id=:client')->execute([':device'=>$deviceId, ':client'=>$clientId]);
                 } else {
                     $deviceId = (int) $deviceRow['id'];
-                    $existingClient = $this->pdo->prepare('SELECT c.id, c.api_key_hash FROM api_clients c JOIN devices d ON d.api_client_id = c.id WHERE d.id=:device LIMIT 1 FOR UPDATE');
+                    $existingClient = $this->pdo->prepare('SELECT c.id, c.api_key_hash, c.device_id FROM api_clients c JOIN devices d ON d.api_client_id = c.id WHERE d.id=:device LIMIT 1 FOR UPDATE');
                     $existingClient->execute([':device' => $deviceId]);
                     $existingClientRow = $existingClient->fetch(PDO::FETCH_ASSOC);
                     if ($existingClientRow !== false && !hash_equals((string) $existingClientRow['api_key_hash'], $storedHash)) {
                         throw new \App\Support\Errors\ConflictException('device_client_conflict', 'RPI already has a different API client');
+                    }
+                    if ($existingClientRow !== false && $existingClientRow['device_id'] !== null && (int) $existingClientRow['device_id'] !== $deviceId) {
+                        throw new \App\Support\Errors\ConflictException('device_client_conflict', 'API client is already bound to another device');
                     }
                     $clientId = $existingClientRow === false ? false : $existingClientRow['id'];
                     if ($clientId === false) {
@@ -99,6 +102,11 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                         $createClient = $this->pdo->prepare("INSERT INTO api_clients (code,kind,api_key_hash,scopes_csv,active,device_id) VALUES (:code,'RPI',:hash,'qr:validate,rooms:read,presence:write',1,:device)");
                         $createClient->execute([':code' => 'RPI-'.$device->chipId, ':hash' => $storedHash, ':device' => $deviceId]);
                         $clientId = (int) $this->pdo->lastInsertId();
+                    }
+                    $duplicateBinding = $this->pdo->prepare('SELECT id FROM devices WHERE api_client_id=:client AND id<>:device LIMIT 1 FOR UPDATE');
+                    $duplicateBinding->execute([':client' => (int)$clientId, ':device' => $deviceId]);
+                    if ($duplicateBinding->fetchColumn() !== false) {
+                        throw new \App\Support\Errors\ConflictException('device_client_conflict', 'API client is already linked to another device');
                     }
                     $this->pdo->prepare('UPDATE devices SET api_client_id=:client, pack_id=COALESCE(:pack, pack_id), label=COALESCE(:label, label) WHERE id=:device')->execute([':client'=>(int)$clientId, ':pack'=>$packId, ':label'=>$label, ':device'=>$deviceId]);
                 }

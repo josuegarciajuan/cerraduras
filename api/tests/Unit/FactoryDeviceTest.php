@@ -132,4 +132,27 @@ checkFactory(str_contains($repository, 'INSERT INTO devices') && str_contains($r
 checkFactory(str_contains($repository, 'DELETE FROM factory_devices') && str_contains($repository, 'INSERT INTO audit_log'), 'claim audits before consuming the factory row');
 checkFactory(str_contains($repository, 'FROM devices d') && str_contains($repository, 'api_clients c') && str_contains($repository, 'CLAIMED'), 'post-claim announce resolves the linked RPI as logical CLAIMED');
 
+checkFactory(
+    str_contains($firmware, 'prefs.remove("ssid")')
+    && str_contains($firmware, 'prefs.remove("pass")')
+    && str_contains($firmware, 'prefs.remove("last_ssid")')
+    && str_contains($firmware, 'prefs.remove("build_marker")')
+    && !str_contains($firmware, 'prefs.clear()')
+    && !str_contains($firmware, 'credentials.clear()'),
+    'new builds reset only WiFi provisioning and preserve device credentials'
+);
+checkFactory(
+    str_contains($firmware, 'ESP.getSketchMD5()')
+    && str_contains($firmware, '__DATE__')
+    && str_contains($firmware, '__TIME__')
+    && str_contains($firmware, 'build_marker'),
+    'build marker changes automatically with the compiled sketch'
+);
+checkFactory(
+    str_contains($repository, 'c.device_id')
+    && str_contains($repository, 'duplicateBinding')
+    && str_contains($repository, 'already linked to another device'),
+    'claim rejects duplicate device-client bindings without leaving partial resources'
+);
+
 exit($failed === 0 ? 0 : 1);
