@@ -480,7 +480,20 @@ void setup() {
   // ya es seguro sin pausar ni borrar la suscripción. No usar
   // esp_task_wdt_delete(NULL): loopTask aún no está suscrito aquí y generaría un
   // `task_wdt: delete_entry: task not found` benigno en cada arranque.
-  esp_task_wdt_init(60, true);
+  //
+  // API del watchdog según core: Arduino-ESP32 core 3.x (IDF 5.x) cambió la firma
+  // de esp_task_wdt_init() a un config-struct. Guard para mantener compilable el
+  // sketch también en core 2.x (IDF 4.x), donde la firma era (timeout_sec, panic).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  esp_task_wdt_config_t wdt_cfg = {
+      .timeout_ms     = 60000,   // RF-1.1: 60s
+      .idle_core_mask = 0,       // no vigilar idle tasks (igual que hoy)
+      .trigger_panic  = true,    // panic/reinicio al expirar
+  };
+  esp_task_wdt_init(&wdt_cfg);
+#else
+  esp_task_wdt_init(60, true);   // Arduino core 2.x (IDF 4.x)
+#endif
 
   bool hadStoredWifi = hasStoredWifi();
   bool nvsConnected = connectWithNvs();

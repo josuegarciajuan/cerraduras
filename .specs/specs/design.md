@@ -17,7 +17,18 @@ El firmware actual (`scanner-relay-prod.ino`) es un sketch Arduino monociclo (`s
 
 void setup() {
   Serial.begin(115200);
-  esp_task_wdt_init(60, true);  // 60s timeout, panic on timeout
+  // Arduino-ESP32 core 3.x (IDF 5.x): esp_task_wdt_init() toma un config-struct.
+  // Core 2.x legado (IDF 4.x) usaba esp_task_wdt_init(60, true).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  esp_task_wdt_config_t wdt_cfg = {
+      .timeout_ms     = 60000,   // 60s
+      .idle_core_mask = 0,       // no vigilar idle tasks
+      .trigger_panic  = true,    // panic/reboot al expirar
+  };
+  esp_task_wdt_init(&wdt_cfg);
+#else
+  esp_task_wdt_init(60, true);   // core 2.x legado
+#endif
   esp_task_wdt_add(NULL);       // vigila la tarea actual (loop)
   ...
 }
@@ -239,7 +250,16 @@ if (heap < 20480) {
 ```cpp
 void setup() {
   Serial.begin(115200);
-  esp_task_wdt_init(60, true);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  esp_task_wdt_config_t wdt_cfg = {
+      .timeout_ms     = 60000,
+      .idle_core_mask = 0,
+      .trigger_panic  = true,
+  };
+  esp_task_wdt_init(&wdt_cfg);   // core 3.x (IDF 5.x): config-struct
+#else
+  esp_task_wdt_init(60, true);   // core 2.x legado (IDF 4.x)
+#endif
   esp_task_wdt_add(NULL);
   delay(3000);  // esperar a Serial Monitor en debug — aceptable en setup()
 

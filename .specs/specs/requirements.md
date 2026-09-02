@@ -5,7 +5,7 @@
 # Fase 1: Robustez firmware ESP32 QR Reader
 
 ## RF-1: Watchdog Timer
-- **RF-1.1**: El ESP32 debe configurar un watchdog hardware (`esp_task_wdt_init`) con timeout de 60 segundos.
+- **RF-1.1**: El ESP32 debe configurar un watchdog hardware (`esp_task_wdt_init`) con timeout de 60 segundos. (Nota de implementación: en Arduino-ESP32 core 3.x / IDF 5.x la llamada usa `esp_task_wdt_config_t{timeout_ms=60000, idle_core_mask=0, trigger_panic=true}`; en core 2.x legado `esp_task_wdt_init(60, true)`.)
 - **RF-1.2**: El `loop()` principal debe resetear el watchdog (`esp_task_wdt_reset`) en cada iteración.
 - **RF-1.3**: Si el código se bloquea >60s (delay infinito, deadlock, crash lógico), el watchdog debe forzar un reinicio automático del ESP32.
 
