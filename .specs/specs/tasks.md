@@ -16,7 +16,17 @@ Archivo a modificar: `docs/esp32-qr-reader/scanner-relay-prod.ino` (640 líneas)
 - [x] Añadir `#include "esp_task_wdt.h"` al principio del archivo (junto a los otros includes, línea ~44).
 - [x] En `setup()`, antes del provisioning WiFi (línea ~479), fijar el timeout global del TWDT a 60s:
   ```cpp
-  esp_task_wdt_init(60, true);   // RF-1.1: timeout 60s, panic on timeout
+  // API según core: core 3.x (IDF 5.x) usa config-struct; 2.x legado (60, true).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  esp_task_wdt_config_t wdt_cfg = {
+      .timeout_ms     = 60000,   // RF-1.1: 60s
+      .idle_core_mask = 0,
+      .trigger_panic  = true,
+  };
+  esp_task_wdt_init(&wdt_cfg);
+#else
+  esp_task_wdt_init(60, true);   // RF-1.1: timeout 60s, panic on timeout (core 2.x)
+#endif
   ```
   NOTA (diverge de TSK-01 original): `esp_task_wdt_add(NULL)` NO se hace en `setup()`.
   `loopTask` solo se suscribe en la 1ª iteración de `loop()`, de modo que el
@@ -24,6 +34,10 @@ Archivo a modificar: `docs/esp32-qr-reader/scanner-relay-prod.ino` (640 líneas)
   corto. No usar `esp_task_wdt_delete(NULL)` en `setup()`: antes de la 1ª iteración
   de `loop()` loopTask aún no está suscrito y esa llamada genera un
   `task_wdt: delete_entry: task not found` benigno en cada arranque.
+  NOTA (adaptación core 3.x): `esp_task_wdt_init()` cambió de firma en Arduino-ESP32
+  core 3.x (IDF 5.x) a `esp_task_wdt_init(const esp_task_wdt_config_t*)`. La
+  configuración de arriba con `#if ESP_ARDUINO_VERSION_MAJOR >= 3` mantiene el
+  sketch compilable también en core 2.x.
 - [x] En `loop()` (1ª iteración), suscribir `loopTask` y feedear al inicio:
   ```cpp
   esp_task_wdt_add(NULL);   // 1ª iteración únicamente

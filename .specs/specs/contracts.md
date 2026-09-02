@@ -84,7 +84,10 @@ Response 200: {"ok":true}
 ### Watchdog
 - Timeout: 60 segundos
 - Librería: `esp_task_wdt.h` (incluida en ESP32 Arduino core)
-- `esp_task_wdt_init(60, true)` — timeout 60s, reinicio automático al expirar
+- Configuración inicial en `setup()`. La firma de `esp_task_wdt_init()` cambió entre cores:
+  - Core ≥3 (IDF 5.x): `esp_task_wdt_config_t{timeout_ms=60000, idle_core_mask=0, trigger_panic=true}` → `esp_task_wdt_init(&cfg)` (timeout 60s, reinicio automático al expirar).
+  - Core 2.x legado (IDF 4.x): `esp_task_wdt_init(60, true)`.
+  - El sketch usa un `#if ESP_ARDUINO_VERSION_MAJOR >= 3` para cubrir ambos.
 - `esp_task_wdt_reset()` — llamado al inicio de cada `loop()`
 
 ---
