@@ -8,6 +8,13 @@ interface DeviceRepositoryInterface
     /** @return list<Device> */
     public function listForRoom(int $roomId): array;
 
+    /**
+     * List every device from the `devices` table regardless of pack/room,
+     * including unassigned RPI devices created by a factory claim (F39).
+     * @return list<Device>
+     */
+    public function findAll(): array;
+
     public function findById(int $id): ?Device;
 
     public function findForRoomKind(int $roomId, string $kind): ?Device;
@@ -49,6 +56,14 @@ interface DeviceRepositoryInterface
      * Update last_seen_at for a device (liveness tracking for dashboard).
      */
     public function updateLastSeen(int $deviceId): void;
+
+    /**
+     * Refresh last_seen_at for every device of a given kind inside a pack
+     * (ESP32 heartbeat sub-device liveness, F33).
+     *
+     * @return int number of devices touched
+     */
+    public function touchPackKind(int $packId, string $kind): int;
 
     /**
      * Resolve the room_id for a device that has no direct room_id but belongs

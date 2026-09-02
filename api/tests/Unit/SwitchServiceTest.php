@@ -71,6 +71,8 @@ final class FakeDeviceRepoForSwitch implements DeviceRepositoryInterface
     public function resolveRoomId(int $deviceId): ?int { return null; }
     public function findByPackAndKind(int $packId, string $kind): array { return []; }
     public function findOneByPackAndKind(int $packId, string $kind): ?Device { return null; }
+    public function findAll(): array { return []; }
+    public function touchPackKind(int $packId, string $kind): int { return 0; }
 }
 
 final class FakeRoomRepoForSwitch implements RoomRepositoryInterface

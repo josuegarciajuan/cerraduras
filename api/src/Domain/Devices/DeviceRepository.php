@@ -35,6 +35,17 @@ final class DeviceRepository implements DeviceRepositoryInterface
         return array_map([$this, 'hydrate'], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
     }
 
+    /** @return list<Device> */
+    public function findAll(): array
+    {
+        $stmt = $this->pdo->query(
+            'SELECT id, room_id, pack_id, kind, external_id, label, api_client_id, meta_json, battery_pct, is_identified, identified_at
+             FROM devices
+             ORDER BY (pack_id IS NOT NULL) DESC, kind ASC, id ASC'
+        );
+        return array_map([$this, 'hydrate'], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    }
+
     public function findById(int $id): ?Device
     {
         $stmt = $this->pdo->prepare(
@@ -224,6 +235,24 @@ final class DeviceRepository implements DeviceRepositoryInterface
         );
         $stmt->execute([':id' => $deviceId]);
     }
+
+    /**
+     * Refresh last_seen_at for every device of a given kind inside a pack.
+     * Used by the ESP32 heartbeat to mark its sub-devices online without
+     * depending on them sharing the chip external_id.
+     *
+     * @return int number of devices touched
+     */
+    public function touchPackKind(int $packId, string $kind): int
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE devices SET last_seen_at = UTC_TIMESTAMP(3)
+             WHERE pack_id = :pid AND kind = :k'
+        );
+        $stmt->execute([':pid' => $packId, ':k' => $kind]);
+        return $stmt->rowCount();
+    }
+
 
     public function updateBattery(int $deviceId, ?int $pct): void
     {

@@ -88,6 +88,8 @@ final class FakeDeviceRepoForIdentify implements DeviceRepositoryInterface
 
     public function findByPackAndKind(int $packId, string $kind): array { return []; }
     public function findOneByPackAndKind(int $packId, string $kind): ?Device { return null; }
+    public function findAll(): array { return array_values($this->byId); }
+    public function touchPackKind(int $packId, string $kind): int { return 0; }
     public function updateLastSeen(int $deviceId): void {}
     public function updateBattery(int $deviceId, ?int $pct): void {}
     public function resolveRoomId(int $deviceId): ?int { return null; }

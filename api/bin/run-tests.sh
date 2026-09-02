@@ -2400,6 +2400,13 @@ if [ -n "$FACTORY_ID" ] && [ "$FACTORY_ID" != " " ]; then
   else
     fail "Claim consumes factory row while preserving audit" "Esperadas 0 filas factory_devices, recibidas $FACTORY_ROWS"
   fi
+  # El RPI reclamado sin pack debe ser listable como dispositivo "sin pack" (RF-39.4.5)
+  FOUND_UNASSIGNED=$(curl -s -H "X-API-Key: $ADMIN_KEY" "${API_BASE}/api/v1/devices" | python3 -c "import sys,json; items=json.load(sys.stdin).get('items',[]); print(1 if any(d.get('external_id')=='$FACTORY_CHIP' and d.get('pack_id') is None for d in items) else 0)" 2>/dev/null)
+  if [ "$FOUND_UNASSIGNED" = "1" ]; then
+    pass "GET /api/v1/devices lista el RPI reclamado sin pack (RF-39.4.5)"
+  else
+    fail "GET /api/v1/devices lista el RPI reclamado sin pack" "external_id=$FACTORY_CHIP con pack_id=null no aparece en /devices"
+  fi
   http_test POST "/api/v1/factory-devices/$FACTORY_ID/claim" 200 "Claim is idempotent without enrollment credential" --key ADMIN-CLI --body '{"label":"F40 test"}'
 else
   skip "Factory device claim setup" "Created chip_id not found in PENDING list"

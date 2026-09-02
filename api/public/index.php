@@ -605,6 +605,7 @@ $deviceRepo = new DeviceRepository($pdo);
 $deviceService = new DeviceService($deviceRepo, $roomRepo);
 $switchService = new SwitchService($deviceRepo, $roomRepo);
 $deviceController = new DeviceController($deviceService);
+$commandQueueRepo = new \App\Domain\Devices\CommandQueueRepository($pdo);
 
 // Device Packs (F25)
 $devicePackRepo     = new DevicePackRepository($pdo);
@@ -973,6 +974,276 @@ $router->get(
     }
 );
 
+// --- Command queue ESP32 (F32 ping + F33 pull queue) ------------------------
+// Pull-based model: the ESP32 chip only knows its own chipId. Every command is
+// keyed by the owner RPI external_id of the pack; sub-devices (SCANNER/LOCK) are
+// resolved within that pack by kind — never by hardcoded ids.
+
+/**
+ * Resolve the owner chip of a device pack.
+ * @return string|null external_id (chipId) of the pack's RPI
+ */
+$resolveOwnerChip = static function (\App\Domain\Devices\DeviceRepository $repo, ?int $packId, string $fallback): ?string {
+    if ($packId !== null) {
+        $rpis = $repo->findByPackAndKind($packId, \App\Domain\Devices\Device::KIND_RPI);
+        foreach ($rpis as $rpi) {
+            if ($rpi->externalId !== '') {
+                return $rpi->externalId;
+            }
+        }
+    }
+    return $fallback !== '' ? $fallback : null;
+};
+
+// POST /dashboard-api/device-heartbeat — liveness beacon from the ESP32 chip.
+// Refreshes last_seen for the RPI owner and for every sub-kind within its own
+// pack; reports whether a command is pending for the chip.
+// Body: {"external_id":"<chipId>","sub_kinds":["RPI","SCANNER","LOCK"]}  (legacy: {"external_id","sub_kind"})
+$router->post(
+    '/dashboard-api/device-heartbeat',
+    function (\App\Http\Request $request) use ($deviceRepo, $commandQueueRepo): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $extId = (string) ($body['external_id'] ?? '');
+        if ($extId === '') {
+            return \App\Http\Response::json(400, ['error' => 'external_id required']);
+        }
+
+        // Normalise sub-kinds: accept batch `sub_kinds` or legacy single `sub_kind`.
+        $subKinds = [];
+        if (isset($body['sub_kinds']) && is_array($body['sub_kinds'])) {
+            foreach ($body['sub_kinds'] as $k) {
+                if (is_string($k) && $k !== '') {
+                    $subKinds[] = strtoupper($k);
+                }
+            }
+        }
+        $legacy = $body['sub_kind'] ?? null;
+        if (is_string($legacy) && $legacy !== '' && !in_array(strtoupper($legacy), $subKinds, true)) {
+            $subKinds[] = strtoupper($legacy);
+        }
+        if ($subKinds === []) {
+            $subKinds[] = \App\Domain\Devices\Device::KIND_RPI;
+        }
+
+        $rpi = $deviceRepo->findByKindAndExternalId(\App\Domain\Devices\Device::KIND_RPI, $extId);
+
+        // RPI: precise liveness update (external_id match).
+        $ownerPack = null;
+        if ($rpi !== null) {
+            $deviceRepo->updateLastSeen($rpi->id);
+            $ownerPack = $rpi->packId;
+        }
+
+        // Sub-devices: resolve by pack + kind (robust even if their own
+        // external_id differs from the chip, e.g. legacy SCANNER rows).
+        foreach ($subKinds as $kind) {
+            if ($kind === \App\Domain\Devices\Device::KIND_RPI) {
+                // RPI already handled precisely above; no need to repeat.
+                continue;
+            }
+            if ($ownerPack !== null) {
+                $deviceRepo->touchPackKind($ownerPack, $kind);
+            }
+        }
+
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'has_pending_commands' => $commandQueueRepo->hasPending($extId),
+        ]);
+    }
+);
+
+// GET /dashboard-api/pending-command?external_id=<chipId>
+// Returns the oldest pending command for the chip and marks it picked_up.
+$router->get(
+    '/dashboard-api/pending-command',
+    function (\App\Http\Request $request) use ($commandQueueRepo): \App\Http\Response {
+        $extId = (string) ($request->query['external_id'] ?? '');
+        if ($extId === '') {
+            return \App\Http\Response::json(400, ['error' => 'external_id required']);
+        }
+        $cmd = $commandQueueRepo->pickUp($extId);
+        if ($cmd === null) {
+            return \App\Http\Response::json(200, ['ok' => true, 'command' => null]);
+        }
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'command' => $cmd,
+            'id' => $cmd['id'],
+            'command_name' => $cmd['command'],
+        ]);
+    }
+);
+
+// POST /dashboard-api/command-result — ESP32 reports execution result for a command.
+// Body: {"command_id":<int>,"external_id":"<chipId>","results":{...}}
+$router->post(
+    '/dashboard-api/command-result',
+    function (\App\Http\Request $request) use ($commandQueueRepo): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $commandId = isset($body['command_id']) ? (int) $body['command_id'] : 0;
+        $extId = (string) ($body['external_id'] ?? '');
+        $results = isset($body['results']) && is_array($body['results']) ? $body['results'] : [];
+
+        if ($commandId <= 0 || $extId === '') {
+            return \App\Http\Response::json(400, ['error' => 'command_id and external_id are required']);
+        }
+        $updated = $commandQueueRepo->finish($commandId, $extId, $results);
+        if ($updated === 0) {
+            return \App\Http\Response::json(404, ['error' => 'Command not found or not owned by this device']);
+        }
+        return \App\Http\Response::json(200, ['ok' => true]);
+    }
+);
+
+// POST /dashboard-api/ping-all-devices — on-demand verification of a room's devices.
+// For pull ESP32 sub-devices (SCANNER/LOCK) it enqueues a `check` command for the
+// owner chip and reports _pending_check. RPI and non-pull devices report online.
+// Body: {"device_ids":[<int>,...]}
+$router->post(
+    '/dashboard-api/ping-all-devices',
+    function (\App\Http\Request $request) use ($pdo, $deviceRepo, $commandQueueRepo, $resolveOwnerChip): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $ids = $body['device_ids'] ?? null;
+        if (!is_array($ids) || $ids === []) {
+            return \App\Http\Response::json(400, ['error' => 'device_ids array required']);
+        }
+
+        $results = [];
+        foreach ($ids as $rawId) {
+            $deviceId = (int) $rawId;
+            $dev = $deviceRepo->findById($deviceId);
+            if ($dev === null) {
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'online' => false,
+                    'found' => false,
+                    '_pending_check' => false,
+                ];
+                continue;
+            }
+
+            $isPullKind = in_array($dev->kind, [
+                \App\Domain\Devices\Device::KIND_SCANNER,
+                \App\Domain\Devices\Device::KIND_LOCK,
+            ], true);
+
+            if ($isPullKind) {
+                // Enqueue a check for the owner chip (fallback: this row's external_id).
+                $owner = $resolveOwnerChip($deviceRepo, $dev->packId, $dev->externalId);
+                $queuedId = null;
+                if ($owner !== null) {
+                    $queuedId = $commandQueueRepo->enqueue($owner, 'check');
+                }
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'online' => false,          // pending live confirmation
+                    'found' => true,
+                    '_pending_check' => $queuedId !== null,
+                    'checked_via' => 'PULL',
+                    'external_id' => $owner,
+                ];
+            } else {
+                // RPI and non-pull devices: nothing to queue (RPI self-beacons via heartbeat).
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'online' => true,
+                    'found' => true,
+                    '_pending_check' => false,
+                    'checked_via' => 'PULL',
+                ];
+            }
+        }
+
+        return \App\Http\Response::json(200, ['ok' => true, 'results' => $results]);
+    }
+);
+
+// POST /dashboard-api/check-device — single-device guard. SCANNER/LOCK must use
+// ping-all-devices (pull model), so they are rejected here with a clear 400.
+$router->post(
+    '/dashboard-api/check-device',
+    function (\App\Http\Request $request) use ($pdo, $deviceRepo): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $deviceId = isset($body['device_id']) ? (int) $body['device_id'] : 0;
+        if ($deviceId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'device_id required']);
+        }
+        $dev = $deviceRepo->findById($deviceId);
+        if ($dev === null) {
+            return \App\Http\Response::json(404, ['error' => 'Device not found']);
+        }
+        if (in_array($dev->kind, [
+            \App\Domain\Devices\Device::KIND_SCANNER,
+            \App\Domain\Devices\Device::KIND_LOCK,
+        ], true)) {
+            return \App\Http\Response::json(400, ['error' => $dev->kind . ' is pull-based; use ping-all-devices']);
+        }
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'device_id' => $deviceId,
+            'online' => true,
+            'checked_via' => 'PULL',
+        ]);
+    }
+);
+
+// POST /dashboard-api/battery-refresh — ask Tuya for the device's battery and
+// persist it (F36). Body: {"device_id":<int>}
+// Tuya connectivity errors map to 502 (dashboard/tests treat it as "unavailable").
+$router->post(
+    '/dashboard-api/battery-refresh',
+    function (\App\Http\Request $request) use ($pdo, $deviceRepo): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $deviceId = isset($body['device_id']) ? (int) $body['device_id'] : 0;
+        if ($deviceId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'device_id required']);
+        }
+        $dev = $deviceRepo->findById($deviceId);
+        if ($dev === null) {
+            return \App\Http\Response::json(404, ['error' => 'Device not found']);
+        }
+
+        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($dev->externalId) . '/status', null);
+        if (($res['error'] ?? null) !== null || (int) ($res['http'] ?? 0) >= 500) {
+            return \App\Http\Response::json(502, ['error' => $res['error'] ?? 'Tuya API unavailable']);
+        }
+        if (($res['data']['success'] ?? false) !== true) {
+            return \App\Http\Response::json(502, ['error' => $res['data']['msg'] ?? 'Tuya status API failed']);
+        }
+
+        $batteryPct = null;
+        foreach (($res['data']['result'] ?? []) as $dp) {
+            if (!is_array($dp)) {
+                continue;
+            }
+            $code  = strtolower((string) ($dp['code'] ?? ''));
+            $value = $dp['value'] ?? null;
+            if ($code === 'battery_percentage' && is_numeric($value)) {
+                $pct = (int) $value;
+                if ($pct >= 0 && $pct <= 100) {
+                    $batteryPct = $pct;
+                    break;
+                }
+            }
+        }
+
+        if ($batteryPct !== null) {
+            $deviceRepo->updateBattery($deviceId, $batteryPct);
+        }
+
+        $state = $batteryPct === null ? 'unknown' : ($batteryPct <= 10 ? 'critical' : ($batteryPct <= 20 ? 'low' : 'normal'));
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'device_id' => $deviceId,
+            'kind' => $dev->kind,
+            'external_id' => $dev->externalId,
+            'battery_pct' => $batteryPct,
+            'state' => $state,
+        ]);
+    }
+);
+
 $roomController = new RoomController($roomService, $roomStateService, $deviceService);
 
 $stayRepo = new StayRepository($pdo);
@@ -1183,6 +1454,11 @@ $router->delete(
 );
 
 // --- Routes: Devices ---
+$router->get(
+    '/api/v1/devices',
+    [$deviceController, 'index'],
+    $authFactory(['rooms:read'])
+);
 $router->get(
     '/api/v1/rooms/{id}/devices',
     [$deviceController, 'listForRoom'],

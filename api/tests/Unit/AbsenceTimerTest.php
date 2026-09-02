@@ -287,9 +287,10 @@ $testSession = new IotSession(
     0, 1, null,
     IotSession::DOOR_CLOSED,
     IotSession::PRESENCE_ABSENT,
-    gmdate('Y-m-d H:i:s', time() - 5),
-    gmdate('Y-m-d H:i:s', time() - 25),
-    null, '', ''
+    gmdate('Y-m-d H:i:s', time() - 300),   // lastOpenAt: stale (door has been closed)
+    gmdate('Y-m-d H:i:s', time() - 5),     // lastCloseAt: recent (within 60s window)
+    gmdate('Y-m-d H:i:s', time() - 25),    // lastAbsentSince: ABSENT for 25s
+    null, ''
 );
 
 // evaluate with room override 30s

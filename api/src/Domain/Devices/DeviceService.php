@@ -37,6 +37,12 @@ final class DeviceService
         return $this->devices->listForRoom($roomId);
     }
 
+    /** @return list<Device> */
+    public function listAll(): array
+    {
+        return $this->devices->findAll();
+    }
+
     public function findForRoomKind(int $roomId, string $kind): ?Device
     {
         return $this->devices->findForRoomKind($roomId, $kind);

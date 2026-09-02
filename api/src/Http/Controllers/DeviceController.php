@@ -28,6 +28,19 @@ final class DeviceController
         $this->devices = $devices;
     }
 
+    /**
+     * List every device (pack-assigned and unassigned, e.g. RPI claimed
+     * from factory without a pack — RF-39.4.5).
+     * GET /api/v1/devices (scope: rooms:read)
+     */
+    public function index(Request $request): Response
+    {
+        $list = $this->devices->listAll();
+        return Response::json(200, [
+            'items' => array_map(static function ($d) { return $d->toArray(); }, $list),
+        ]);
+    }
+
     public function listForRoom(Request $request): Response
     {
         $roomId = (int) $request->routeParam('id');

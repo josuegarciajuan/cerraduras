@@ -201,7 +201,7 @@ function crm(){return{
   user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
    workers:[],workerRoles:[],workersInside:[],factoryDevices:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
-  stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,
+  stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,_factoryTimer:null,
   deviceStatus:{},deviceStatusTick:0,
   devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',external_id:'',label:'',pack_id:null,meta:{}},
 
@@ -209,7 +209,7 @@ function crm(){return{
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
   async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
-   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='fd')this.loadFactoryDevices();if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
+   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(this._factoryTimer){clearInterval(this._factoryTimer);this._factoryTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='fd'){this.loadFactoryDevices();this._factoryTimer=setInterval(()=>this.loadFactoryDevices(true),5000)}if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
   toastOk(m){this.toast={show:true,msg:m,type:'ok'};setTimeout(()=>this.toast.show=false,3000)},
   toastErr(m){this.toast={show:true,msg:m,type:'err'};setTimeout(()=>this.toast.show=false,4000)},
   async logout(){await fetch('/api/v1/crm/logout',{method:'POST'});window.location.href='/panel/login'},
@@ -235,7 +235,7 @@ function crm(){return{
 
    render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'fd':return this.factoryPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
 
-     async loadFactoryDevices(){try{let d=await this.api('/api/v1/factory-devices?status=ALL');this.factoryDevices=d.data||[]}catch(e){this.toastErr(e.message)}},
+     async loadFactoryDevices(silent){try{let d=await this.api('/api/v1/factory-devices?status=ALL');this.factoryDevices=d.data||[]}catch(e){if(!silent)this.toastErr(e.message)}},
        openFactoryClaim(id){let d=this.factoryDevices.find(function(x){return x.id===id}),that=this,packs=this.packs.map(function(p){return'<option value="'+p.id+'">'+that.esc(p.code||p.name||('Pack '+p.id))+'</option>'}).join('');this.modal.content='<h2>Reclamar equipo</h2><div class="field field--mono"><label>chip_id (informativo)</label><code>'+that.esc(d?.chip_id||'')+'</code></div><div class="field"><label>Etiqueta (opcional)</label><input id="fc_label"></div><div class="field"><label>Pack (opcional)</label><select id="fc_pack"><option value="">Sin pack</option>'+packs+'</select></div><p class="field-hint">La credencial individual permanece protegida en el dispositivo y no se solicita al operador.</p><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="claimFactoryDevice('+id+')">Reclamar</button></div>';this.modal.show=true},
        async claimFactoryDevice(id){if(!document.getElementById('fc_label')){this.openFactoryClaim(id);return}let label=document.getElementById('fc_label')?.value||'',pack=document.getElementById('fc_pack')?.value||'';try{await this.api('/api/v1/factory-devices/'+id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null})});this.modal.show=false;this.modal.content='';this.toastOk('Equipo reclamado');await this.loadFactoryDevices();await this.loadPacks()}catch(e){this.toastErr(e.message)}},
     factoryPage(){let that=this;return'<div class="ph"><h1>🏭 Identificación de fábrica</h1><p>Equipos anunciados antes del montaje · '+this.factoryDevices.length+'</p></div><table><tr><th>chip_id</th><th>Estado</th><th>Dispositivo</th><th>Primer anuncio</th><th>Último anuncio</th><th></th></tr>'+this.factoryDevices.map(function(d){return'<tr><td><code>'+that.esc(d.chip_id)+'</code></td><td>'+that.statusBadge(d.status)+'</td><td>'+(d.device_id?'<code>RPI #'+d.device_id+'</code>':'<span class="dim">—</span>')+'</td><td>'+that.esc(d.first_announced_at)+'</td><td>'+that.esc(d.last_announced_at)+'</td><td>'+(d.status==='PENDING'?'<button class="btn btn-p btn-sm" @click="claimFactoryDevice('+d.id+')">Reclamar</button>':(d.device_id?'<button class="btn btn-o btn-sm" @click="nav(\'dv\')">Asignar pack</button>':'<span class="dim">Reclamado por '+that.esc(d.claimed_by||'—')+'</span>'))+'</td></tr>'}).join('')+'</table>'},
@@ -533,7 +533,7 @@ function crm(){return{
     (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
     this.devices=out;
   },
-   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}if(!this.factoryDevices.length)await this.loadFactoryDevices();let unassigned=this.factoryDevices.filter(x=>x.device_id).map(x=>({id:x.device_id,room_id:null,pack_id:null,kind:'RPI',external_id:x.chip_id,label:'RPI '+x.chip_id,meta:{source:'factory_claim'},battery_pct:null}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
+   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:(x.room_id!==undefined&&x.room_id!==null?x.room_id:null),pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null)}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
   packPage(){
     let q=(this.pkQ||'').toLowerCase();
     let packs=this.packs.filter(p=>{
@@ -586,23 +586,25 @@ function crm(){return{
     return'<div class="ph"><h1>Dispositivos</h1><p>Inventario físico por pack y habitación</p></div>'
       +'<div class="fbar"><input class="grow" type="search" placeholder="Buscar por etiqueta, ID externo o habitación..." x-model="devQ">'+pills+'<button class="btn btn-p" @click="openDeviceForm()">+ Nuevo dispositivo</button></div>'+body;
   },
-  openPackForm(id){
+   async openPackForm(id){
     let p=id?this.packs.find(x=>x.id===id):null;
     this.pkForm={name:p?p.name:'',code:p?p.code:''};
     this.pkSel=(p&&p.devices)?p.devices.map(d=>d.id):[];
-    let that=this;
-    let rows=this.devices.length?this.devices.map(d=>{
+    await this.loadDevices();
+    let that=this,packId=p?p.id:null;
+    let cand=(this.devices||[]).filter(d=>d.pack_id===null||(packId&&d.pack_id===packId));
+    let rows=cand.length?cand.map(d=>{
       let c=that.KIND_COLOR[d.kind]||'#8b8fa3',bg=that.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
       let cur=d.pack_id?'en '+that.esc(d.pack_code||d.pack_name):'sin pack';
       let checked=that.pkSel.indexOf(d.id)>=0;
       return'<label class="chk-row"><input type="checkbox"'+(checked?' checked':'')+' @change="togglePkDev('+d.id+')"><span class="pdev-ic" style="--c:'+c+';--c-bg:'+bg+'">'+that.glyph(d.kind)+'</span><span class="chk-txt"><span>'+that.esc(d.label||that.KIND_NAME[d.kind]||d.kind)+'</span><span class="mono dim">'+d.kind+' · '+that.esc(d.external_id)+'</span></span><span class="chk-cur dim">'+cur+'</span></label>';
-    }).join(''):'<div class="pdev pdev--empty">No hay dispositivos registrados. Créalos desde la vista Dispositivos.</div>';
+    }).join(''):'<div class="pdev pdev--empty">No hay dispositivos sin asignar para este pack.</div>';
     rows+='<button type="button" class="chk-row chk-row--add" @click="openDeviceForm(null,'+(p?p.id:0)+')"><span class="pdev-ic" style="--c:var(--accent);--c-bg:rgba(108,142,224,.12)">＋</span><span class="chk-txt"><span>Añadir dispositivo nuevo…</span><span class="mono dim">Se creará dentro de este pack</span></span></button>';
     let selCount=this.pkSel.length?' <span class="mono dim">('+this.pkSel.length+' seleccionado'+(this.pkSel.length===1?')':')s')+'</span>':'';
     this.modal.content='<h2>'+(p?'Editar pack':'Nuevo pack')+'</h2>'
       +'<div class="field"><label for="pkf_name">Nombre</label><input id="pkf_name" x-model="pkForm.name" placeholder="Pack recepción" autocomplete="off"><p class="field-hint">Nombre visible en todo el panel.</p></div>'
       +'<div class="field field--mono"><label for="pkf_code">Código</label><input id="pkf_code" x-model="pkForm.code" placeholder="PK_RECEPCION" autocomplete="off"><p class="field-hint">Se autocompleta desde el nombre si se deja vacío. Único.</p></div>'
-      +'<div class="field"><label>Dispositivos del pack'+selCount+'</label><div class="dev-picker">'+rows+'</div><p class="field-hint">Marca los dispositivos que pertenecen a este pack. Un dispositivo solo puede estar en un pack: se moverá al guardar.</p></div>'
+      +'<div class="field"><label>Dispositivos del pack'+selCount+'</label><div class="dev-picker">'+rows+'</div><p class="field-hint">Solo se muestran dispositivos sin asignar y los ya miembros de este pack. Marca los que deben pertenecer a este pack.</p></div>'
       +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="savePack('+(p?p.id:0)+')">Guardar pack</button></div>';
     this.modal.show=true;
     if(this.$nextTick){this.$nextTick(()=>{let el=document.getElementById('pkf_name');if(el)el.focus()})}
