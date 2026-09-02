@@ -475,8 +475,12 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
 
-  // Fase 1: pausar TWDT nativo durante provisioning (puede tardar hasta 5 min)
-  esp_task_wdt_delete(NULL);
+  // Fase 1: TWDT con timeout 60s (RF-1.1). loopTask NO se vigila hasta el 1er
+  // loop(), por lo que el provisioning largo en setup() (WiFiManager, hasta 5 min)
+  // ya es seguro sin pausar ni borrar la suscripción. No usar
+  // esp_task_wdt_delete(NULL): loopTask aún no está suscrito aquí y generaría un
+  // `task_wdt: delete_entry: task not found` benigno en cada arranque.
+  esp_task_wdt_init(60, true);
 
   bool hadStoredWifi = hasStoredWifi();
   bool nvsConnected = connectWithNvs();
@@ -642,7 +646,9 @@ void setup() {
 
 // ── loop ──────────────────────────────────────────────────────────────────
 void loop() {
-  // Fase 1: Watchdog — reactivar TWDT en la 1ª iteración (se pausó en setup())
+  // Fase 1: Watchdog — suscribir loopTask al TWDT recién en la 1ª iteración.
+  // setup() corrió con TWDT global init a 60s pero sin loopTask suscrito, de modo
+  // que el provisioning largo jamás quedó vigilado con timeout corto.
   static bool wdt_ready = false;
   if (!wdt_ready) {
     esp_task_wdt_add(NULL);
@@ -684,6 +690,7 @@ void loop() {
 
     Serial.printf("[QR-POST] Body JSON (%d bytes): %s\n", body.length(), body.c_str());
     Serial.printf("══════════════════════════════════════════\n");
+    esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
     HTTPClient http;
     beginApiRequest(http, String(API_BASE_URL) + "/api/v1/qr/validate");
     http.addHeader("Content-Type", "application/json");
@@ -695,6 +702,8 @@ void loop() {
     unsigned long qrElapsed = millis() - qrStart;
     String resp = http.getString();
     http.end();
+    esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
+    yield();
 
     Serial.printf("[QR] Validación HTTP %d (%lu ms) → %s\n", code, qrElapsed, resp.c_str());
 
@@ -703,6 +712,7 @@ void loop() {
       relayPulse();
 
       if (ensureWiFi()) {
+        esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
         HTTPClient hLock;
         beginApiRequest(hLock, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
         hLock.addHeader("Content-Type", "application/json");
@@ -711,6 +721,8 @@ void loop() {
         int lc = hLock.POST("{\"external_id\":\"" + id + "\",\"sub_kind\":\"LOCK\"}");
         String lr = hLock.getString();
         hLock.end();
+        esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
+        yield();
         Serial.printf("[QR] LOCK heartbeat → HTTP %d %s\n", lc, lr.c_str());
       }
     } else {
@@ -731,12 +743,15 @@ void loop() {
     }
 
     if (ensureWiFi()) {
+      esp_task_wdt_reset();  // defensa: feed antes de cadena HTTP bloqueante
       HTTPClient h;
       beginApiRequest(h, String(API_BASE_URL) + "/api/v1/health");
       h.setTimeout(4000);
       int hc = h.GET();
       String hr = h.getString();
       h.end();
+      esp_task_wdt_reset();  // defensa: feed entre HTTP
+      yield();
       Serial.printf("[HB] Health check: HTTP %d — %s\n", hc, hr.c_str());
 
       // F33: send heartbeat with batch sub_kinds for all ESP32 sub-devices
@@ -751,11 +766,14 @@ void loop() {
       int hbCode = hb.POST(hbBody);
       String hbResp = hb.getString();
       hb.end();
+      esp_task_wdt_reset();  // defensa: feed entre HTTP
+      yield();
       Serial.printf("[HB] Heartbeat [HTTP %d] %s\n", hbCode, hbResp.c_str());
 
       // F33: If API reports pending commands, poll and execute them
       if (hbCode == 200 && hbResp.indexOf("\"has_pending_commands\":true") > 0) {
         Serial.println("[F33] Polling pending commands...");
+        esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
         HTTPClient cmdPoll;
         beginApiRequest(cmdPoll, String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
         cmdPoll.setTimeout(3000);
@@ -763,6 +781,8 @@ void loop() {
         int cmdCode = cmdPoll.GET();
         String cmdResp = cmdPoll.getString();
         cmdPoll.end();
+        esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
+        yield();
         Serial.printf("[F33] Poll → HTTP %d %s\n", cmdCode, cmdResp.c_str());
 
         if (cmdCode == 200) {
@@ -816,6 +836,8 @@ void loop() {
               int resCode = cmdResult.POST(resultBody);
               String resResp = cmdResult.getString();
               cmdResult.end();
+              esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
+              yield();
               Serial.printf("[F33] Command result POST → HTTP %d %s\n", resCode, resResp.c_str());
             } else {
               Serial.printf("[F33] Unknown command: %s — skipping\n", cmdName.c_str());
@@ -882,7 +904,8 @@ void loop() {
 
   // ── Fase 39: inventario auxiliar, después de QR/USB/heartbeat/identify ──
   // HTTPClient usa el timeout corto mínimo disponible; no hay delay ni bucle de espera.
+  esp_task_wdt_reset();  // defensa: feed antes del posible HTTP de announce
   announceFactoryDevice(now);
-
-  yield();  // Fase 1: non-blocking (antes era delay(1))
+  esp_task_wdt_reset();  // defensa: feed tras el posible HTTP de announce
+  yield();
 }

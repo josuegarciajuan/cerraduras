@@ -13,18 +13,30 @@ Archivo a modificar: `docs/esp32-qr-reader/scanner-relay-prod.ino` (640 líneas)
 **Trazabilidad**: RF-1.1, RF-1.2, RF-1.3
 **Archivo**: `scanner-relay-prod.ino`
 
-- [ ] Añadir `#include "esp_task_wdt.h"` al principio del archivo (junto a los otros includes, línea ~44).
-- [ ] En `setup()`, después de `Serial.begin(115200)` (línea 274), añadir:
+- [x] Añadir `#include "esp_task_wdt.h"` al principio del archivo (junto a los otros includes, línea ~44).
+- [x] En `setup()`, antes del provisioning WiFi (línea ~479), fijar el timeout global del TWDT a 60s:
   ```cpp
-  esp_task_wdt_init(60, true);
-  esp_task_wdt_add(NULL);
+  esp_task_wdt_init(60, true);   // RF-1.1: timeout 60s, panic on timeout
   ```
-- [ ] En `loop()` (línea 459), añadir como primera línea dentro de la función:
+  NOTA (diverge de TSK-01 original): `esp_task_wdt_add(NULL)` NO se hace en `setup()`.
+  `loopTask` solo se suscribe en la 1ª iteración de `loop()`, de modo que el
+  provisioning largo (WiFiManager, hasta 5 min) nunca queda vigilado con timeout
+  corto. No usar `esp_task_wdt_delete(NULL)` en `setup()`: antes de la 1ª iteración
+  de `loop()` loopTask aún no está suscrito y esa llamada genera un
+  `task_wdt: delete_entry: task not found` benigno en cada arranque.
+- [x] En `loop()` (1ª iteración), suscribir `loopTask` y feedear al inicio:
   ```cpp
-  esp_task_wdt_reset();
+  esp_task_wdt_add(NULL);   // 1ª iteración únicamente
+  esp_task_wdt_reset();     // primera línea de cada iteración
   ```
+- [x] Feed de defensa en profundidad: `esp_task_wdt_reset()` + `yield()` antes y
+  después de cada grupo HTTP bloqueante del `loop()` (QR-POST, heartbeat + F33,
+  announce), ya que cada HTTP puede tardar varios segundos (TLS handshake,
+  `getString()` de respuestas grandes) y el timeout global es 60s.
 
-**Verificación**: Compilar y flashear. El ESP32 debe arrancar sin errores. Si se introduce un `while(true){}` de prueba, el ESP32 debe reiniciarse solo a los 60s.
+**Verificación**: Compilar y flashear. El ESP32 debe arrancar sin errores (sin
+`task_wdt: delete_entry` en el log). Si se introduce un `while(true){}` de prueba,
+el ESP32 debe reiniciarse solo a los 60s.
 
 ---
 
