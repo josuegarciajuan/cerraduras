@@ -1227,3 +1227,14 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] Rechazar credencial incompatible sin efectos laterales.
 - [x] Añadir regresiones unitarias y HTTP para repetición posterior y ausencia de fila.
 **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` termina con 0 failures.
+
+## TSK — Calibración de sensor de presencia (RF-41)
+
+**Trazabilidad**: RF-41.1–RF-41.7 · CR-presence-calibrate
+**Archivos**: `api/public/index.php`, `api/public/dashboard.html`, `.specs/specs/*.md`
+- [x] Helper `resolvePresenceDeviceForRoom()`: resuelve el dispositivo `PRESENCE` de la habitación vía pack.
+- [x] Helper `persistPresenceCalibration()`: guarda snapshot en `devices.meta_json.calibration` fusionando el meta.
+- [x] `GET /dashboard-api/presence-calibrate/status` (RF-41.3/RF-41.4): lee DP, modo OFF y presencia efectiva.
+- [x] `POST /dashboard-api/presence-calibrate/set` (RF-41.1/RF-41.2/RF-41.5): escribe DP y persiste por habitación; sin inyección en dominio.
+- [x] Frontend `dashboard.html`: entrada clicable sobre el sensor del croquis SVG + modal `#cal-modal` con slider de radio y sensibilidad, insignia en vivo verde/roja, estados offline/OFF/error, cooldown de cuota Tuya (RF-41.6) y guardas (RF-41.7).
+**Verificación**: `php -l` y `node --check` del JS del panel; manual contra `/dashboard?room=<con sensor>` (validar badge al entrar/salir y persistencia al reabrir).

@@ -376,3 +376,13 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 - **RF-40.4.3**: Un anuncio posterior para un `chip_id` vinculado a un RPI devuelve metadatos lógicos `CLAIMED` y no crea `PENDING`.
 - **RF-40.4.4**: Una credencial distinta se rechaza sin efectos laterales.
 - **RF-40.4.5**: Se preservan compatibilidad, autenticación, auditoría y no regresión.
+
+## Panel /dashboard — Calibración de sensor de presencia (RF-41)
+
+- **RF-41.1**: El panel `/dashboard` debe permitir calibrar, por habitación seleccionada, el **radio de detección** (`far_detection`, en cm) y la **sensibilidad** (`sensitivity`, 0–9) del sensor de presencia Tuya ZY-M100-5 asignado a esa habitación (canonical room→pack→device).
+- **RF-41.2**: Cada sensor se asigna a una habitación distinta; la configuración calibrada debe **persistirse por habitación/dispositivo** (`devices.meta_json.calibration`) y recuperarse al reabrir el panel.
+- **RF-41.3**: El panel debe mostrar una **insignia en vivo** verde/roja de presencia basada en la **lectura directa al sensor** (polling ~2 s solo mientras el modal está abierto), no en el estado de dominio (que llega vía webhook y puede ir con retardo).
+- **RF-41.4**: Semántica OFF: cuando el radio `far_detection ≤ 1` el sensor se considera apagado → presencia efectiva `ABSENT` y la insignia muestra estado `RADIO APAGADO`.
+- **RF-41.5**: La calibración **no inyecta** eventos de presencia en `iot_session` ni en el dominio, para no ensuciar anomalías mientras el técnico entra/sale.
+- **RF-41.6**: La calibración respeta la **cuota de la API Tuya**: no más de ~1 llamada cada 2 s (poll + escrituras), con backoff y mensaje de espera cuando se agota la cuota.
+- **RF-41.7**: Guardas: habitación sin sensor de presencia → aviso y controles deshabilitados; sensor offline → modal de solo lectura con reintento hasta primera lectura OK.

@@ -432,6 +432,54 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
     return ['http' => $httpCode, 'data' => is_array($data) ? $data : [], 'error' => null, 'elapsed_ms' => $elapsed];
 }
 
+/**
+ * Resolve the PRESENCE sensor device assigned to a room (canonical room→pack→device chain).
+ * Returns null when the room has no presence sensor (e.g. room without a pack, or a pack
+ * without a PRESENCE device). Mirrors the discovery used by /dashboard-api/device-status.
+ */
+function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
+{
+    $stmt = $pdo->prepare(
+        "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at, d.battery_pct,
+                (d.last_seen_at IS NOT NULL
+                 AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
+           FROM devices d
+           JOIN rooms r ON r.pack_id = d.pack_id
+          WHERE r.id = :rid AND d.kind = 'PRESENCE'
+          LIMIT 1"
+    );
+    $stmt->execute([':rid' => $roomId]);
+    $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+    if (!$row) {
+        return null;
+    }
+    $row['online']  = (bool) ($row['online'] ?? false);
+    $row['meta']    = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
+    unset($row['meta_json']);
+    return $row;
+}
+
+/**
+ * Persist the calibrated radio/sensitivity snapshot on the PRESENCE device of a room.
+ * Stored under devices.meta_json.calibration so each room keeps its own configuration
+ * (each sensor is assigned to a different room). Never clobbers other meta keys.
+ * Returns the written snapshot array.
+ */
+function persistPresenceCalibration(\PDO $pdo, int $deviceId, ?array $meta, int $farCm, int $sensitivity): array
+{
+    $meta = is_array($meta) ? $meta : [];
+    $snap = [
+        'far_detection'  => $farCm,
+        'sensitivity'    => $sensitivity,
+        'calibrated_at'  => gmdate('Y-m-d\TH:i:s\Z'),
+        'source'         => 'dashboard-calib',
+    ];
+    $meta['calibration'] = $snap;
+    $upd = $pdo->prepare('UPDATE devices SET meta_json = :m WHERE id = :id');
+    $upd->execute([':m' => json_encode($meta, JSON_UNESCAPED_SLASHES), ':id' => $deviceId]);
+    return $snap;
+}
+
 // GET /dashboard-api/rooms — list all rooms with code + status + pack info
 $router->get(
     '/dashboard-api/rooms',
@@ -1909,6 +1957,143 @@ $router->post(
                 'injected' => $presence,
             ]);
         }
+    }
+);
+
+// ── Presence-sensor calibration (per-room, LAN dashboard) ─────────────────
+// Generalizes the /simula dev tool to the PRESENCE device assigned to any room
+// (each sensor lives in its own room/pack). The live badge below reads the raw
+// Tuya DP directly (~2s polling only while the calibration modal is open) because
+// the domain presence_state only flips via webhook/poller and can lag several
+// seconds. We intentionally DO NOT inject events into iot_session here to avoid
+// polluting anomalies while the technician walks in/out.
+
+// GET /dashboard-api/presence-calibrate/status?room_id=N
+// Reads far_detection, sensitivity and raw presence_state from the Tuya device.
+$router->get(
+    '/dashboard-api/presence-calibrate/status',
+    function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id required']);
+        }
+        $dev = resolvePresenceDeviceForRoom($pdo, $roomId);
+        if ($dev === null) {
+            return \App\Http\Response::json(404, ['error' => 'La habitación no tiene sensor de presencia']);
+        }
+
+        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
+        if ($res['error']) {
+            return \App\Http\Response::json(502, [
+                'error'   => $res['error'],
+                'device'  => ['id' => $dev['id'], 'external_id' => $dev['external_id'], 'online' => $dev['online']],
+            ]);
+        }
+        if (($res['data']['success'] ?? false) !== true) {
+            return \App\Http\Response::json(502, [
+                'error'  => $res['data']['msg'] ?? 'Tuya status API failed',
+                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id'], 'online' => $dev['online']],
+            ]);
+        }
+
+        $dps = [];
+        foreach (($res['data']['result'] ?? []) as $dp) {
+            $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
+        }
+        $far = isset($dps['far_detection']) ? (int) $dps['far_detection'] : null;
+        $sens = isset($dps['sensitivity']) ? (int) $dps['sensitivity'] : null;
+        $presenceState = $dps['presence_state'] ?? null;
+        $saved = is_array($dev['meta'] ?? null) && isset($dev['meta']['calibration'])
+            ? $dev['meta']['calibration']
+            : null;
+
+        return \App\Http\Response::json(200, [
+            'room_id'           => $roomId,
+            'device'            => [
+                'id'          => $dev['id'],
+                'external_id' => $dev['external_id'],
+                'label'       => $dev['label'],
+                'online'      => $dev['online'],
+            ],
+            'far_detection'      => $far,        // cm
+            'sensitivity'        => $sens,       // 0-9
+            'presence_state'     => $presenceState,
+            'target_dis_closest' => $dps['target_dis_closest'] ?? null,
+            'mode'               => ($far !== null && $far <= 1) ? 'OFF' : 'ON',
+            // Live badge: raw effective presence at the CURRENT radio (radio<=1 ⇒ ABSENT).
+            'effective_presence' => ($far !== null && $far <= 1)
+                ? 'ABSENT'
+                : ($presenceState === 'presence' ? 'PRESENT' : 'ABSENT'),
+            'saved'              => $saved,      // last persisted calibration snapshot
+        ]);
+    }
+);
+
+// POST /dashboard-api/presence-calibrate/set — write DP(s) and persist per-room snapshot
+$router->post(
+    '/dashboard-api/presence-calibrate/set',
+    function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
+        $body = $request->jsonBody ?? [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id required']);
+        }
+        $dev = resolvePresenceDeviceForRoom($pdo, $roomId);
+        if ($dev === null) {
+            return \App\Http\Response::json(404, ['error' => 'La habitación no tiene sensor de presencia']);
+        }
+
+        $far = isset($body['far_detection']) ? (int) $body['far_detection'] : null;
+        $sens = isset($body['sensitivity']) ? (int) $body['sensitivity'] : null;
+        if ($far === null && $sens === null) {
+            return \App\Http\Response::json(400, ['error' => 'far_detection o sensitivity requeridos']);
+        }
+        if ($far !== null && ($far < 0 || $far > 1000)) {
+            return \App\Http\Response::json(400, ['error' => 'far_detection fuera de rango (0-1000 cm)']);
+        }
+        if ($sens !== null && ($sens < 0 || $sens > 9)) {
+            return \App\Http\Response::json(400, ['error' => 'sensitivity fuera de rango (0-9)']);
+        }
+
+        $commands = [];
+        if ($far !== null) {
+            $commands[] = ['code' => 'far_detection', 'value' => $far];
+        }
+        if ($sens !== null) {
+            $commands[] = ['code' => 'sensitivity', 'value' => $sens];
+        }
+
+        $res = tuyaPresenceApi(
+            'POST',
+            '/v1.0/iot-03/devices/' . $dev['external_id'] . '/commands',
+            json_encode(['commands' => $commands])
+        );
+        if ($res['error']) {
+            return \App\Http\Response::json(502, [
+                'error'  => $res['error'],
+                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
+            ]);
+        }
+        if (($res['data']['success'] ?? false) !== true) {
+            return \App\Http\Response::json(502, [
+                'error'  => $res['data']['msg'] ?? 'Tuya command failed',
+                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
+            ]);
+        }
+
+        // Persist the calibration snapshot for this room/device (each sensor per room).
+        $finalFar  = $far ?? ($dev['meta']['calibration']['far_detection'] ?? null);
+        $finalSens = $sens ?? ($dev['meta']['calibration']['sensitivity'] ?? null);
+        $snap = null;
+        if ($finalFar !== null && $finalSens !== null) {
+            $snap = persistPresenceCalibration($pdo, $dev['id'], $dev['meta'], (int) $finalFar, (int) $finalSens);
+        }
+
+        return \App\Http\Response::json(200, [
+            'ok'      => true,
+            'saved'   => $snap,
+            'elapsed_ms' => $res['elapsed_ms'] ?? 0,
+        ]);
     }
 );
 
