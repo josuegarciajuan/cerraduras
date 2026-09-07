@@ -848,3 +848,32 @@ autorizándose por scope hasta su migración.
 
 El registro de auditoría del claim incluye `chip_id`, `status_before`,
 `status_after`, `actor` y `created_at`.
+
+## CR — Calibración de sensor de presencia (RF-41)
+
+### `GET /dashboard-api/presence-calibrate/status?room_id=N` (LAN dashboard, sin auth)
+- `400` si falta `room_id`. `404` si la habitación no tiene sensor de presencia
+  (cuerpo `{error}`). `502` si la API Tuya falla o hay backoff de cuota
+  (cuerpo incluye `error` y `device`).
+- Respuesta `200`:
+  ```json
+  {
+    "room_id": 1,
+    "device": { "id": 5, "external_id": "bf98d27d…", "label": "...", "online": true },
+    "far_detection": 300,          // cm
+    "sensitivity": 9,              // 0-9
+    "presence_state": "presence",  // 'presence' | 'none' | null
+    "target_dis_closest": 120,
+    "mode": "ON",                  // 'ON' | 'OFF' (OFF ⇔ far_detection <= 1)
+    "effective_presence": "PRESENT", // 'PRESENT' | 'ABSENT' (radio<=1 ⇒ 'ABSENT')
+    "saved": { "far_detection": 300, "sensitivity": 9, "calibrated_at": "…Z", "source": "dashboard-calib" }
+  }
+  ```
+
+### `POST /dashboard-api/presence-calibrate/set`
+- Body: `{ "room_id": 1, "far_detection": 250, "sensitivity": 9 }` (uno o ambos campos).
+- `400` si falta `room_id`, ambos campos vacíos o fuera de rango
+  (`far_detection` 0–1000, `sensitivity` 0–9). `404` sin sensor. `502` Tuya falla.
+- `200`: `{ "ok": true, "saved": {…snapshot persistido…}, "elapsed_ms": … }`.
+- Efecto: escribe los DP `far_detection`/`sensitivity` en el dispositivo Tuya y
+  persiste el snapshot en `devices.meta_json.calibration` de la habitación.

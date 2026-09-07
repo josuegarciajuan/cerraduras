@@ -1283,3 +1283,31 @@ para anuncio y operación, conserva todas las funciones productivas y exige
 HTTPS para el anuncio. La credencial no se expone por Serial ni WiFiManager y
 `chip_id` sigue siendo visible. Si el servidor actual no publica TLS, el
 despliegue queda bloqueado.
+
+## Diseño — Calibración de sensor de presencia (RF-41)
+
+**Descubrimiento por habitación.** Se resuelve el dispositivo `PRESENCE` de la room
+siguiendo la cadena canónica room→pack→device (misma consulta que
+`/dashboard-api/device-status`). Cada sensor vive en una habitación distinta, por lo
+que su configuración es única por habitación.
+
+**Endpoints LAN** (`/dashboard-api/presence-calibrate/{status,set}`, sin auth como el
+resto del dashboard): generalizan la herramienta dev `/simula/*` (que queda intacta,
+hardcodeada a un único dispositivo) reutilizando `tuyaPresenceApi()` y su backoff de cuota.
+
+**Badge en vivo.** Se lee el DP crudo del sensor (polling ~2 s solo con el modal abierto)
+porque `presence_state` de dominio solo transita vía webhook/poller y puede tardar varios
+segundos. No se inyecta nada en `iot_session` para no ensuciar anomalías.
+
+**Persistencia por habitación.** Tras un `set` confirmado se fusiona en
+`devices.meta_json.calibration` `{far_detection_cm, sensitivity, calibrated_at, source}`.
+El valor de verdad sigue siendo el DP del sensor (el dispositivo lo recuerda); el `meta`
+es respaldo/consulta para reabrir el modal o tras sustituir el sensor.
+
+**Panel.** Entrada: zona clicable sobre el sensor del croquis SVG (con icono ⚙️ en hover).
+Modal `#cal-modal` siguiendo el patrón `.modal-overlay/.modal-box`: slider de radio
+(0–800 cm, paso 5 cm) y slider de sensibilidad (0–9), insignia `DETECTANDO PRESENCIA`
+(verde) / `SIN PRESENCIA` (rojo) / `RADIO APAGADO` (naranja, radio ≤ 1) / `SIN DATOS`
+(gris, offline/sin lectura), estados "Enviando/Guardando", banner de error (Tuya/offline/
+quota con espera ~15 s), read-back del valor confirmado y hint al técnico. Cooldown de
+~2 s entre llamadas Tuya y timers limpiados al cerrar.

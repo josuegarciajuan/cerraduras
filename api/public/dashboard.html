@@ -67,6 +67,47 @@
   .modal-box select { width:100%; padding:8px; border-radius:6px; background:var(--surface2); color:var(--text); border:1px solid rgba(255,255,255,0.15); font-size:0.85rem; margin-top:8px; }
   .modal-box label { font-size:0.8rem; color:var(--text-dim); display:block; margin-top:12px; }
 
+  /* ── Calibrar presencia: modal + slider + live badge ── */
+  #presence-sensor-group { cursor:pointer; }
+  #presence-sensor-group .calib-gear { transition:opacity .2s, filter .2s; }
+  #presence-sensor-group:hover .calib-gear { opacity:1 !important; filter:drop-shadow(0 0 3px var(--cyan)); }
+  #cal-modal .modal-box { max-width:480px; }
+  #cal-modal h2 { margin-bottom:2px; }
+  #cal-modal .cal-sub { font-size:0.7rem; color:var(--text-dim); margin:2px 0 12px; font-family:'SF Mono','Fira Code',monospace; }
+  .cal-error { display:none; background:rgba(255,82,82,.1); border:1px solid rgba(255,82,82,.3); border-radius:8px; padding:8px 10px; color:var(--red); font-size:.72rem; margin-bottom:12px; }
+  .cal-error.show { display:block; }
+  /* Live badge with semantic glow (green=present / red=absent / orange=off) */
+  .cal-live { border-radius:10px; padding:12px; text-align:center; border:1px solid rgba(255,255,255,.06); background:var(--surface2); transition:border-color .3s, box-shadow .3s, background-color .3s; margin-bottom:10px; }
+  .cal-live .cal-live-label { font-size:.86rem; font-weight:800; letter-spacing:.05em; }
+  .cal-live .cal-live-sub { font-size:.66rem; color:var(--text-dim); margin-top:2px; }
+  .cal-live.present { border-color:rgba(0,230,118,.4); box-shadow:0 0 22px rgba(0,230,118,.14); background:rgba(0,230,118,.08); }
+  .cal-live.present .cal-live-label { color:var(--green); }
+  .cal-live.absent  { border-color:rgba(255,82,82,.32); box-shadow:0 0 22px rgba(255,82,82,.10); background:rgba(255,82,82,.07); }
+  .cal-live.absent  .cal-live-label { color:var(--red); }
+  .cal-live.off     { border-color:rgba(255,145,0,.35); background:rgba(255,145,0,.07); }
+  .cal-live.off .cal-live-label { color:var(--orange); }
+  .cal-live.offline { border-color:rgba(255,255,255,.1); box-shadow:none; background:var(--surface2); }
+  .cal-live.offline .cal-live-label { color:var(--text-dim); }
+  .cal-live.flash { animation:cal-flash .5s ease; }
+  @keyframes cal-flash { 0% { transform:scale(1.03); } 100% { transform:scale(1); } }
+  .cal-hint { font-size:.72rem; color:var(--text-dim); text-align:center; margin:2px 0 6px; }
+  /* Readout + range (dark adaptation of simula slider) */
+  .cal-readout { text-align:center; font-family:'SF Mono','Fira Code',monospace; font-size:1.9rem; font-weight:700; color:var(--text); line-height:1; transition:color .2s; margin-top:2px; }
+  .cal-readout.preview { color:var(--blue); }
+  .cal-readout.pending { color:var(--yellow); }
+  .cal-readout.small { font-size:1.3rem; }
+  .cal-readout-unit { text-align:center; font-size:.7rem; color:var(--text-dim); margin-bottom:4px; }
+  input[type=range].cal-range { -webkit-appearance:none; appearance:none; width:100%; height:8px; border-radius:4px; background:linear-gradient(90deg,var(--red),var(--orange) 40%,var(--yellow) 62%,var(--green)); outline:none; cursor:pointer; margin:2px 0; }
+  input[type=range].cal-range::-webkit-slider-thumb { -webkit-appearance:none; width:24px; height:24px; border-radius:50%; background:#fff; border:2px solid var(--surface2); cursor:pointer; box-shadow:0 0 10px rgba(255,255,255,.25); transition:box-shadow .2s; }
+  input[type=range].cal-range::-webkit-slider-thumb:hover { box-shadow:0 0 18px rgba(255,255,255,.4); }
+  input[type=range].cal-range::-moz-range-thumb { width:24px; height:24px; border-radius:50%; background:#fff; border:2px solid var(--surface2); cursor:pointer; }
+  input[type=range].cal-range:disabled { opacity:.35; cursor:not-allowed; }
+  .cal-range-labels { display:flex; justify-content:space-between; font-family:'SF Mono','Fira Code',monospace; font-size:.62rem; color:var(--text-dim); margin:2px 0 6px; }
+  .cal-readback { text-align:center; font-size:.66rem; color:var(--text-dim); margin:6px 0 4px; font-family:'SF Mono','Fira Code',monospace; }
+  .cal-actions { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
+  @keyframes cal-spin { to { transform:rotate(360deg); } }
+  @media (pointer:coarse) { input[type=range].cal-range::-webkit-slider-thumb { width:34px; height:34px; } #cal-modal .modal-box .btn { min-height:44px; } }
+
   /* ── ZONE 2: State bar (fixed height, compact) ── */
   #zone2 { height:44px; padding:4px 20px 0; text-align:center; transition:background-color 0.6s; overflow:hidden; }
   #zone2 .state-main { display:flex; align-items:center; justify-content:center; gap:6px; }
@@ -288,6 +329,44 @@
   </div>
 </div>
 
+<!-- ──────────────── MODAL: Calibrar sensor de presencia ──────────────── -->
+<div class="modal-overlay" id="cal-modal" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+  <div class="modal-box cal-box">
+    <h2 id="cal-title">🎚️ Calibrar sensor de presencia</h2>
+    <div class="cal-sub" id="cal-sub">—</div>
+
+    <div id="cal-error" class="cal-error"></div>
+
+    <!-- Live badge: green/red presence while technician walks in/out -->
+    <div class="cal-live offline" id="cal-live" role="status">
+      <div class="cal-live-label" id="cal-live-label">SIN DATOS</div>
+      <div class="cal-live-sub" id="cal-live-sub">Consultando el sensor…</div>
+    </div>
+    <div class="cal-hint">Entra y sale de la habitación: la insignia debe ponerse verde al entrar y roja al salir del área marcada.</div>
+
+    <label for="cal-far-range">Rango de detección (radio)</label>
+    <div class="cal-readout" id="cal-far-readout" aria-live="off">—</div>
+    <div class="cal-readout-unit">metros</div>
+    <input type="range" class="cal-range" id="cal-far-range" min="0" max="800" step="5" value="0"
+           disabled aria-label="Rango de detección en metros" aria-valuetext="0 metros">
+    <div class="cal-range-labels"><span>0 m</span><span>2 m</span><span>4 m</span><span>6 m</span><span>8 m</span></div>
+
+    <label for="cal-sens-range">Sensibilidad (micro-movimientos)</label>
+    <div class="cal-readout small" id="cal-sens-readout">—</div>
+    <input type="range" class="cal-range cal-range-sens" id="cal-sens-range" min="0" max="9" step="1" value="9"
+           disabled aria-label="Sensibilidad de 0 a 9">
+    <div class="cal-range-labels"><span>0</span><span>3</span><span>6</span><span>9</span></div>
+
+    <div class="cal-readback" id="cal-readback">—</div>
+
+    <div class="cal-actions">
+      <button class="btn btn-config" id="cal-refresh-btn" onclick="calRefresh()">🔄 Refrescar</button>
+      <button class="btn btn-clear" onclick="closeCalibrateModal()">Cancelar</button>
+      <button class="btn btn-sim" id="cal-done-btn" onclick="calDone()">Guardar y Listo</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────── ZONE 2: State Bar ──────────────── -->
 <div id="zone2">
   <div class="state-main">
@@ -366,6 +445,13 @@
         <circle id="radar-ripple-6" cx="484" cy="40" r="4" fill="none" stroke="rgba(0,230,118,0.5)" stroke-width="1.5" style="display:none"/>
         <!-- Polling indicator dot near sensor -->
         <circle id="polling-dot" cx="508" cy="38" r="4" fill="rgba(0,230,118,0.3)" style="display:none"/>
+        <!-- Calibration affordance: transparent clickable zone + gear glyph (drawn last so it captures the click) -->
+        <rect id="calib-sensor-hit" x="452" y="14" width="118" height="34" rx="8" fill="rgba(0,0,0,0)"
+              stroke="rgba(0,0,0,0)" style="cursor:pointer;pointer-events:all" onclick="openCalibrateModal()">
+          <title>🎚️ Calibrar sensor de presencia</title>
+        </rect>
+        <text class="calib-gear" id="calib-sensor-gear" x="528" y="31" text-anchor="middle" fill="var(--cyan)"
+              font-size="12" style="pointer-events:none;opacity:0.35">⚙️</text>
       </g>
 
       <!-- Sensor puerta (junto a marco) -->
@@ -2770,6 +2856,281 @@ async function refreshDashboardBattery(deviceId) {
     }
   } catch(e) { if (battEl) battEl.innerHTML = orig || 'Error'; }
 }
+
+// ═══════════════════════════════════════════════════════════
+// Calibrar sensor de presencia (per-room). Reads/writes the Tuya
+// presence DP directly while the modal is open (~2s live badge).
+// ═══════════════════════════════════════════════════════════
+let calState = null;
+let _calPollTimer = null;
+let _calDebounce = null;
+let _calInflight = false;
+let _calDirtyFar = false;
+let _calDirtySens = false;
+let _calLastAnyApi = 0;   // client clock ms — Tuya quota guard
+let _calQuotaUntil = 0;   // client clock ms — show waiting state meanwhile
+let _calLastBadge = '';
+const CAL_COOLDOWN_MS = 2000;
+const CAL_MAX_CM = 800;
+
+function calEl(id) { return document.getElementById(id); }
+
+function calRoomName() {
+  const r = roomList.find(x => x.id == currentRoomId);
+  return r ? `Hab. ${r.code}` : `Room ${currentRoomId}`;
+}
+
+function calSetLive(state, label, sub) {
+  const live = calEl('cal-live');
+  live.classList.remove('present', 'absent', 'off', 'offline');
+  live.classList.add(state);
+  if (label !== _calLastBadge) { live.classList.add('flash'); setTimeout(() => live.classList.remove('flash'), 550); }
+  _calLastBadge = label;
+  calEl('cal-live-label').textContent = label;
+  calEl('cal-live-sub').textContent = sub || '';
+}
+
+function calSetEnabled(on) {
+  calEl('cal-far-range').disabled  = !on;
+  calEl('cal-sens-range').disabled = !on;
+}
+
+function calSetError(msg) {
+  const e = calEl('cal-error');
+  e.textContent = msg || '';
+  e.classList.toggle('show', !!msg);
+}
+
+function calRefreshNow() {
+  if (_calInflight) return;
+  calReadStatus().catch(() => {});
+}
+
+// Find the PRESENCE device for the current room (cache first, else fetch).
+async function calResolvePresenceDevice() {
+  if (_deviceCache && Array.isArray(_deviceCache.devices)) {
+    const d = _deviceCache.devices.find(x => x.kind === 'PRESENCE');
+    if (d) return d;
+  }
+  try {
+    const res = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`, { cache: 'no-store' });
+    const data = await res.json();
+    return (data.devices || []).find(x => x.kind === 'PRESENCE') || null;
+  } catch (e) { return null; }
+}
+
+async function openCalibrateModal() {
+  calEl('cal-modal').classList.add('open');
+  calSetError('');
+  calSetLive('offline', 'SIN DATOS', 'Consultando el sensor…');
+  calSetEnabled(false);
+  calEl('cal-done-btn').disabled = false;
+  calEl('cal-done-btn').textContent = 'Guardar y Listo';
+  _calDirtyFar = _calDirtySens = false;
+  _calQuotaUntil = 0;
+
+  const dev = await calResolvePresenceDevice();
+  calState = {
+    roomId: currentRoomId, device: dev || null, online: !!(dev && dev.online),
+    farRead: null, farTarget: null, sensRead: null, sensTarget: null,
+    hasSensor: !!dev,
+  };
+  const subEl = calEl('cal-sub');
+  if (dev) {
+    subEl.textContent = `${calRoomName()} · ${dev.label || 'Sensor de presencia'} · ${(dev.external_id || '').slice(-6)}`;
+  } else {
+    subEl.textContent = calRoomName() + ' · sin sensor de presencia';
+    calSetLive('offline', 'SIN SENSOR', 'Esta habitación no tiene sensor de presencia.');
+    calSetError('La habitación actual no tiene un sensor de presencia. Asigna un pack con sensor para calibrar.');
+    return; // leave modal open with disabled controls + explanatory banner
+  }
+
+  calSetEnabled(false); // enabled only after first successful read
+  calReadStatus().catch(() => {});
+
+  if (_calPollTimer) clearInterval(_calPollTimer);
+  _calPollTimer = setInterval(() => {
+    if (_calInflight) return;
+    if (Date.now() < _calQuotaUntil) return;
+    calReadStatus().catch(() => {});
+  }, 2000);
+}
+
+function closeCalibrateModal() {
+  if (_calPollTimer) { clearInterval(_calPollTimer); _calPollTimer = null; }
+  if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
+  calEl('cal-modal').classList.remove('open');
+  calState = null;
+}
+
+// Read far_detection/sensitivity/presence_state from the sensor + refresh UI.
+async function calReadStatus() {
+  if (_calInflight) return;
+  if (!calState || !calState.hasSensor) return;
+  const now = Date.now();
+  if (now - _calLastAnyApi < CAL_COOLDOWN_MS) return; // respect Tuya quota
+  if (now < _calQuotaUntil) return;
+  _calLastAnyApi = now;
+  try {
+    const res = await fetch(`/dashboard-api/presence-calibrate/status?room_id=${calState.roomId}`, { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    calState.online = !!(data.device && (data.device.online || data.far_detection != null));
+    if (data.far_detection != null) {
+      calState.farRead = Math.min(Math.max(0, data.far_detection), CAL_MAX_CM);
+      calEl('cal-far-range').value = calState.farRead;
+    }
+    if (data.sensitivity != null) {
+      calState.sensRead = data.sensitivity;
+      calEl('cal-sens-range').value = calState.sensRead;
+    }
+    calState.saved = data.saved || null;
+    if (!_calDirtyFar) calRenderReadout('far', calState.farRead);
+    if (!_calDirtySens) calRenderReadout('sens', calState.sensRead);
+    calSetEnabled(true);
+    calApplyBadgeFromStatus(data);
+  } catch (e) {
+    calSetEnabled(false);
+    calSetLive('offline', 'SIN DATOS', 'No se pudo leer el sensor.');
+    calSetError((e && e.message) ? e.message : 'No se pudo leer el sensor');
+  }
+}
+
+function calRenderReadout(which, value) {
+  const el = calEl(which === 'far' ? 'cal-far-readout' : 'cal-sens-readout');
+  if (which === 'far') {
+    const m = ((value != null ? value : 0) / 100).toFixed(2);
+    el.textContent = m;
+    el.classList.remove('preview', 'pending');
+    calEl('cal-far-range').setAttribute('aria-valuetext', `${m} metros`);
+  } else {
+    el.textContent = value != null ? `${value}/9` : '—';
+    el.classList.remove('preview', 'pending');
+  }
+}
+
+// Compute current effective presence: honours OFF when radio<=1 (target or read).
+function calEffectivePresence(serverEffective) {
+  const far = (_calDirtyFar && calState && calState.farTarget != null) ? calState.farTarget
+            : (calState && calState.farRead != null ? calState.farRead : null);
+  if (far != null && far <= 1) return 'OFF';
+  return serverEffective === 'PRESENT' ? 'PRESENT' : 'ABSENT';
+}
+
+function calApplyBadgeFromStatus(data) {
+  const eff = calEffectivePresence(data.effective_presence);
+  const far = (_calDirtyFar && calState.farTarget != null) ? calState.farTarget : calState.farRead;
+  if (!calState.online) {
+    calSetLive('offline', 'SIN DATOS', 'Dispositivo offline.');
+  } else if (eff === 'OFF') {
+    calSetLive('off', 'RADIO APAGADO', 'Sube el rango para activar la detección.');
+  } else if (eff === 'PRESENT') {
+    calSetLive('present', 'DETECTANDO PRESENCIA', 'Dentro del área (radio ' + ((far||0)/100).toFixed(2) + ' m).');
+  } else {
+    calSetLive('absent', 'SIN PRESENCIA', 'Fuera del área (radio ' + ((far||0)/100).toFixed(2) + ' m).');
+  }
+  calSetError('');
+}
+
+// Slider preview while dragging.
+function calOnFarInput() {
+  const el = calEl('cal-far-range');
+  const cm = parseInt(el.value, 10);
+  calState.farTarget = cm; _calDirtyFar = true;
+  const m = (cm / 100).toFixed(2);
+  const r = calEl('cal-far-readout');
+  r.textContent = m; r.classList.add('preview');
+  calEl('cal-far-range').setAttribute('aria-valuetext', `${m} metros`);
+  calSetError('');
+  if (cm <= 1) calSetLive('off', 'RADIO APAGADO', 'Sube el rango para activar la detección.');
+}
+
+function calOnSensInput() {
+  const el = calEl('cal-sens-range');
+  const s = parseInt(el.value, 10);
+  calState.sensTarget = s; _calDirtySens = true;
+  const r = calEl('cal-sens-readout');
+  r.textContent = `${s}/9`; r.classList.add('preview');
+}
+
+function calOnRangeChange() { calQueueWrite(); }
+
+function calQueueWrite() {
+  if (_calDebounce) clearTimeout(_calDebounce);
+  _calDebounce = setTimeout(() => { _calDebounce = null; doCalWrite(); }, 1200);
+}
+
+async function doCalWrite() {
+  if (!calState || !calState.hasSensor) return;
+  if (_calInflight) return;
+  _calInflight = true;
+  const far = calState.farTarget != null ? calState.farTarget : calState.farRead;
+  const sens = calState.sensTarget != null ? calState.sensTarget : calState.sensRead;
+  const rFar  = calEl('cal-far-readout');
+  const rSens = calEl('cal-sens-readout');
+  rFar.classList.toggle('pending', _calDirtyFar);
+  rSens.classList.toggle('pending', _calDirtySens);
+  calSetError('');
+
+  // While a write is in flight, pause the live poll to respect Tuya quota.
+  const body = { room_id: calState.roomId, far_detection: Math.max(0, Math.min(CAL_MAX_CM, far)) };
+  if (sens != null) body.sensitivity = sens;
+  try {
+    const waitMs = Math.max(0, _calLastAnyApi + CAL_COOLDOWN_MS - Date.now());
+    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+    const res = await fetch('/dashboard-api/presence-calibrate/set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    _calLastAnyApi = Date.now();
+    const data = await res.json();
+    if (!res.ok) {
+      if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
+      throw new Error(data.error || ('HTTP ' + res.status));
+    }
+    // Confirmed value == what we sent → clear dirty, then re-read to sync read-back.
+    _calDirtyFar = _calDirtySens = false;
+    calState.farTarget = calState.sensTarget = null;
+    if (data.saved) calState.saved = data.saved;
+    // Read back shortly after (Tuya eventual consistency) to confirm + live presence.
+    setTimeout(() => { if (calEl('cal-modal').classList.contains('open')) calReadStatus(); }, 1300);
+  } catch (e) {
+    calSetError((e && e.message) ? e.message : 'No se pudo guardar');
+    rFar.classList.remove('pending');
+    rSens.classList.remove('pending');
+  } finally {
+    _calInflight = false;
+    rFar.classList.remove('pending');
+    rSens.classList.remove('pending');
+  }
+}
+
+async function calDone() {
+  if (!calState || !calState.hasSensor) { closeCalibrateModal(); return; }
+  const btn = calEl('cal-done-btn');
+  if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
+  const dirty = _calDirtyFar || _calDirtySens;
+  if (dirty && !_calInflight) {
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    await doCalWrite();
+  }
+  closeCalibrateModal();
+}
+
+function calRefresh() { if (!_calInflight) calReadStatus().catch(() => {}); }
+
+// ── wiring (elements exist: script runs at end of body) ──
+(function () {
+  calEl('cal-far-range').addEventListener('input', calOnFarInput);
+  calEl('cal-far-range').addEventListener('change', calOnRangeChange);
+  calEl('cal-sens-range').addEventListener('input', calOnSensInput);
+  calEl('cal-sens-range').addEventListener('change', calOnRangeChange);
+  calEl('cal-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'cal-modal') closeCalibrateModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && calEl('cal-modal').classList.contains('open')) closeCalibrateModal();
+  });
+})();
 
 // Timeout guard: if after 10s the page is still "Conectando...", show error
 setTimeout(() => {
