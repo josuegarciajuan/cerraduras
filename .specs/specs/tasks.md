@@ -1238,3 +1238,39 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] `POST /dashboard-api/presence-calibrate/set` (RF-41.1/RF-41.2/RF-41.5): escribe DP y persiste por habitación; sin inyección en dominio.
 - [x] Frontend `dashboard.html`: entrada clicable sobre el sensor del croquis SVG + modal `#cal-modal` con slider de radio y sensibilidad, insignia en vivo verde/roja, estados offline/OFF/error, cooldown de cuota Tuya (RF-41.6) y guardas (RF-41.7).
 **Verificación**: `php -l` y `node --check` del JS del panel; manual contra `/dashboard?room=<con sensor>` (validar badge al entrar/salir y persistencia al reabrir).
+
+---
+
+# Fase 30: Refactor canónico pack (F30) — eliminar `devices.room_id`
+
+**Objetivo**: dejar SOLO el modelo `device → pack → room`. Un dispositivo pertenece a
+un pack (`devices.pack_id`) y la habitación se resuelve SIEMPRE vía `rooms.pack_id`;
+se elimina la asociación directa dispositivo→habitación (columna `devices.room_id` y
+`Device::$roomId`), que era un residuo legacy que generaba ambigüedad y conflictos.
+
+**Trazabilidad**: RF-16/RF-39 (packs) · corrección de incoherencias del modelo
+**Estado**: completada
+
+- [x] Migración `api/migrations/0102_remove_devices_room_id.sql`: sanea `room_id` legacy,
+      `DROP FOREIGN KEY fk_devices_room`, `DROP INDEX uniq_devices_room_kind`, `DROP COLUMN room_id`.
+- [x] `Device.php`: eliminar propiedad/campo `$roomId`, parámetro constructor y clave `room_id` de `toArray()`.
+- [x] `DeviceRepository.php`: quitar `room_id` de todos los `SELECT` y de `hydrate()`; `findIdentified()` resuelve la room vía pack; doc canónica.
+- [x] `DeviceRepositoryInterface.php`: doc `resolveRoomId` canónica (device→pack→room).
+- [x] Fallbacks legacy eliminados (resolución de room SOLO por pack):
+      `DeviceService::findRoomIdForRpiExternalId`, `DeviceService::identify`,
+      `QrValidateService::verifyDevice`, `TuyaSensorIngress::normalize`,
+      `SwitchService::turnByPack` (ahora usa `rooms->findByPackId`).
+- [x] `HealthController` (deep health batería): JOIN por `pack_id` en vez de `d.room_id`.
+- [x] `DeviceController::register`: registro canónico por `pack_id` (se retira el fallback `room_id`).
+- [x] `DeviceController::create` (`POST /rooms/{id}/devices`): crea el device en el **pack** de la room (nuevo `DeviceService::createInRoom`); si la room no tiene pack → 422 `room_has_no_pack`.
+- [x] `FactoryDeviceRepository.php`: el INSERT de claim crea el RPI con `pack_id` (sin `room_id`).
+- [x] `index.php` `GET /dashboard-api/pack-detail`: corregido el bloque con `$rows`/`$roomId` indefinidos (consulta por `pack_id`).
+- [x] Frontend `panel/index.html`: `loadDevices()` no depende de `device.room_id` (unassigned → room null).
+- [x] `bin/register-devices.php`: CSV `external_id,pack_code`; registra con `pack_id` resolviendo `/api/v1/device-packs`.
+- [x] Tests unitarios adaptados al modelo canónico (fakes re-keyeados por pack): `SwitchServiceTest`, `DeviceIdentifyTest`, `QrValidateServiceTest`, `ChipBatteryTest`, `FactoryDeviceTest`.
+- [x] Regresión unitaria: todos los `api/tests/Unit/*.php` en verde (excepto `WorkerSessionTest` que requiere `.env`/BD en el worktree).
+
+**Nota operacional**: bajo el modelo canónico "mover un dispositivo de habitación" ya no
+existe como concepto: se mueve de pack (`PATCH /api/v1/devices/{id}` con `pack_id`), y es el
+pack quien determina la habitación. Esto evita estados incoherentes (device con `room_id`
+pero `rooms.pack_id` distinto) y es la base para eliminar el fallback legacy en F30.

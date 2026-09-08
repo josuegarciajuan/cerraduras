@@ -101,7 +101,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | F26 Botón Mírame | BLOCK 17 (2) | Completado |
 | F27 QR pruebas + Pack reset | BLOCK 20, BLOCK 21 | Completado |
 | F28 Flujo físico (luz, regla salida, exit-scan, coreografía) | — | Completado |
-| F30 Refactor canónico pack | — | Pendiente |
+| F30 Refactor canónico pack (eliminar devices.room_id) | — | **Completado** (migración 0102) |
 | **F31 Verificación de salida robusta** | **BLOCK 22** | **Completado** |
 | **F32 Verificación dispositivos bajo demanda** | **BLOCK 23** | **Completado** |
 | **F33 Command-queue SCANNER/LOCK** | **BLOCK 24** | **Completado** |
