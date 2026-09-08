@@ -66,9 +66,9 @@ interface DeviceRepositoryInterface
     public function touchPackKind(int $packId, string $kind): int;
 
     /**
-     * Resolve the room_id for a device that has no direct room_id but belongs
-     * to a pack that is assigned to a room.
-     * Returns the room_id or null if the device is not linked to any room.
+     * Resolve the room_id for a device that belongs to a pack which is itself
+     * assigned to a room (canonical device → pack → room). A device not linked
+     * to any pack returns null.
      */
     public function resolveRoomId(int $deviceId): ?int;
 

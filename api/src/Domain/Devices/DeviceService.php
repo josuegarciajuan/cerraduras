@@ -51,18 +51,15 @@ final class DeviceService
     /**
      * Resolve the room associated to a given RPI device external id.
      * Used by QrValidateService to map the Raspberry's device_id to its room.
+     * Canonical model (F30): the room always resolves through the pack.
      */
     public function findRoomIdForRpiExternalId(string $externalId): ?int
     {
         $d = $this->devices->findByKindAndExternalId(Device::KIND_RPI, $externalId);
-        if ($d === null) {
+        if ($d === null || $d->packId === null) {
             return null;
         }
-        // Resolve via pack (canonical), fallback to legacy roomId
-        if ($d->packId !== null) {
-            return $this->devices->resolveRoomId($d->id);
-        }
-        return $d->roomId;
+        return $this->devices->resolveRoomId($d->id);
     }
 
     /**
@@ -96,8 +93,37 @@ final class DeviceService
     }
 
     /**
-     * Partial update of an existing device. `kind` and `room_id` are
-     * intentionally immutable; to "move" a device, delete and recreate it.
+     * Canonical (F30): create a device inside the pack assigned to a room.
+     * Devices never bind to a room directly; the pack owns them. If the room
+     * has no pack, there is nowhere canonical to place the device.
+     *
+     * @param array<string,mixed>|null $meta
+     */
+    public function createInRoom(
+        int $roomId,
+        string $kind,
+        string $externalId,
+        ?string $label,
+        ?int $apiClientId,
+        ?array $meta
+    ): Device {
+        $room = $this->rooms->findById($roomId);
+        if ($room === null) {
+            throw new NotFoundException('Room not found', ['room_id' => $roomId]);
+        }
+        if ($room->packId === null) {
+            throw new UnprocessableException(
+                'room_has_no_pack',
+                'La habitación no tiene pack asignado; asigna un pack antes de crear dispositivos',
+                ['room_id' => $roomId]
+            );
+        }
+        return $this->create($room->packId, $kind, $externalId, $label, $apiClientId, $meta);
+    }
+
+    /**
+     * Partial update of an existing device. `kind` is intentionally immutable;
+     * to "move" a device between packs, update its `pack_id`.
      *
      * @param array<string,mixed> $fields
      */
@@ -208,9 +234,8 @@ final class DeviceService
             throw new \RuntimeException('Device disappeared during identify');
         }
 
-        $roomId = ($updated->packId !== null)
-            ? $this->devices->resolveRoomId($updated->id)
-            : $updated->roomId;
+        // Canonical model (F30): the room always resolves through the pack.
+        $roomId = ($updated->packId !== null) ? $this->devices->resolveRoomId($updated->id) : null;
 
         $result = [
             'identified' => $updated->isIdentified,
