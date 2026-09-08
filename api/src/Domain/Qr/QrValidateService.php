@@ -457,10 +457,11 @@ final class QrValidateService
             return;
         }
 
-        // Resolve device's room via pack (canonical) or direct room_id (legacy)
-        $deviceRoomId = $device->packId !== null 
+        // Canonical model (F30): the device's room always resolves through its
+        // pack. A device not linked to a pack resolves to no room.
+        $deviceRoomId = $device->packId !== null
             ? $this->devices->resolveRoomId($device->id)
-            : $device->roomId;
+            : null;
 
         if ($deviceRoomId !== $expectedRoomId) {
             $this->writeAccessEvent(

@@ -6,6 +6,9 @@ namespace App\Domain\Devices;
 /**
  * Device: a physical device attached to a pack, and through the pack to a room.
  *
+ * Canonical model (F30): device → pack → room. A device has NO direct room_id;
+ * its room is always resolved through the pack (rooms.pack_id = devices.pack_id).
+ *
  * Kinds (design.md §4.3):
  *   RPI       ESP32 with QR reader + relay
  *   LOCK      Electronic lock (Tuya)
@@ -23,7 +26,6 @@ final class Device
     public const KIND_SCANNER   = 'SCANNER';
 
     public int $id;
-    public ?int $roomId;
     public ?int $packId;
     public string $kind;
     public string $externalId;
@@ -40,7 +42,6 @@ final class Device
      */
     public function __construct(
         int $id,
-        ?int $roomId,
         ?int $packId,
         string $kind,
         string $externalId,
@@ -52,7 +53,6 @@ final class Device
         ?string $identifiedAt = null
     ) {
         $this->id = $id;
-        $this->roomId = $roomId;
         $this->packId = $packId;
         $this->kind = $kind;
         $this->externalId = $externalId;
@@ -69,7 +69,6 @@ final class Device
     {
         return [
             'id' => $this->id,
-            'room_id' => $this->roomId,
             'pack_id' => $this->packId,
             'kind' => $this->kind,
             'external_id' => $this->externalId,

@@ -128,7 +128,9 @@ checkFactory(
 $migration = (string) file_get_contents(__DIR__ . '/../../migrations/0046_factory_devices.sql');
 checkFactory(str_contains($migration, 'device_id') && str_contains($migration, 'FOREIGN KEY'), 'factory claim links the created RPI device');
 $repository = (string) file_get_contents(__DIR__ . '/../../src/Infrastructure/Persistence/FactoryDeviceRepository.php');
-checkFactory(str_contains($repository, 'INSERT INTO devices') && str_contains($repository, 'pack_id') && str_contains($repository, 'room_id') && str_contains($repository, 'beginTransaction'), 'claim creates or links an unassigned RPI in the same transaction');
+// Canonical (F30): the INSERT no longer carries room_id — an unassigned RPI is
+// created bound only to its pack (devices.room_id column was removed).
+checkFactory(str_contains($repository, 'INSERT INTO devices') && str_contains($repository, 'pack_id') && !str_contains($repository, 'room_id') && str_contains($repository, 'beginTransaction'), 'claim creates an unassigned RPI bound to a pack (no direct room_id) in the same transaction');
 checkFactory(str_contains($repository, 'DELETE FROM factory_devices') && str_contains($repository, 'INSERT INTO audit_log'), 'claim audits before consuming the factory row');
 checkFactory(str_contains($repository, 'FROM devices d') && str_contains($repository, 'api_clients c') && str_contains($repository, 'CLAIMED'), 'post-claim announce resolves the linked RPI as logical CLAIMED');
 

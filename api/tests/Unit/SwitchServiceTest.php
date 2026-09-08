@@ -32,8 +32,16 @@ use App\Support\Clock;
 
 final class FakeDeviceRepoForSwitch implements DeviceRepositoryInterface
 {
-    /** @var array<int, array<string, Device>> room_id => [kind => Device] */
-    public array $devices = [];
+    /**
+     * Canonical model (F30): devices belong to a pack, never to a room directly.
+     * Indexed as pack_id => [kind => Device].
+     *
+     * @var array<int, array<string, Device>>
+     */
+    public array $devicesByPack = [];
+
+    /** Room fake used to resolve room → pack (rooms.pack_id). */
+    private ?FakeRoomRepoForSwitch $rooms = null;
 
     /** @var array{id:int, fields:array<string,mixed>}|null */
     public ?array $lastUpdate = null;
@@ -41,16 +49,38 @@ final class FakeDeviceRepoForSwitch implements DeviceRepositoryInterface
     /** @var array<string,mixed>|null */
     public ?array $lastMetaJsonPersisted = null;
 
-    public function addDevice(Device $d): void
+    public function setRoomRepo(FakeRoomRepoForSwitch $rooms): void
     {
-        $this->devices[$d->roomId ?? 0][$d->kind] = $d;
+        $this->rooms = $rooms;
     }
 
-    public function listForRoom(int $roomId): array { return array_values($this->devices[$roomId] ?? []); }
+    public function addDevice(Device $d): void
+    {
+        $this->devicesByPack[$d->packId ?? 0][$d->kind] = $d;
+    }
+
+    /**
+     * Resolve the pack assigned to a room (canonical room → pack → device).
+     */
+    private function resolvePackIdForRoom(int $roomId): ?int
+    {
+        if ($this->rooms === null) {
+            return null;
+        }
+        $room = $this->rooms->findById($roomId);
+        return $room?->packId;
+    }
+
+    public function listForRoom(int $roomId): array
+    {
+        $packId = $this->resolvePackIdForRoom($roomId);
+        return $packId === null ? [] : array_values($this->devicesByPack[$packId] ?? []);
+    }
     public function findById(int $id): ?Device { return null; }
     public function findForRoomKind(int $roomId, string $kind): ?Device
     {
-        return $this->devices[$roomId][$kind] ?? null;
+        $packId = $this->resolvePackIdForRoom($roomId);
+        return $packId === null ? null : ($this->devicesByPack[$packId][$kind] ?? null);
     }
     public function findByKindAndExternalId(string $kind, string $externalId): ?Device { return null; }
     public function findByExternalId(string $externalId): ?Device { return null; }
@@ -69,8 +99,14 @@ final class FakeDeviceRepoForSwitch implements DeviceRepositoryInterface
     public function updateLastSeen(int $deviceId): void {}
     public function updateBattery(int $deviceId, ?int $pct): void {}
     public function resolveRoomId(int $deviceId): ?int { return null; }
-    public function findByPackAndKind(int $packId, string $kind): array { return []; }
-    public function findOneByPackAndKind(int $packId, string $kind): ?Device { return null; }
+    public function findByPackAndKind(int $packId, string $kind): array
+    {
+        return isset($this->devicesByPack[$packId][$kind]) ? [$this->devicesByPack[$packId][$kind]] : [];
+    }
+    public function findOneByPackAndKind(int $packId, string $kind): ?Device
+    {
+        return $this->devicesByPack[$packId][$kind] ?? null;
+    }
     public function findAll(): array { return []; }
     public function touchPackKind(int $packId, string $kind): int { return 0; }
 }
@@ -88,7 +124,15 @@ final class FakeRoomRepoForSwitch implements RoomRepositoryInterface
     public function update(int $id, array $fields, ?string $expectedStatus = null): int { return 0; }
     public function resetAfterPackRemoval(int $roomId): void {}
     public function count(array $filters): int { return 0; }
-    public function findByPackId(int $packId): ?Room { return null; }
+    public function findByPackId(int $packId): ?Room
+    {
+        foreach ($this->rooms as $room) {
+            if ($room->packId === $packId) {
+                return $room;
+            }
+        }
+        return null;
+    }
 }
 
 final class FakeSwitchGateway implements SwitchGatewayInterface
@@ -161,7 +205,8 @@ echo str_repeat("=", 60) . "\n\n";
 // Test 1: turnOn with no switch registered → no-op
 $deviceRepo = new FakeDeviceRepoForSwitch();
 $roomRepo   = new FakeRoomRepoForSwitch();
-$room       = new Room(1, '101', 1, 1, 'FREE', null, null, null);
+$deviceRepo->setRoomRepo($roomRepo);
+$room       = new Room(1, '101', 1, 100, 'FREE', null, null, null); // Room 1 → pack 100
 $roomRepo->addRoom($room);
 
 $svc = new SwitchService($deviceRepo, $roomRepo);
@@ -190,8 +235,9 @@ if ($device === null) {
 }
 
 // Test 4: Register a switch and verify getSwitchForRoom
-// Device constructor: (id, roomId, packId, kind, externalId, label, apiClientId, meta)
-$switchDevice = new Device(42, 1, null, Device::KIND_SWITCH, 'tuya-dev-001', null, null, null);
+// Canonical (F30): the switch belongs to the pack of Room 1 (pack 100).
+// Device constructor: (id, packId, kind, externalId, label, apiClientId, meta)
+$switchDevice = new Device(42, 100, Device::KIND_SWITCH, 'tuya-dev-001', null, null, null);
 $deviceRepo->addDevice($switchDevice);
 
 $device = $svc->getSwitchForRoom(1);
@@ -234,8 +280,9 @@ echo "\n--- Persistence ---\n";
 // Test 8: turnOn persists last_command=ON and commanded_at
 $deviceRepo2 = new FakeDeviceRepoForSwitch();
 $roomRepo2   = new FakeRoomRepoForSwitch();
-$roomRepo2->addRoom(new Room(2, '102', 1, 1, 'FREE', null, null, null));
-$switchDevice2 = new Device(43, 2, null, Device::KIND_SWITCH, 'tuya-dev-002', null, null, ['model' => 'EAWCBT-J', 'dp_code' => 'switch']);
+$deviceRepo2->setRoomRepo($roomRepo2);
+$roomRepo2->addRoom(new Room(2, '102', 1, 200, 'FREE', null, null, null)); // Room 2 → pack 200
+$switchDevice2 = new Device(43, 200, Device::KIND_SWITCH, 'tuya-dev-002', null, null, ['model' => 'EAWCBT-J', 'dp_code' => 'switch']);
 $deviceRepo2->addDevice($switchDevice2);
 $svc2 = new SwitchService($deviceRepo2, $roomRepo2);
 
@@ -273,8 +320,9 @@ if ($meta !== null && ($meta['last_command'] ?? null) === 'OFF') {
 // Test 12: No persistence when gateway returns failure
 $deviceRepo3 = new FakeDeviceRepoForSwitch();
 $roomRepo3   = new FakeRoomRepoForSwitch();
-$roomRepo3->addRoom(new Room(3, '103', 1, 1, 'FREE', null, null, null));
-$switchDevice3 = new Device(44, 3, null, Device::KIND_SWITCH, 'tuya-dev-003', null, null, null);
+$deviceRepo3->setRoomRepo($roomRepo3);
+$roomRepo3->addRoom(new Room(3, '103', 1, 300, 'FREE', null, null, null)); // Room 3 → pack 300
+$switchDevice3 = new Device(44, 300, Device::KIND_SWITCH, 'tuya-dev-003', null, null, null);
 $deviceRepo3->addDevice($switchDevice3);
 $svc3 = new SwitchService($deviceRepo3, $roomRepo3);
 

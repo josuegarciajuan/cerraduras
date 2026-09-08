@@ -89,7 +89,7 @@ final class TuyaSensorIngress implements SensorIngressInterface
             throw new BadRequestException('Missing device ID in Tuya payload');
         }
 
-        // --- 2. Look up room_id from devices table ---
+        // --- 2. Resolve the room via pack (canonical F30 model: device → pack → room) ---
         $device = $this->deviceRepo->findByExternalId($devId);
         if ($device === null) {
             throw new BadRequestException(
@@ -97,12 +97,7 @@ final class TuyaSensorIngress implements SensorIngressInterface
                 ['external_id' => $devId]
             );
         }
-        $roomId = $device->roomId;
-
-        // If no direct room_id, resolve via pack chain (room.pack_id → devices.pack_id)
-        if ($roomId === null && $device->packId !== null) {
-            $roomId = $this->deviceRepo->resolveRoomId($device->id);
-        }
+        $roomId = ($device->packId !== null) ? $this->deviceRepo->resolveRoomId($device->id) : null;
 
         // Track liveness: update last_seen_at on the Tuya device
         try {

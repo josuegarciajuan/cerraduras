@@ -115,7 +115,7 @@ final class HealthController
             $stmt = $pdo->query(
                 "SELECT d.id, d.label, r.code AS room_code, d.battery_pct
                  FROM devices d
-                 JOIN rooms r ON r.id = d.room_id
+                 JOIN rooms r ON r.pack_id = d.pack_id
                  WHERE d.kind = 'PROXIMITY'
                    AND d.battery_pct IS NOT NULL
                    AND d.battery_pct < 20

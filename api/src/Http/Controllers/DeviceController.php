@@ -50,6 +50,11 @@ final class DeviceController
         ]);
     }
 
+    /**
+     * Create a device in the pack assigned to the given room (canonical F30:
+     * devices belong to a pack, never directly to a room).
+     * POST /api/v1/rooms/{id}/devices (scope: rooms:write)
+     */
     public function create(Request $request): Response
     {
         $roomId = (int) $request->routeParam('id');
@@ -66,7 +71,7 @@ final class DeviceController
             }
             $meta = $m;
         }
-        $device = $this->devices->create($roomId, $kind, $externalId, $label, $apiClientId, $meta);
+        $device = $this->devices->createInRoom($roomId, $kind, $externalId, $label, $apiClientId, $meta);
         return Response::json(201, $device->toArray());
     }
 
@@ -102,8 +107,8 @@ final class DeviceController
     }
 
     /**
-     * register: convenience endpoint for ESP32 device registration.
-     * Accepts pack_id in the body (room_id deprecated, kept for backward compat).
+     * register: convenience endpoint for device registration (canonical F30:
+     * registration is by pack_id; room_id is no longer accepted).
      *
      * POST /api/v1/devices/register
      * Body: { "pack_id": 5, "kind": "RPI", "external_id": "92f57630" }
@@ -111,11 +116,7 @@ final class DeviceController
     public function register(Request $request): Response
     {
         $body       = JsonBody::require($request->jsonBody);
-        // pack_id (canonical), fallback to room_id (deprecated)
-        $packId     = JsonBody::intOpt($body, 'pack_id', null);
-        if ($packId === null) {
-            $packId = JsonBody::int($body, 'room_id', 1);
-        }
+        $packId     = JsonBody::int($body, 'pack_id');
         $kind       = JsonBody::string($body, 'kind', 32);
         $externalId = JsonBody::string($body, 'external_id', 128);
         $apiClientId = JsonBody::intOpt($body, 'api_client_id', 1);
