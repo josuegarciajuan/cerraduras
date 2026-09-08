@@ -35,6 +35,9 @@ final class FakeDeviceRepoForIdentify implements DeviceRepositoryInterface
     public array $byId = [];
     public int $nextId = 1;
 
+    /** Room fake used to resolve the room of a device via its pack (F30). */
+    public ?FakeRoomRepoForIdentify $rooms = null;
+
     public function addDevice(Device $d): void
     {
         $this->byKindExt[$d->kind . '|' . $d->externalId] = $d;
@@ -68,15 +71,28 @@ final class FakeDeviceRepoForIdentify implements DeviceRepositoryInterface
         return $d;
     }
 
+    /**
+     * Canonical (F30): the room of a device is the room that owns its pack.
+     * Returns null for devices with no pack.
+     */
+    private function roomForDevice(Device $d): ?Room
+    {
+        if ($d->packId === null || $this->rooms === null) {
+            return null;
+        }
+        return $this->rooms->findByPackId($d->packId);
+    }
+
     /** @return list<array{room_id:int,code:string,device_id:int,external_id:string,identified_at:string}> */
     public function findIdentified(): array
     {
         $result = [];
         foreach ($this->byId as $d) {
             if ($d->isIdentified && $d->kind === Device::KIND_RPI) {
+                $room = $this->roomForDevice($d);
                 $result[] = [
-                    'room_id'       => $d->roomId,
-                    'code'          => '101',
+                    'room_id'       => $room !== null ? $room->id : 0,
+                    'code'          => $room !== null ? $room->code : '',
                     'device_id'     => $d->id,
                     'external_id'   => $d->externalId,
                     'identified_at' => $d->identifiedAt ?? '',
@@ -92,7 +108,16 @@ final class FakeDeviceRepoForIdentify implements DeviceRepositoryInterface
     public function touchPackKind(int $packId, string $kind): int { return 0; }
     public function updateLastSeen(int $deviceId): void {}
     public function updateBattery(int $deviceId, ?int $pct): void {}
-    public function resolveRoomId(int $deviceId): ?int { return null; }
+
+    public function resolveRoomId(int $deviceId): ?int
+    {
+        $d = $this->byId[$deviceId] ?? null;
+        if ($d === null) {
+            return null;
+        }
+        $room = $this->roomForDevice($d);
+        return $room !== null ? $room->id : null;
+    }
 }
 
 final class FakeRoomRepoForIdentify implements RoomRepositoryInterface
@@ -108,7 +133,15 @@ final class FakeRoomRepoForIdentify implements RoomRepositoryInterface
     public function update(int $id, array $fields, ?string $expectedStatus = null): int { return 0; }
     public function resetAfterPackRemoval(int $roomId): void {}
     public function count(array $filters): int { return 0; }
-    public function findByPackId(int $packId): ?Room { return null; }
+    public function findByPackId(int $packId): ?Room
+    {
+        foreach ($this->rooms as $room) {
+            if ($room->packId === $packId) {
+                return $room;
+            }
+        }
+        return null;
+    }
 }
 
 // ============================================================================
@@ -141,11 +174,13 @@ echo str_repeat("=", 60) . "\n\n";
 
 $deviceRepo = new FakeDeviceRepoForIdentify();
 $roomRepo   = new FakeRoomRepoForIdentify();
-$room       = new Room(1, '101', 1, null, 'FREE', null, null);
+// Canonical model (F30): the RPI belongs to a pack; Room 1 owns that pack.
+$room       = new Room(1, '101', 1, 10, 'FREE', null, null);
 $roomRepo->addRoom($room);
+$deviceRepo->rooms = $roomRepo;
 
-// Register an RPI device (ESP32)
-$esp32 = new Device(1, 1, null, Device::KIND_RPI, '92f57630', null, null, null, null, false, null);
+// Register an RPI device (ESP32) — device → pack 10 → Room 1
+$esp32 = new Device(1, 10, Device::KIND_RPI, '92f57630', null, null, null);
 $deviceRepo->addDevice($esp32);
 
 $svc = new DeviceService($deviceRepo, $roomRepo);

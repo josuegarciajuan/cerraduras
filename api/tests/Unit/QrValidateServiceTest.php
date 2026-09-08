@@ -75,7 +75,15 @@ final class FakeRoomRepo implements RoomRepositoryInterface
     public function insert(string $c, int $rt, ?bool $s): int { return 0; }
     public function update(int $id, array $f, ?string $expectedStatus = null): int { return 0; }
     public function resetAfterPackRemoval(int $roomId): void {}
-    public function findByPackId(int $packId): ?Room { return null; }
+    public function findByPackId(int $packId): ?Room
+    {
+        foreach ($this->byId as $room) {
+            if ($room->packId === $packId) {
+                return $room;
+            }
+        }
+        return null;
+    }
 }
 
 final class FakeStayRepo implements StayRepositoryInterface
@@ -112,8 +120,17 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
     /** @var Device[] */
     public array $devices = [];
 
+    /** Room fake used to resolve a device's room via its pack (canonical F30). */
+    public ?FakeRoomRepo $rooms = null;
+
     public function listForRoom(int $roomId): array { return []; }
-    public function findById(int $id): ?Device { return null; }
+    public function findById(int $id): ?Device
+    {
+        foreach ($this->devices as $d) {
+            if ($d->id === $id) return $d;
+        }
+        return null;
+    }
     public function findForRoomKind(int $roomId, string $kind): ?Device { return null; }
     public function findByKindAndExternalId(string $kind, string $externalId): ?Device
     {
@@ -139,7 +156,15 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
     public function findAll(): array { return []; }
     public function touchPackKind(int $packId, string $kind): int { return 0; }
     public function updateLastSeen(int $deviceId): void {}
-    public function resolveRoomId(int $deviceId): ?int { return null; }
+    public function resolveRoomId(int $deviceId): ?int
+    {
+        $d = $this->findById($deviceId);
+        if ($d === null || $d->packId === null || $this->rooms === null) {
+            return null;
+        }
+        $room = $this->rooms->findByPackId($d->packId);
+        return $room !== null ? $room->id : null;
+    }
     public function updateBattery(int $deviceId, ?int $pct): void {}
 }
 
@@ -332,8 +357,12 @@ Clock::freeze(new DateTimeImmutable('2026-04-28T10:00:00Z', new DateTimeZone('UT
 // Test 7: device_mismatch — device registered but for wrong room
 // ============================================================================
 putenv('SIMULATED_MODE=false'); // Force real mode so device check runs strictly
+$devRepo->rooms = $roomRepo;
+$roomRepo->byId[99] = new Room(99, '199', 1, 99, Room::STATUS_OCCUPIED, true, null); // Room 99 → pack 99
 $devRepo->devices = [
-    new Device(1, 99, null, 'RPI', 'rpi-wrong-room', null, null, null), // room 99, not room 1
+    // Canonical (F30): the RPI belongs to pack 99 → Room 99, which is NOT the
+    // token's room (1). resolveRoomId() resolves 99 → device_mismatch.
+    new Device(1, 99, 'RPI', 'rpi-wrong-room', null, null, null),
 ];
 $jti4  = Uuid::v4();
 $tok4  = $tk->issue($roomId, $stayId, $jti4, $now, $exp);
@@ -344,7 +373,9 @@ expect('device_mismatch', function () use ($service, $tok4) {
     $service->validate($tok4, 'rpi-wrong-room', 'test-corr-7');
 }, 'device registered to wrong room → device_mismatch');
 putenv('SIMULATED_MODE=true'); // restore
+unset($roomRepo->byId[99]);
 $devRepo->devices = [];
+$devRepo->rooms = null;
 
 // ============================================================================
 // Test 8: room_cooldown

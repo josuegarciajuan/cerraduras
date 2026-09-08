@@ -43,10 +43,9 @@ final class FakeBatteryDeviceRepo
 
     public function __construct()
     {
-        // Seed one device row mimicking DB output
+        // Seed one device row mimicking DB output (canonical F30: no room_id column)
         $this->rows[3] = [
             'id'          => '3',
-            'room_id'     => null,
             'pack_id'     => '2',
             'kind'        => 'PROXIMITY',
             'external_id' => 'bf4c7e7d2cef28cea2nkwk',
@@ -68,9 +67,10 @@ final class FakeBatteryDeviceRepo
             ? json_decode((string) $row['meta_json'], true)
             : null;
 
+        // Device constructor (F30): (id, packId, kind, externalId, label,
+        // apiClientId, meta, batteryPct, isIdentified, identifiedAt)
         return new Device(
             (int) $row['id'],
-            $row['room_id'] !== null ? (int) $row['room_id'] : null,
             $row['pack_id'] !== null ? (int) $row['pack_id'] : null,
             (string) $row['kind'],
             (string) $row['external_id'],
@@ -138,10 +138,10 @@ echo "\n";
 // --- T2: Device model includes battery_pct ---
 echo "BLOQUE 2: Modelo Device con batteryPct\n";
 
-$d1 = new Device(1, null, null, 'PROXIMITY', 'ext1', null, null, null, null, false, null);
+$d1 = new Device(1, null, 'PROXIMITY', 'ext1', null, null, null);
 assertEq('default batteryPct is null', true, $d1->batteryPct === null);
 
-$d2 = new Device(2, null, null, 'PROXIMITY', 'ext2', null, null, null, 87, false, null);
+$d2 = new Device(2, null, 'PROXIMITY', 'ext2', null, null, null, 87);
 assertEq('batteryPct set to 87',    87,   $d2->batteryPct);
 
 $a2 = $d2->toArray();
