@@ -582,17 +582,16 @@ $router->get(
         if (!$packRow) {
             return \App\Http\Response::json(404, ['error' => 'Pack not found']);
         }
-        // Get devices with online status
-        $devRows = $pdo->prepare(
+        // Devices of the pack with online status (canonical F30: device → pack).
+        $devStmt = $pdo->prepare(
             "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at, d.battery_pct,
                       (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
               FROM devices d
-              JOIN rooms r ON r.pack_id = d.pack_id
-              WHERE r.id = :rid AND r.pack_id IS NOT NULL
+              WHERE d.pack_id = :pid
              ORDER BY d.kind"
         );
-        $rows->execute([':rid' => $roomId]);
-        $devices = $rows->fetchAll(\PDO::FETCH_ASSOC);
+        $devStmt->execute([':pid' => $packId]);
+        $devices = $devStmt->fetchAll(\PDO::FETCH_ASSOC);
         foreach ($devices as &$d) {
             $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
             unset($d['meta_json']);

@@ -5,18 +5,21 @@ declare(strict_types=1);
 /**
  * bin/register-devices.sh → bin/register-devices.php
  *
- * Registra dispositivos ESP32 en la tabla devices desde un archivo CSV.
+ * Registra dispositivos en la tabla devices desde un archivo CSV.
+ *
+ * Modelo canónico (F30): un dispositivo pertenece a un PACK, nunca a una room
+ * directamente. El CSV referencia el pack por su `code`.
  *
  * Formato CSV (sin cabecera):
- *   external_id,room_code
- *   a1b2c3d4,101
- *   92f57630,102
+ *   external_id,pack_code
+ *   a1b2c3d4,PRUEBAS
+ *   92f57630,proto2
  *   ...
  *
  * Uso:
  *   php bin/register-devices.php devices.csv
  *
- * Cada línea llama a POST /api/v1/devices/register.
+ * Cada línea llama a POST /api/v1/devices/register con { pack_id, kind, external_id }.
  *
  * Requisitos:
  *   - API_KEY en variable de entorno ADMIN_CLI_KEY (o hardcodeada abajo)
@@ -36,6 +39,31 @@ if (!is_file($csvFile) || !is_readable($csvFile)) {
 
 $apiBase  = getenv('API_BASE_URL') ?: 'http://127.0.0.1:8080';
 $adminKey = getenv('ADMIN_CLI_KEY') ?: 'b888a80507b084ad7be8908b3b46db06b820211d788aeb81';
+
+// Preload packs (code => id) once.
+$packsUrl = "{$apiBase}/api/v1/device-packs";
+$ctx0 = stream_context_create([
+    'http' => [
+        'header' => "X-API-Key: {$adminKey}\r\nAccept: application/json\r\n",
+        'timeout' => 10,
+    ],
+]);
+$packsResp = @file_get_contents($packsUrl, false, $ctx0);
+if ($packsResp === false) {
+    fwrite(STDERR, "ERROR: cannot list packs at {$packsUrl}\n");
+    exit(1);
+}
+$packsData = json_decode($packsResp, true);
+$packsById = [];
+foreach (($packsData['items'] ?? $packsData) as $p) {
+    if (isset($p['code']) && isset($p['id'])) {
+        $packsById[(string) $p['code']] = (int) $p['id'];
+    }
+}
+if (empty($packsById)) {
+    fwrite(STDERR, "ERROR: no packs found (device registration requires a pack)\n");
+    exit(1);
+}
 
 $handle = fopen($csvFile, 'r');
 if ($handle === false) {
@@ -58,34 +86,19 @@ while (($line = fgets($handle)) !== false) {
         continue;
     }
 
-    [$externalId, $roomCode] = $parts;
+    [$externalId, $packCode] = $parts;
     $externalId = trim($externalId);
-    $roomCode   = trim($roomCode);
+    $packCode   = trim($packCode);
 
-    // Resolve room_code → room_id
-    $roomUrl = "{$apiBase}/api/v1/rooms?code=" . urlencode($roomCode);
-    $ctx = stream_context_create([
-        'http' => [
-            'header' => "X-API-Key: {$adminKey}\r\nAccept: application/json\r\n",
-            'timeout' => 10,
-        ],
-    ]);
-    $resp = @file_get_contents($roomUrl, false, $ctx);
-    if ($resp === false) {
-        fwrite(STDERR, "ERROR: cannot resolve room {$roomCode}\n");
+    $packId = $packsById[$packCode] ?? null;
+    if ($packId === null) {
+        fwrite(STDERR, "ERROR: pack {$packCode} not found\n");
         continue;
     }
-    $data = json_decode($resp, true);
-    $items = $data['items'] ?? [];
-    if (empty($items)) {
-        fwrite(STDERR, "ERROR: room {$roomCode} not found\n");
-        continue;
-    }
-    $roomId = (int) $items[0]['id'];
 
-    // POST /api/v1/devices/register
+    // POST /api/v1/devices/register (pack-based, canonical F30)
     $body = json_encode([
-        'room_id'     => $roomId,
+        'pack_id'     => $packId,
         'kind'        => 'RPI',
         'external_id' => $externalId,
     ], JSON_UNESCAPED_UNICODE);
@@ -105,14 +118,14 @@ while (($line = fgets($handle)) !== false) {
     if ($regResp !== false) {
         $regData = json_decode($regResp, true);
         if (isset($regData['id'])) {
-            echo "  OK  room {$roomCode} (id={$roomId}) ← device {$externalId}\n";
+            echo "  OK  pack {$packCode} (id={$packId}) ← device {$externalId}\n";
             $success++;
         } else {
-            echo "  SKIP room {$roomCode}: " . ($regData['error']['message'] ?? 'already exists') . "\n";
+            echo "  SKIP pack {$packCode}: " . ($regData['error']['message'] ?? 'already exists') . "\n";
             $skipped++;
         }
     } else {
-        fwrite(STDERR, "  FAIL room {$roomCode}: HTTP error\n");
+        fwrite(STDERR, "  FAIL pack {$packCode}: HTTP error\n");
     }
 }
 

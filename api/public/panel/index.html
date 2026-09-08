@@ -533,7 +533,7 @@ function crm(){return{
     (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
     this.devices=out;
   },
-   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:(x.room_id!==undefined&&x.room_id!==null?x.room_id:null),pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null)}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
+   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:null,pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null)}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
   packPage(){
     let q=(this.pkQ||'').toLowerCase();
     let packs=this.packs.filter(p=>{
