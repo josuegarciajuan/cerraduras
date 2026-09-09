@@ -1274,3 +1274,16 @@ se elimina la asociación directa dispositivo→habitación (columna `devices.ro
 existe como concepto: se mueve de pack (`PATCH /api/v1/devices/{id}` con `pack_id`), y es el
 pack quien determina la habitación. Esto evita estados incoherentes (device con `room_id`
 pero `rooms.pack_id` distinto) y es la base para eliminar el fallback legacy en F30.
+
+## F39 — Estado verídico de dispositivos (RF-42)
+
+- [x] Migración `0103_online_probe_columns.sql`: `devices.online_state` + `devices.online_probed_at`.
+- [x] Helpers backend en `index.php`: clasificación ESP32 vs Tuya cloud, `probeTuyaOnlineOnce` (sonda real y persistencia), `resolveDeviceOnlineState`.
+- [x] `GET /dashboard-api/device-status`: estado de 3 valores (online/offline/unknown) por origen; nunca online sin señal real; expone `state`, `tuya_cloud`, sonda y conteos.
+- [x] `POST /dashboard-api/ping-all-devices`: sonda Tuya real solo con `verify_tuya:true`; sin flag Tuya = `unknown` sin cuota; SCANNER/LOCK = pull; RPI = heartbeat. Ya no devuelve `online:true` ciego.
+- [x] `assign-and-reset`: reutiliza la sonda real (persiste online_state).
+- [x] `SwitchService`: elimina el refresco de `last_seen` por comando cloud "aceptado" (falso online).
+- [x] Frontend `/dashboard`: auto-recheck 10 s excluye Tuya cloud; carga + botón "Comprobar" envían `verify_tuya:true`; render 3 estados; indicador pack con "sin verificar".
+- [x] CRM `/panel`: detalle de habitación muestra estado real de dispositivos del pack.
+- [x] Tests: BLOCK 30 en `run-tests.sh` (contrato device-status + ping sin cuota). Trazabilidad RF-42.
+- [x] Docs: requisitos (RF-42), diseño, AGENTS.md (F39).

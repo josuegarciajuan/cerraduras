@@ -110,6 +110,24 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F36 Battery Monitoring** | **BLOCK 26** | **Completado** |
 | F37 Configuración + filtro anomalías | BLOCK 27, BLOCK 28 | Completado |
 | **F38 Workers (QR maestro)** | **BLOCK 29** | **Pendiente** |
+| **F39 Estado verídico de dispositivos** | **BLOCK 30** | **Completado** |
+
+### F39 — Estado verídico de dispositivos (panel "Dispositivos")
+
+El punto de cada dispositivo en el panel debe reflejar su estado REAL, no uno reactivo:
+- **ESP32/local (RPI, SCANNER, LOCK)** → se verifica gratis por heartbeat/command-queue;
+  puede re-comprobarse de forma periódica (poll 10s).
+- **Tuya cloud (PRESENCE, PROXIMITY, SWITCH)** → consumen cuota de la API Tuya.
+  Solo se verifican con una sonda real (`GET /devices/{id}` → `result.online`) **al cargar
+  el panel y al pulsar "Comprobar dispositivos"** (`POST /dashboard-api/ping-all-devices`
+  con `verify_tuya:true`). **NUNCA** en el poll periódico.
+
+Resultado: un dispositivo Tuya físicamente apagado ya no aparece "conectado". Mientras no
+haya sonda fresca su estado es **`unknown` ("sin verificar", ámbar)**, no verde.
+
+Modelo de datos (migración `0103`): `devices.online_state` + `devices.online_probed_at`
+(última sonda Tuya real). `last_seen_at` sigue siendo solo actividad, ya no prueba conexión
+para Tuya cloud.
 
 ## Operaciones
 

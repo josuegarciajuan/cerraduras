@@ -386,3 +386,13 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 - **RF-41.5**: La calibración **no inyecta** eventos de presencia en `iot_session` ni en el dominio, para no ensuciar anomalías mientras el técnico entra/sale.
 - **RF-41.6**: La calibración respeta la **cuota de la API Tuya**: no más de ~1 llamada cada 2 s (poll + escrituras), con backoff y mensaje de espera cuando se agota la cuota.
 - **RF-41.7**: Guardas: habitación sin sensor de presencia → aviso y controles deshabilitados; sensor offline → modal de solo lectura con reintento hasta primera lectura OK.
+
+## Panel /dashboard — Estado verídico de dispositivos (RF-42)
+
+- **RF-42.1**: El punto de cada dispositivo en el panel "Dispositivos" (y el indicador del pack) debe reflejar su **estado real de conectividad**, nunca un estado "online" reactivo derivado de un evento/comando cloud aceptado.
+- **RF-42.2**: Los dispositivos **ESP32/local** (`RPI`, `SCANNER`, `LOCK`) se verifican de forma **gratuita y periódica** vía heartbeat (`device-heartbeat`) y command-queue `check`; su estado se deriva de `last_seen_at`/check fresco.
+- **RF-42.3**: Los dispositivos **Tuya cloud** (`PRESENCE`, `PROXIMITY`, `SWITCH`) consumen **cuota** de la API Tuya; solo se verifican con una **sonda real** (`GET /devices/{id}` → `result.online`) **al cargar el panel y al pulsar "Comprobar dispositivos"**. **NUNCA** en un poll periódico.
+- **RF-42.4**: Un dispositivo Tuya **sin sonda fresca** se muestra como **`unknown` ("sin verificar", ámbar)**, no como verde. Solo una sonda real que devuelva `online=true` pinta verde; `online=false` pinta rojo.
+- **RF-42.5**: `POST /dashboard-api/ping-all-devices` sondea Tuya solo cuando el cliente envía `verify_tuya:true` (carga/manual). Sin la flag, los Tuya cloud se devuelven como `unknown` **sin consumir cuota** y sin marcarlos online.
+- **RF-42.6**: Un comando Tuya "aceptado" por el cloud (que puede encolarlo aunque el dispositivo físico esté apagado) **no** debe marcar el dispositivo como online (`SwitchService` no refresca `last_seen` por ello).
+- **RF-42.7**: El auto-recheck periódico del panel (10 s) solo re-comprueba sub-dispositivos ESP32 (`SCANNER`/`LOCK`); nunca dispositivos Tuya cloud.

@@ -1311,3 +1311,31 @@ Modal `#cal-modal` siguiendo el patrón `.modal-overlay/.modal-box`: slider de r
 (gris, offline/sin lectura), estados "Enviando/Guardando", banner de error (Tuya/offline/
 quota con espera ~15 s), read-back del valor confirmado y hint al técnico. Cooldown de
 ~2 s entre llamadas Tuya y timers limpiados al cerrar.
+
+## Diseño — Estado verídico de dispositivos (F39 / RF-42)
+
+**Origen de verificación.** Se clasifica cada dispositivo por cómo se confirma su conexión:
+- `DEVICE_KIND_ESP32 = [RPI, SCANNER, LOCK]` → heartbeat/command-queue, sin cuota.
+- `DEVICE_KIND_TUYA  = [PRESENCE, PROXIMITY, SWITCH]` → sonda `GET /devices/{id}` (`result.online`), con cuota.
+
+**Modelo (migración 0103).** `devices.online_state TINYINT(1) NULL` (1/0/NULL) +
+`devices.online_probed_at DATETIME(3) NULL`, que registran la última **sonda real** Tuya.
+`last_seen_at` queda como actividad reactiva y deja de ser prueba de conexión para Tuya cloud.
+
+**device-status.** Para ESP32 se deriva online de `last_seen_at` fresco; para Tuya cloud,
+si `online_probed_at` está dentro de `TUYA_PROBE_TTL_SECONDS` (600 s) se muestra el
+`online_state` (verde/rojo); si la sonda es vieja o no existe → `state=unknown`, `online=null`
+(ámbar). Respuesta incluye `state`, `tuya_cloud`, `online_state`, `online_probed_at` y conteos
+`online/offline/unknown`.
+
+**ping-all-devices.** Sonda real solo si `verify_tuya:true` (carga/manual); sin flag devuelve
+Tuya como `unknown` sin llamar a Tuya (no quema cuota). `SCANNER`/`LOCK` → encola `check`
+(pull). `RPI` → heartbeat.
+
+**SwitchService.** Ya no refresca `last_seen_at` tras un comando cloud "aceptado" (Tuya lo
+encola aunque el físico esté apagado → era la causa del falso online de "Luz").
+
+**Frontend /dashboard.** Auto-recheck 10 s excluye Tuya cloud (solo SCANNER/LOCK pull).
+Carga de página + "Comprobar dispositivos" envían `verify_tuya:true`. Render de 3 estados
+(verde/rojo/ámbar "no verificado") con tooltip de origen y sonda. Indicador de pack suma
+online/offline/sin verificar.
