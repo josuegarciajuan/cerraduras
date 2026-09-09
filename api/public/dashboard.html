@@ -2567,119 +2567,23 @@ function updatePackIndicatorFromCache(ds) {
 }
 
 // ═══════════════════════════════════════════════════════
-// Auto-polling: rechecks offline devices every 10s
-// until they come back online. Only for devices that should
-// be online (have a pack assigned and are showing red).
-// RPI is excluded — only ESP32 heartbeat can verify it.
+// VERIFICACIÓN DE DISPOSITIVOS — SOLO bajo demanda
+// ─────────────────────────────────────────────────────────
+// NO hay auto-polling de dispositivos. Se eliminó el re-check automático (10s)
+// porque el comando 'check' hacia la cerradura/relé la hacía saltar y hacia el
+// lector QR hacía que se iluminara continuamente, y el heartbeat/ping del ESP32
+// tampoco debe ejecutarse en bucle.
+// La verificación de conectividad (Tuya cloud y ESP32 via command-queue) se hace
+// SOLO al cargar la página o pulsar "Comprobar dispositivos" (autoPing y refresh).
+// El estado online de ESP32 se mantiene por el heartbeat del propio chip
+// (device-heartbeat), sin necesidad de 'check' periódico.
 // ═══════════════════════════════════════════════════════
 
 function manageOfflineDevicePoll(ds) {
-  const devices = ds.devices || [];
-  const currentSet = new Set();
-
-  for (const d of devices) {
-    if (!d.id) continue;
-    const st = devStateOf(d);
-    // Skip pending (amber) y online (green)
-    if (d._pending_check) continue;
-    if (st === 'online') continue;
-    // RPI solo lo verifica su propio heartbeat ESP32 (no hay comando que encolar)
-    if (d.kind === 'RPI') continue;
-    // CRÍTICO: Tuya cloud consume cuota de la API Tuya → NUNCA re-comprobar en el poll
-    // periódico (solo al cargar el panel o pulsar "Comprobar dispositivos").
-    if (devIsTuyaCloud(d)) continue;
-    // Solo re-check periódico para sub-dispositivos ESP32 (SCANNER/LOCK) offline
-    // vía command-queue (gratis).
-    if (st !== 'offline') continue;
-
-    currentSet.add(d.id);
-  }
-
-  // Merge with existing set: remove devices that are now online, add new offline
-  _offlineDeviceIds = currentSet;
-
-  if (_offlineDeviceIds.size > 0) {
-    if (!_offlinePollTimer) {
-      _offlinePollTimer = setInterval(_recheckOfflineDevices, 10000);
-      // Run one immediate check too
-      _recheckOfflineDevices();
-    }
-  } else {
-    if (_offlinePollTimer) {
-      clearInterval(_offlinePollTimer);
-      _offlinePollTimer = null;
-    }
-  }
-}
-
-async function _recheckOfflineDevices() {
-  if (_offlineDeviceIds.size === 0) {
-    if (_offlinePollTimer) { clearInterval(_offlinePollTimer); _offlinePollTimer = null; }
-    return;
-  }
-
-  try {
-    const deviceIds = Array.from(_offlineDeviceIds);
-    const pingRes = await fetch('/dashboard-api/ping-all-devices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds }),
-    });
-    const pingData = await pingRes.json();
-
-    if (pingData.ok) {
-      // Merge ping results into device data
-      const resultsMap = {};
-      (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
-
-      // Refresh device cache from last known data
-      const ds = _deviceCache || { devices: [], online: 0, offline: 0, total: 0, room_id: currentRoomId };
-
-      let newOfflineIds = new Set();
-      const updatedDevices = (ds.devices || []).map(d => {
-        const r = resultsMap[d.id] || {};
-        if (!r.hasOwnProperty('device_id')) return d; // not in ping results
-
-        const state = (r.state) ? r.state : devStateOf(d);
-        const online = state === 'online';
-        const pendingCheck = r._pending_check === true;
-
-        // Sigue en re-check automático solo si el ping confirmó offline y es un
-        // sub-dispositivo ESP32 (SCANNER/LOCK). RPI y Tuya cloud quedan excluidos.
-        if (state === 'offline' && !pendingCheck && d.kind !== 'RPI' && !devIsTuyaCloud(d)) {
-          newOfflineIds.add(d.id);
-        }
-
-        return {
-          ...d,
-          state: state,
-          online: online,
-          online_state: r.online_state !== undefined ? r.online_state : d.online_state,
-          online_probed_at: r.online_probed_at || d.online_probed_at,
-          last_seen_at: r.last_seen_at || d.last_seen_at,
-          _pending_check: pendingCheck,
-        };
-      });
-
-      const onlineC  = updatedDevices.filter(d => devStateOf(d) === 'online').length;
-      const offlineC = updatedDevices.filter(d => devStateOf(d) === 'offline').length;
-      const unknownC = updatedDevices.filter(d => devStateOf(d) === 'unknown').length;
-
-      _offlineDeviceIds = newOfflineIds;
-      _deviceCache = { ...ds, devices: updatedDevices, online: onlineC, offline: offlineC, unknown: unknownC };
-
-      updateDevicesPanelFromCache(_deviceCache);
-      updatePackIndicatorFromCache(_deviceCache);
-
-      if (_offlineDeviceIds.size === 0 && _offlinePollTimer) {
-        clearInterval(_offlinePollTimer);
-        _offlinePollTimer = null;
-      }
-    }
-  } catch (e) {
-    console.warn('[recheckOfflineDevices] ping error:', e);
-    // Don't clear timer on error — keep retrying
-  }
+  // No-op intencionado: ya no se lanza ningún poll/re-check automático.
+  // Si por legado quedara un timer corriendo, se detiene aquí.
+  if (_offlinePollTimer) { clearInterval(_offlinePollTimer); _offlinePollTimer = null; }
+  _offlineDeviceIds = new Set();
 }
 
 async function refreshDeviceStatus() {
