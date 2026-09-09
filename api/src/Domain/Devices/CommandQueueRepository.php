@@ -62,6 +62,24 @@ final class CommandQueueRepository
     }
 
     /**
+     * Expire this chip's `picked_up` commands that never reported a result.
+     * A chip that picked a command and then went silent (offline / watchdog
+     * reset) would otherwise leave it `picked_up` forever. Re-armed the next
+     * time the chip contacts the API so the queue does not wedge or leak.
+     */
+    public function expirePickedUp(string $externalId, int $staleSeconds = 120): int
+    {
+        $stmt = $this->pdo->prepare(
+            "UPDATE device_commands
+             SET status = 'timeout', updated_at = CURRENT_TIMESTAMP(3)
+             WHERE external_id = :x AND status = 'picked_up'
+               AND updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL :s SECOND)"
+        );
+        $stmt->execute([':x' => $externalId, ':s' => $staleSeconds]);
+        return $stmt->rowCount();
+    }
+
+    /**
      * Return the oldest `pending` command for the chip and atomically mark it
      * `picked_up`. Returns null when there is nothing to do.
      *
@@ -69,6 +87,9 @@ final class CommandQueueRepository
      */
     public function pickUp(string $externalId): ?array
     {
+        // First expire this chip's wedged picked_up commands.
+        $this->expirePickedUp($externalId);
+
         $stmt = $this->pdo->prepare(
             "SELECT id, external_id, command, payload_json, created_at
              FROM device_commands
