@@ -139,10 +139,12 @@ final class SwitchService
 
             $this->devices->update($device->id, ['meta_json' => json_encode($merged, JSON_UNESCAPED_UNICODE)]);
 
-            // Refresh last_seen_at: a successful command proves the switch is online/reachable.
-            // Without this, the dashboard always shows the switch as offline (red dot)
-            // because no other mechanism updates last_seen_at for SWITCH devices.
-            $this->devices->updateLastSeen($device->id);
+            // NOTA (estado verídico): ya NO se refresca last_seen_at aquí. Un comando
+            // "aceptado" por el cloud Tuya NO prueba que el dispositivo físico esté
+            // conectado (Tuya lo encola aunque esté apagado); refrescar online aquí
+            // producía falsos "conectado" en el panel. El estado real lo determina la
+            // sonda Tuya (result.online) que se ejecuta al cargar el panel o al pulsar
+            // "Comprobar dispositivos".
         } catch (\Throwable $e) {
             error_log('[SwitchService] persistLastCommand failed for room ' . $roomId . ': ' . $e->getMessage());
         }
@@ -225,8 +227,8 @@ final class SwitchService
             ]);
             $this->devices->update($device->id, ['meta_json' => json_encode($merged, JSON_UNESCAPED_UNICODE)]);
 
-            // Refresh last_seen_at: a successful command proves the switch is online/reachable.
-            $this->devices->updateLastSeen($device->id);
+            // NOTA (estado verídico): no refrescar last_seen_at en un comando cloud
+            // "aceptado"; eso fabricaba falsos online. Ver persistLastCommand().
         } catch (\Throwable $e) {
             error_log('[SwitchService] persistLastCommandForDevice failed: ' . $e->getMessage());
         }

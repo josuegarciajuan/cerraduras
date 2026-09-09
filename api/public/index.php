@@ -432,6 +432,98 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
     return ['http' => $httpCode, 'data' => is_array($data) ? $data : [], 'error' => null, 'elapsed_ms' => $elapsed];
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Estado verídico de conectividad por dispositivo.
+//
+// Cada dispositivo se clasifica por SU ORIGEN de verificación:
+//   - ESP32 / local (gratis, verificación periódica vía heartbeat/pull):
+//       RPI (heartbeat), SCANNER y LOCK (command-queue 'check' o relé).
+//       Su estado se deriva de last_seen_at (se mantiene fresco sin cuota).
+//   - Tuya cloud (consumen cuota de la API Tuya → SOLO se sondean al cargar
+//       el panel o al pulsar "Comprobar dispositivos", NUNCA en el poll):
+//       PRESENCE, PROXIMITY, SWITCH.
+//       Su estado se deriva de la última SONDA real (result.online) persistida
+//       en devices.online_state + devices.online_probed_at.
+//
+// IMPORTANTE: no añadir nunca un poll periódico que sondee Tuya cloud.
+// ─────────────────────────────────────────────────────────────────────
+/** @var list<string> Dispositivos que comparten hardware ESP32 (sin cuota Tuya). */
+const DEVICE_KIND_ESP32 = ['RPI', 'SCANNER', 'LOCK'];
+/** @var list<string> Dispositivos Tuya cloud (cuota → sondear solo bajo demanda). */
+const DEVICE_KIND_TUYA  = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
+/** Cuántos segundos conserva una sonda Tuya real antes de considerarse "sin verificar". */
+const TUYA_PROBE_TTL_SECONDS = 600;
+
+function deviceIsEsp32(array $dev): bool {
+    return in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_ESP32, true);
+}
+
+function deviceIsTuyaCloud(array $dev): bool {
+    return in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_TUYA, true);
+}
+
+/**
+ * Sonda real de conectividad de un dispositivo Tuya cloud (GET /devices/{id}).
+ * Devuelve true/false si la API respondió con un result.online válido, o null
+ * si Tuya no pudo confirmar (error HTTP/red/cuota). NO debe llamarse en polls.
+ */
+function probeTuyaOnlineOnce(\PDO $pdo, int $deviceId, string $externalId): ?bool {
+    if ($externalId === '') {
+        return null;
+    }
+    $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId), null);
+    if (($res['error'] ?? null) !== null || (int) ($res['http'] ?? 0) >= 500) {
+        return null; // Tuya no disponible: no concluir online/offline
+    }
+    if (($res['data']['success'] ?? false) !== true) {
+        return null;
+    }
+    $online = isset($res['data']['result']['online']) ? (bool) $res['data']['result']['online'] : null;
+    if ($online === null) {
+        return null;
+    }
+    $state = $online ? 1 : 0;
+    $stmt = $pdo->prepare(
+        'UPDATE devices SET online_state = :st, online_probed_at = UTC_TIMESTAMP(3) WHERE id = :did'
+    );
+    $stmt->execute([':st' => $state, ':did' => $deviceId]);
+    return $online;
+}
+
+/**
+ * @return array{state:string, online:bool|null} estado verídico de un dispositivo
+ *   (usado por /dashboard-api/device-status). Nunca devuelve online=true sin una
+ *   señal real (heartbeat/check para ESP32, sonda Tuya fresca para Tuya cloud).
+ */
+function resolveDeviceOnlineState(array $dev, int $probeTtlSeconds): array {
+    $kind = (string) ($dev['kind'] ?? '');
+    if (!deviceIsTuyaCloud(['kind' => $kind])) {
+        // ESP32/local: estado desde last_seen_at (heartbeat/check) fresco.
+        if (($dev['last_seen_at'] ?? null) === null) {
+            return ['state' => 'unknown', 'online' => null];
+        }
+        $online = (bool) ($dev['online'] ?? false); // SQL ya calcula la ventana de 10 min
+        return ['state' => $online ? 'online' : 'offline', 'online' => $online];
+    }
+
+    // Tuya cloud: estado desde la última SONDA real, si no está caducada.
+    $probedAt = $dev['online_probed_at'] ?? null;
+    $stateRaw = $dev['online_state'] ?? null;
+    $fresh = false;
+    if ($probedAt !== null) {
+        $probedTs = strtotime((string) $probedAt . ' UTC');
+        if ($probedTs === false) {
+            $probedTs = strtotime((string) $probedAt);
+        }
+        $fresh = $probedTs !== false && (time() - $probedTs) <= $probeTtlSeconds;
+    }
+    if ($stateRaw === null || !$fresh) {
+        return ['state' => 'unknown', 'online' => null]; // no verificado aún o sonda vieja
+    }
+    $online = ((int) $stateRaw === 1);
+    return ['state' => $online ? 'online' : 'offline', 'online' => $online];
+}
+
 /**
  * Resolve the PRESENCE sensor device assigned to a room (canonical room→pack→device chain).
  * Returns null when the room has no presence sensor (e.g. room without a pack, or a pack
@@ -897,21 +989,31 @@ $router->post(
                 if (!$first) usleep(200_000);
                 $first = false;
 
-                $apiResult = tuyaPresenceApi('GET', "/v1.0/iot-03/devices/{$dev['external_id']}", null);
-
-                if ($apiResult['http'] === 200 && $apiResult['error'] === null) {
-                    $online = (bool)($apiResult['data']['result']['online'] ?? false);
-                    if ($online) {
-                        $pdo->prepare("UPDATE devices SET last_seen_at = UTC_TIMESTAMP(3) WHERE id = :did")
-                            ->execute([':did' => $dev['id']]);
-                    }
+                // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda real de conectividad.
+                $online = probeTuyaOnlineOnce($pdo, (int)$dev['id'], (string)$dev['external_id']);
+                if ($online === true) {
+                    // Comandable alcanzable: refrescar actividad también.
+                    $pdo->prepare("UPDATE devices SET last_seen_at = UTC_TIMESTAMP(3) WHERE id = :did")
+                        ->execute([':did' => $dev['id']]);
                     $deviceChecks[] = [
                         'device_id' => (int)$dev['id'],
                         'kind' => $dev['kind'],
                         'external_id' => $dev['external_id'],
-                        'online' => $online,
+                        'online' => true,
+                        'state' => 'online',
                         'error' => null,
-                        'last_seen_at' => $online ? gmdate('Y-m-d\TH:i:s.v\Z') : $dev['last_seen_at'],
+                        'last_seen_at' => gmdate('Y-m-d\TH:i:s.v\Z'),
+                        'checked_via' => 'TUYA',
+                    ];
+                } elseif ($online === false) {
+                    $deviceChecks[] = [
+                        'device_id' => (int)$dev['id'],
+                        'kind' => $dev['kind'],
+                        'external_id' => $dev['external_id'],
+                        'online' => false,
+                        'state' => 'offline',
+                        'error' => null,
+                        'last_seen_at' => $dev['last_seen_at'],
                         'checked_via' => 'TUYA',
                     ];
                 } else {
@@ -919,8 +1021,9 @@ $router->post(
                         'device_id' => (int)$dev['id'],
                         'kind' => $dev['kind'],
                         'external_id' => $dev['external_id'],
-                        'online' => false,
-                        'error' => $apiResult['error'] ?? "HTTP {$apiResult['http']}",
+                        'online' => null,
+                        'state' => 'unknown',
+                        'error' => 'Tuya no pudo confirmar conectividad',
                         'last_seen_at' => $dev['last_seen_at'],
                         'checked_via' => 'TUYA',
                     ];
@@ -962,11 +1065,13 @@ $router->get(
         $packRow = $packStmt->fetch(\PDO::FETCH_ASSOC);
         $pack = $packRow ?: ['pack_id' => null, 'pack_code' => null, 'pack_name' => null];
 
-        // Resolve devices via pack chain + direct room_id
-        // Use MySQL DATE_SUB for consistent timezone — matches pack-detail endpoint
+        // Resolve devices via pack chain (canonical model: device → pack → room).
+        // Use MySQL DATE_SUB for consistent timezone. The SQL `online` column is a
+        // freshness hint used ONLY for ESP32/local devices (last_seen heartbeat).
         $rows = $pdo->prepare(
-            "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at, d.battery_pct,
-                      (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
+            "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at,
+                    d.online_state, d.online_probed_at, d.battery_pct,
+                    (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
               FROM devices d
               JOIN rooms r ON r.pack_id = d.pack_id
               WHERE r.id = :rid AND r.pack_id IS NOT NULL
@@ -975,38 +1080,61 @@ $router->get(
         $rows->execute([':rid' => $roomId]);
         $devices = $rows->fetchAll(\PDO::FETCH_ASSOC);
 
-        foreach ($devices as &$d) {
-            $d['online'] = (bool) ($d['online'] ?? false);
-            $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
-            unset($d['meta_json']);
-        }
-        unset($d);
-
-        // Inherit RPI liveness for LOCK and SCANNER (same physical hardware)
+        $inheritOnlineKinds = DEVICE_KIND_ESP32; // LOCK/SCANNER/RPI comparten hardware ESP32
         $rpiOnline = false;
         foreach ($devices as $d) {
-            if ($d['kind'] === 'RPI' && $d['online']) { $rpiOnline = true; break; }
-        }
-        if ($rpiOnline) {
-            foreach ($devices as &$d) {
-                if (in_array($d['kind'], ['LOCK', 'SCANNER']) && !$d['online']) {
-                    $d['online'] = true;
-                    $d['_inherited'] = true;
-                }
+            if ($d['kind'] === 'RPI' && deviceIsEsp32($d) && (bool) ($d['online'] ?? false)) {
+                $rpiOnline = true;
+                break;
             }
         }
 
-        // NOTE: checkTuyaOnline() removed from the automatic poll.
-        // Device online status is determined by last_seen_at, which is kept
-        // fresh by Pulsar webhooks (PROXIMITY), presence poller (PRESENCE),
-        // and device heartbeat (RPI/ESP32). LOCK and SWITCH are command-only
-        // and do not need status polling.
-        // checkTuyaOnline() remains available as a manual fallback for
-        // debugging/emergency use but MUST NOT run on every dashboard poll
-        // — it burns Tuya API quota unnecessarily.
+        foreach ($devices as &$d) {
+            $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
+            unset($d['meta_json']);
 
-        $onlineCount  = count(array_filter($devices, fn($d) => $d['online']));
-        $offlineCount = count($devices) - $onlineCount;
+            $d['tuya_cloud'] = deviceIsTuyaCloud($d);
+
+            if (deviceIsTuyaCloud($d)) {
+                // Tuya cloud: estado verídico desde la sonda real (online_state/probed_at).
+                $st = resolveDeviceOnlineState($d, TUYA_PROBE_TTL_SECONDS);
+                $d['state']  = $st['state'];
+                $d['online'] = $st['online'];
+                $d['online_state']     = ($d['online_state'] ?? null);
+                $d['online_probed_at'] = ($d['online_probed_at'] ?? null);
+                continue;
+            }
+
+            // ESP32 / local: estado desde last_seen (heartbeat/check fresco).
+            $st = resolveDeviceOnlineState($d, TUYA_PROBE_TTL_SECONDS);
+            $d['state']  = $st['state'];
+            $d['online'] = $st['online'];
+            $d['online_state']     = null;
+            $d['online_probed_at'] = null;
+
+            // Heredar liveness del RPI a sub-dispositivos ESP32 del mismo hardware
+            // (solo marcador informativo; LOCK/SCANNER además se confirman por pull).
+            if ($rpiOnline && in_array($d['kind'], $inheritOnlineKinds, true) && !$d['online'] && $d['kind'] !== 'RPI') {
+                $d['online'] = true;
+                $d['_inherited'] = true;
+            }
+        }
+        unset($d);
+
+        // NOTA: para Tuya cloud (PRESENCE/PROXIMITY/SWITCH) el punto del panel ya NO se
+        // calcula por last_seen_at reactivo (eso producía falsos "online" cuando un evento
+        // o un comando cloud aceptado refrescaba last_seen sin que el dispositivo físico
+        // estuviera realmente conectado). Solo una sonda real (al cargar o "Comprobar")
+        // marca online/offline; si no hay sonda fresca el estado es 'unknown' (ámbar).
+
+        $onlineCount  = 0;
+        $offlineCount = 0;
+        $unknownCount = 0;
+        foreach ($devices as $d) {
+            if ($d['state'] === 'online')   { $onlineCount++; }
+            elseif ($d['state'] === 'offline') { $offlineCount++; }
+            else { $unknownCount++; }
+        }
 
         return \App\Http\Response::json(200, [
             'room_id' => $roomId,
@@ -1015,6 +1143,7 @@ $router->get(
             'pack_name' => $pack['pack_name'],
             'online' => $onlineCount,
             'offline' => $offlineCount,
+            'unknown' => $unknownCount,
             'total' => count($devices),
             'devices' => $devices,
         ]);
@@ -1160,6 +1289,10 @@ $router->post(
     function (\App\Http\Request $request) use ($pdo, $deviceRepo, $commandQueueRepo, $resolveOwnerChip): \App\Http\Response {
         $body = $request->jsonBody ?? [];
         $ids = $body['device_ids'] ?? null;
+        // Solo se sondea Tuya cloud (consume cuota) cuando el cliente lo pide
+        // explícitamente (carga del panel / botón "Comprobar"). Sin la flag no se
+        // quema cuota: los dispositivos Tuya se devuelven como 'unknown' (sin verificar).
+        $verifyTuya = !empty($body['verify_tuya']);
         if (!is_array($ids) || $ids === []) {
             return \App\Http\Response::json(400, ['error' => 'device_ids array required']);
         }
@@ -1171,17 +1304,63 @@ $router->post(
             if ($dev === null) {
                 $results[] = [
                     'device_id' => $deviceId,
-                    'online' => false,
+                    'online' => null,
+                    'state' => 'unknown',
                     'found' => false,
                     '_pending_check' => false,
                 ];
                 continue;
             }
 
-            $isPullKind = in_array($dev->kind, [
+            $kind = (string) $dev->kind;
+            $isPullKind = in_array($kind, [
                 \App\Domain\Devices\Device::KIND_SCANNER,
                 \App\Domain\Devices\Device::KIND_LOCK,
             ], true);
+
+            if (deviceIsTuyaCloud(['kind' => $kind])) {
+                if (!$verifyTuya) {
+                    // Sin verificación explícita → no quemar cuota: estado 'unknown'.
+                    $results[] = [
+                        'device_id' => $deviceId,
+                        'found' => true,
+                        'online' => null,
+                        'state' => 'unknown',
+                        'tuya_cloud' => true,
+                        '_pending_check' => false,
+                        'checked_via' => 'TUYA',
+                        'error' => 'no verificado (sonda Tuya omitida)',
+                    ];
+                    continue;
+                }
+                // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda REAL de conectividad.
+                // Consume cuota Tuya → este endpoint solo lo invocan la carga del panel
+                // y el botón "Comprobar dispositivos", nunca el poll automático.
+                $probe = probeTuyaOnlineOnce($pdo, $deviceId, (string) $dev->externalId);
+                if ($probe === null) {
+                    $results[] = [
+                        'device_id' => $deviceId,
+                        'found' => true,
+                        'online' => null,
+                        'state' => 'unknown',
+                        'tuya_cloud' => true,
+                        '_pending_check' => false,
+                        'checked_via' => 'TUYA',
+                        'error' => 'Tuya no pudo confirmar conectividad',
+                    ];
+                } else {
+                    $results[] = [
+                        'device_id' => $deviceId,
+                        'found' => true,
+                        'online' => $probe,
+                        'state' => $probe ? 'online' : 'offline',
+                        'tuya_cloud' => true,
+                        '_pending_check' => false,
+                        'checked_via' => 'TUYA',
+                    ];
+                }
+                continue;
+            }
 
             if ($isPullKind) {
                 // Enqueue a check for the owner chip (fallback: this row's external_id).
@@ -1193,19 +1372,23 @@ $router->post(
                 $results[] = [
                     'device_id' => $deviceId,
                     'online' => false,          // pending live confirmation
+                    'state' => 'unknown',
                     'found' => true,
                     '_pending_check' => $queuedId !== null,
                     'checked_via' => 'PULL',
                     'external_id' => $owner,
                 ];
             } else {
-                // RPI and non-pull devices: nothing to queue (RPI self-beacons via heartbeat).
+                // RPI: self-beacons vía /dashboard-api/device-heartbeat. No hay comando
+                // que encolar; se reporta online (heartbeat) y el poll de device-status
+                // reconcilia con last_seen real en segundos.
                 $results[] = [
                     'device_id' => $deviceId,
                     'online' => true,
+                    'state' => 'online',
                     'found' => true,
                     '_pending_check' => false,
-                    'checked_via' => 'PULL',
+                    'checked_via' => 'HEARTBEAT',
                 ];
             }
         }
