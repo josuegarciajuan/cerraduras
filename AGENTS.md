@@ -115,8 +115,10 @@ hasta el momento (regresión completa). Debe ejecutarse:
 ### F39 — Estado verídico de dispositivos (panel "Dispositivos")
 
 El punto de cada dispositivo en el panel debe reflejar su estado REAL, no uno reactivo:
-- **ESP32/local (RPI, SCANNER, LOCK)** → se verifica gratis por heartbeat/command-queue;
-  puede re-comprobarse de forma periódica (poll 10s).
+- **ESP32/local (RPI, SCANNER, LOCK)** → se verifica por heartbeat del propio chip
+  (device-heartbeat). El comando `check` (command-queue) NO se lanza en bucle: se usa
+  solo al cargar el panel o pulsar "Comprobar dispositivos" (evita hacer saltar el
+  relé de la cerradura o iluminar el lector QR continuamente).
 - **Tuya cloud (PRESENCE, PROXIMITY, SWITCH)** → consumen cuota de la API Tuya.
   Solo se verifican con una sonda real (`GET /devices/{id}` → `result.online`) **al cargar
   el panel y al pulsar "Comprobar dispositivos"** (`POST /dashboard-api/ping-all-devices`

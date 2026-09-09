@@ -1335,7 +1335,8 @@ Tuya como `unknown` sin llamar a Tuya (no quema cuota). `SCANNER`/`LOCK` → enc
 **SwitchService.** Ya no refresca `last_seen_at` tras un comando cloud "aceptado" (Tuya lo
 encola aunque el físico esté apagado → era la causa del falso online de "Luz").
 
-**Frontend /dashboard.** Auto-recheck 10 s excluye Tuya cloud (solo SCANNER/LOCK pull).
-Carga de página + "Comprobar dispositivos" envían `verify_tuya:true`. Render de 3 estados
-(verde/rojo/ámbar "no verificado") con tooltip de origen y sonda. Indicador de pack suma
-online/offline/sin verificar.
+**Frontend /dashboard.** NO hay auto-recheck de dispositivos (se eliminó el poll de 10 s
+que lanzaba `check` a cerradura/relé y lector QR y los hacía actuar en bucle). La
+verificación se hace SOLO al cargar la página o pulsar "Comprobar dispositivos". El
+heartbeat del chip ESP32 mantiene el estado online; el lector de `device-status` (GET,
+solo lectura) refresca el panel sin actuar hardware.
