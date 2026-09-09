@@ -1093,9 +1093,17 @@ $router->post(
             }
         }
 
+        $hasPending = $commandQueueRepo->hasPending($extId);
+
+        // Opportunistic cleanup: bound the queue while the chip is active.
+        // Only runs when there is a backlog, so the DELETE is infrequent.
+        if ($hasPending) {
+            $commandQueueRepo->purgeStale(24);
+        }
+
         return \App\Http\Response::json(200, [
             'ok' => true,
-            'has_pending_commands' => $commandQueueRepo->hasPending($extId),
+            'has_pending_commands' => $hasPending,
         ]);
     }
 );
