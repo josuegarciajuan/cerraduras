@@ -2463,7 +2463,7 @@ print(','.join(str(x['id']) for x in (d.get('devices') or []) if x.get('tuya_clo
         if [ -z "$TUYA_IDS" ]; then
             skip "ping-all-devices sin verify_tuya (Tuya)" "No hay dispositivos Tuya cloud en la room"
         else
-            IDS_JSON=$(echo "$TUYA_IDS" | python3 -c "import sys;print('['+','.join('\"%s\"'%s for s in sys.stdin.read().split(','))+']')" 2>/dev/null)
+            IDS_JSON=$(echo "$TUYA_IDS" | python3 -c "import sys; ids=[int(x) for x in sys.stdin.read().replace(chr(10),'').split(',') if x.strip()]; print(ids)" 2>/dev/null)
             PING_JSON=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "{\"device_ids\":$IDS_JSON}")
             PING_OK=$(echo "$PING_JSON" | python3 -c "
 import sys,json
