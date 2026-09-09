@@ -30,21 +30,52 @@ const path = require('path');
   }
 })();
 
+// child_process must be required before ROOM_ID is resolved below (TDZ).
+const { execFileSync } = require('child_process');
+
 const ACCESS_ID     = process.env.TUYA_ACCESS_ID || '';
 const ACCESS_SECRET = process.env.TUYA_ACCESS_SECRET || '';
 const DEVICE_ID     = 'bf98d27d79685e38a2wbda';
-const ROOM_ID       = 1;
+const ROOM_ID       = resolveRoomId();
 const POLL_MS              = 1000;       // local /live check interval (faster door-change detection)
 const TUYA_MIN_INTERVAL_MS = 5000;        // default min time between Tuya API calls (quota saving)
 const TUYA_FAST_INTERVAL_MS = 2000;        // faster throttle during countdown/verification (exit_deadline active)
 const WEBHOOK_URL   = 'http://127.0.0.1:8080/api/v1/tuya/webhook';
-const LIVE_URL      = 'http://127.0.0.1:8080/api/v1/rooms/1/live';
+const LIVE_URL      = `http://127.0.0.1:8080/api/v1/rooms/${ROOM_ID}/live`;
 const DOOR_WINDOW_MS = parseInt(process.env.PRESENCE_WINDOW_MS || '30000', 10); // max capture window after door change (default 30s)
 
 // ─── Dependencies ─────────────────────────────────────────────────────
 const crypto  = require('crypto');
 const https   = require('https');
 const http    = require('http');
+
+/**
+ * Resolve the room this PRESENCE device currently belongs to (canonical F30:
+ * device → pack → room). ROOM_ID is used only to read the local /live
+ * door-state gate; the Tuya webhook resolves the target room from the device
+ * itself. Resolving at startup lets the poller follow pack re-assignments
+ * (e.g. PROTO2 is room 12, not the historical room 1) without code edits.
+ * Override with ROOM_ID env to force a specific room.
+ */
+function resolveRoomId() {
+  const envRoom = parseInt(process.env.ROOM_ID || '', 10);
+  if (Number.isFinite(envRoom) && envRoom > 0) return envRoom;
+  try {
+    const host = process.env.DB_HOST || '127.0.0.1';
+    const port = process.env.DB_PORT || '3306';
+    const db   = process.env.DB_NAME || 'cerraduras_db';
+    const user = process.env.DB_USER || 'cerraduras_user';
+    const out = execFileSync('mysql', [
+      '-h', host, '-P', String(port), '-u', user, db, '-N', '-e',
+      "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id = r.pack_id " +
+      "WHERE d.external_id = '" + DEVICE_ID + "' AND d.kind = 'PRESENCE' LIMIT 1",
+    ], { env: { ...process.env, MYSQL_PWD: process.env.DB_PASS || '' }, encoding: 'utf8', timeout: 5000 });
+    const id = parseInt(out.trim(), 10);
+    if (Number.isFinite(id) && id > 0) return id;
+  } catch (e) { /* DB unavailable — fall through to default */ }
+  console.log('[config] ⚠ could not resolve room for ' + DEVICE_ID + ' — defaulting to room 1');
+  return 1;
+}
 
 // ─── State ─────────────────────────────────────────────────────────────
 let accessToken      = null;
@@ -206,6 +237,7 @@ function isCaptureWindow(liveData) {
 async function main() {
   console.log(`[${ts()}] ═══ ZY-M100-5 Presence Poller (GATED) ═══`);
   console.log(`  Device : ${DEVICE_ID}`);
+  console.log(`  Room   : ${ROOM_ID} (live gate)`);
   console.log(`  Gate   : door OPEN | exit_deadline | ${DOOR_WINDOW_MS/1000}s post-door-change | verify-window post-close (F31)`);
   console.log(`  Tuya   : min ${TUYA_MIN_INTERVAL_MS/1000}s between calls (quota saving)`);
   console.log(`  Rule   : far_detection≤1 → ABSENT`);
@@ -344,6 +376,8 @@ async function main() {
       if (errorStreak <= 3) console.error(`[${ts()}] ⚠ ${e.message}`);
       if (errorStreak === 3) console.error(`[${ts()}] (suppressing further errors)`);
     }
+  }
+
   console.log(`[${ts()}] ✅ Shutdown complete.`);
   process.exit(0);
 }
