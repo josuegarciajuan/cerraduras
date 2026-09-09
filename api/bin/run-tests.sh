@@ -2417,6 +2417,72 @@ fi
 _cleanup_factory_test
 
 # =============================================================================
+# BLOCK 30 — F39: Estado verídico de dispositivos (online/offline/sin verificar)
+# Trazabilidad: estado del panel Dispositivos (no falsear online)
+# No sondea Tuya real (no consume cuota): comprueba el contrato y que el ping
+# sin verify_tuya NO marque online a dispositivos Tuya cloud.
+# =============================================================================
+block "BLOCK 30 — Estado verídico de dispositivos"
+
+DS_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id = r.pack_id WHERE d.kind='PRESENCE' LIMIT 1" 2>/dev/null)
+if [ -z "$DS_ROOM" ]; then
+    skip "BLOCK 30 estado verídico" "No hay habitación con sensor de presencia (Tuya cloud)"
+else
+    HAS_SW=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id = $DS_ROOM AND d.kind='SWITCH'" 2>/dev/null || echo "0")
+    if [ "$HAS_SW" != "1" ]; then
+        skip "BLOCK 30 estado verídico (room $DS_ROOM)" "La habitación con PRESENCE no tiene SWITCH en su pack"
+    else
+        DS_JSON=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=$DS_ROOM")
+        DS_RESULT=$(echo "$DS_JSON" | python3 -c "
+import sys, json
+try:
+    d=json.load(sys.stdin)
+except Exception as e:
+    print('ERR '+str(e)); sys.exit(0)
+devs=d.get('devices') or []
+states=set(dev.get('state') for dev in devs)
+valid=states <= {'online','offline','unknown'}
+cnt_sum = (d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
+tuya=[x for x in devs if x.get('tuya_cloud')]
+tuya_flag = bool(tuya) and all((x.get('state')=='offline' and x.get('online') is False) or
+                               (x.get('state')=='unknown' and x.get('online') is None) for x in tuya)
+print(('OK ' if (valid and cnt_sum and tuya_flag) else 'FAIL ')+('valid='+str(valid)+' sum='+str(cnt_sum)+' tuya_ok='+str(tuya_flag)+' states='+str(sorted(states))))
+" 2>/dev/null)
+        case "$DS_RESULT" in
+            OK*) pass "device-status: estados verídicos (online/offline/unknown) coherentes en room $DS_ROOM" ;;
+            FAIL*) fail "device-status: estados verídicos en room $DS_ROOM" "${DS_RESULT#FAIL }" ;;
+            *)     fail "device-status: parse en room $DS_ROOM" "${DS_RESULT:-respuesta vacía}" ;;
+        esac
+
+        # Ping sin verify_tuya: Tuya cloud NO debe marcarse online (ni consumir cuota)
+        TUYA_IDS=$(echo "$DS_JSON" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(','.join(str(x['id']) for x in (d.get('devices') or []) if x.get('tuya_cloud')))
+")
+        if [ -z "$TUYA_IDS" ]; then
+            skip "ping-all-devices sin verify_tuya (Tuya)" "No hay dispositivos Tuya cloud en la room"
+        else
+            IDS_JSON=$(echo "$TUYA_IDS" | python3 -c "import sys;print('['+','.join('\"%s\"'%s for s in sys.stdin.read().split(','))+']')" 2>/dev/null)
+            PING_JSON=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "{\"device_ids\":$IDS_JSON}")
+            PING_OK=$(echo "$PING_JSON" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin); rs=d.get('results') or []
+except Exception as e:
+    print('0'); sys.exit(0)
+print('1' if rs and all(r.get('state')=='unknown' and r.get('online') is None and r.get('checked_via')=='TUYA' for r in rs) else '0')
+")
+            if [ "$PING_OK" = "1" ]; then
+                pass "ping-all-devices sin verify_tuya: Tuya cloud se reporta 'sin verificar' (no online, sin cuota)"
+            else
+                fail "ping-all-devices sin verify_tuya: Tuya cloud NO debe marcarse online" "$PING_JSON"
+            fi
+        fi
+    fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
