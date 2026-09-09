@@ -601,6 +601,52 @@ let _graceTimer = null;          // 5s timeout — forces _sensorsEverSeen=true 
 let _offlinePollTimer = null;    // interval for auto-rechecking offline devices
 let _offlineDeviceIds = new Set(); // device IDs currently being polled every 10s
 
+// ── Estado verídico de conectividad por dispositivo ────────────────────
+// Dispositivos Tuya cloud (PRESENCE/PROXIMITY/SWITCH) consumen cuota de la API Tuya:
+// SOLO se verifican al cargar el panel o pulsando "Comprobar dispositivos", NUNCA en
+// el poll periódico (para no quemar cuota). El resto (RPI/SCANNER/LOCK, hardware ESP32)
+// se verifica gratis por heartbeat/command-queue y sí se re-comprueba periódicamente.
+const TUYA_CLOUD_KINDS = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
+const ESP32_KINDS      = ['RPI', 'SCANNER', 'LOCK'];
+function devIsTuyaCloud(d) {
+  return !!(d && (d.tuya_cloud || TUYA_CLOUD_KINDS.indexOf(d.kind) >= 0));
+}
+// Estado normalizado: 'online' | 'offline' | 'unknown'. Prefiere d.state (que el
+// backend calcula con verdad: sonda Tuya real o heartbeat/check ESP32), con fallback.
+function devStateOf(d) {
+  if (d && d.state) return d.state;
+  if (d && d._pending_check) return 'unknown';
+  if (!d || d.online === undefined || d.online === null) return 'unknown';
+  return d.online ? 'online' : 'offline';
+}
+function devDotMeta(state) {
+  if (state === 'online')  return { dot: 'var(--green)', label: 'conectado' };
+  if (state === 'offline') return { dot: 'var(--red)',   label: 'offline' };
+  return { dot: 'var(--amber, #f0a030)', label: 'no verificado' }; // sin sonda fresca
+}
+function packIndicatorHtml(packName, online, offline, unknown) {
+  const total = online + offline + unknown;
+  let icon, color, bg, border;
+  if (unknown > 0) {
+    icon = '🟠'; color = 'var(--orange)'; bg = 'rgba(255,145,0,0.08)'; border = 'rgba(255,145,0,0.3)';
+  } else if (offline > 0) {
+    icon = '🔴'; color = 'var(--red)'; bg = 'rgba(255,82,82,0.10)'; border = 'rgba(255,82,82,0.3)';
+  } else {
+    icon = '🟢'; color = 'var(--green)'; bg = 'rgba(0,230,118,0.08)'; border = 'rgba(0,230,118,0.3)';
+  }
+  const extra =
+    (offline > 0 ? ' · 🔴 ' + offline + ' offline' : '') +
+    (unknown > 0 ? ' · 🟠 ' + unknown + ' sin verificar' : '');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${bg};border:1px solid ${border};font-size:0.68rem;color:${color}">${icon} 📦 <b>${packName}</b> · ${online}/${total} online${extra}</span>`;
+}
+// Dispositivo "alcanzable": online confirmado O aún sin verificar (no probado offline).
+// Los 'unknown' NO cuentan como caídos → evita falsos SIN_CONFIGURAR/SENSORES_DESCONECTADOS
+// antes de que la sonda Tuya (carga/"Comprobar") confirme el estado real.
+function anyDeviceReachable() {
+  if (!_deviceCache || !_deviceCache.devices || !_deviceCache.devices.length) return false;
+  return _deviceCache.devices.some(d => devStateOf(d) !== 'offline');
+}
+
 // ── NEW: Presence-driven features (F34 panel choreography) ──
 let _presenceDetectedDuringOpen = false; // track if presence was seen during door-open period
 let _lastKnownPollingFreq = 0;          // 0=stopped, 3=fast, 4=vfast, 6=medium, 10=slow
@@ -984,7 +1030,7 @@ function deriveState(data) {
   // UNKNOWN sensors
   if (!_sensorsEverSeen && (door === 'UNKNOWN' || presence === 'UNKNOWN')) return 'LOADING';
   if (door === 'UNKNOWN' && presence === 'UNKNOWN' && status === 'FREE') {
-    const anyDeviceOnline = _deviceCache && _deviceCache.online > 0;
+    const anyDeviceOnline = anyDeviceReachable();
     if (!anyDeviceOnline) return 'SIN_CONFIGURAR';
   }
   if (door === 'UNKNOWN' || presence === 'UNKNOWN') {
@@ -994,7 +1040,7 @@ function deriveState(data) {
       // let the OCCUPIED group handle the verification countdown.
       const entryInProgress = (door === 'CLOSED' && (previousDoor === 'OPEN' || recentQrBroad));
       if (!entryInProgress) {
-        const anyDeviceOnline = _deviceCache && _deviceCache.online > 0;
+        const anyDeviceOnline = anyDeviceReachable();
         if (!anyDeviceOnline) return 'SENSORES_DESCONECTADOS';
       }
     }
@@ -1341,11 +1387,12 @@ function renderModalDevices(devices, mode, resultsMap) {
   // mode === 'done' — show real results
   return devices.map(d => {
     const r = (resultsMap && resultsMap[d.id]) || {};
-    const online = r.online || d.online;
-    const icon = online ? '✅' : '❌';
-    const color = online ? 'var(--green)' : 'var(--red)';
+    const st = (r.state) ? r.state : devStateOf(Object.assign({}, d, { online: r.online, state: r.state }));
     const via = r.checked_via ? ` · vía ${r.checked_via}` : '';
-    const label = online ? 'activo' : (r.error ? `error: ${r.error}` : 'offline');
+    let icon, color, label;
+    if (st === 'online') { icon = '✅'; color = 'var(--green)'; label = 'activo'; }
+    else if (st === 'offline') { icon = '❌'; color = 'var(--red)'; label = (r.error ? `error: ${r.error}` : 'offline'); }
+    else { icon = '🟠'; color = 'var(--orange)'; label = (r.error ? `sin verificar: ${r.error}` : 'no verificado'); }
     return `<div class="pack-item"><span class="check" style="color:${color}">${icon}</span> ${kindName(d.kind)} <span style="font-size:0.6rem;color:var(--text-dim)">${(d.external_id||'').substring(0,10)}… — ${label}${via}</span></div>`;
   }).join('');
 }
@@ -1385,7 +1432,7 @@ async function openConfigModal(deviceId, externalId, currentRoomId, packId, pack
           const pingRes = await fetch('/dashboard-api/ping-all-devices', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ device_ids: deviceIds }),
+            body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
           });
           const pingData = await pingRes.json();
           if (pingData.ok) {
@@ -1625,14 +1672,10 @@ async function updatePackIndicator() {
     const res = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`);
     if (!res.ok || !room.pack_id) return;
     const ds = await res.json();
-    const online  = ds.online || 0;
-    const total   = ds.total || 0;
-    const allOk   = online === total;
-    const icon    = allOk ? '🟢' : '🟠';
-    const color   = allOk ? 'var(--green)' : 'var(--orange)';
-    const bg      = allOk ? 'rgba(0,230,118,0.08)' : 'rgba(255,145,0,0.08)';
-    const border  = allOk ? 'rgba(0,230,118,0.3)' : 'rgba(255,145,0,0.3)';
-    el.innerHTML = `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${bg};border:1px solid ${border};font-size:0.68rem;color:${color}">${icon} 📦 <b>${packName}</b> · ${online}/${total} online</span>`;
+    const online   = ds.online || 0;
+    const offline  = ds.offline || 0;
+    const unknown  = ds.unknown || 0;
+    el.innerHTML = packIndicatorHtml(packName, online, offline, unknown);
     el.dataset.packId = room.pack_id;
   } catch(e) { /* keep quick render */ }
 }
@@ -1666,7 +1709,7 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
     });
     const pingData = await pingRes.json();
     if (pingData.ok) {
@@ -1675,15 +1718,22 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
       (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
       const updatedDevices = ds.devices.map(d => {
         const r = resultsMap[d.id] || {};
-        const online = r.hasOwnProperty('online') ? r.online : d.online;
         // F33: carry _pending_check flag from COMMAND_QUEUED results to render "(comprobando...)"
-        const pendingCheck = r._pending_check === true;
-        return { ...d, online: online, last_seen_at: r.last_seen_at || d.last_seen_at, _tuya_fallback: r.checked_via === 'TUYA', _pending_check: pendingCheck };
+        const state = (r.state) ? r.state : devStateOf(d);
+        return {
+          ...d, state: state, online: state === 'online',
+          online_state: r.online_state !== undefined ? r.online_state : d.online_state,
+          online_probed_at: r.online_probed_at || d.online_probed_at,
+          last_seen_at: r.last_seen_at || d.last_seen_at,
+          _pending_check: r._pending_check === true,
+        };
       });
+      const onlineC  = updatedDevices.filter(d => devStateOf(d) === 'online').length;
+      const offlineC = updatedDevices.filter(d => devStateOf(d) === 'offline').length;
+      const unknownC = updatedDevices.filter(d => devStateOf(d) === 'unknown').length;
       const panelData = {
         ...ds,
-        online: updatedDevices.filter(d => d.online).length,
-        offline: updatedDevices.filter(d => !d.online).length,
+        online: onlineC, offline: offlineC, unknown: unknownC,
         devices: updatedDevices,
       };
       updateDevicesPanelFromCache(panelData);
@@ -2005,7 +2055,7 @@ function startDevicePolling() {
   if (_deviceTimer) clearInterval(_deviceTimer);
   _deviceTimer = setInterval(() => {
     const hasOfflineOrPending = _deviceCache && (_deviceCache.devices || []).some(
-      d => !d.online || d._pending_check
+      d => devStateOf(d) === 'offline' || d._pending_check
     );
     const devicePollMs = hasOfflineOrPending ? 10000 : 30000;
     if (Date.now() - _lastDeviceFetch > devicePollMs) {
@@ -2410,7 +2460,7 @@ async function resetTestQr() {
 
 function updateDevicesPanel(data) {
   const el = document.getElementById('devices-content');
-  // Fetch device status for this room (includes online/offline)
+  // Fetch device status for this room (includes online/offline + per-device state)
   fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`)
     .then(r => r.json())
     .then(result => {
@@ -2426,35 +2476,31 @@ function updateDevicesPanel(data) {
       el.innerHTML = devices.map(d => {
         const name = d.label || kindName(d.kind);
         const idShort = (d.external_id||'').substring(0,6);
-        // Determine dot color: gray for never-seen, amber for pending check, green for online, red for offline
-        let dotColor, statusLabel;
+        const st = devStateOf(d);
+        const dm = devDotMeta(st);
+        const via = devIsTuyaCloud(d) ? 'Tuya' : 'ESP32';
+        let statusLabel = dm.label;
         if (d._pending_check) {
-          dotColor = 'var(--amber, #f0a030)';
           statusLabel = '(comprobando...)';
-        } else if (d.last_seen_at === null || d.last_seen_at === undefined) {
-          dotColor = 'var(--text-dim)';
-          statusLabel = '(sin datos)';
-        } else if (d.online) {
-          dotColor = 'var(--green)';
-          // F33: SCANNER/LOCK verified via command-queue vs inherited from RPI
-          if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) {
-            statusLabel = '(vía ESP32, no verificado)';
-          } else {
-            statusLabel = d._inherited ? '(vía ESP32)' : d._tuya_fallback ? '(vía Tuya)' : '';
-          }
-        } else {
-          dotColor = 'var(--red)';
-          statusLabel = '(offline)';
+        } else if (st === 'online') {
+          if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) statusLabel = '(vía ESP32, no verificado)';
+          else if (d._inherited) statusLabel = '(vía ESP32)';
+          else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
+          else statusLabel = '';
+        } else if (st === 'unknown') {
+          statusLabel = devIsTuyaCloud(d) ? '(no verificado · pulsa Comprobar)' : '(sin datos)';
         }
+        const lastSeen = d.last_seen_at ? ' · last_seen ' + d.last_seen_at : '';
+        const probed   = d.online_probed_at ? ' · sonda Tuya ' + d.online_probed_at : '';
         return `
-        <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} | last_seen: ${d.last_seen_at||'nunca'} ${statusLabel}">
-          <span><span class="dot" style="background:${dotColor};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
+        <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} · verificación ${via} · estado ${st}${lastSeen}${probed}">
+          <span><span class="dot" style="background:${dm.dot};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
           <span style="font-family:mono;font-size:0.65rem;color:var(--text-dim)">${idShort}…</span>
         </div>`;
    }).join('') + `<div style="margin-top:6px;font-size:0.7rem;color:${packColor}">Pack: ${packLabel}</div>
-     <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online} online · 🔴 ${result.offline} offline</div>`;
-     // Show refresh button if there are devices
-     document.getElementById('btn-refresh-devices').style.display = 'inline-block';
+     <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online||0} online · 🔴 ${result.offline||0} offline · 🟠 ${result.unknown||0} sin verificar</div>`;
+      // Show refresh button if there are devices
+      document.getElementById('btn-refresh-devices').style.display = 'inline-block';
     })
          .catch(() => { el.innerHTML = 'Error'; });
 }
@@ -2477,29 +2523,29 @@ function updateDevicesPanelFromCache(result) {
   el.innerHTML = devices.map(d => {
     const name = d.label || kindName(d.kind);
     const idShort = (d.external_id||'').substring(0,6);
-    let dotColor, statusLabel;
+    const st = devStateOf(d);
+    const dm = devDotMeta(st);
+    const via = devIsTuyaCloud(d) ? 'Tuya' : 'ESP32';
+    let statusLabel = dm.label;
     if (d._pending_check) {
-      dotColor = 'var(--amber, #f0a030)'; statusLabel = '(comprobando...)';
-    } else if (d.last_seen_at === null || d.last_seen_at === undefined) {
-      dotColor = 'var(--text-dim)'; statusLabel = '(sin datos)';
-    } else if (d.online) {
-      dotColor = 'var(--green)';
-      // F33: SCANNER/LOCK verified via command-queue vs inherited from RPI
-      if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) {
-        statusLabel = '(vía ESP32, no verificado)';
-      } else {
-        statusLabel = d._inherited ? '(vía ESP32)' : d._tuya_fallback ? '(vía Tuya)' : '';
-      }
-    } else {
-      dotColor = 'var(--red)'; statusLabel = '(offline)';
+      statusLabel = '(comprobando...)';
+    } else if (st === 'online') {
+      if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) statusLabel = '(vía ESP32, no verificado)';
+      else if (d._inherited) statusLabel = '(vía ESP32)';
+      else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
+      else statusLabel = '';
+    } else if (st === 'unknown') {
+      statusLabel = devIsTuyaCloud(d) ? '(no verificado · pulsa Comprobar)' : '(sin datos)';
     }
+    const lastSeen = d.last_seen_at ? ' · last_seen ' + d.last_seen_at : '';
+    const probed   = d.online_probed_at ? ' · sonda Tuya ' + d.online_probed_at : '';
     return `
-    <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} | last_seen: ${d.last_seen_at||'nunca'} ${statusLabel}">
-      <span><span class="dot" style="background:${dotColor};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
+    <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} · verificación ${via} · estado ${st}${lastSeen}${probed}">
+      <span><span class="dot" style="background:${dm.dot};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
       <span style="font-family:mono;font-size:0.65rem;color:var(--text-dim)">${idShort}…</span>
     </div>`;
   }).join('') + `<div style="margin-top:6px;font-size:0.7rem;color:${packColor}">Pack: ${packLabel}</div>
-    <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online} online · 🔴 ${result.offline} offline</div>`;
+    <div style="font-size:0.64rem;color:var(--text-dim);margin-top:4px">🟢 ${result.online||0} online · 🔴 ${result.offline||0} offline · 🟠 ${result.unknown||0} sin verificar</div>`;
   // Show refresh button if there are devices
   document.getElementById('btn-refresh-devices').style.display = 'inline-block';
 }
@@ -2513,14 +2559,10 @@ function updatePackIndicatorFromCache(ds) {
     return;
   }
   const packName = room.pack_name || 'Pack #' + room.pack_id;
-  const online  = ds.online || 0;
-  const total   = ds.total || 0;
-  const allOk   = online === total;
-  const icon    = allOk ? '🟢' : '🟠';
-  const color   = allOk ? 'var(--green)' : 'var(--orange)';
-  const bg      = allOk ? 'rgba(0,230,118,0.08)' : 'rgba(255,145,0,0.08)';
-  const border  = allOk ? 'rgba(0,230,118,0.3)' : 'rgba(255,145,0,0.3)';
-  el.innerHTML = `<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${bg};border:1px solid ${border};font-size:0.68rem;color:${color}">${icon} 📦 <b>${packName}</b> · ${online}/${total} online</span>`;
+  const online   = ds.online || 0;
+  const offline  = ds.offline || 0;
+  const unknown  = ds.unknown || 0;
+  el.innerHTML = packIndicatorHtml(packName, online, offline, unknown);
   el.dataset.packId = room.pack_id;
 }
 
@@ -2536,10 +2578,19 @@ function manageOfflineDevicePoll(ds) {
   const currentSet = new Set();
 
   for (const d of devices) {
-    // Skip if already pending check (amber), already online (green), or RPI
+    if (!d.id) continue;
+    const st = devStateOf(d);
+    // Skip pending (amber) y online (green)
     if (d._pending_check) continue;
-    if (d.online) continue;
-    if (d.kind === 'RPI') continue; // only ESP32 heartbeat can verify RPI
+    if (st === 'online') continue;
+    // RPI solo lo verifica su propio heartbeat ESP32 (no hay comando que encolar)
+    if (d.kind === 'RPI') continue;
+    // CRÍTICO: Tuya cloud consume cuota de la API Tuya → NUNCA re-comprobar en el poll
+    // periódico (solo al cargar el panel o pulsar "Comprobar dispositivos").
+    if (devIsTuyaCloud(d)) continue;
+    // Solo re-check periódico para sub-dispositivos ESP32 (SCANNER/LOCK) offline
+    // vía command-queue (gratis).
+    if (st !== 'offline') continue;
 
     currentSet.add(d.id);
   }
@@ -2589,28 +2640,33 @@ async function _recheckOfflineDevices() {
         const r = resultsMap[d.id] || {};
         if (!r.hasOwnProperty('device_id')) return d; // not in ping results
 
-        const online = r.hasOwnProperty('online') && r.online !== null ? r.online : d.online;
+        const state = (r.state) ? r.state : devStateOf(d);
+        const online = state === 'online';
         const pendingCheck = r._pending_check === true;
 
-        // If device is now online or pending, remove from recheck list
-        if (!online && !pendingCheck && d.kind !== 'RPI') {
+        // Sigue en re-check automático solo si el ping confirmó offline y es un
+        // sub-dispositivo ESP32 (SCANNER/LOCK). RPI y Tuya cloud quedan excluidos.
+        if (state === 'offline' && !pendingCheck && d.kind !== 'RPI' && !devIsTuyaCloud(d)) {
           newOfflineIds.add(d.id);
         }
 
         return {
           ...d,
-          online: online !== null ? online : d.online,
+          state: state,
+          online: online,
+          online_state: r.online_state !== undefined ? r.online_state : d.online_state,
+          online_probed_at: r.online_probed_at || d.online_probed_at,
           last_seen_at: r.last_seen_at || d.last_seen_at,
-          _tuya_fallback: r.checked_via === 'TUYA',
           _pending_check: pendingCheck,
         };
       });
 
+      const onlineC  = updatedDevices.filter(d => devStateOf(d) === 'online').length;
+      const offlineC = updatedDevices.filter(d => devStateOf(d) === 'offline').length;
+      const unknownC = updatedDevices.filter(d => devStateOf(d) === 'unknown').length;
+
       _offlineDeviceIds = newOfflineIds;
-      _deviceCache = { ...ds, devices: updatedDevices,
-        online: updatedDevices.filter(d => d.online).length,
-        offline: updatedDevices.filter(d => !d.online).length,
-      };
+      _deviceCache = { ...ds, devices: updatedDevices, online: onlineC, offline: offlineC, unknown: unknownC };
 
       updateDevicesPanelFromCache(_deviceCache);
       updatePackIndicatorFromCache(_deviceCache);
@@ -2650,7 +2706,7 @@ async function refreshDeviceStatus() {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
     });
     const pingData = await pingRes.json();
 
@@ -2660,14 +2716,22 @@ async function refreshDeviceStatus() {
       (pingData.results || []).forEach(r => { resultsMap[r.device_id] = r; });
       const updatedDevices = devices.map(d => {
         const r = resultsMap[d.id] || {};
-        const online = r.hasOwnProperty('online') ? r.online : d.online;
+        const state = (r.state) ? r.state : devStateOf(d);
         const via = r.checked_via;
-        return { ...d, online: online, last_seen_at: r.last_seen_at || d.last_seen_at, _tuya_fallback: via === 'TUYA' };
+        return {
+          ...d, state: state, online: state === 'online',
+          online_state: r.online_state !== undefined ? r.online_state : d.online_state,
+          online_probed_at: r.online_probed_at || d.online_probed_at,
+          last_seen_at: r.last_seen_at || d.last_seen_at,
+          _pending_check: r._pending_check === true,
+        };
       });
+      const onlineC  = updatedDevices.filter(d => devStateOf(d) === 'online').length;
+      const offlineC = updatedDevices.filter(d => devStateOf(d) === 'offline').length;
+      const unknownC = updatedDevices.filter(d => devStateOf(d) === 'unknown').length;
       const panelData = {
         ...ds,
-        online: updatedDevices.filter(d => d.online).length,
-        offline: updatedDevices.filter(d => !d.online).length,
+        online: onlineC, offline: offlineC, unknown: unknownC,
         devices: updatedDevices,
       };
       updateDevicesPanelFromCache(panelData);
