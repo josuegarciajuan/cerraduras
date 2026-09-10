@@ -1228,6 +1228,14 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] Añadir regresiones unitarias y HTTP para repetición posterior y ausencia de fila.
 **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` termina con 0 failures.
 
+## TSK-40.08: Anuncio terminal ante credencial rechazada y recovery
+**Trazabilidad**: RF-40.4.4, RF-40.4.5
+**Archivos**: `docs/esp32-qr-reader/scanner-relay-prod*.ino`, `api/tests/Unit/FactoryDeviceTest.php`, `docs/ops.md`
+- [x] Detener el anuncio ante un 4xx terminal (salvo 429) en vez de reintentar cada 30 s.
+- [x] Cubrir en tests unitarios la existencia de la rama terminal en el firmware canónico.
+- [x] Documentar el procedimiento manual de re-enrolado (liberar binding, borrar NVS, reprovisionar, reclamar).
+**Verificación**: `bash bin/run-tests.sh` con 0 failures y `docs/ops.md` con el procedimiento.
+
 ## TSK — Calibración de sensor de presencia (RF-41)
 
 **Trazabilidad**: RF-41.1–RF-41.7 · CR-presence-calibrate

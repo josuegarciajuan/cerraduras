@@ -1284,6 +1284,15 @@ HTTPS para el anuncio. La credencial no se expone por Serial ni WiFiManager y
 `chip_id` sigue siendo visible. Si el servidor actual no publica TLS, el
 despliegue queda bloqueado.
 
+**Credencial desincronizada (recovery).** Si la credencial de la placa cambia
+(reflasheo con la NVS borrada), el anuncio recibe `403
+invalid_factory_credential` de forma permanente y el QR `validate`/`identify` de
+esa placa falla con 401. El firmware detiene el anuncio ante un 4xx terminal
+(salvo 429) en lugar de reintentar cada 30 s. La recuperación es manual:
+liberar el binding obsoleto (`DELETE` del `api_client` del chip y de su fila
+`factory_devices`), borrar la NVS de la placa, reprovisionar WiFi y volver a
+reclamar desde el panel. Procedimiento detallado en `docs/ops.md`.
+
 ## Diseño — Calibración de sensor de presencia (RF-41)
 
 **Descubrimiento por habitación.** Se resuelve el dispositivo `PRESENCE` de la room
