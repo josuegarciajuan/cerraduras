@@ -168,6 +168,18 @@ Re-enrolado (manual, solo afecta al chip indicado):
 El firmware productivo detiene el anuncio ante un 4xx terminal (salvo 429) en
 vez de reintentar cada 30 s; tras re-enrolar hay que reiniciar la placa.
 
+### Callbacks USB y red (crash al conectar el lector)
+
+En `scanner-relay-prod-12v-robusto.ino`, los callbacks `usb.onDeviceConnected`
+y `usb.onKeyboard` corren en la **tarea del host USB**. Nunca deben usar el
+`WiFiClientSecure`/`HTTPClient` compartidos (variable estática `apiTlsClient()`):
+`loop()` los usa a la vez y el uso concurrente provoca un panic
+`LoadProhibited` y reinicio en bucle al enchufar el lector HID.
+
+Regla: los callbacks solo registran estado/flags (`scannerConnected`,
+`scannerBeatPending`); el heartbeat de SCANNER se envía desde `loop()` junto al
+resto de I/O de red, de forma secuencial.
+
 ### ESP32 + GM65 (lector QR)
 
 - Puerto UART: GPIO16 (RX2), GPIO17 (TX2)

@@ -138,6 +138,10 @@ String     pendingQr;
 bool       hasPending = false;
 unsigned long lastBeat = 0;
 bool       scannerConnected = false;  // F33: set true on USB connect, false on disconnect
+// F33: el callback USB corre en la tarea del host USB. NUNCA debe usar el
+// WiFiClientSecure/HTTPClient compartidos (panic por uso concurrente). El
+// heartbeat de SCANNER se pide aquí y lo envía loop() de forma secuencial.
+volatile bool scannerBeatPending = false;
 
 // ── Fase 1: Non-blocking relay state ──
 unsigned long relayOffAt = 0;
@@ -585,18 +589,8 @@ void setup() {
     espUsbHostPrint(device);
     Serial.print("[USB] Listo. Escanea un QR...\n");
     Serial.print("══════════════════════════════════════════\n\n");
-    scannerConnected = true;  // F33: track USB HID scanner presence
-    if (ensureWiFi()) {
-      HTTPClient hScan;
-      beginApiRequest(hScan, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
-      hScan.addHeader("Content-Type", "application/json");
-      addDeviceAuth(hScan);
-      hScan.setTimeout(3000);
-      int sc = hScan.POST("{\"external_id\":\"" + chipId() + "\",\"sub_kind\":\"SCANNER\"}");
-      String sr = hScan.getString();
-      hScan.end();
-      Serial.printf("[USB] SCANNER heartbeat → HTTP %d %s\n", sc, sr.c_str());
-    }
+    scannerConnected = true;   // F33: track USB HID scanner presence
+    scannerBeatPending = true; // F33: el heartbeat lo envía loop() (no la tarea USB)
   });
 
   usb.onDeviceDisconnected([](const EspUsbHostDeviceInfo &device) {
@@ -819,6 +813,32 @@ void loop() {
       }
     } else {
       Serial.println(">> ACCESO DENEGADO");
+    }
+  }
+
+  // ── F33: heartbeat de SCANNER diferido ─────────────────────────────
+  // El callback onDeviceConnected solo marca el flag; aquí, en la tarea
+  // principal, se envía con el cliente TLS compartido (secuencial).
+  if (scannerBeatPending) {
+    if (ensureWiFi()) {
+      scannerBeatPending = false;
+      esp_task_wdt_reset();  // feed antes de HTTP bloqueante
+      HTTPClient hScan;
+      beginApiRequest(hScan, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
+      hScan.addHeader("Content-Type", "application/json");
+      addDeviceAuth(hScan);
+      hScan.setTimeout(3000);
+      int sc = hScan.POST("{\"external_id\":\"" + chipId() + "\",\"sub_kind\":\"SCANNER\"}");
+      String sr = hScan.getString();
+      hScan.end();
+      esp_task_wdt_reset();  // feed tras HTTP bloqueante
+      Serial.printf("[USB] SCANNER heartbeat → HTTP %d %s\n", sc, sr.c_str());
+    } else {
+      static unsigned long lastScannerWarn = 0;
+      if (millis() - lastScannerWarn > 5000) {
+        Serial.println("[USB] SCANNER pendiente de heartbeat pero sin WiFi — reintentando...");
+        lastScannerWarn = millis();
+      }
     }
   }
 

@@ -122,6 +122,19 @@ checkFactory(
     && str_contains($firmware, 'anuncio detenido'),
     'terminal 4xx from announce stops retrying instead of looping every 30s'
 );
+$robusto = (string) file_get_contents(__DIR__ . '/../../../docs/esp32-qr-reader/scanner-relay-prod-12v-robusto.ino');
+$usbCbStart = strpos($robusto, 'usb.onDeviceConnected');
+$usbCbEnd = strpos($robusto, 'usb.onDeviceDisconnected');
+$usbConnectCb = ($usbCbStart !== false && $usbCbEnd !== false && $usbCbEnd > $usbCbStart)
+    ? substr($robusto, $usbCbStart, $usbCbEnd - $usbCbStart) : '';
+checkFactory(
+    $usbConnectCb !== ''
+    && str_contains($usbConnectCb, 'scannerBeatPending')
+    && !str_contains($usbConnectCb, 'beginApiRequest')
+    && !str_contains($usbConnectCb, 'HTTPClient')
+    && substr_count($robusto, 'scannerBeatPending') >= 3,
+    'USB connect callback defers network I/O to loop (no shared TLS race)'
+);
 checkFactory(
     str_contains($firmware, 'usb.onKeyboard')
     && str_contains($firmware, 'relayPulse()')
