@@ -1236,6 +1236,13 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] Documentar el procedimiento manual de re-enrolado (liberar binding, borrar NVS, reprovisionar, reclamar).
 **Verificación**: `bash bin/run-tests.sh` con 0 failures y `docs/ops.md` con el procedimiento.
 
+## TSK-40.10: Sketch de diagnóstico del relé (barrido de excitación)
+**Trazabilidad**: hardware/relé 12 V (docs/hardware/esp32-relay-wiring.md)
+**Archivos**: `docs/esp32-qr-reader/test-relay-sweep.ino`
+- [x] Barrido automático LOW/HIGH/FLOAT en GPIO16 (3 s por estado) para ver si el relé conmuta.
+- [x] Instrucciones y checklist (12 V, GND común, jumper) impresas por Serial.
+**Verificación**: manual en placa; no entra en `api/bin/run-tests.sh` (sketch de diagnóstico).
+
 ## TSK — Calibración de sensor de presencia (RF-41)
 
 **Trazabilidad**: RF-41.1–RF-41.7 · CR-presence-calibrate
