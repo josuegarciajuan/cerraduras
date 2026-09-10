@@ -1243,6 +1243,13 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] Instrucciones y checklist (12 V, GND común, jumper) impresas por Serial.
 **Verificación**: manual en placa; no entra en `api/bin/run-tests.sh` (sketch de diagnóstico).
 
+## TSK-40.12: Verificación del relé recuperado (apertura cada 5 s)
+**Trazabilidad**: hardware/relé 12 V (docs/hardware/esp32-relay-wiring.md)
+**Archivos**: `docs/esp32-qr-reader/test-relay-open-5s.ino`
+- [x] Pulso de apertura LOW (2 s) cada 5 s, reposo FLOAT (ACTIVE-LOW tri-state).
+- [x] Esperado: clic firme al abrir/cerrar sin zumbido.
+**Verificación**: manual en placa; no entra en `api/bin/run-tests.sh` (sketch de diagnóstico).
+
 ## TSK — Calibración de sensor de presencia (RF-41)
 
 **Trazabilidad**: RF-41.1–RF-41.7 · CR-presence-calibrate
