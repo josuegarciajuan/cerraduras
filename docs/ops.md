@@ -180,6 +180,20 @@ Regla: los callbacks solo registran estado/flags (`scannerConnected`,
 `scannerBeatPending`); el heartbeat de SCANNER se envía desde `loop()` junto al
 resto de I/O de red, de forma secuencial.
 
+### Relé (GPIO16) — polaridad configurable
+
+El relé recuperado `SONGLE SRD-12VDC-SL-C` va sobre un módulo **ACTIVE-LOW**:
+conduce con nivel **LOW** y su reposo limpio es **FLOAT** (`INPUT`). Poner la
+entrada a HIGH la deja en zona indeterminada y el relé **zumba**; por eso el
+reposo nunca es HIGH. En `scanner-relay-prod-12v-robusto.ino`:
+
+- `#define RELAY_ACTIVE_LOW 1` → `relayOn() = OUTPUT + LOW`, `relayOff() = INPUT`.
+- `#define RELAY_ACTIVE_LOW 0` → módulo ACTIVE-HIGH original (idle LOW), por compatibilidad.
+
+Alimentación del módulo: `VCC` a **12 V**, `GND` común con el ESP32, señal
+`IN1 → GPIO16`. El contacto de potencia: `COM → 12 V`, `NO → cerradura`, con
+diodo flyback en paralelo con el solenoide.
+
 ### ESP32 + GM65 (lector QR)
 
 - Puerto UART: GPIO16 (RX2), GPIO17 (TX2)

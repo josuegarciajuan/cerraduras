@@ -1,6 +1,11 @@
 # Circuito: ESP32 + Módulo Relé + Pestillo Eléctrico 12V
 
 > Versión: 1.0 | Trazabilidad: RF-15, design §2.7
+>
+> ⚠️ Documento histórico (ESP32-WROOM-32, GPIO26, módulo de 5 V). El montaje
+> actual es **ESP32-S3-USB-OTG + GPIO16 + módulo relé 12 V ACTIVE-LOW tri-state**;
+> ver `docs/ops.md` (sección "Relé (GPIO16) — polaridad configurable") y
+> `docs/esp32-qr-reader/scanner-relay-prod-12v-robusto.ino`.
 
 ## 1. Lista de materiales (BOM)
 

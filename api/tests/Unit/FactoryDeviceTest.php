@@ -136,6 +136,13 @@ checkFactory(
     'USB connect callback defers network I/O to loop (no shared TLS race)'
 );
 checkFactory(
+    str_contains($robusto, '#define RELAY_ACTIVE_LOW  1')
+    && str_contains($robusto, '#if RELAY_ACTIVE_LOW')
+    && str_contains($robusto, 'pinMode(RELAY_PIN, INPUT);   // tri-state: reposo limpio')
+    && str_contains($robusto, 'digitalWrite(RELAY_PIN, LOW);'),
+    'recovered relay uses ACTIVE-LOW tri-state idle (LOW on, FLOAT off)'
+);
+checkFactory(
     str_contains($firmware, 'usb.onKeyboard')
     && str_contains($firmware, 'relayPulse()')
     && str_contains($firmware, 'IDENTIFY_PIN')
