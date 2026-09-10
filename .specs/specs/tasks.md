@@ -1250,6 +1250,15 @@ Archivo único: `docs/esp32-qr-reader/scanner-relay-prod.ino`.
 - [x] Esperado: clic firme al abrir/cerrar sin zumbido.
 **Verificación**: manual en placa; no entra en `api/bin/run-tests.sh` (sketch de diagnóstico).
 
+## TSK-40.11: Adaptar el robusto al relé recuperado (ACTIVE-LOW tri-state)
+**Trazabilidad**: hardware/relé 12 V (docs/hardware/esp32-relay-wiring.md)
+**Archivos**: `docs/esp32-qr-reader/scanner-relay-prod-12v-robusto.ino`, `api/tests/Unit/FactoryDeviceTest.php`
+- [x] `#define RELAY_ACTIVE_LOW 1`: `relayOn()=OUTPUT+LOW`, `relayOff()=INPUT` (FLOAT).
+- [x] `checkLock()` con polaridad correcta y vuelta a FLOAT.
+- [x] `#else` conserva el módulo ACTIVE-HIGH original (idle LOW).
+- [x] Aserción unitaria sobre la polaridad del robusto.
+**Verificación**: `bash bin/run-tests.sh` con 0 failures nuevos; clic firme en QR válido y sin zumbido.
+
 ## TSK — Calibración de sensor de presencia (RF-41)
 
 **Trazabilidad**: RF-41.1–RF-41.7 · CR-presence-calibrate

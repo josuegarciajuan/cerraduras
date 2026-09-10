@@ -16,9 +16,9 @@
  * (checkLock). Resto idéntico (WiFi NVS, WiFiManager, heartbeat 30 s, F33
  * command-queue, announce F40, watchdog, factory reset por GPIO4).
  *
- * VARIANTE 12V (ACTIVE-HIGH): adaptado al relé SONGLE SRD-12VDC-SL-C
- * (módulo "high/low level trigger", jumper en H). El original
- * scanner-relay-prod.ino (relé 5V ACTIVE-LOW tri-state) se conserva intacto.
+ * RELÉ (configurable con RELAY_ACTIVE_LOW): por defecto ACTIVE-LOW tri-state para
+ * el relé recuperado SONGLE SRD-12VDC-SL-C (LOW = ON, reposo FLOAT/INPUT). El
+ * módulo ACTIVE-HIGH original se soporta poniendo RELAY_ACTIVE_LOW a 0.
  *
  * WiFi:
  *   - Credenciales WiFi guardadas en NVS (Preferences).
@@ -46,12 +46,12 @@
  * Hardware:
  *   - ESP32-S3-USB-OTG (Board: ESP32-S3-USB-OTG / USB Mode: USB-OTG)
  *   - Lector QR 2D USB conectado al puerto USB-Host
- *   - Relé SONGLE SRD-12VDC-SL-C en GPIO16 (ACTIVE-HIGH, módulo high/low trigger con jumper en H)
+ *   - Relé SONGLE SRD-12VDC-SL-C en GPIO16 (ACTIVE-LOW tri-state; ver RELAY_ACTIVE_LOW)
  *   - Pulsador N.O. en GPIO4 (a GND, con INPUT_PULLUP)
  *
- * LÓGICA DEL RELÉ (verificada con test-relay-high.ino):
- *   pinMode(OUTPUT) + digitalWrite(HIGH) = relé ON (ALTA en IN1) → CLIC → abierto
- *   pinMode(OUTPUT) + digitalWrite(LOW)  = relé OFF → cerrado
+ * LÓGICA DEL RELÉ (verificada con test-relay-open-5s.ino):
+ *   relayOn()  = OUTPUT + LOW  → relé ON → abierto
+ *   relayOff() = INPUT (FLOAT) → relé OFF → cerrado (HIGH haría zumbar el relé)
  *
  * Alimentación del módulo relé: VCC a 12V (SRD-12VDC), GND común con el ESP32.
  *
@@ -112,8 +112,13 @@
 // ── Configuración de la API (hardcodeada, no depende de WiFi) ───────────────
 const char* API_BASE_URL = "https://cerraduras.josue.ink";
 
-// ── Relay (ACTIVE-HIGH, módulo 12V) ───────────────────────────────────────
-#define RELAY_PIN         16    // GPIO16 (probado con test-relay-high.ino)
+// ── Relay ──────────────────────────────────────────────────────────────────
+// Relé recuperado (SONGLE SRD-12VDC-SL-C sobre módulo ACTIVE-LOW): LOW = ON y
+// reposo FLOAT (INPUT). El nivel HIGH deja la entrada en zona indeterminada y
+// hace zumbar el relé, por eso NUNCA se usa como reposo.
+// Poner RELAY_ACTIVE_LOW a 0 para el módulo ACTIVE-HIGH (idle LOW).
+#define RELAY_ACTIVE_LOW  1
+#define RELAY_PIN         16    // GPIO16 (probado con test-relay-open-5s.ino)
 #define OPEN_DURATION_MS  3000   // 3 segundos de pulso de apertura
 #define RELAY_CLICK_MS    150    // pulso corto para feedback acústico (no abre)
 #define LOCK_CHECK_US     5000   // F33: pulso de test de cerradura (5ms, no activa solenoide)
@@ -326,11 +331,23 @@ bool clearNvsIfNewFirmware() {
   return false;
 }
 
-// ── Relé (módulo SONGLE SRD-12VDC ACTIVE-HIGH) ─────────────────────────────
-//   ON  = OUTPUT + HIGH (ALTA en IN1 activa la bobina)
-//   OFF = OUTPUT + LOW  (desactiva; NO usar tri-state en este módulo)
-void relayOn()  { pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, HIGH); }
-void relayOff() { pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, LOW); }
+// ── Relé ───────────────────────────────────────────────────────────────────
+// ACTIVE-LOW (recuperado):  ON = OUTPUT + LOW   | OFF = INPUT (FLOAT, apagado limpio)
+// ACTIVE-HIGH (módulo 12V): ON = OUTPUT + HIGH  | OFF = OUTPUT + LOW
+void relayOn() {
+#if RELAY_ACTIVE_LOW
+  pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, LOW);
+#else
+  pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, HIGH);
+#endif
+}
+void relayOff() {
+#if RELAY_ACTIVE_LOW
+  pinMode(RELAY_PIN, INPUT);   // tri-state: reposo limpio (evita el zumbido)
+#else
+  pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, LOW);
+#endif
+}
 
 void relayPulse() {
   Serial.println("[RELAY] → ON (abriendo pestillo)");
@@ -344,10 +361,17 @@ void relayPulse() {
 // Verifica integridad del circuito: GPIO → transistor → relé → bobina
 // El solenoide necesita ≥50ms para moverse; 5ms es imperceptible
 bool checkLock() {
+#if RELAY_ACTIVE_LOW
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);          // activa relay (active-low)
+  delayMicroseconds(LOCK_CHECK_US);      // 5ms = 5000µs
+  pinMode(RELAY_PIN, INPUT);             // vuelve a reposo (FLOAT)
+#else
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, HIGH);         // activa relay (active-high)
   delayMicroseconds(LOCK_CHECK_US);      // 5ms = 5000µs
   digitalWrite(RELAY_PIN, LOW);          // desactiva relay
+#endif
   Serial.printf("[LOCK-CHECK] pulso %dµs en GPIO%d — OK\n", LOCK_CHECK_US, RELAY_PIN);
   return true;  // si llegamos aquí, el circuito responde
 }
@@ -529,9 +553,9 @@ void setup() {
 
   String id = chipId();
   Serial.println("\n==============================================");
-  Serial.println(" ESP32-S3 QR Reader + Relay 12V (v6-12v — ACTIVE-HIGH)");
+  Serial.println(" ESP32-S3 QR Reader + Relay 12V (v6-12v — ACTIVE-LOW tri-state)");
   Serial.println(" Device ID: " + id);
-  Serial.println(" Relay pin: GPIO" + String(RELAY_PIN) + " (ACTIVE-HIGH, SRD-12VDC modo H)");
+  Serial.println(" Relay pin: GPIO" + String(RELAY_PIN) + " (ACTIVE-LOW tri-state, SRD-12VDC)");
   Serial.println("==============================================");
   Serial.println("");
   Serial.println("  🔧 PRIMER INICIO: si no hay WiFi guardada,");
