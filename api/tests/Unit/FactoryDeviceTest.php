@@ -117,6 +117,12 @@ checkFactory(
     'firmware uses a per-device NVS credential and HTTPS without shared key'
 );
 checkFactory(
+    str_contains($firmware, 'code >= 400 && code < 500')
+    && str_contains($firmware, 'code != 429')
+    && str_contains($firmware, 'anuncio detenido'),
+    'terminal 4xx from announce stops retrying instead of looping every 30s'
+);
+checkFactory(
     str_contains($firmware, 'usb.onKeyboard')
     && str_contains($firmware, 'relayPulse()')
     && str_contains($firmware, 'IDENTIFY_PIN')

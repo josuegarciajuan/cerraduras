@@ -233,6 +233,12 @@ void announceFactoryDevice(unsigned long now) {
   } else if (code >= 200 && code < 300 && response.indexOf("\"status\":\"PENDING\"") >= 0) {
     Serial.printf("[FACTORY] chip_id=%s PENDING (%lu ms); reintento en %lu ms\n",
                   chipId().c_str(), millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);
+  } else if (code >= 400 && code < 500 && code != 429) {
+    // Credencial rechazada (p.ej. 403 invalid_factory_credential) o petición inválida:
+    // es terminal para este arranque. Parar el bucle de reintento cada 30 s hasta
+    // re-enrolar la placa o reiniciarla; un PENDING genuino nunca cae aquí.
+    factoryAnnouncementEnabled = false;
+    Serial.printf("[FACTORY] credencial rechazada (HTTP %d); anuncio detenido hasta re-enrolar/reiniciar\n", code);
   } else {
     Serial.printf("[FACTORY] anuncio HTTP %d (%lu ms); reintento en %lu ms\n",
                   code, millis() - startedAt, FACTORY_ANNOUNCE_RETRY_MS);

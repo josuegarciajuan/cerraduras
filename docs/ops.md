@@ -137,6 +137,37 @@ clientes API legacy sin `device_id` siguen operando durante la transición;
 revócalos/desactívalos después de verificar QR, heartbeat e identify y de
 confirmar que cada RPI usa su cliente vinculado.
 
+### Recuperación: credencial de fábrica desincronizada (`403 invalid_factory_credential`)
+
+Síntoma: el ESP32 conecta por WiFi y hace heartbeat/command-queue con
+normalidad, pero repite `[FACTORY] anuncio HTTP 403` y en `api/logs/api.log`
+aparece `invalid_factory_credential`. Significa que el `factory_key` de la NVS
+no coincide con el hash del `api_clients` ya vinculado a la placa; como la
+clave plana nunca se persiste, no se puede recuperar y hay que re-enrolar.
+Mientras persista, el QR `validate`/`identify` de esa placa fallará con 401.
+
+Re-enrolado (manual, solo afecta al chip indicado):
+
+1. Apagar la placa ESP32 (evita que anuncie entre pasos).
+2. Liberar el binding obsoleto en la BD:
+   ```sql
+   SET @chip := '<chip_id>';
+   DELETE FROM factory_devices WHERE chip_id = @chip;
+   DELETE FROM api_clients WHERE code = CONCAT('RPI-', @chip);
+   ```
+   Las FK `ON DELETE SET NULL` desvinculan `devices.api_client_id`
+   automáticamente.
+3. Borrar la NVS (`esptool erase_flash`) y reflashear la variante productiva; al
+   arrancar genera `factory_key` nueva y pide provisioning WiFi.
+4. Reprovisionar WiFi y esperar el anuncio `PENDING` (200/201).
+5. Reclamar desde el panel "Identificación de fábrica" (etiqueta/pack).
+   Reutiliza el `devices` existente por `external_id` y crea un `api_client`
+   nuevo con la clave actual.
+6. Verificar: `[FACTORY] chip_id=… CLAIMED`, sin más 403, y lectura QR real.
+
+El firmware productivo detiene el anuncio ante un 4xx terminal (salvo 429) en
+vez de reintentar cada 30 s; tras re-enrolar hay que reiniciar la placa.
+
 ### ESP32 + GM65 (lector QR)
 
 - Puerto UART: GPIO16 (RX2), GPIO17 (TX2)
