@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 /**
- * tuya-presence-poller — Gated Tuya HTTP API poller for ZY-M100-5.
+ * tuya-presence-poller — Generic gated Tuya HTTP API poller for a PRESENCE
+ * sensor assigned to a pack (no sensor is hardcoded — see F43).
+ *
+ * One instance per sensor, launched by `presence-poller-manager.sh` with
+ * `PRESENCE_DEVICE_ID` set to the Tuya device currently assigned to a pack.
+ * The room is resolved dynamically via device → pack → room, so pack
+ * re-assignments are followed without code edits.
  *
  * Only calls the Tuya Cloud API when the door is OPEN or within
  * an active verification window (exit_deadline on /live), reducing
- * API quota consumption by ~99%. The rest of the time it cheks the
+ * API quota consumption by ~99%. The rest of the time it checks the
  * local /live endpoint (cost zero quota).
  *
  * Respects /simula far_detection≤1 → ABSENT rule and forwards
@@ -35,7 +41,13 @@ const { execFileSync } = require('child_process');
 
 const ACCESS_ID     = process.env.TUYA_ACCESS_ID || '';
 const ACCESS_SECRET = process.env.TUYA_ACCESS_SECRET || '';
-const DEVICE_ID     = 'bf98d27d79685e38a2wbda';
+// No sensor is hardcoded: the supervisor passes the device id as argv[2] (and
+// PRESENCE_DEVICE_ID env), one poller instance per PRESENCE device assigned to a pack.
+const DEVICE_ID     = process.argv[2] || process.env.PRESENCE_DEVICE_ID || '';
+if (DEVICE_ID === '') {
+  console.error('[config] ❌ device id required as argv[2] or PRESENCE_DEVICE_ID env (no sensor is hardcoded).');
+  process.exit(1);
+}
 const ROOM_ID       = resolveRoomId();
 const POLL_MS              = 1000;       // local /live check interval (faster door-change detection)
 const TUYA_MIN_INTERVAL_MS = 5000;        // default min time between Tuya API calls (quota saving)
@@ -151,7 +163,7 @@ async function getDeviceStatus() {
 // ─── Local /live check (zero Tuya quota) ──────────────────────────────
 async function fetchLiveState() {
   return new Promise((resolve) => {
-    const opts = { hostname: '127.0.0.1', port: 8080, path: '/api/v1/rooms/1/live', method: 'GET', timeout: 3000 };
+    const opts = { hostname: '127.0.0.1', port: 8080, path: `/api/v1/rooms/${ROOM_ID}/live`, method: 'GET', timeout: 3000 };
     const req = http.get(opts, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -235,7 +247,7 @@ function isCaptureWindow(liveData) {
 
 // ─── Main ─────────────────────────────────────────────────────────────
 async function main() {
-  console.log(`[${ts()}] ═══ ZY-M100-5 Presence Poller (GATED) ═══`);
+  console.log(`[${ts()}] ═══ PRESENCE Poller (GATED) ═══`);
   console.log(`  Device : ${DEVICE_ID}`);
   console.log(`  Room   : ${ROOM_ID} (live gate)`);
   console.log(`  Gate   : door OPEN | exit_deadline | ${DOOR_WINDOW_MS/1000}s post-door-change | verify-window post-close (F31)`);
@@ -332,10 +344,11 @@ async function main() {
       const rawPresence = dps.presence_state || '';
       const distance    = dps.target_dis_closest;
 
-      // Effective presence: respect /simula OFF
+      // Effective presence: respect /simula OFF; accept both ZY-M100 ("presence")
+      // and 24G V3 ("move") as PRESENT.
       const effective = (farDet <= 1)
         ? 'ABSENT'
-        : (rawPresence === 'presence' ? 'PRESENT' : 'ABSENT');
+        : ((rawPresence === 'presence' || rawPresence === 'move') ? 'PRESENT' : 'ABSENT');
 
       // Transition → forward to webhook
       if (effective !== lastEffective && lastEffective !== null) {

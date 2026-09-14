@@ -55,7 +55,7 @@ if [ "$PANEL_CODE" = "200" ]; then green "CRM Panel → HTTP 200"
 else red "CRM Panel → HTTP $DASH_CODE" "¿panel/login.html existe?"; fi
 
 # 7. Workers
-for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker" "node.*index.js" "node.*tuya-presence-poller"; do
+for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker" "node.*index.js" "presence-poller-manager" "node.*tuya-presence-poller"; do
   label=$(echo "$w" | sed 's/.*bin\///' | sed 's/node\.\*//' | sed 's/\.js//')
   if pgrep -f "$w" >/dev/null 2>&1; then green "Worker: $label → running"
   else red "Worker: $label → stopped" "¿start-all.sh ejecutado?"; fi

@@ -62,7 +62,7 @@ scan_log() {
 
 # Main loop
 while true; do
-  for logfile in "$LOGDIR"/api.log "$LOGDIR"/php-server.log "$LOGDIR"/exit-scan.log "$LOGDIR"/anomaly-scanner.log "$LOGDIR"/overstay-scan.log "$LOGDIR"/outbox-worker.log "$LOGDIR"/pulsar-consumer.log "$LOGDIR"/presence-poller.log; do
+  for logfile in "$LOGDIR"/api.log "$LOGDIR"/php-server.log "$LOGDIR"/exit-scan.log "$LOGDIR"/anomaly-scanner.log "$LOGDIR"/overstay-scan.log "$LOGDIR"/outbox-worker.log "$LOGDIR"/pulsar-consumer.log "$LOGDIR"/presence-poller.log "$LOGDIR"/presence-poller-*.log; do
     scan_log "$logfile" 2>/dev/null || true
   done
   sleep "$SCAN_WINDOW"

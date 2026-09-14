@@ -552,6 +552,39 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
 }
 
 /**
+ * DP capability ranges for a PRESENCE device (F43).
+ *
+ * The 24G-Presence Sensor V3 and the ZY-M100 expose different Tuya DP ranges
+ * (far 75-900 step 75 / sensitivity 1-10 vs far 0-1000 step 10 / sensitivity 0-9).
+ * Caps are read from meta_json.dp_caps, falling back to ZY-M100-compatible defaults.
+ *
+ * @param array<string,mixed>|null $meta
+ * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int}
+ */
+function presenceDpCaps(?array $meta): array
+{
+    $c = (is_array($meta) && isset($meta['dp_caps']) && is_array($meta['dp_caps'])) ? $meta['dp_caps'] : [];
+    $farMin  = isset($c['far_min'])  ? (int) $c['far_min']  : 0;
+    $farMax  = isset($c['far_max'])  ? (int) $c['far_max']  : 1000;
+    $farStep = isset($c['far_step']) ? (int) $c['far_step'] : 10;
+    $sensMin = isset($c['sens_min']) ? (int) $c['sens_min'] : 0;
+    $sensMax = isset($c['sens_max']) ? (int) $c['sens_max'] : 9;
+    // "Radio 0 = OFF" only exists when the sensor admits far_detection 0 (ZY-M100).
+    // The 24G V3 has far_min 75, so there is no off-by-radio sentinel for it.
+    $offFar  = array_key_exists('off_far', $c)
+        ? ($c['off_far'] === null ? null : (int) $c['off_far'])
+        : ($farMin === 0 ? 0 : null);
+    return [
+        'far_min'  => $farMin,
+        'far_max'  => $farMax,
+        'far_step' => $farStep,
+        'sens_min' => $sensMin,
+        'sens_max' => $sensMax,
+        'off_far'  => $offFar,
+    ];
+}
+
+/**
  * Persist the calibrated radio/sensitivity snapshot on the PRESENCE device of a room.
  * Stored under devices.meta_json.calibration so each room keeps its own configuration
  * (each sensor is assigned to a different room). Never clobbers other meta keys.
@@ -2039,7 +2072,10 @@ $router->post(
 );
 
 // ── Simula: presence sensor range toggle (dev tool, no auth) ──
-define('SIMULA_DEVICE_ID', 'bf98d27d79685e38a2wbda');
+// Configurable so the dev tool can target any sensor; defaults to the ZY-M100
+// bench sensor (ranges hardcoded in simula.html). Use the per-room
+// /dashboard-api/presence-calibrate endpoint for the 24G V3.
+define('SIMULA_DEVICE_ID', Config::get('SIMULA_DEVICE_ID', 'bf98d27d79685e38a2wbda'));
 
 // GET /dashboard-api/simula/status — read current far_detection & sensitivity from Tuya
 $router->get(
@@ -2067,7 +2103,7 @@ $router->get(
             // RF-30: effective presence respects /simula OFF → radius 0 ⇒ ABSENT
             'effective_presence'  => ($dps['far_detection'] ?? 0) <= 1
                 ? 'ABSENT (radio 0)'
-                : (($dps['presence_state'] ?? 'none') === 'presence' ? 'PRESENT' : 'ABSENT'),
+                : (in_array($dps['presence_state'] ?? 'none', ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
         ]);
     }
 );
@@ -2196,6 +2232,9 @@ $router->get(
         $saved = is_array($dev['meta'] ?? null) && isset($dev['meta']['calibration'])
             ? $dev['meta']['calibration']
             : null;
+        $caps = presenceDpCaps($dev['meta'] ?? null);
+        // OFF-by-radio only when the sensor admits far_detection 0 (ZY-M100).
+        $isOff = ($caps['off_far'] !== null && $far !== null && $far <= 1);
 
         return \App\Http\Response::json(200, [
             'room_id'           => $roomId,
@@ -2206,14 +2245,17 @@ $router->get(
                 'online'      => $dev['online'],
             ],
             'far_detection'      => $far,        // cm
-            'sensitivity'        => $sens,       // 0-9
+            'sensitivity'        => $sens,       // per dp_caps
             'presence_state'     => $presenceState,
             'target_dis_closest' => $dps['target_dis_closest'] ?? null,
-            'mode'               => ($far !== null && $far <= 1) ? 'OFF' : 'ON',
+            'illuminance_value'  => $dps['illuminance_value'] ?? null,
+            'dp_caps'            => $caps,
+            'mode'               => $isOff ? 'OFF' : 'ON',
             // Live badge: raw effective presence at the CURRENT radio (radio<=1 ⇒ ABSENT).
-            'effective_presence' => ($far !== null && $far <= 1)
+            // Accept both ZY-M100 ("presence") and 24G V3 ("move") as PRESENT.
+            'effective_presence' => $isOff
                 ? 'ABSENT'
-                : ($presenceState === 'presence' ? 'PRESENT' : 'ABSENT'),
+                : (in_array($presenceState, ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
             'saved'              => $saved,      // last persisted calibration snapshot
         ]);
     }
@@ -2238,11 +2280,23 @@ $router->post(
         if ($far === null && $sens === null) {
             return \App\Http\Response::json(400, ['error' => 'far_detection o sensitivity requeridos']);
         }
-        if ($far !== null && ($far < 0 || $far > 1000)) {
-            return \App\Http\Response::json(400, ['error' => 'far_detection fuera de rango (0-1000 cm)']);
+
+        // Validate/patch against the device's own DP capabilities (F43): the ZY-M100
+        // and the 24G V3 have different ranges (0-1000/step 10 vs 75-900/step 75).
+        $caps = presenceDpCaps($dev['meta'] ?? null);
+        if ($far !== null) {
+            if ($far < $caps['far_min'] || $far > $caps['far_max']) {
+                return \App\Http\Response::json(400, [
+                    'error' => sprintf('far_detection fuera de rango (%d-%d cm)', $caps['far_min'], $caps['far_max']),
+                ]);
+            }
+            $step = max(1, $caps['far_step']);
+            $far  = (int) (round(($far - $caps['far_min']) / $step) * $step + $caps['far_min']);
         }
-        if ($sens !== null && ($sens < 0 || $sens > 9)) {
-            return \App\Http\Response::json(400, ['error' => 'sensitivity fuera de rango (0-9)']);
+        if ($sens !== null && ($sens < $caps['sens_min'] || $sens > $caps['sens_max'])) {
+            return \App\Http\Response::json(400, [
+                'error' => sprintf('sensitivity fuera de rango (%d-%d)', $caps['sens_min'], $caps['sens_max']),
+            ]);
         }
 
         $commands = [];
