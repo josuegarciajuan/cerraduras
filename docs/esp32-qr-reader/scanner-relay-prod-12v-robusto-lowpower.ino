@@ -10,7 +10,8 @@
  * pico dominante (WiFi TX a máxima potencia + handshake TLS) sigue existiendo
  * aunque se escalone. Cambios respecto a robusto:
  *   1) Radio de bajo consumo: WiFi.setTxPower(8.5 dBm, o 2 dBm si el arranque
- *      anterior fue BROWNOUT) + WiFi.setSleep(true). CPU a 80 MHz.
+ *      anterior fue BROWNOUT) + WiFi.setSleep(false) por estabilidad TLS.
+ *      CPU a 80 MHz DESACTIVADO por defecto (ver toggles LOWPOWER_*).
  *   2) Arranque escalonado: delay() de asentamiento de la rail SIN radio antes de
  *      conectar WiFi, y usb.begin() (inrush del GM65) AL FINAL, después de
  *      WiFi/NTP/health.
@@ -18,13 +19,21 @@
  *      vuelve a reposo; heartbeat periódico, SCANNER y announce se saltan mientras
  *      relayPulsing (el QR ya no hace TLS con la bobina energizada).
  *   4) Modo adaptativo: esp_reset_reason() → si el arranque anterior fue BROWNOUT,
- *      baja a 2 dBm, retrasa USB y omite el blink-light. Parpadeo de LED como
- *      diagnóstico sin monitor serie (3 parpadeos = brownout) + contador de
- *      reinicios en RTC_NOINIT.
+ *      baja a 2 dBm, retrasa USB y omite el blink-light. Código de LED como
+ *      diagnóstico sin monitor serie: 1 = normal, 2 = cuelgue SW (WDT/PANIC),
+ *      3 = brownout. Contador de reinicios en RTC_NOINIT.
  *   5) Anti-bucle: el WiFi watchdog reintenta sin ESP.restart() (cada reinicio es
  *      un pico que realimenta el brownout).
  *   6) DISABLE_BROWNOUT (0 por defecto): último recurso. Poner a 1 desactiva el
  *      detector de brownout; evita el reset pero puede corromper NVS/flash.
+ *
+ * v2 (corrección de cuelgue TASK_WDT observado en v1):
+ *   A) Toggles LOWPOWER_CPU_80MHZ=0 y LOWPOWER_WIFI_SLEEP=0 (se sospechan
+ *      culpables del cuelgue; apagados para bisecar).
+ *   B) TWDT arreglado: en core 3.x esp_task_wdt_init() falla por "already
+ *      initialized"; se llama esp_task_wdt_reconfigure() para fijar 60 s de verdad.
+ *   C) TLS: WiFiClientSecure.setHandshakeTimeout(10) (el default ~120 s supera el
+ *      TWDT y reiniciaba) + HTTPClient.setReuse(false).
  *
  * Hereda de robusto/no-bootclick:
  *   A) relayOff() como PRIMERA línea de setup().
@@ -164,12 +173,21 @@ const char* API_BASE_URL = "https://cerraduras.josue.ink";
 // arranque anterior terminó en BROWNOUT (auto-throttle).
 #define WIFI_TX_POWER          WIFI_POWER_8_5dBm
 #define SAFE_TX_POWER          WIFI_POWER_2dBm
-#define CPU_FREQ_MHZ           80
 #define BOOT_SETTLE_MS         4000          // quiet time con la radio apagada
 #define USB_BOOT_DELAY_MS      500           // respiro antes de encender el host USB
 #define USB_BOOT_DELAY_BROWNOUT_MS 6000      // extra si venimos de brownout
 #define HTTP_GAP_MS            200           // separación entre peticiones TLS
 #define WIFI_RETRY_MS          30000         // reintento de conexión (sin reinicio)
+
+// v2 (bisect): los dos ajustes que se sospechan culpables del cuelgue/TASK_WDT
+// quedan APAGADOS por defecto. Poner a 1 solo para probar en aislamiento.
+//   LOWPOWER_CPU_80MHZ=1 → setCpuFrequencyMhz(80)  (puede romper timing WiFi/TLS)
+//   LOWPOWER_WIFI_SLEEP=1 → WiFi.setSleep(true)    (modem-sleep puede colgar TLS)
+// Con 0 se usa CPU por defecto y WiFi.setSleep(false) por estabilidad.
+#define LOWPOWER_CPU_80MHZ     0
+#define LOWPOWER_WIFI_SLEEP    0
+#define CPU_FREQ_MHZ           80            // solo se aplica si LOWPOWER_CPU_80MHZ
+
 // 1 = desactivar el brownout detector (ÚLTIMO RECURSO: riesgo de corrupción de
 // NVS/flash si la rail cae). 0 = dejarlo activo (recomendado).
 #define DISABLE_BROWNOUT       0
@@ -196,6 +214,7 @@ volatile bool lockHeartbeatPending = false;
 // ── LOW-POWER: motivo del arranque (auto-throttle) ──
 esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;
 bool               bootFromBrownout = false;
+bool               bootFromWdt = false;   // v2: cuelgue SW (TASK_WDT/PANIC/WDT)
 // Contador de reinicios en RTC (sobrevive reinicios; se limpia en power-on).
 RTC_NOINIT_ATTR uint32_t rtcBootCount;
 
@@ -230,11 +249,28 @@ const char* resetReasonName(esp_reset_reason_t r) {
 // Si el arranque anterior fue BROWNOUT, usa la potencia segura (2 dBm).
 void configureRadio() {
   WiFi.setTxPower(bootFromBrownout ? SAFE_TX_POWER : WIFI_TX_POWER);
+#if LOWPOWER_WIFI_SLEEP
   WiFi.setSleep(true);
+#else
+  WiFi.setSleep(false);  // v2: modem-sleep OFF → handshakes TLS estables
+#endif
+}
+
+// v2: código de LED según el motivo del arranque anterior, para diagnóstico sin
+// monitor serie (crítico cuando la placa va a la fuente).
+//   1 = normal | 2 = cuelgue software (WDT/PANIC) | 3 = brownout (eléctrico)
+int ledCodeForResetReason(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_BROWNOUT:  return 3;
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_WDT:
+    case ESP_RST_PANIC:     return 2;
+    default:                return 1;
+  }
 }
 
 // Diagnóstico sin monitor serie: parpadea el LED incorporado N veces.
-// 3 parpadeos = arranque anterior por brownout; 1 = cualquier otro motivo.
 void ledBlinkDiagnostic(int times) {
   pinMode(LED_PIN, OUTPUT);
   for (int i = 0; i < times; i++) {
@@ -250,12 +286,18 @@ WiFiClientSecure &apiTlsClient() {
   static bool configured = false;
   if (!configured) {
     client.setCACert(CERRADURAS_API_CA_PEM);
+    // v2: el handshake por defecto puede bloquear hasta ~120 s (>> TWDT) y
+    // provocar el reinicio por watchdog. Se acota a 10 s para fallar/retentar.
+    client.setHandshakeTimeout(10);
     configured = true;
   }
   return client;
 }
 
 void beginApiRequest(HTTPClient &http, const String &url) {
+  // v2: no reutilizar socket/estado entre peticiones (evita cuelgues por
+  // keep-alive con el cliente TLS estático compartido).
+  http.setReuse(false);
   http.begin(apiTlsClient(), url);
 }
 
@@ -637,17 +679,25 @@ void setup() {
   // ── LOW-POWER: motivo del arranque + auto-throttle ──
   bootResetReason  = esp_reset_reason();
   bootFromBrownout = (bootResetReason == ESP_RST_BROWNOUT);
+  bootFromWdt = (bootResetReason == ESP_RST_TASK_WDT) ||
+                (bootResetReason == ESP_RST_INT_WDT)  ||
+                (bootResetReason == ESP_RST_WDT)      ||
+                (bootResetReason == ESP_RST_PANIC);
   if (bootResetReason == ESP_RST_POWERON) rtcBootCount = 0;  // nuevo power-on
   rtcBootCount++;
-  setCpuFrequencyMhz(CPU_FREQ_MHZ);  // WiFi opera a 80 MHz; baja el consumo
+#if LOWPOWER_CPU_80MHZ
+  setCpuFrequencyMhz(CPU_FREQ_MHZ);  // v2: apagado por defecto (ver define)
+#endif
 
   Serial.println();
   Serial.printf("[BOOT] reset_reason=%s (%d)  boot_count=%lu  CPU=%u MHz%s\n",
                 resetReasonName(bootResetReason), (int)bootResetReason,
                 (unsigned long)rtcBootCount, (unsigned)getCpuFrequencyMhz(),
-                bootFromBrownout ? "  → MODO SEGURO (TX 2 dBm, USB tardío)" : "");
-  // Diagnóstico sin monitor serie: 3 parpadeos = brownout; 1 = otro motivo.
-  ledBlinkDiagnostic(bootFromBrownout ? 3 : 1);
+                bootFromBrownout ? "  → MODO SEGURO (TX 2 dBm, USB tardío)"
+                                 : (bootFromWdt ? "  → cuelgue SW previo" : ""));
+  // Diagnóstico sin monitor serie (clave en la fuente): 1 = normal,
+  // 2 = cuelgue software (WDT/PANIC), 3 = brownout.
+  ledBlinkDiagnostic(ledCodeForResetReason(bootResetReason));
 
   deviceFactoryKey = loadOrCreateFactoryKey();
 
@@ -692,13 +742,21 @@ void setup() {
   // API del watchdog según core: Arduino-ESP32 core 3.x (IDF 5.x) cambió la firma
   // de esp_task_wdt_init() a un config-struct. Guard para mantener compilable el
   // sketch también en core 2.x (IDF 4.x), donde la firma era (timeout_sec, panic).
+  //
+  // v2: en core 3.x el TWDT ya viene inicializado por el core, así que
+  // esp_task_wdt_init() devuelve ESP_ERR_INVALID_STATE ("already initialized") y
+  // el timeout de 60 s NUNCA se aplicaba. Si falla, se usa esp_task_wdt_reconfigure
+  // para fijar de verdad el timeout y evitar reinicios por stalls transitorios.
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t wdt_cfg = {
       .timeout_ms     = 60000,   // RF-1.1: 60s
-      .idle_core_mask = 0,       // no vigilar idle tasks (igual que hoy)
+      .idle_core_mask = 0,       // no vigilar idle tasks
       .trigger_panic  = true,    // panic/reinicio al expirar
   };
-  esp_task_wdt_init(&wdt_cfg);
+  esp_err_t wdtErr = esp_task_wdt_init(&wdt_cfg);
+  if (wdtErr != ESP_OK) {
+    esp_task_wdt_reconfigure(&wdt_cfg);  // ya inicializado: reconfigurar
+  }
 #else
   esp_task_wdt_init(60, true);   // Arduino core 2.x (IDF 4.x)
 #endif
