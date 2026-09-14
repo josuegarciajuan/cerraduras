@@ -14,4 +14,4 @@ UPDATE outbox_vb6
        next_attempt_at = UTC_TIMESTAMP(3)
  WHERE topic = 'debt.created'
    AND status = 'PENDING'
-   AND (payload_json IS NULL OR JSON_EXTRACT(payload_json, '$.vb6_refs.codtic') IS NULL);
+   AND (payload_json IS NULL OR JSON_VALUE(payload_json, '$.vb6_refs.codtic') IS NULL);
