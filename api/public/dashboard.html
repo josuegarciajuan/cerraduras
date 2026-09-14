@@ -355,14 +355,14 @@
     <label for="cal-far-range">Rango de detección (radio)</label>
     <div class="cal-readout" id="cal-far-readout" aria-live="off">—</div>
     <div class="cal-readout-unit">metros</div>
-    <input type="range" class="cal-range" id="cal-far-range" min="0" max="800" step="5" value="0"
-           disabled aria-label="Rango de detección en metros" aria-valuetext="0 metros">
+    <input type="range" class="cal-range" id="cal-far-range" min="75" max="900" step="75" value="150"
+           disabled aria-label="Rango de detección en metros" aria-valuetext="1.5 metros">
     <div class="cal-range-labels"><span>0 m</span><span>2 m</span><span>4 m</span><span>6 m</span><span>8 m</span></div>
 
     <label for="cal-sens-range">Sensibilidad (micro-movimientos)</label>
     <div class="cal-readout small" id="cal-sens-readout">—</div>
-    <input type="range" class="cal-range cal-range-sens" id="cal-sens-range" min="0" max="9" step="1" value="9"
-           disabled aria-label="Sensibilidad de 0 a 9">
+    <input type="range" class="cal-range cal-range-sens" id="cal-sens-range" min="1" max="10" step="1" value="5"
+           disabled aria-label="Sensibilidad de 1 a 10">
     <div class="cal-range-labels"><span>0</span><span>3</span><span>6</span><span>9</span></div>
 
     <div class="cal-readback" id="cal-readback">—</div>
@@ -2905,10 +2905,13 @@ async function calWaitCooldown() {
   if (waitMs > 0) await calSleep(waitMs);
 }
 
-function calClampFar(v) {
+// Snap to the sensor's real range grid (e.g. every 0.75 m on the 24G V3).
+function calSnapFar(v) {
   const lo = _calCaps ? _calCaps.far_min : 0;
   const hi = _calCaps ? _calCaps.far_max : CAL_MAX_CM;
-  return Math.max(lo, Math.min(hi, parseInt(v, 10) || lo));
+  const st = Math.max(1, _calCaps ? _calCaps.far_step : 5);
+  const n = Math.round((parseInt(v, 10) - lo) / st);
+  return Math.max(lo, Math.min(hi, lo + n * st));
 }
 function calClampSens(v) {
   const lo = _calCaps ? _calCaps.sens_min : 0;
@@ -2929,6 +2932,8 @@ function calRenderInfo() {
   const parts = [];
   if (lr) {
     parts.push('sensor: ' + (lr.presence_state != null ? lr.presence_state : '—'));
+    if (calState.readFar != null)  parts.push('radar: ' + (calState.readFar / 100).toFixed(2) + ' m');
+    if (calState.readSens != null) parts.push('sens ' + calState.readSens);
     if (lr.target_m != null) parts.push('objetivo: ' + lr.target_m.toFixed(1) + ' m');
   }
   if (_calLastReadAt) parts.push('hace ' + Math.round((Date.now() - _calLastReadAt) / 1000) + ' s');
@@ -2966,7 +2971,7 @@ async function openCalibrateModal() {
     roomId: currentRoomId, device: dev || null, online: !!(dev && dev.online),
     hasSensor: !!dev,
     appliedFar: null, appliedSens: null, readFar: null, readSens: null,
-    initial: null, saved: null, lastRead: null,
+    initial: null, saved: null, lastRead: null, seeded: false,
   };
   const subEl = calEl('cal-sub');
   if (dev) {
@@ -3021,30 +3026,20 @@ async function calReadStatus(force) {
     const fr = calEl('cal-far-range');
     fr.min = _calCaps.far_min; fr.max = _calCaps.far_max; fr.step = _calCaps.far_step || 1;
     const sr = calEl('cal-sens-range');
-    sr.min = _calCaps.sens_min; sr.max = _calCaps.sens_max;
+    sr.min = _calCaps.sens_min; sr.max = _calCaps.sens_max; sr.step = 1;
   }
-  if (data.far_detection != null) {
-    calState.readFar = data.far_detection;
-    if (!_calDirtyFar && !_calBusy) {
-      calEl('cal-far-range').value = data.far_detection;
-      calRenderReadout('far', data.far_detection);
-    }
-  }
-  if (data.sensitivity != null) {
-    calState.readSens = data.sensitivity;
-    if (!_calDirtySens && !_calBusy) {
-      calEl('cal-sens-range').value = data.sensitivity;
-      calRenderReadout('sens', data.sensitivity);
-    }
-  }
-  // Baseline: the device value read at open is the applied one (until an apply sets it).
-  if (data.far_detection != null && calState.appliedFar == null) calState.appliedFar = data.far_detection;
-  if (data.sensitivity != null && calState.appliedSens == null) calState.appliedSens = data.sensitivity;
-  if (!_calBusy) calSetEnabled(true);
+  // Device's real values (read-only info line). The sliders are the installer's
+  // target and are NEVER overwritten by the poll — only seeded once on open.
+  if (data.far_detection != null) calState.readFar = data.far_detection;
+  if (data.sensitivity != null)  calState.readSens = data.sensitivity;
+  calState.saved = data.saved || calState.saved || null;
   if (!calState.initial && data.far_detection != null && data.sensitivity != null) {
     calState.initial = { far_detection: data.far_detection, sensitivity: data.sensitivity };
   }
-  calState.saved = data.saved || calState.saved || null;
+  if (!calState.seeded && data.far_detection != null) {
+    calSeedControls();
+  }
+  if (!_calBusy) calSetEnabled(true);
   calState.lastRead = {
     presence_state: data.presence_state,
     target_m: (data.target_distance_m != null) ? data.target_distance_m : null,
@@ -3055,6 +3050,30 @@ async function calReadStatus(force) {
   calRenderBadge();
   calUpdateSync();
   return data;
+}
+
+// Seed the sliders ONCE when the modal opens: from the last saved calibration,
+// else from the device (far) and a sensible MID sensitivity when never saved.
+// After this, polls never touch the sliders, so the installer's selection is safe.
+function calSeedControls() {
+  calState.seeded = true;
+  const fr = calEl('cal-far-range'), sr = calEl('cal-sens-range');
+  const lo   = _calCaps ? _calCaps.far_min  : 0;
+  const hi   = _calCaps ? _calCaps.far_max  : CAL_MAX_CM;
+  const smin = _calCaps ? _calCaps.sens_min : 0;
+  const smax = _calCaps ? _calCaps.sens_max : 9;
+  const saved = calState.saved;
+  const farVal = (saved && saved.far_detection != null) ? saved.far_detection
+               : (calState.readFar != null ? calState.readFar : lo);
+  const midSens = Math.max(smin, Math.min(smax, Math.round((smin + smax) / 2)));
+  const sensVal = (saved && saved.sensitivity != null) ? saved.sensitivity : midSens;
+  fr.value = calSnapFar(farVal);
+  sr.value = Math.max(smin, Math.min(smax, sensVal));
+  calRenderReadout('far', parseInt(fr.value, 10));
+  calRenderReadout('sens', parseInt(sr.value, 10));
+  // Applied baseline = what the device actually has right now.
+  calState.appliedFar  = calState.readFar  != null ? calState.readFar  : parseInt(fr.value, 10);
+  calState.appliedSens = calState.readSens != null ? calState.readSens : parseInt(sr.value, 10);
 }
 
 function calRenderReadout(which, value) {
@@ -3103,7 +3122,8 @@ function calUpdateSync() {
 // Slider preview while dragging (no Tuya call yet).
 function calOnFarInput() {
   const el = calEl('cal-far-range');
-  const cm = parseInt(el.value, 10);
+  const cm = calSnapFar(el.value);
+  if (parseInt(el.value, 10) !== cm) el.value = cm; // keep the thumb on real steps
   calState.farTarget = cm; _calDirtyFar = true;
   const m = (cm / 100).toFixed(2);
   const r = calEl('cal-far-readout');
@@ -3136,7 +3156,7 @@ async function calApplyChanged() {
   if (!calState || !calState.hasSensor) return;
   if (_calBusy) { calQueueApply(); return; }
   const body = { room_id: calState.roomId, persist: false };
-  if (_calDirtyFar)  body.far_detection = calClampFar(calEl('cal-far-range').value);
+  if (_calDirtyFar)  body.far_detection = calSnapFar(calEl('cal-far-range').value);
   if (_calDirtySens) body.sensitivity   = calClampSens(calEl('cal-sens-range').value);
   if (body.far_detection == null && body.sensitivity == null) return;
 
@@ -3183,7 +3203,7 @@ async function calDone() {
   calSetLive('loading', 'GUARDANDO…', 'Persistiendo la configuración…');
   calSetError('');
   try {
-    const far = _calDirtyFar ? calClampFar(calEl('cal-far-range').value) : calState.appliedFar;
+    const far = _calDirtyFar ? calSnapFar(calEl('cal-far-range').value) : calState.appliedFar;
     const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : calState.appliedSens;
     const body = { room_id: calState.roomId, persist: true };
     if (far != null) body.far_detection = far;
