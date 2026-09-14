@@ -2483,6 +2483,46 @@ print('1' if rs and all(r.get('state')=='unknown' and r.get('online') is None an
 fi
 
 # =============================================================================
+# BLOCK 32 — F43: Sensor 24G V3 en proto2 + ZY-M100 en banco de pruebas
+# Trazabilidad: alta del 24G-Presence Sensor V3 en el pack proto2 y
+# reasignación del ZY-M100 al pack PRUEBAS ("Equipo de Pruebas").
+# Solo comprueba BD (no consume cuota de la API Tuya).
+# =============================================================================
+block "BLOCK 32 — F43: PRESENCE 24G V3 / reasignación de packs"
+
+PACK_PROTO2=$($MYSQL -sN -e "SELECT id FROM device_packs WHERE code='proto2' LIMIT 1" 2>/dev/null || echo "")
+PACK_PRUEBAS=$($MYSQL -sN -e "SELECT id FROM device_packs WHERE code='PRUEBAS' LIMIT 1" 2>/dev/null || echo "")
+
+if [ -z "$PACK_PROTO2" ] || [ -z "$PACK_PRUEBAS" ]; then
+    skip "BLOCK 32 — F43" "Faltan los packs proto2 o PRUEBAS en la BD"
+else
+    # 24G V3 registrado como PRESENCE en proto2, con label y meta
+    NEW_ROW=$($MYSQL -sN -e "SELECT CONCAT(pack_id,'|',kind,'|',label,'|',(meta_json LIKE '%24G-Presence Sensor V3%')) FROM devices WHERE external_id='bf9a278e76e2c3f01ay0cs' LIMIT 1" 2>/dev/null || echo "")
+    if [ "$NEW_ROW" = "$PACK_PROTO2|PRESENCE|Sensor Presencia 24G V3|1" ]; then
+        pass "24G V3 registrado como PRESENCE en proto2 (pack $PACK_PROTO2) con label y meta"
+    else
+        fail "24G V3 no está correctamente asignado a proto2" "expected '$PACK_PROTO2|PRESENCE|Sensor Presencia 24G V3|1' got '$NEW_ROW'"
+    fi
+
+    # ZY-M100 reasignado a PRUEBAS
+    OLD_ROW=$($MYSQL -sN -e "SELECT CONCAT(pack_id,'|',label) FROM devices WHERE kind='PRESENCE' AND external_id='bf98d27d79685e38a2wbda' LIMIT 1" 2>/dev/null || echo "")
+    if [ "$OLD_ROW" = "$PACK_PRUEBAS|Sensor Presencia ZY-M100 (pruebas)" ]; then
+        pass "ZY-M100 reasignado a Equipo de Pruebas (pack $PACK_PRUEBAS)"
+    else
+        fail "ZY-M100 no está en Equipo de Pruebas" "expected '$PACK_PRUEBAS|Sensor Presencia ZY-M100 (pruebas)' got '$OLD_ROW'"
+    fi
+
+    # Exactamente un PRESENCE por pack (proto2 y PRUEBAS)
+    N_PROTO2=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices WHERE pack_id=$PACK_PROTO2 AND kind='PRESENCE'" 2>/dev/null || echo "0")
+    N_PRUEBAS=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices WHERE pack_id=$PACK_PRUEBAS AND kind='PRESENCE'" 2>/dev/null || echo "0")
+    if [ "$N_PROTO2" = "1" ] && [ "$N_PRUEBAS" = "1" ]; then
+        pass "un único PRESENCE por pack (proto2=$N_PROTO2, PRUEBAS=$N_PRUEBAS)"
+    else
+        fail "debe haber exactamente un PRESENCE por pack" "proto2=$N_PROTO2 PRUEBAS=$N_PRUEBAS"
+    fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

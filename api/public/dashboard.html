@@ -2838,6 +2838,7 @@ let _calDirtySens = false;
 let _calLastAnyApi = 0;   // client clock ms — Tuya quota guard
 let _calQuotaUntil = 0;   // client clock ms — show waiting state meanwhile
 let _calLastBadge = '';
+let _calCaps = null;      // per-device DP caps (F43): far/sens ranges from the server
 const CAL_COOLDOWN_MS = 2000;
 const CAL_MAX_CM = 800;
 
@@ -2895,6 +2896,7 @@ async function openCalibrateModal() {
   calEl('cal-done-btn').disabled = false;
   calEl('cal-done-btn').textContent = 'Guardar y Listo';
   _calDirtyFar = _calDirtySens = false;
+  _calCaps = null;
   _calQuotaUntil = 0;
 
   const dev = await calResolvePresenceDevice();
@@ -2944,8 +2946,17 @@ async function calReadStatus() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
     calState.online = !!(data.device && (data.device.online || data.far_detection != null));
+    if (data.dp_caps) {
+      _calCaps = data.dp_caps;
+      const fr = calEl('cal-far-range');
+      fr.min = _calCaps.far_min; fr.max = _calCaps.far_max; fr.step = _calCaps.far_step || 1;
+      const sr = calEl('cal-sens-range');
+      sr.min = _calCaps.sens_min; sr.max = _calCaps.sens_max;
+    }
+    const farMin = _calCaps ? _calCaps.far_min : 0;
+    const farMax = _calCaps ? _calCaps.far_max : CAL_MAX_CM;
     if (data.far_detection != null) {
-      calState.farRead = Math.min(Math.max(0, data.far_detection), CAL_MAX_CM);
+      calState.farRead = Math.min(Math.max(farMin, data.far_detection), farMax);
       calEl('cal-far-range').value = calState.farRead;
     }
     if (data.sensitivity != null) {
@@ -2972,7 +2983,7 @@ function calRenderReadout(which, value) {
     el.classList.remove('preview', 'pending');
     calEl('cal-far-range').setAttribute('aria-valuetext', `${m} metros`);
   } else {
-    el.textContent = value != null ? `${value}/9` : '—';
+    el.textContent = value != null ? `${value}/${_calCaps ? _calCaps.sens_max : 9}` : '—';
     el.classList.remove('preview', 'pending');
   }
 }
@@ -2981,7 +2992,9 @@ function calRenderReadout(which, value) {
 function calEffectivePresence(serverEffective) {
   const far = (_calDirtyFar && calState && calState.farTarget != null) ? calState.farTarget
             : (calState && calState.farRead != null ? calState.farRead : null);
-  if (far != null && far <= 1) return 'OFF';
+  // OFF-by-radio only when the sensor admits far_detection 0 (ZY-M100).
+  const offAllowed = !_calCaps || _calCaps.off_far !== null;
+  if (offAllowed && far != null && far <= 1) return 'OFF';
   return serverEffective === 'PRESENT' ? 'PRESENT' : 'ABSENT';
 }
 
@@ -3010,7 +3023,8 @@ function calOnFarInput() {
   r.textContent = m; r.classList.add('preview');
   calEl('cal-far-range').setAttribute('aria-valuetext', `${m} metros`);
   calSetError('');
-  if (cm <= 1) calSetLive('off', 'RADIO APAGADO', 'Sube el rango para activar la detección.');
+  const offAllowed = !_calCaps || _calCaps.off_far !== null;
+  if (offAllowed && cm <= 1) calSetLive('off', 'RADIO APAGADO', 'Sube el rango para activar la detección.');
 }
 
 function calOnSensInput() {
@@ -3018,7 +3032,7 @@ function calOnSensInput() {
   const s = parseInt(el.value, 10);
   calState.sensTarget = s; _calDirtySens = true;
   const r = calEl('cal-sens-readout');
-  r.textContent = `${s}/9`; r.classList.add('preview');
+  r.textContent = `${s}/${_calCaps ? _calCaps.sens_max : 9}`; r.classList.add('preview');
 }
 
 function calOnRangeChange() { calQueueWrite(); }
@@ -3041,7 +3055,9 @@ async function doCalWrite() {
   calSetError('');
 
   // While a write is in flight, pause the live poll to respect Tuya quota.
-  const body = { room_id: calState.roomId, far_detection: Math.max(0, Math.min(CAL_MAX_CM, far)) };
+  const farMin = _calCaps ? _calCaps.far_min : 0;
+  const farMax = _calCaps ? _calCaps.far_max : CAL_MAX_CM;
+  const body = { room_id: calState.roomId, far_detection: Math.max(farMin, Math.min(farMax, far)) };
   if (sens != null) body.sensitivity = sens;
   try {
     const waitMs = Math.max(0, _calLastAnyApi + CAL_COOLDOWN_MS - Date.now());

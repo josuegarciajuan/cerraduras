@@ -21,6 +21,7 @@ echo "=== Cerraduras Hotel — Start All ==="
 echo "[1/8] Stopping old..."
 pkill -f "node.*index.js" 2>/dev/null || true
 pkill -f "node.*tuya-presence-poller" 2>/dev/null || true
+pkill -f "presence-poller-manager" 2>/dev/null || true
 pkill -f "php.*bin/exit-scan.php" 2>/dev/null || true
 pkill -f "php.*bin/overstay-scan.php" 2>/dev/null || true
 pkill -f "php.*bin/anomaly-scanner.php" 2>/dev/null || true
@@ -49,9 +50,9 @@ nohup bash -c "while true; do
 done" > /dev/null 2>&1 &
 echo "       PID: $!"
 
-echo "[4/8] Tuya Presence Poller..."
+echo "[4/8] Tuya Presence Poller manager (multi-sensor, pack-aware)..."
 cd /root/cerraduras/api
-nohup bash -c "while true; do node bin/tuya-presence-poller.js >> logs/presence-poller.log 2>&1; sleep 3; done" > /dev/null 2>&1 &
+nohup bash bin/presence-poller-manager.sh >> logs/presence-poller.log 2>&1 &
 echo "       PID: $!"
 
 echo "[5/8] Exit rule scanner (F28)..."
@@ -91,4 +92,4 @@ echo "  Dashboard:      http://92.113.151.136:8080/dashboard?room=1"
 echo "  WS-VB6:         http://92.113.151.136:8081/ws-vb6/v1/health"
 echo ""
 echo "Para parar:"
-echo "  pkill -f 'php -S.*8080' && pkill -f 'php -S.*8081' && pkill -f 'tuya-pulsar-consumer' && pkill -f 'tuya-presence-poller' && pkill -f 'php.*bin/exit-scan' && pkill -f 'php.*bin/overstay-scan' && pkill -f 'php.*bin/outbox-worker' && pkill -f 'php.*bin/anomaly-scanner'"
+echo "  pkill -f 'php -S.*8080' && pkill -f 'php -S.*8081' && pkill -f 'tuya-pulsar-consumer' && pkill -f 'presence-poller-manager' && pkill -f 'tuya-presence-poller' && pkill -f 'php.*bin/exit-scan' && pkill -f 'php.*bin/overstay-scan' && pkill -f 'php.*bin/outbox-worker' && pkill -f 'php.*bin/anomaly-scanner'"

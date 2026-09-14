@@ -35,6 +35,9 @@ final class TuyaSensorIngress implements SensorIngressInterface
         'presence_state' => [
             'sensor'    => 'PRESENCE',
             'presence'  => 'PRESENT',
+            // 24G-Presence Sensor V3 reports transient motion as "move"; treat it
+            // as presence so mmWave events are not dropped (F43).
+            'move'      => 'PRESENT',
             'none'      => 'ABSENT',
         ],
     ];
