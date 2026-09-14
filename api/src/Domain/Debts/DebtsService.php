@@ -108,16 +108,21 @@ final class DebtsService
             $vb6Refs   = $this->extractVb6Refs($stay);
 
             // Topic 1: debt.created → POST /ws-vb6/v1/debts
-            $this->outbox->enqueue(
-                'debt.created',
-                [
-                    'debt_id'        => $debtId,
-                    'occurred_at'    => $now,
-                    'exceso_minutos' => $excesoMinutos,
-                    'vb6_refs'       => $vb6Refs,
-                ],
-                "debt-created-{$debtId}"
-            );
+            // WS-VB6 exige codtic/codcli; si el stay no los tiene el item nunca se
+            // aceptaría (422), así que no se encola (se podrá reencolar vía
+            // /debts/{id}/resync cuando el stay tenga las refs).
+            if (!empty($vb6Refs['codtic']) && !empty($vb6Refs['codcli'])) {
+                $this->outbox->enqueue(
+                    'debt.created',
+                    [
+                        'debt_id'        => $debtId,
+                        'occurred_at'    => $now,
+                        'exceso_minutos' => $excesoMinutos,
+                        'vb6_refs'       => $vb6Refs,
+                    ],
+                    "debt-created-{$debtId}"
+                );
+            }
 
             // Topic 2: stay.overstay → POST /ws-vb6/v1/stays/events
             $this->outbox->enqueue(
@@ -158,7 +163,27 @@ final class DebtsService
 
         // Reset status to PENDING_SYNC and schedule outbox for immediate retry.
         $this->debts->update($debtId, ['status' => Debt::STATUS_PENDING_SYNC]);
-        $this->outbox->scheduleRetry("debt-created-{$debtId}");
+        $idem = "debt-created-{$debtId}";
+        if (!$this->outbox->scheduleRetry($idem)) {
+            // No había item en el outbox (no se encoló por falta de refs VB6). Si el
+            // stay ya tiene las refs necesarias, reconstruir y encolar el payload.
+            $stay = $this->stays->findById($debt->stayId);
+            if ($stay !== null) {
+                $refs = $this->extractVb6Refs($stay);
+                if (!empty($refs['codtic']) && !empty($refs['codcli'])) {
+                    $this->outbox->enqueue(
+                        'debt.created',
+                        [
+                            'debt_id'        => $debtId,
+                            'occurred_at'    => Clock::nowUtc()->format('Y-m-d\TH:i:s\Z'),
+                            'exceso_minutos' => $debt->excesoMinutos,
+                            'vb6_refs'       => $refs,
+                        ],
+                        $idem
+                    );
+                }
+            }
+        }
 
         return $this->debts->findById($debtId);
     }

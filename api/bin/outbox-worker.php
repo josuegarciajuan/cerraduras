@@ -133,8 +133,16 @@ foreach ($items as $item) {
     } catch (ApiException $e) {
         $failed++;
         $errMsg = "ApiException({$e->errorCode()}): {$e->getMessage()}";
-        $outboxRepo->markFailed($id, $errMsg, $attempts);
-        echo "[outbox-worker] FAIL id={$id} topic={$topic}: {$errMsg}\n";
+        $http   = $e->httpStatus();
+        if ($http >= 400 && $http < 500) {
+            // 4xx from WS-VB6: the payload will never be accepted (e.g. missing
+            // vb6_refs) → mark permanently failed, no retries.
+            $outboxRepo->markPermanentlyFailed($id, $errMsg);
+            echo "[outbox-worker] FAIL(id={$id}, permanent) topic={$topic}: {$errMsg}\n";
+        } else {
+            $outboxRepo->markFailed($id, $errMsg, $attempts);
+            echo "[outbox-worker] FAIL id={$id} topic={$topic}: {$errMsg}\n";
+        }
     } catch (\Throwable $e) {
         $failed++;
         $errMsg = get_class($e) . ': ' . $e->getMessage();
