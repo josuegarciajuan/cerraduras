@@ -559,7 +559,7 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
  * Caps are read from meta_json.dp_caps, falling back to ZY-M100-compatible defaults.
  *
  * @param array<string,mixed>|null $meta
- * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int}
+ * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int,target_scale:int}
  */
 function presenceDpCaps(?array $meta): array
 {
@@ -569,18 +569,22 @@ function presenceDpCaps(?array $meta): array
     $farStep = isset($c['far_step']) ? (int) $c['far_step'] : 10;
     $sensMin = isset($c['sens_min']) ? (int) $c['sens_min'] : 0;
     $sensMax = isset($c['sens_max']) ? (int) $c['sens_max'] : 9;
+    // Divisor de target_dis_closest para obtener metros: 100 (cm, ZY-M100) o 10
+    // (decímetros, 24G V3). Declarado en meta_json.dp_caps.target_scale.
+    $targetScale = isset($c['target_scale']) ? (int) $c['target_scale'] : 100;
     // "Radio 0 = OFF" only exists when the sensor admits far_detection 0 (ZY-M100).
     // The 24G V3 has far_min 75, so there is no off-by-radio sentinel for it.
     $offFar  = array_key_exists('off_far', $c)
         ? ($c['off_far'] === null ? null : (int) $c['off_far'])
         : ($farMin === 0 ? 0 : null);
     return [
-        'far_min'  => $farMin,
-        'far_max'  => $farMax,
-        'far_step' => $farStep,
-        'sens_min' => $sensMin,
-        'sens_max' => $sensMax,
-        'off_far'  => $offFar,
+        'far_min'      => $farMin,
+        'far_max'      => $farMax,
+        'far_step'     => $farStep,
+        'sens_min'     => $sensMin,
+        'sens_max'     => $sensMax,
+        'off_far'      => $offFar,
+        'target_scale' => $targetScale,
     ];
 }
 
@@ -2248,6 +2252,9 @@ $router->get(
             'sensitivity'        => $sens,       // per dp_caps
             'presence_state'     => $presenceState,
             'target_dis_closest' => $dps['target_dis_closest'] ?? null,
+            'target_distance_m'  => (isset($dps['target_dis_closest']) && $dps['target_dis_closest'] !== null && $caps['target_scale'] > 0)
+                ? round(((int) $dps['target_dis_closest']) / $caps['target_scale'], 1)
+                : null,
             'illuminance_value'  => $dps['illuminance_value'] ?? null,
             'dp_caps'            => $caps,
             'mode'               => $isOff ? 'OFF' : 'ON',
@@ -2277,6 +2284,9 @@ $router->post(
 
         $far = isset($body['far_detection']) ? (int) $body['far_detection'] : null;
         $sens = isset($body['sensitivity']) ? (int) $body['sensitivity'] : null;
+        // Live adjust (persist=false) writes the DPs but keeps the last saved
+        // snapshot untouched; "Guardar" sends persist=true to persist it.
+        $persist = !array_key_exists('persist', $body) || (bool) $body['persist'];
         if ($far === null && $sens === null) {
             return \App\Http\Response::json(400, ['error' => 'far_detection o sensitivity requeridos']);
         }
@@ -2325,17 +2335,19 @@ $router->post(
             ]);
         }
 
-        // Persist the calibration snapshot for this room/device (each sensor per room).
+        // Persist the calibration snapshot (only on explicit save; persist=false
+        // is a live adjust that must not overwrite the last saved configuration).
         $finalFar  = $far ?? ($dev['meta']['calibration']['far_detection'] ?? null);
         $finalSens = $sens ?? ($dev['meta']['calibration']['sensitivity'] ?? null);
         $snap = null;
-        if ($finalFar !== null && $finalSens !== null) {
+        if ($persist && $finalFar !== null && $finalSens !== null) {
             $snap = persistPresenceCalibration($pdo, $dev['id'], $dev['meta'], (int) $finalFar, (int) $finalSens);
         }
 
         return \App\Http\Response::json(200, [
-            'ok'      => true,
-            'saved'   => $snap,
+            'ok'         => true,
+            'persisted'  => $snap !== null,
+            'saved'      => $snap,
             'elapsed_ms' => $res['elapsed_ms'] ?? 0,
         ]);
     }
