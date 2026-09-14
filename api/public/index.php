@@ -559,7 +559,7 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
  * Caps are read from meta_json.dp_caps, falling back to ZY-M100-compatible defaults.
  *
  * @param array<string,mixed>|null $meta
- * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int,target_scale:int}
+ * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int,target_scale:int,near_min:int}
  */
 function presenceDpCaps(?array $meta): array
 {
@@ -572,6 +572,9 @@ function presenceDpCaps(?array $meta): array
     // Divisor de target_dis_closest para obtener metros: 100 (cm, ZY-M100) o 10
     // (decímetros, 24G V3). Declarado en meta_json.dp_caps.target_scale.
     $targetScale = isset($c['target_scale']) ? (int) $c['target_scale'] : 100;
+    // Distancia mínima (zona muerta). El calibrador la fuerza siempre al mínimo
+    // para que el sensor detecte desde pegado a él; solo se gestiona el máximo.
+    $nearMin = isset($c['near_min']) ? (int) $c['near_min'] : 0;
     // "Radio 0 = OFF" only exists when the sensor admits far_detection 0 (ZY-M100).
     // The 24G V3 has far_min 75, so there is no off-by-radio sentinel for it.
     $offFar  = array_key_exists('off_far', $c)
@@ -585,6 +588,42 @@ function presenceDpCaps(?array $meta): array
         'sens_max'     => $sensMax,
         'off_far'      => $offFar,
         'target_scale' => $targetScale,
+        'near_min'     => $nearMin,
+    ];
+}
+
+/**
+ * Normalize a raw Tuya DP map for a PRESENCE device into the shape returned by
+ * both the status and set endpoints (F43).
+ *
+ * @param array<string,mixed> $dps  code => value
+ * @param array<string,mixed> $caps presenceDpCaps()
+ * @return array<string,mixed>
+ */
+function normalizePresenceDps(array $dps, array $caps): array
+{
+    $far   = isset($dps['far_detection']) ? (int) $dps['far_detection'] : null;
+    $sens  = isset($dps['sensitivity']) ? (int) $dps['sensitivity'] : null;
+    $near  = isset($dps['near_detection']) ? (int) $dps['near_detection'] : null;
+    $state = $dps['presence_state'] ?? null;
+    // OFF-by-radio only when the sensor admits far_detection 0 (ZY-M100).
+    $isOff = ($caps['off_far'] !== null && $far !== null && $far <= 1);
+    $targetScale = (int) ($caps['target_scale'] ?? 100);
+    return [
+        'far_detection'      => $far,
+        'near_detection'     => $near,
+        'sensitivity'        => $sens,
+        'presence_state'     => $state,
+        'target_dis_closest' => $dps['target_dis_closest'] ?? null,
+        'target_distance_m'  => (isset($dps['target_dis_closest']) && $dps['target_dis_closest'] !== null && $targetScale > 0)
+            ? round(((int) $dps['target_dis_closest']) / $targetScale, 1)
+            : null,
+        'illuminance_value'  => $dps['illuminance_value'] ?? null,
+        'mode'               => $isOff ? 'OFF' : 'ON',
+        // Accept both ZY-M100 ("presence") and 24G V3 ("move") as PRESENT.
+        'effective_presence' => $isOff
+            ? 'ABSENT'
+            : (in_array($state, ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
     ];
 }
 
@@ -594,7 +633,7 @@ function presenceDpCaps(?array $meta): array
  * (each sensor is assigned to a different room). Never clobbers other meta keys.
  * Returns the written snapshot array.
  */
-function persistPresenceCalibration(\PDO $pdo, int $deviceId, ?array $meta, int $farCm, int $sensitivity): array
+function persistPresenceCalibration(\PDO $pdo, int $deviceId, ?array $meta, int $farCm, int $sensitivity, ?int $nearCm = null): array
 {
     $meta = is_array($meta) ? $meta : [];
     $snap = [
@@ -603,6 +642,9 @@ function persistPresenceCalibration(\PDO $pdo, int $deviceId, ?array $meta, int 
         'calibrated_at'  => gmdate('Y-m-d\TH:i:s\Z'),
         'source'         => 'dashboard-calib',
     ];
+    if ($nearCm !== null) {
+        $snap['near_detection'] = $nearCm;
+    }
     $meta['calibration'] = $snap;
     $upd = $pdo->prepare('UPDATE devices SET meta_json = :m WHERE id = :id');
     $upd->execute([':m' => json_encode($meta, JSON_UNESCAPED_SLASHES), ':id' => $deviceId]);
@@ -2230,41 +2272,23 @@ $router->get(
         foreach (($res['data']['result'] ?? []) as $dp) {
             $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
         }
-        $far = isset($dps['far_detection']) ? (int) $dps['far_detection'] : null;
-        $sens = isset($dps['sensitivity']) ? (int) $dps['sensitivity'] : null;
-        $presenceState = $dps['presence_state'] ?? null;
+        $caps  = presenceDpCaps($dev['meta'] ?? null);
+        $state = normalizePresenceDps($dps, $caps);
         $saved = is_array($dev['meta'] ?? null) && isset($dev['meta']['calibration'])
             ? $dev['meta']['calibration']
             : null;
-        $caps = presenceDpCaps($dev['meta'] ?? null);
-        // OFF-by-radio only when the sensor admits far_detection 0 (ZY-M100).
-        $isOff = ($caps['off_far'] !== null && $far !== null && $far <= 1);
 
-        return \App\Http\Response::json(200, [
-            'room_id'           => $roomId,
-            'device'            => [
+        return \App\Http\Response::json(200, array_merge([
+            'room_id' => $roomId,
+            'device'  => [
                 'id'          => $dev['id'],
                 'external_id' => $dev['external_id'],
                 'label'       => $dev['label'],
                 'online'      => $dev['online'],
             ],
-            'far_detection'      => $far,        // cm
-            'sensitivity'        => $sens,       // per dp_caps
-            'presence_state'     => $presenceState,
-            'target_dis_closest' => $dps['target_dis_closest'] ?? null,
-            'target_distance_m'  => (isset($dps['target_dis_closest']) && $dps['target_dis_closest'] !== null && $caps['target_scale'] > 0)
-                ? round(((int) $dps['target_dis_closest']) / $caps['target_scale'], 1)
-                : null,
-            'illuminance_value'  => $dps['illuminance_value'] ?? null,
-            'dp_caps'            => $caps,
-            'mode'               => $isOff ? 'OFF' : 'ON',
-            // Live badge: raw effective presence at the CURRENT radio (radio<=1 ⇒ ABSENT).
-            // Accept both ZY-M100 ("presence") and 24G V3 ("move") as PRESENT.
-            'effective_presence' => $isOff
-                ? 'ABSENT'
-                : (in_array($presenceState, ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
-            'saved'              => $saved,      // last persisted calibration snapshot
-        ]);
+            'dp_caps' => $caps,
+            'saved'   => $saved,      // last persisted calibration snapshot
+        ], $state));
     }
 );
 
@@ -2309,12 +2333,21 @@ $router->post(
             ]);
         }
 
+        // The UI only manages the MAXIMUM range; the minimum (dead zone) is always
+        // pushed to its lowest possible value so the sensor detects from right next
+        // to it (F43).
+        $nearMin = (int) $caps['near_min'];
+
         $commands = [];
         if ($far !== null) {
             $commands[] = ['code' => 'far_detection', 'value' => $far];
         }
         if ($sens !== null) {
             $commands[] = ['code' => 'sensitivity', 'value' => $sens];
+        }
+        // Force the dead zone to its minimum (skip on the ZY-M100 OFF case far=0).
+        if ($far === null || $far > 0) {
+            $commands[] = ['code' => 'near_detection', 'value' => $nearMin];
         }
 
         $res = tuyaPresenceApi(
@@ -2335,19 +2368,51 @@ $router->post(
             ]);
         }
 
-        // Persist the calibration snapshot (only on explicit save; persist=false
-        // is a live adjust that must not overwrite the last saved configuration).
-        $finalFar  = $far ?? ($dev['meta']['calibration']['far_detection'] ?? null);
-        $finalSens = $sens ?? ($dev['meta']['calibration']['sensitivity'] ?? null);
+        // Verify by read-back: Tuya ACKs the command even when the device ignores it
+        // (e.g. far <= near), so the ACK alone is not proof of application.
+        $applied = false;
+        $warning = null;
+        $status  = null;
+        $rb = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
+        if ($rb['error'] || (($rb['data']['success'] ?? false) !== true)) {
+            $warning = 'No se pudo verificar la aplicación del valor en el sensor';
+        } else {
+            $dps = [];
+            foreach (($rb['data']['result'] ?? []) as $dp) {
+                $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
+            }
+            $status   = normalizePresenceDps($dps, $caps);
+            $sentNear = in_array('near_detection', array_column($commands, 'code'), true);
+            $applied  = ($far === null  || $status['far_detection'] === $far)
+                     && ($sens === null || $status['sensitivity'] === $sens)
+                     && (!$sentNear    || $status['near_detection'] === $nearMin);
+            if (!$applied) {
+                $warning = 'El sensor no aplicó el valor solicitado (revisa el rango máximo o el estado del dispositivo)';
+            }
+        }
+
+        // Persist the calibration snapshot only on explicit save AND only when the
+        // sensor really applied it (never claim "guardado" for an unapplied value).
         $snap = null;
-        if ($persist && $finalFar !== null && $finalSens !== null) {
-            $snap = persistPresenceCalibration($pdo, $dev['id'], $dev['meta'], (int) $finalFar, (int) $finalSens);
+        if ($persist && $applied && $status !== null
+            && $status['far_detection'] !== null && $status['sensitivity'] !== null) {
+            $snap = persistPresenceCalibration(
+                $pdo,
+                $dev['id'],
+                $dev['meta'],
+                (int) $status['far_detection'],
+                (int) $status['sensitivity'],
+                $status['near_detection'] !== null ? (int) $status['near_detection'] : null
+            );
         }
 
         return \App\Http\Response::json(200, [
             'ok'         => true,
+            'applied'    => $applied,
             'persisted'  => $snap !== null,
             'saved'      => $snap,
+            'warning'    => $warning,
+            'status'     => $status,
             'elapsed_ms' => $res['elapsed_ms'] ?? 0,
         ]);
     }

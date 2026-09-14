@@ -80,6 +80,11 @@
   .cal-sync.unsaved { color:var(--orange); border-color:rgba(255,145,0,.4); background:rgba(255,145,0,.08); }
   .cal-sync.busy { color:var(--blue); border-color:rgba(41,121,255,.4); background:rgba(41,121,255,.08); }
   .cal-sync.saved { color:var(--green); border-color:rgba(0,230,118,.4); background:rgba(0,230,118,.08); }
+  .cal-box { position:relative; }
+  .cal-loading { position:absolute; inset:0; z-index:6; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; border-radius:inherit; background:rgba(10,10,18,.62); text-align:center; padding:0 20px; }
+  .cal-loading[hidden] { display:none; }
+  .cal-loading-spinner { width:28px; height:28px; border:3px solid rgba(255,255,255,.14); border-top-color:var(--blue); border-radius:50%; animation:cal-spin .7s linear infinite; }
+  .cal-loading span { font-size:.72rem; color:var(--text-dim); }
   .cal-live.loading { border-color:rgba(41,121,255,.35); background:rgba(41,121,255,.07); }
   .cal-live.loading .cal-live-label { color:var(--blue); }
   .cal-live.loading .cal-live-label::after { content:''; display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid rgba(41,121,255,.3); border-top-color:var(--blue); border-radius:50%; animation:cal-spin .7s linear infinite; vertical-align:middle; }
@@ -339,6 +344,10 @@
 <!-- ──────────────── MODAL: Calibrar sensor de presencia ──────────────── -->
 <div class="modal-overlay" id="cal-modal" role="dialog" aria-modal="true" aria-labelledby="cal-title">
   <div class="modal-box cal-box">
+    <div class="cal-loading" id="cal-loading" hidden>
+      <div class="cal-loading-spinner"></div>
+      <span id="cal-loading-text">Consultando sensor…</span>
+    </div>
     <h2 id="cal-title">🎚️ Calibrar sensor de presencia</h2>
     <div class="cal-sub" id="cal-sub">—</div>
     <div class="cal-sync" id="cal-sync">—</div>
@@ -352,12 +361,13 @@
     </div>
     <div class="cal-hint">Mueve el radio o la sensibilidad: al soltar se aplica al sensor y se comprueba al momento si detecta. Mantente dentro del área para validar la presencia.</div>
 
-    <label for="cal-far-range">Rango de detección (radio)</label>
+    <label for="cal-far-range">Rango de detección (máximo)</label>
     <div class="cal-readout" id="cal-far-readout" aria-live="off">—</div>
     <div class="cal-readout-unit">metros</div>
     <input type="range" class="cal-range" id="cal-far-range" min="75" max="900" step="75" value="150"
-           disabled aria-label="Rango de detección en metros" aria-valuetext="1.5 metros">
-    <div class="cal-range-labels"><span>0 m</span><span>2 m</span><span>4 m</span><span>6 m</span><span>8 m</span></div>
+           disabled aria-label="Rango máximo de detección en metros" aria-valuetext="1.5 metros">
+    <div class="cal-range-labels"><span>0.75 m</span><span>3 m</span><span>6 m</span><span>9 m</span></div>
+    <div class="cal-hint">Detecta desde 0 m (junto al sensor) hasta este radio.</div>
 
     <label for="cal-sens-range">Sensibilidad (micro-movimientos)</label>
     <div class="cal-readout small" id="cal-sens-readout">—</div>
@@ -2837,8 +2847,7 @@ async function refreshDashboardBattery(deviceId) {
 // Calibrar sensor de presencia (per-room). Reads/writes the Tuya
 // presence DP directly while the modal is open (~2s live badge).
 // ═══════════════════════════════════════════════════════════
-let calState = null;      // { roomId, device, online, hasSensor, appliedFar, appliedSens, readFar, readSens, initial, saved, lastRead }
-let _calPollTimer = null;
+let calState = null;      // { roomId, device, online, hasSensor, appliedFar, appliedSens, readFar, readSens, readNear, initial, saved, lastRead }
 let _calDebounce = null;
 let _calBusy = false;     // a Tuya write/read is in flight (one at a time)
 let _calDirtyFar = false;
@@ -2873,8 +2882,17 @@ function calSetEnabled(on) {
   calEl('cal-sens-range').disabled = !on;
 }
 
-function calSetBusy(on) {
+function calSetBusy(on, text) {
   _calBusy = !!on;
+  const ov = calEl('cal-loading');
+  if (ov) {
+    if (on) {
+      calEl('cal-loading-text').textContent = text || 'Consultando sensor…';
+      ov.hidden = false;
+    } else {
+      ov.hidden = true;
+    }
+  }
   if (on) {
     calSetEnabled(false);
     calEl('cal-done-btn').disabled = true;
@@ -2919,9 +2937,47 @@ function calClampSens(v) {
   return Math.max(lo, Math.min(hi, parseInt(v, 10) || lo));
 }
 
-function calRefreshNow() {
-  if (_calBusy) return;
-  calReadStatus(true).catch(() => {});
+function calApplyCaps(caps) {
+  if (!caps) return;
+  _calCaps = caps;
+  const fr = calEl('cal-far-range');
+  fr.min = caps.far_min; fr.max = caps.far_max; fr.step = caps.far_step || 1;
+  const sr = calEl('cal-sens-range');
+  sr.min = caps.sens_min; sr.max = caps.sens_max; sr.step = 1;
+}
+
+// Map a status payload (GET status or the set read-back) into local state.
+function calApplyStatusToState(st) {
+  if (!st || !calState) return;
+  if (st.far_detection != null)  calState.readFar  = st.far_detection;
+  if (st.sensitivity != null)    calState.readSens = st.sensitivity;
+  if (st.near_detection != null) calState.readNear = st.near_detection;
+  calState.lastRead = {
+    presence_state: st.presence_state,
+    target_m: (st.target_distance_m != null) ? st.target_distance_m : null,
+    effective_presence: st.effective_presence,
+    mode: st.mode || null,
+  };
+  _calLastReadAt = Date.now();
+  calRenderInfo();
+  calRenderBadge();
+}
+
+// POST a calibration change. The server applies it, verifies by read-back and
+// returns {applied, persisted, warning, status}. Throws on HTTP/transport error.
+async function calPostSet(body) {
+  await calWaitCooldown();
+  const res = await fetch('/dashboard-api/presence-calibrate/set', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  _calLastAnyApi = Date.now();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
+    throw new Error(data.error || ('HTTP ' + res.status));
+  }
+  if (data.status) calApplyStatusToState(data.status);
+  return data;
 }
 
 // Info line: raw sensor state + measured target distance + reading age (read-only).
@@ -2933,6 +2989,7 @@ function calRenderInfo() {
   if (lr) {
     parts.push('sensor: ' + (lr.presence_state != null ? lr.presence_state : '—'));
     if (calState.readFar != null)  parts.push('radar: ' + (calState.readFar / 100).toFixed(2) + ' m');
+    if (calState.readNear != null) parts.push('mín: ' + (calState.readNear / 100).toFixed(2) + ' m');
     if (calState.readSens != null) parts.push('sens ' + calState.readSens);
     if (lr.target_m != null) parts.push('objetivo: ' + lr.target_m.toFixed(1) + ' m');
   }
@@ -2958,97 +3015,90 @@ async function openCalibrateModal() {
   calSetError('');
   calSetSync('', '—');
   calSetLive('loading', 'CONSULTANDO…', 'Leyendo el sensor…');
-  calSetEnabled(false);
-  calSetBusy(false);
   calEl('cal-done-btn').textContent = 'Guardar y Listo';
   _calDirtyFar = _calDirtySens = false;
   _calCaps = null;
   _calQuotaUntil = 0;
   _calLastReadAt = 0;
+  calSetBusy(true, 'Consultando sensor…');
 
-  const dev = await calResolvePresenceDevice();
-  calState = {
-    roomId: currentRoomId, device: dev || null, online: !!(dev && dev.online),
-    hasSensor: !!dev,
-    appliedFar: null, appliedSens: null, readFar: null, readSens: null,
-    initial: null, saved: null, lastRead: null, seeded: false,
-  };
-  const subEl = calEl('cal-sub');
-  if (dev) {
+  try {
+    const dev = await calResolvePresenceDevice();
+    calState = {
+      roomId: currentRoomId, device: dev || null, online: !!(dev && dev.online),
+      hasSensor: !!dev,
+      appliedFar: null, appliedSens: null, readFar: null, readSens: null, readNear: null,
+      initial: null, saved: null, lastRead: null, seeded: false,
+    };
+    const subEl = calEl('cal-sub');
+    if (!dev) {
+      subEl.textContent = calRoomName() + ' · sin sensor de presencia';
+      calSetLive('offline', 'SIN SENSOR', 'Esta habitación no tiene sensor de presencia.');
+      calSetError('La habitación actual no tiene un sensor de presencia. Asigna un pack con sensor para calibrar.');
+      return;
+    }
     subEl.textContent = `${calRoomName()} · ${dev.label || 'Sensor de presencia'} · ${(dev.external_id || '').slice(-6)}`;
-  } else {
-    subEl.textContent = calRoomName() + ' · sin sensor de presencia';
-    calSetLive('offline', 'SIN SENSOR', 'Esta habitación no tiene sensor de presencia.');
-    calSetError('La habitación actual no tiene un sensor de presencia. Asigna un pack con sensor para calibrar.');
-    return; // leave modal open with disabled controls + explanatory banner
+    await calReadStatus();
+    await calAutoReapplyIfNeeded();
+  } catch (e) {
+    calSetError(e && e.message ? e.message : 'No se pudo consultar el sensor');
+  } finally {
+    calSetBusy(false);
+    calUpdateSync();
   }
+}
 
-  calSetEnabled(false); // enabled only after first successful read
-  calReadStatus(true).catch(() => {});
-
-  if (_calPollTimer) clearInterval(_calPollTimer);
-  _calPollTimer = setInterval(() => {
-    if (_calBusy) return;
-    if (Date.now() < _calQuotaUntil) return;
-    calReadStatus().catch(() => {});
-  }, 2000);
+// If the last saved calibration is not what the device currently has, re-apply it
+// (the sensor may have rejected an earlier value, e.g. far <= near).
+async function calAutoReapplyIfNeeded() {
+  const saved = calState.saved;
+  if (!saved || saved.far_detection == null || calState.readFar == null) return;
+  const farDiff  = saved.far_detection !== calState.readFar;
+  const sensDiff = saved.sensitivity != null && saved.sensitivity !== calState.readSens;
+  if (!farDiff && !sensDiff) {
+    calState.appliedFar  = calState.readFar;
+    calState.appliedSens = calState.readSens;
+    return;
+  }
+  calSetLive('loading', 'APLICANDO CONFIG…', 'La configuración guardada no está en el sensor; reaplicando…');
+  const body = { room_id: calState.roomId, persist: false, far_detection: saved.far_detection };
+  if (saved.sensitivity != null) body.sensitivity = saved.sensitivity;
+  const data = await calPostSet(body);
+  calState.appliedFar  = data.status ? data.status.far_detection : saved.far_detection;
+  calState.appliedSens = data.status ? data.status.sensitivity   : saved.sensitivity;
+  if (!data.applied) calSetError(data.warning || 'No se pudo reaplicar la configuración guardada');
 }
 
 function closeCalibrateModal() {
-  if (_calPollTimer) { clearInterval(_calPollTimer); _calPollTimer = null; }
   if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
   calEl('cal-modal').classList.remove('open');
   calState = null;
   _calBusy = false;
+  const ov = calEl('cal-loading'); if (ov) ov.hidden = true;
 }
 
-// Read far_detection/sensitivity/presence_state from the sensor + refresh UI.
-// The badge reflects ONLY this freshly read state, never the pending slider.
-// force=true bypasses the quota cooldown (used right after an apply / on demand).
-async function calReadStatus(force) {
+// Read the sensor once (no polling) and refresh the UI. The badge reflects ONLY
+// this freshly read state, never the pending slider.
+async function calReadStatus() {
   if (!calState || !calState.hasSensor) return null;
-  const now = Date.now();
-  if (!force && now - _calLastAnyApi < CAL_COOLDOWN_MS) return null; // respect Tuya quota
-  if (now < _calQuotaUntil) return null;
   const res = await fetch(`/dashboard-api/presence-calibrate/status?room_id=${calState.roomId}`, { cache: 'no-store' });
   _calLastAnyApi = Date.now();
   const data = await res.json();
   if (!res.ok) {
     calState.online = false;
     calSetLive('offline', 'SIN DATOS', 'No se pudo leer el sensor.');
-    calSetError(data.error || ('HTTP ' + res.status));
     throw new Error(data.error || ('HTTP ' + res.status));
   }
-  _calLastReadAt = Date.now();
   calState.online = !!(data.device && (data.device.online || data.far_detection != null));
-  if (data.dp_caps) {
-    _calCaps = data.dp_caps;
-    const fr = calEl('cal-far-range');
-    fr.min = _calCaps.far_min; fr.max = _calCaps.far_max; fr.step = _calCaps.far_step || 1;
-    const sr = calEl('cal-sens-range');
-    sr.min = _calCaps.sens_min; sr.max = _calCaps.sens_max; sr.step = 1;
-  }
-  // Device's real values (read-only info line). The sliders are the installer's
-  // target and are NEVER overwritten by the poll — only seeded once on open.
-  if (data.far_detection != null) calState.readFar = data.far_detection;
-  if (data.sensitivity != null)  calState.readSens = data.sensitivity;
+  if (data.dp_caps) calApplyCaps(data.dp_caps);
   calState.saved = data.saved || calState.saved || null;
+  calApplyStatusToState(data);
   if (!calState.initial && data.far_detection != null && data.sensitivity != null) {
     calState.initial = { far_detection: data.far_detection, sensitivity: data.sensitivity };
   }
   if (!calState.seeded && data.far_detection != null) {
     calSeedControls();
   }
-  if (!_calBusy) calSetEnabled(true);
-  calState.lastRead = {
-    presence_state: data.presence_state,
-    target_m: (data.target_distance_m != null) ? data.target_distance_m : null,
-    effective_presence: data.effective_presence,
-    mode: data.mode || null,
-  };
-  calRenderInfo();
-  calRenderBadge();
-  calUpdateSync();
   return data;
 }
 
@@ -3150,40 +3200,27 @@ function calQueueApply() {
   _calDebounce = setTimeout(() => { _calDebounce = null; calApplyChanged(); }, 300);
 }
 
-// Apply ONLY the changed DP(s) (persist:false) and read the sensor back.
-// No save here: the installer can keep moving sliders freely.
+// Apply ONLY the changed DP(s) (persist:false). The server writes, verifies by
+// read-back and returns the device state; a loading overlay is shown meanwhile.
 async function calApplyChanged() {
   if (!calState || !calState.hasSensor) return;
-  if (_calBusy) { calQueueApply(); return; }
+  if (_calBusy) { calQueueApply(); return; } // retry once the in-flight call ends
+  const far  = _calDirtyFar  ? calSnapFar(calEl('cal-far-range').value) : null;
+  const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : null;
+  if (far == null && sens == null) return;
   const body = { room_id: calState.roomId, persist: false };
-  if (_calDirtyFar)  body.far_detection = calSnapFar(calEl('cal-far-range').value);
-  if (_calDirtySens) body.sensitivity   = calClampSens(calEl('cal-sens-range').value);
-  if (body.far_detection == null && body.sensitivity == null) return;
+  if (far != null)  body.far_detection = far;
+  if (sens != null) body.sensitivity   = sens;
 
-  calSetBusy(true);
+  calSetBusy(true, 'Aplicando y verificando…');
   calSetSync('busy', 'Aplicando…');
-  calSetLive('loading', 'CONSULTANDO…', 'Aplicando y leyendo el sensor…');
+  calSetLive('loading', 'CONSULTANDO…', 'Aplicando y verificando en el sensor…');
   calSetError('');
   try {
-    await calWaitCooldown();
-    const res = await fetch('/dashboard-api/presence-calibrate/set', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    _calLastAnyApi = Date.now();
-    const data = await res.json();
-    if (!res.ok) {
-      if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
-      throw new Error(data.error || ('HTTP ' + res.status));
-    }
-    if (body.far_detection != null) { calState.appliedFar = body.far_detection; _calDirtyFar = false; calRenderReadout('far', body.far_detection); }
-    if (body.sensitivity != null)   { calState.appliedSens = body.sensitivity; _calDirtySens = false; calRenderReadout('sens', body.sensitivity); }
-    // Tuya is eventually consistent: read, and re-read once if the device lags.
-    await calSleep(900);
-    await calReadStatus(true);
-    if (body.far_detection != null && calState.readFar != null && calState.readFar !== calState.appliedFar) {
-      await calSleep(1500);
-      await calReadStatus(true);
-    }
+    const data = await calPostSet(body);
+    if (far != null)  { calState.appliedFar  = (data.status && data.status.far_detection != null) ? data.status.far_detection : far;  _calDirtyFar = false;  calRenderReadout('far', calState.appliedFar); }
+    if (sens != null) { calState.appliedSens = (data.status && data.status.sensitivity != null)   ? data.status.sensitivity   : sens; _calDirtySens = false; calRenderReadout('sens', calState.appliedSens); }
+    if (!data.applied) calSetError(data.warning || 'El sensor no aplicó el valor solicitado');
   } catch (e) {
     calSetError(e && e.message ? e.message : 'No se pudo aplicar');
   } finally {
@@ -3192,35 +3229,35 @@ async function calApplyChanged() {
   }
 }
 
-// Save the currently selected configuration (persist snapshot).
+// Save the currently selected configuration (persist snapshot). Only considered
+// saved when the sensor actually applied it (server read-back).
 async function calDone() {
   if (!calState || !calState.hasSensor) { closeCalibrateModal(); return; }
   if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
   const btn = calEl('cal-done-btn');
-  calSetBusy(true);
+  const far  = _calDirtyFar  ? calSnapFar(calEl('cal-far-range').value) : calState.appliedFar;
+  const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : calState.appliedSens;
+  const body = { room_id: calState.roomId, persist: true };
+  if (far != null)  body.far_detection = far;
+  if (sens != null) body.sensitivity = sens;
+
+  calSetBusy(true, 'Guardando y verificando…');
   btn.textContent = 'Guardando…';
   calSetSync('busy', 'Guardando…');
-  calSetLive('loading', 'GUARDANDO…', 'Persistiendo la configuración…');
+  calSetLive('loading', 'GUARDANDO…', 'Guardando y verificando en el sensor…');
   calSetError('');
   try {
-    const far = _calDirtyFar ? calSnapFar(calEl('cal-far-range').value) : calState.appliedFar;
-    const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : calState.appliedSens;
-    const body = { room_id: calState.roomId, persist: true };
-    if (far != null) body.far_detection = far;
-    if (sens != null) body.sensitivity = sens;
-    await calWaitCooldown();
-    const res = await fetch('/dashboard-api/presence-calibrate/set', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    _calLastAnyApi = Date.now();
-    const data = await res.json();
-    if (!res.ok) {
-      if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
-      throw new Error(data.error || ('HTTP ' + res.status));
+    const data = await calPostSet(body);
+    if (!data.applied) {
+      calSetError(data.warning || 'El sensor no aplicó el valor; no se ha guardado');
+      calSetSync('unsaved', 'Sin guardar');
+      btn.textContent = 'Guardar y Listo';
+      calSetBusy(false);
+      return;
     }
-    if (far != null) { calState.appliedFar = far; _calDirtyFar = false; }
+    if (far != null)  { calState.appliedFar = far;  _calDirtyFar = false; }
     if (sens != null) { calState.appliedSens = sens; _calDirtySens = false; }
-    calState.saved = { far_detection: calState.appliedFar, sensitivity: calState.appliedSens };
+    calState.saved = data.saved || { far_detection: calState.appliedFar, sensitivity: calState.appliedSens };
     calSetBusy(false);
     closeCalibrateModal();
     return;
@@ -3240,22 +3277,14 @@ async function calCancel() {
   const changed = target && (curFar !== target.far_detection || curSens !== target.sensitivity);
   if (!changed) { closeCalibrateModal(); return; }
 
-  calSetBusy(true);
+  calSetBusy(true, 'Restaurando…');
   calSetLive('loading', 'RESTAURANDO…', 'Revirtiendo a la última configuración guardada…');
   calSetError('');
   try {
     const body = { room_id: calState.roomId, persist: false };
     if (target.far_detection != null) body.far_detection = target.far_detection;
     if (target.sensitivity != null)   body.sensitivity = target.sensitivity;
-    await calWaitCooldown();
-    const res = await fetch('/dashboard-api/presence-calibrate/set', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    _calLastAnyApi = Date.now();
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || ('HTTP ' + res.status));
-    }
+    await calPostSet(body);
   } catch (e) {
     // Warn but still close; the installer can re-open and re-save.
     console.warn('[calibrate] revert failed', e);
@@ -3264,7 +3293,21 @@ async function calCancel() {
   closeCalibrateModal();
 }
 
-function calRefresh() { if (!_calBusy) calReadStatus(true).catch(() => {}); }
+// Manual refresh (no automatic polling).
+async function calRefresh() {
+  if (!calState || !calState.hasSensor || _calBusy) return;
+  calSetBusy(true, 'Consultando sensor…');
+  calSetLive('loading', 'CONSULTANDO…', 'Leyendo el sensor…');
+  calSetError('');
+  try {
+    await calReadStatus();
+  } catch (e) {
+    calSetError(e && e.message ? e.message : 'No se pudo leer el sensor');
+  } finally {
+    calSetBusy(false);
+    calUpdateSync();
+  }
+}
 
 // ── wiring (elements exist: script runs at end of body) ──
 (function () {
