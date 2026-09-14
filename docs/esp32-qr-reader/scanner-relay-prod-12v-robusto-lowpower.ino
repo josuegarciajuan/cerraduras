@@ -34,6 +34,9 @@
  *      initialized"; se llama esp_task_wdt_reconfigure() para fijar 60 s de verdad.
  *   C) TLS: WiFiClientSecure.setHandshakeTimeout(10) (el default ~120 s supera el
  *      TWDT y reiniciaba) + HTTPClient.setReuse(false).
+ *   D) v2.1: isJsonResponse() detecta respuestas 200 con HTML (un gate/proxy como
+ *      panel-gate delante de la API). Un 200 con HTML NO se da por bueno: se
+ *      avisa por serial y, en el announce, se reintenta.
  *
  * Hereda de robusto/no-bootclick:
  *   A) relayOff() como PRIMERA línea de setup().
@@ -301,6 +304,18 @@ void beginApiRequest(HTTPClient &http, const String &url) {
   http.begin(apiTlsClient(), url);
 }
 
+// v2.1: detecta respuestas que NO son JSON. Un 200 con HTML significa que hay
+// un gate/proxy/página de login delante de la API (p. ej. panel-gate): el HTTP
+// es 200 pero el cuerpo no es la API, así que NO debe darse por bueno.
+bool isJsonResponse(const String &body) {
+  int i = 0;
+  while (i < (int)body.length() &&
+         (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n')) {
+    i++;
+  }
+  return i < (int)body.length() && body[i] == '{';
+}
+
 // Identify button state
 bool       lastIdentifyState = HIGH;
 bool       identifyPending   = false;
@@ -378,6 +393,13 @@ void announceFactoryDevice(unsigned long now) {
   String response = http.getString();
   http.end();
   factoryAnnouncementInFlight = false;
+
+  // v2.1: un 2xx con HTML no es la API (gate/proxy delante). No interpretar como
+  // válido; se reintenta.
+  if (code >= 200 && code < 300 && !isJsonResponse(response)) {
+    Serial.printf("[FACTORY] ⚠ HTTP %d pero NO-JSON (¿gate/proxy delante de la API?); reintento\n", code);
+    return;
+  }
 
   if (code >= 200 && code < 300 && response.indexOf("\"status\":\"CLAIMED\"") >= 0) {
     factoryAnnouncementEnabled = false;
@@ -891,6 +913,10 @@ void setup() {
     String healthResp = h.getString();
     h.end();
     Serial.printf("[BOOT] API health: HTTP %d — %s\n", c, healthResp.c_str());
+    // v2.1: detecta 200 con HTML (gate/proxy delante de la API).
+    if (c == 200 && !isJsonResponse(healthResp)) {
+      Serial.println("[BOOT] ⚠ health 200 NO-JSON → hay un gate/proxy delante de la API");
+    }
 
     // Solo parpadea el switch si la red WiFi es NUEVA (no reconexión a red conocida)
     Preferences prefs;
@@ -1067,6 +1093,10 @@ void loop() {
       esp_task_wdt_reset();  // defensa: feed entre HTTP
       yield();
       Serial.printf("[HB] Health check: HTTP %d — %s\n", hc, hr.c_str());
+      // v2.1: detecta 200 con HTML (gate/proxy delante de la API).
+      if (hc == 200 && !isJsonResponse(hr)) {
+        Serial.println("[HB] ⚠ health 200 NO-JSON → hay un gate/proxy delante de la API");
+      }
 
       delay(HTTP_GAP_MS);  // LOW-POWER: respiro de rail entre peticiones TLS
 
@@ -1085,6 +1115,10 @@ void loop() {
       esp_task_wdt_reset();  // defensa: feed entre HTTP
       yield();
       Serial.printf("[HB] Heartbeat [HTTP %d] %s\n", hbCode, hbResp.c_str());
+      // v2.1: un 200 con HTML no confirma el latido en la API.
+      if (hbCode == 200 && !isJsonResponse(hbResp)) {
+        Serial.println("[HB] ⚠ heartbeat 200 NO-JSON → el latido NO llegó a la API");
+      }
 
       // F33: If API reports pending commands, poll and execute them
       if (hbCode == 200 && hbResp.indexOf("\"has_pending_commands\":true") > 0) {
