@@ -3179,9 +3179,8 @@ function calUpdateSync() {
   calSetSync('saved', 'Guardado');
 }
 
-// Slider preview while dragging. The value is applied from calState.farTarget
-// (the last dragged value), and a debounced apply also runs on `input` so touch
-// devices keep working even when `change` is not fired on release.
+// Slider preview while dragging. The value is applied ONLY on release (change /
+// pointerup / touchend) with the last dragged value — never on every step.
 function calOnFarInput() {
   const el = calEl('cal-far-range');
   const cm = calSnapFar(el.value);
@@ -3192,7 +3191,6 @@ function calOnFarInput() {
   el.setAttribute('aria-valuetext', `${m} metros`);
   calSetError('');
   calSetSync('unsaved', 'Sin aplicar');
-  calQueueApply(500);
 }
 
 function calOnSensInput() {
@@ -3203,23 +3201,26 @@ function calOnSensInput() {
   r.textContent = `${s}/${_calCaps ? _calCaps.sens_max : 9}`; r.classList.add('preview');
   calSetError('');
   calSetSync('unsaved', 'Sin aplicar');
-  calQueueApply(500);
 }
 
-// Release: flush immediately with the value where the drag stopped.
-function calOnRangeChange() {
-  // Sync the target from the DOM in case `change` arrives without a prior `input`
-  // (some browsers fire it on grab, and touch devices may not fire it on release).
-  const fv = calSnapFar(calEl('cal-far-range').value);
-  if (fv !== calState.appliedFar) { calState.farTarget = fv; _calDirtyFar = true; }
-  const sv = calClampSens(calEl('cal-sens-range').value);
-  if (sv !== calState.appliedSens) { calState.sensTarget = sv; _calDirtySens = true; }
+// Release handlers (one per control): flush a single apply with the final value.
+function calFarRelease() {
+  const v = calSnapFar(calEl('cal-far-range').value);
+  if (v !== calState.appliedFar) { calState.farTarget = v; _calDirtyFar = true; }
+  else { _calDirtyFar = false; }
+  calQueueApply(0);
+}
+
+function calSensRelease() {
+  const v = calClampSens(calEl('cal-sens-range').value);
+  if (v !== calState.appliedSens) { calState.sensTarget = v; _calDirtySens = true; }
+  else { _calDirtySens = false; }
   calQueueApply(0);
 }
 
 function calQueueApply(delay) {
   if (_calDebounce) clearTimeout(_calDebounce);
-  _calDebounce = setTimeout(() => { _calDebounce = null; calApplyChanged(); }, (delay == null) ? 500 : delay);
+  _calDebounce = setTimeout(() => { _calDebounce = null; calApplyChanged(); }, (delay == null) ? 0 : delay);
 }
 
 // Apply ONLY the changed DP(s) (persist:false). The server writes, verifies by
@@ -3267,8 +3268,9 @@ async function calDone() {
   if (!calState || !calState.hasSensor) { closeCalibrateModal(); return; }
   if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
   const btn = calEl('cal-done-btn');
-  const far  = _calDirtyFar  ? calSnapFar(calEl('cal-far-range').value) : calState.appliedFar;
-  const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : calState.appliedSens;
+  // Save what the installer sees on screen (sliders are the source of truth).
+  const far  = calSnapFar(calEl('cal-far-range').value);
+  const sens = calClampSens(calEl('cal-sens-range').value);
   const body = { room_id: calState.roomId, persist: true };
   if (far != null)  body.far_detection = far;
   if (sens != null) body.sensitivity = sens;
@@ -3343,10 +3345,18 @@ async function calRefresh() {
 
 // ── wiring (elements exist: script runs at end of body) ──
 (function () {
-  calEl('cal-far-range').addEventListener('input', calOnFarInput);
-  calEl('cal-far-range').addEventListener('change', calOnRangeChange);
-  calEl('cal-sens-range').addEventListener('input', calOnSensInput);
-  calEl('cal-sens-range').addEventListener('change', calOnRangeChange);
+  const farEl = calEl('cal-far-range');
+  const sensEl = calEl('cal-sens-range');
+  farEl.addEventListener('input', calOnFarInput);
+  farEl.addEventListener('change', calFarRelease);
+  farEl.addEventListener('pointerup', calFarRelease);
+  farEl.addEventListener('touchend', calFarRelease);
+  farEl.addEventListener('pointercancel', calFarRelease);
+  sensEl.addEventListener('input', calOnSensInput);
+  sensEl.addEventListener('change', calSensRelease);
+  sensEl.addEventListener('pointerup', calSensRelease);
+  sensEl.addEventListener('touchend', calSensRelease);
+  sensEl.addEventListener('pointercancel', calSensRelease);
   calEl('cal-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'cal-modal') calCancel(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && calEl('cal-modal').classList.contains('open')) calCancel();
