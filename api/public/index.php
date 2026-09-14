@@ -2369,26 +2369,35 @@ $router->post(
         }
 
         // Verify by read-back: Tuya ACKs the command even when the device ignores it
-        // (e.g. far <= near), so the ACK alone is not proof of application.
-        $applied = false;
-        $warning = null;
-        $status  = null;
-        $rb = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
-        if ($rb['error'] || (($rb['data']['success'] ?? false) !== true)) {
-            $warning = 'No se pudo verificar la aplicación del valor en el sensor';
-        } else {
+        // (e.g. far <= near), and the device needs a few seconds to apply the DP.
+        // Retry the read a couple of times before concluding it was not applied.
+        $applied  = false;
+        $warning  = null;
+        $status   = null;
+        $sentNear = in_array('near_detection', array_column($commands, 'code'), true);
+        $maxAttempts = 4;
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+            if ($attempt > 0) {
+                usleep(1400000); // ~1.4 s settle between reads (device takes ~4 s)
+            }
+            $rb = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
+            if ($rb['error'] || (($rb['data']['success'] ?? false) !== true)) {
+                $warning = 'No se pudo verificar la aplicación del valor en el sensor';
+                continue;
+            }
             $dps = [];
             foreach (($rb['data']['result'] ?? []) as $dp) {
                 $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
             }
-            $status   = normalizePresenceDps($dps, $caps);
-            $sentNear = in_array('near_detection', array_column($commands, 'code'), true);
-            $applied  = ($far === null  || $status['far_detection'] === $far)
-                     && ($sens === null || $status['sensitivity'] === $sens)
-                     && (!$sentNear    || $status['near_detection'] === $nearMin);
-            if (!$applied) {
-                $warning = 'El sensor no aplicó el valor solicitado (revisa el rango máximo o el estado del dispositivo)';
+            $status  = normalizePresenceDps($dps, $caps);
+            $applied = ($far === null  || $status['far_detection'] === $far)
+                    && ($sens === null || $status['sensitivity'] === $sens)
+                    && (!$sentNear    || $status['near_detection'] === $nearMin);
+            if ($applied) {
+                $warning = null;
+                break;
             }
+            $warning = 'El sensor no aplicó el valor solicitado (revisa el rango máximo o el estado del dispositivo)';
         }
 
         // Persist the calibration snapshot only on explicit save AND only when the

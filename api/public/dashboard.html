@@ -2967,17 +2967,24 @@ function calApplyStatusToState(st) {
 // returns {applied, persisted, warning, status}. Throws on HTTP/transport error.
 async function calPostSet(body) {
   await calWaitCooldown();
-  const res = await fetch('/dashboard-api/presence-calibrate/set', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  _calLastAnyApi = Date.now();
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
-    throw new Error(data.error || ('HTTP ' + res.status));
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch('/dashboard-api/presence-calibrate/set', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    _calLastAnyApi = Date.now();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
+      throw new Error(data.error || ('HTTP ' + res.status));
+    }
+    if (data.status) calApplyStatusToState(data.status);
+    return data;
+  } finally {
+    clearTimeout(to);
   }
-  if (data.status) calApplyStatusToState(data.status);
-  return data;
 }
 
 // Info line: raw sensor state + measured target distance + reading age (read-only).
@@ -3064,9 +3071,12 @@ async function calAutoReapplyIfNeeded() {
   const body = { room_id: calState.roomId, persist: false, far_detection: saved.far_detection };
   if (saved.sensitivity != null) body.sensitivity = saved.sensitivity;
   const data = await calPostSet(body);
-  calState.appliedFar  = data.status ? data.status.far_detection : saved.far_detection;
-  calState.appliedSens = data.status ? data.status.sensitivity   : saved.sensitivity;
-  if (!data.applied) calSetError(data.warning || 'No se pudo reaplicar la configuración guardada');
+  if (data.applied) {
+    calState.appliedFar  = saved.far_detection;
+    calState.appliedSens = (saved.sensitivity != null) ? saved.sensitivity : calState.readSens;
+  } else {
+    calSetError(data.warning || 'No se pudo reaplicar la configuración guardada');
+  }
 }
 
 function closeCalibrateModal() {
@@ -3218,9 +3228,18 @@ async function calApplyChanged() {
   calSetError('');
   try {
     const data = await calPostSet(body);
-    if (far != null)  { calState.appliedFar  = (data.status && data.status.far_detection != null) ? data.status.far_detection : far;  _calDirtyFar = false;  calRenderReadout('far', calState.appliedFar); }
-    if (sens != null) { calState.appliedSens = (data.status && data.status.sensitivity != null)   ? data.status.sensitivity   : sens; _calDirtySens = false; calRenderReadout('sens', calState.appliedSens); }
-    if (!data.applied) calSetError(data.warning || 'El sensor no aplicó el valor solicitado');
+    const farNow  = calSnapFar(calEl('cal-far-range').value);
+    const sensNow = calClampSens(calEl('cal-sens-range').value);
+    if (data.applied) {
+      if (far != null)  { calState.appliedFar  = far;  if (farNow === far)  { _calDirtyFar = false;  calRenderReadout('far', far); } }
+      if (sens != null) { calState.appliedSens = sens; if (sensNow === sens) { _calDirtySens = false; calRenderReadout('sens', sens); } }
+    } else {
+      // Keep the installer's selection on screen; never overwrite it with a stale
+      // read-back. The device's real value is shown in the info line.
+      if (far != null && !_calDirtyFar)  calRenderReadout('far', far);
+      if (sens != null && !_calDirtySens) calRenderReadout('sens', sens);
+      calSetError(data.warning || 'El sensor todavía no refleja el valor; espera unos segundos.');
+    }
   } catch (e) {
     calSetError(e && e.message ? e.message : 'No se pudo aplicar');
   } finally {
