@@ -3179,35 +3179,47 @@ function calUpdateSync() {
   calSetSync('saved', 'Guardado');
 }
 
-// Slider preview while dragging (no Tuya call yet).
+// Slider preview while dragging. The value is applied from calState.farTarget
+// (the last dragged value), and a debounced apply also runs on `input` so touch
+// devices keep working even when `change` is not fired on release.
 function calOnFarInput() {
   const el = calEl('cal-far-range');
   const cm = calSnapFar(el.value);
-  if (parseInt(el.value, 10) !== cm) el.value = cm; // keep the thumb on real steps
   calState.farTarget = cm; _calDirtyFar = true;
   const m = (cm / 100).toFixed(2);
   const r = calEl('cal-far-readout');
   r.textContent = m; r.classList.add('preview');
-  calEl('cal-far-range').setAttribute('aria-valuetext', `${m} metros`);
+  el.setAttribute('aria-valuetext', `${m} metros`);
   calSetError('');
   calSetSync('unsaved', 'Sin aplicar');
+  calQueueApply(500);
 }
 
 function calOnSensInput() {
   const el = calEl('cal-sens-range');
-  const s = parseInt(el.value, 10);
+  const s = calClampSens(el.value);
   calState.sensTarget = s; _calDirtySens = true;
   const r = calEl('cal-sens-readout');
   r.textContent = `${s}/${_calCaps ? _calCaps.sens_max : 9}`; r.classList.add('preview');
   calSetError('');
   calSetSync('unsaved', 'Sin aplicar');
+  calQueueApply(500);
 }
 
-function calOnRangeChange() { calQueueApply(); }
+// Release: flush immediately with the value where the drag stopped.
+function calOnRangeChange() {
+  // Sync the target from the DOM in case `change` arrives without a prior `input`
+  // (some browsers fire it on grab, and touch devices may not fire it on release).
+  const fv = calSnapFar(calEl('cal-far-range').value);
+  if (fv !== calState.appliedFar) { calState.farTarget = fv; _calDirtyFar = true; }
+  const sv = calClampSens(calEl('cal-sens-range').value);
+  if (sv !== calState.appliedSens) { calState.sensTarget = sv; _calDirtySens = true; }
+  calQueueApply(0);
+}
 
-function calQueueApply() {
+function calQueueApply(delay) {
   if (_calDebounce) clearTimeout(_calDebounce);
-  _calDebounce = setTimeout(() => { _calDebounce = null; calApplyChanged(); }, 300);
+  _calDebounce = setTimeout(() => { _calDebounce = null; calApplyChanged(); }, (delay == null) ? 500 : delay);
 }
 
 // Apply ONLY the changed DP(s) (persist:false). The server writes, verifies by
@@ -3215,8 +3227,9 @@ function calQueueApply() {
 async function calApplyChanged() {
   if (!calState || !calState.hasSensor) return;
   if (_calBusy) { calQueueApply(); return; } // retry once the in-flight call ends
-  const far  = _calDirtyFar  ? calSnapFar(calEl('cal-far-range').value) : null;
-  const sens = _calDirtySens ? calClampSens(calEl('cal-sens-range').value) : null;
+  // Always send the LAST dragged value (target), not a late DOM re-read.
+  const far  = _calDirtyFar  ? (calState.farTarget  != null ? calState.farTarget  : calSnapFar(calEl('cal-far-range').value)) : null;
+  const sens = _calDirtySens ? (calState.sensTarget != null ? calState.sensTarget : calClampSens(calEl('cal-sens-range').value)) : null;
   if (far == null && sens == null) return;
   const body = { room_id: calState.roomId, persist: false };
   if (far != null)  body.far_detection = far;
