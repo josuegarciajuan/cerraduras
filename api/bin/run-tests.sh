@@ -2520,6 +2520,32 @@ else
     else
         fail "debe haber exactamente un PRESENCE por pack" "proto2=$N_PROTO2 PRUEBAS=$N_PRUEBAS"
     fi
+
+    # Validación del calibrador: ocurre ANTES de llamar a Tuya → 0 cuota consumida.
+    PROTO2_ROOM=$($MYSQL -sN -e "SELECT id FROM rooms WHERE pack_id=$PACK_PROTO2 LIMIT 1" 2>/dev/null || echo "")
+    if [ -n "$PROTO2_ROOM" ]; then
+        http_test POST /dashboard-api/presence-calibrate/set 400 \
+            "presence-calibrate: far fuera de rango → 400" \
+            --body "{\"room_id\":$PROTO2_ROOM,\"far_detection\":99999}"
+        http_test POST /dashboard-api/presence-calibrate/set 400 \
+            "presence-calibrate: sensitivity fuera de rango → 400" \
+            --body "{\"room_id\":$PROTO2_ROOM,\"sensitivity\":999}"
+        http_test POST /dashboard-api/presence-calibrate/set 400 \
+            "presence-calibrate: sin parámetros → 400" \
+            --body "{\"room_id\":$PROTO2_ROOM}"
+    else
+        skip "presence-calibrate validación" "No hay room asignada al pack proto2"
+    fi
+
+    # Room sin sensor de presencia → 404
+    NO_PRES_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r LEFT JOIN devices d ON d.pack_id=r.pack_id AND d.kind='PRESENCE' WHERE d.id IS NULL ORDER BY r.id LIMIT 1" 2>/dev/null || echo "")
+    if [ -n "$NO_PRES_ROOM" ]; then
+        http_test POST /dashboard-api/presence-calibrate/set 404 \
+            "presence-calibrate: room sin PRESENCE → 404" \
+            --body "{\"room_id\":$NO_PRES_ROOM,\"far_detection\":600}"
+    else
+        skip "presence-calibrate room sin PRESENCE" "Todas las rooms tienen PRESENCE"
+    fi
 fi
 
 # =============================================================================
