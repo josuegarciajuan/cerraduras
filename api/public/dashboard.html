@@ -1324,12 +1324,20 @@ function toggleZone5() { document.getElementById('zone5').classList.toggle('coll
 // ║              DATA FETCHING & UPDATES                   ║
 // ╚══════════════════════════════════════════════════════════╝
 
+let _roomsSignature = null;
+
 async function fetchRooms() {
   try {
     const res = await fetch('/dashboard-api/rooms');
     if (!res.ok) return;
     roomList = await res.json();
     const sel = document.getElementById('room-selector');
+    // Signature of what the <select> actually renders (id/code/status/pack).
+    // Rebuilding <option> nodes while the native picker is open dismisses it
+    // (notably on Android/mobile), so only touch the DOM when it really changed.
+    const signature = JSON.stringify(roomList.map(r => [r.id, r.code, r.pack_id ? r.status : 'sin pack']));
+    if (signature === _roomsSignature && sel.options.length === roomList.length) return;
+    _roomsSignature = signature;
     const currentVal = sel.value; // preserve selection
     sel.innerHTML = '';
     roomList.forEach(r => {
@@ -2809,8 +2817,14 @@ async function init() {
   });
   // Countdown refresh (every 500ms for blinking) — light, keep as-is
   setInterval(updateCountdown, 500);
-  // Rooms refresh (less frequent, keep for room selector)
-  setInterval(() => { fetchRooms(); }, 5000);
+  // Rooms refresh (less frequent, keep for room selector).
+  // Skip while the selector is focused: rebuilding <option> closes the native
+  // picker mid-interaction (Android/mobile). It will refresh on the next tick.
+  setInterval(() => {
+    const sel = document.getElementById('room-selector');
+    if (sel && document.activeElement === sel) return;
+    fetchRooms();
+  }, 5000);
 }
 
 init();
