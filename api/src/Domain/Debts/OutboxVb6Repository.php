@@ -132,4 +132,25 @@ final class OutboxVb6Repository implements OutboxVb6RepositoryInterface
             ':id'       => $id,
         ]);
     }
+
+    /**
+     * Mark an outbox item as permanently failed (no further retries).
+     *
+     * Used when WS-VB6 answers 4xx (client_error): the payload will never be
+     * accepted, so retrying only burns attempts and keeps the worker exiting 1.
+     */
+    public function markPermanentlyFailed(int $id, string $error): void
+    {
+        $this->pdo->prepare(
+            "UPDATE outbox_vb6
+             SET status          = 'FAILED',
+                 attempts        = GREATEST(attempts, 20),
+                 last_error      = :error,
+                 next_attempt_at = UTC_TIMESTAMP(3)
+             WHERE id = :id"
+        )->execute([
+            ':error' => substr($error, 0, 512),
+            ':id'    => $id,
+        ]);
+    }
 }

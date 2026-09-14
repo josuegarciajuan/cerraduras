@@ -1016,6 +1016,14 @@ fi  # WS server up
 # =============================================================================
 block "BLOCK 15 — F14: Outbox worker"
 
+# Aislar el estado global del outbox: apartar temporalmente los items PENDING ya
+# vencidos (p. ej. debt.created sin refs VB6) para que el worker no los procese y
+# las aserciones sean deterministas. Se restauran al final del bloque.
+DUE_IDS=$($MYSQL -sN -e "SELECT id FROM outbox_vb6 WHERE status='PENDING' AND next_attempt_at <= UTC_TIMESTAMP(3)" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+if [ -n "$DUE_IDS" ]; then
+    $MYSQL -sN -e "UPDATE outbox_vb6 SET next_attempt_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 DAY) WHERE id IN ($DUE_IDS)" 2>/dev/null || true
+fi
+
 # ---- Test: worker runs with no items ----
 worker_out=$(cd "$PROJECT_DIR" && php bin/outbox-worker.php 2>&1)
 worker_exit=$?
@@ -1059,6 +1067,11 @@ else
     else
         fail "outbox_vb6 item marcado SENT" "Status actual: '$item_status' (esperado SENT)"
     fi
+fi
+
+# Restaurar los items PENDING que se apartaron al inicio del bloque
+if [ -n "$DUE_IDS" ]; then
+    $MYSQL -sN -e "UPDATE outbox_vb6 SET next_attempt_at = UTC_TIMESTAMP(3) WHERE id IN ($DUE_IDS)" 2>/dev/null || true
 fi
 
 # ---- Test: StayController.close() enqueues stay.closed event ----
@@ -1264,8 +1277,15 @@ block "BLOCK 18 — F15.5: Smart Switch (EAWCBT-J)"
 # Ensure pack assigned (pack-based resolution after refactor)
 $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
 
-    # Asegurar que room 1 tiene un switch device
-    $MYSQL -sN -e "INSERT IGNORE INTO devices (pack_id, kind, external_id, meta_json) VALUES (5, 'SWITCH', 'bfc8730a715c56c8d1paby', '{\"model\":\"EAWCBT-J\",\"dp_code\":\"switch\"}')" 2>/dev/null || true
+    # El SWITCH real ya existe (en proto2) y uniq_devices_external impide insertarlo
+    # de nuevo en el pack 5. Se mueve temporalmente al pack 5 (room 1) y se restaura
+    # al terminar el bloque.
+    SW_ORIG_PACK=$($MYSQL -sN -e "SELECT pack_id FROM devices WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby' LIMIT 1" 2>/dev/null || echo "")
+    if [ -n "$SW_ORIG_PACK" ]; then
+        $MYSQL -sN -e "UPDATE devices SET pack_id=5 WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby'" 2>/dev/null || true
+    else
+        $MYSQL -sN -e "INSERT IGNORE INTO devices (pack_id, kind, external_id, meta_json) VALUES (5, 'SWITCH', 'bfc8730a715c56c8d1paby', '{\"model\":\"EAWCBT-J\",\"dp_code\":\"switch\"}')" 2>/dev/null || true
+    fi
 
     # Ensure admin key has switches:write scope
     $MYSQL -sN -e "UPDATE api_clients SET scopes_csv = CONCAT(scopes_csv, ',switches:write') WHERE code = 'ADMIN-CLI' AND scopes_csv NOT LIKE '%switches:write%'" 2>/dev/null || true
@@ -1345,6 +1365,11 @@ $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
         fi
     else
         skip "Real switch flow tests" "SIMULATED_MODE=true — usar tests simulados arriba"
+    fi
+
+    # Restaurar el SWITCH a su pack original
+    if [ -n "$SW_ORIG_PACK" ]; then
+        $MYSQL -sN -e "UPDATE devices SET pack_id=$SW_ORIG_PACK WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby'" 2>/dev/null || true
     fi
 
 # ===================================================

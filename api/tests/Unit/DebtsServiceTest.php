@@ -108,7 +108,10 @@ final class FakeOutbox implements OutboxVb6RepositoryInterface
     public function scheduleRetry(string $idemKey): bool
     {
         $this->retried[] = $idemKey;
-        return true;
+        foreach ($this->enqueued as $e) {
+            if ($e['idemKey'] === $idemKey) return true;
+        }
+        return false;
     }
 }
 
@@ -123,13 +126,15 @@ function makeStayForDebt(
     int $duracion,
     ?string $firstEntryAt,
     string $status = Stay::STATUS_OCCUPIED,
-    int $id = 1
+    int $id = 1,
+    ?int $codtic = null,
+    ?int $codcli = null
 ): Stay {
     return new Stay(
         $id, 1, $status, $duracion,
         '2026-04-28 09:00:00.000',
         $firstEntryAt, null, null,
-        null, null, null, null, null, null, null, null, null,
+        null, $codtic, $codcli, null, null, null, null, null, null,
         '2026-04-28 09:00:00.000', '2026-04-28 09:00:00.000'
     );
 }
@@ -167,7 +172,7 @@ else bad('T1: no overstay → null', 'got debt id=' . ($result->id ?? '?'));
 // ============================================================================
 // T2: Overstay (80 min actual, 60 contracted, grace=5) → debt created
 // ============================================================================
-$stay2 = makeStayForDebt(60, gmdate('Y-m-d H:i:s', $now - 80*60) . '.000', Stay::STATUS_OCCUPIED, 20);
+$stay2 = makeStayForDebt(60, gmdate('Y-m-d H:i:s', $now - 80*60) . '.000', Stay::STATUS_OCCUPIED, 20, 12345, 67890);
 $stayRepo->byId[20] = $stay2;
 $svc2 = buildService($debtRepo, $stayRepo, $outbox);
 $debt = $svc2->createIfNeeded($stay2, $rt);
@@ -190,6 +195,29 @@ if (in_array('debt.created',  $topics, true)) ok('T3: outbox enqueued debt.creat
 else bad('T3: outbox enqueued debt.created', json_encode($topics));
 if (in_array('stay.overstay', $topics, true)) ok('T3: outbox enqueued stay.overstay');
 else bad('T3: outbox enqueued stay.overstay', json_encode($topics));
+
+// ============================================================================
+// T3b: stay without VB6 refs → debt.created NOT enqueued (WS-VB6 would 422);
+//      once refs exist, rescheduleDebt rebuilds and enqueues it.
+// ============================================================================
+$debtRepoB = new FakeDebtRepo();
+$outboxB   = new FakeOutbox();
+$stayNoRefs = makeStayForDebt(60, gmdate('Y-m-d H:i:s', $now - 80*60) . '.000', Stay::STATUS_OCCUPIED, 40);
+$stayRepo->byId[40] = $stayNoRefs;
+$svcB  = buildService($debtRepoB, $stayRepo, $outboxB);
+$debtB = $svcB->createIfNeeded($stayNoRefs, $rt);
+$topicsB = array_column($outboxB->enqueued, 'topic');
+if ($debtB !== null && !in_array('debt.created', $topicsB, true) && in_array('stay.overstay', $topicsB, true))
+    ok('T3b: sin refs VB6 → no se encola debt.created (sí stay.overstay)');
+else bad('T3b: sin refs VB6', json_encode($topicsB));
+
+$stayNoRefs->vb6Codtic = 12345;
+$stayNoRefs->vb6Codcli = 67890;
+$svcB->rescheduleDebt($debtB->id);
+$topicsB2 = array_column($outboxB->enqueued, 'topic');
+if (in_array('debt.created', $topicsB2, true))
+    ok('T3b: con refs → rescheduleDebt reencola debt.created');
+else bad('T3b: rescheduleDebt rebuild', json_encode($topicsB2));
 
 // ============================================================================
 // T4: TSK-115 — stay transitioned to OVERSTAY
