@@ -727,6 +727,12 @@ const DOOR_PULSE_HOLD_MS = 1200;
 const SSE_SILENCE_MS = 5000;         // >5 s sin señal → resync puntual de /live
 const SSE_FORCE_RECONNECT_MS = 15000; // >15 s sin señal → reconectar EventSource
 
+// Fase A (diagnóstico): medir latencia real de los eventos SSE en el panel.
+let _lastStateAt = 0;        // epoch ms del último evento `state` (NO cuenta pings)
+let _lastDoorChangeAt = 0;   // epoch ms del último cambio real de door_state
+let _serverSkewMs = null;    // server_ts del último state − reloj local
+let _sseDebugTimer = null;   // interval del badge de depuración
+
 // Independent polling timers for device-status + mirame panels
 // These run regardless of SSE state (SSE only covers door/state events)
 let _deviceTimer = null;        // interval for device-status polling
@@ -1966,6 +1972,10 @@ function processLiveData(data) {
 
   // F31: store previous sensor and stay states for transition detection
   const ioForPrev = data.iot_session || {};
+  // Fase A: registrar cuándo cambia realmente la puerta (para medir latencia).
+  if (previousDoor && ioForPrev.door_state && ioForPrev.door_state !== previousDoor) {
+    _lastDoorChangeAt = Date.now();
+  }
   previousDoor     = ioForPrev.door_state || 'UNKNOWN';
   previousPresence = ioForPrev.presence_state || 'UNKNOWN';
   previousStayStatus = (data.active_stay && data.active_stay.status) || null;
@@ -1974,6 +1984,39 @@ function processLiveData(data) {
 // ╔══════════════════════════════════════════════════════════╗
 // ║   SSE (SERVER-SENT EVENTS) — REAL-TIME DASHBOARD       ║
 // ╚══════════════════════════════════════════════════════════╝
+
+// ── Fase A (diagnóstico): badge de latencia SSE, visible con ?debug=1 ─────
+function sseDebugEnabled() {
+  if (new URLSearchParams(location.search).has('debug')) return true;
+  try { return localStorage.getItem('sseDebug') === '1'; } catch (_) { return false; }
+}
+
+function initSseDebugBadge() {
+  if (!sseDebugEnabled()) return;
+  let el = document.getElementById('sse-debug-badge');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sse-debug-badge';
+    el.style.cssText = 'position:fixed;bottom:6px;left:6px;z-index:99999;font:11px/1.35 ui-monospace,monospace;' +
+      'background:rgba(0,0,0,0.72);color:#0f0;padding:4px 7px;border-radius:5px;pointer-events:none;white-space:pre';
+    document.body.appendChild(el);
+  }
+  if (_sseDebugTimer) clearInterval(_sseDebugTimer);
+  _sseDebugTimer = setInterval(() => {
+    const now = Date.now();
+    const stateAge = _lastStateAt ? Math.round((now - _lastStateAt) / 1000) : -1;
+    const doorAge  = _lastDoorChangeAt ? Math.round((now - _lastDoorChangeAt) / 1000) : -1;
+    const mode = _sseConnected ? 'SSE' : (_sseFallbackActive ? 'fallback' : 'poll-only');
+    const io = (lastLiveData && lastLiveData.iot_session) || {};
+    el.textContent =
+      'SSE: ' + mode +
+      '  state age: ' + (stateAge < 0 ? '—' : stateAge + 's') +
+      '  door age: ' + (doorAge < 0 ? '—' : doorAge + 's') + '\n' +
+      'door=' + (io.door_state || '?') + ' pres=' + (io.presence_state || '?') +
+      ' skew=' + (_serverSkewMs == null ? '—' : _serverSkewMs + 'ms');
+  }, 500);
+  console.log('[SSE] debug badge ON (Fase A)');
+}
 
 /**
  * Connect to the SSE event stream for the current room.
@@ -2004,9 +2047,15 @@ function connectSSE() {
 
   _eventSource.addEventListener('state', function(e) {
     _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
+    _lastStateAt = _lastSseEventAt; // Fase A: `state` real (no ping)
     try {
       const data = JSON.parse(e.data);
       if ((data.room_id || 0) !== currentRoomId) return; // stale event from previous room
+      // Fase A: skew contra server_ts (informativo; relojes pueden diferir).
+      if (data.server_ts) {
+        const st = Date.parse(data.server_ts);
+        if (isFinite(st)) _serverSkewMs = Date.now() - st;
+      }
       processLiveData(data);
     } catch(err) {
       console.error('[SSE] Failed to parse state event:', err);
@@ -2928,6 +2977,8 @@ async function init() {
     connectSSE();
     // F41: watchdog de silencio del stream (resync /live + reconexión forzada)
     startSseWatchdog();
+    // Fase A: badge de diagnóstico (solo con ?debug=1)
+    initSseDebugBadge();
     // Independent panel polling: device-status + mirame run regardless of SSE state
     startDevicePolling();
     startMiramePolling();
