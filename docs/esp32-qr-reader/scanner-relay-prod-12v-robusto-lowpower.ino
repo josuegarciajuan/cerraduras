@@ -70,6 +70,8 @@
  *   2. Conecta a WiFi y hace POST /api/v1/qr/validate con device_id=chipId.
  *   3. Si HTTP 200 → activa relé GPIO16 durante OPEN_DURATION_MS (def. 3s).
  *   4. Si HTTP ≠200 → no acciona el relé.
+ *   4b. Lectura descartada por el pre-filtro (dots≠2 o len<QR_MIN_LEN) → POST
+ *       /api/v1/devices/qr-rejected con len/dots/hex (diagnóstico sin serie).
  *   5. Botón mírame (GPIO4): al pulsar → POST /api/v1/devices/identify.
  *   6. Heartbeat cada 30s.
  *
@@ -156,6 +158,11 @@ const char* API_BASE_URL = "https://cerraduras.josue.ink";
 #define RELAY_CLICK_MS    150    // pulso corto para feedback acústico (no abre)
 #define LOCK_CHECK_US     5000   // F33: pulso de test de cerradura (5ms, no activa solenoide)
 
+// FIX #1: longitud mínima de un token QR válido. El token real ronda los 150
+// chars; 80 evita descartar lecturas parciales leves (que ahora llegan a la API
+// y quedan auditadas como 403) sin aceptar basura corta.
+#define QR_MIN_LEN        80
+
 // ── LED feedback ───────────────────────────────────────────────────────────
 #define LED_PIN           2     // built-in LED (GPIO2 en la mayoria de placas)
 #define LED_ON_MS         4500  // tiempo encendido al conectar WiFi
@@ -206,6 +213,15 @@ bool       scannerConnected = false;  // F33: set true on USB connect, false on 
 // WiFiClientSecure/HTTPClient compartidos (panic por uso concurrente). El
 // heartbeat de SCANNER se pide aquí y lo envía loop() de forma secuencial.
 volatile bool scannerBeatPending = false;
+
+// FIX #1: telemetría de rechazos QR diferida. El callback USB NUNCA debe usar
+// WiFiClientSecure/HTTPClient (panic por uso concurrente); marca el flag y
+// loop() envía la telemetría con el cliente TLS compartido (y sin solapar el
+// relé). Sin esto, una lectura descartada es invisible fuera del monitor serie.
+volatile bool qrRejectPending = false;
+volatile int  qrRejectLen     = 0;
+volatile int  qrRejectDots    = 0;
+String        qrRejectText;
 
 // ── Fase 1: Non-blocking relay state ──
 unsigned long relayOffAt = 0;
@@ -680,6 +696,48 @@ void sendIdentify(bool state) {
   }
 }
 
+// ── FIX #1: telemetría de lecturas QR rechazadas por el pre-filtro ────────
+// Sin monitor serie, una lectura parcial USB-HID que el firmware descarta es
+// invisible: la API nunca recibe la petición. Enviamos len/dots/hex para poder
+// diagnosticar desde el servidor si fue truncamiento, puntos extra o basura.
+void reportQrRejected(int qrLen, int qrDots, const String &text) {
+  if (!ensureWiFi()) return;
+
+  char buf[4];
+  String hexHead;
+  hexHead.reserve(220);
+  int headLen = text.length() < 60 ? text.length() : 60;
+  for (int i = 0; i < headLen; i++) {
+    snprintf(buf, sizeof(buf), "%02X ", (uint8_t) text[i]);
+    hexHead += buf;
+  }
+  String hexTail;
+  if (text.length() > 60) {
+    hexTail.reserve(80);
+    for (int i = text.length() - 20; i < (int) text.length(); i++) {
+      snprintf(buf, sizeof(buf), "%02X ", (uint8_t) text[i]);
+      hexTail += buf;
+    }
+  }
+
+  String id = chipId();
+  String body;
+  body.reserve(500);
+  body = "{\"external_id\":\"" + id + "\",\"len\":" + String(qrLen) +
+         ",\"dots\":" + String(qrDots) +
+         ",\"hex_head\":\"" + hexHead + "\",\"hex_tail\":\"" + hexTail + "\"}";
+
+  HTTPClient http;
+  beginApiRequest(http, String(API_BASE_URL) + "/api/v1/devices/qr-rejected");
+  http.addHeader("Content-Type", "application/json");
+  addDeviceAuth(http);
+  http.setTimeout(2500);
+  int code = http.POST(body);
+  http.getString();
+  http.end();
+  Serial.printf("[QR] telemetría rechazo → HTTP %d (len=%d dots=%d)\n", code, qrLen, qrDots);
+}
+
 // ── setup ─────────────────────────────────────────────────────────────────
 void setup() {
   // Relé OFF desde el PRIMER instante del sketch. Antes se hacía tras
@@ -865,19 +923,22 @@ void setup() {
         Serial.println("══════════════════════════════════════════");
 
         // ── Validación de formato ────────────────────────────────
-        // Requisitos: exactamente 2 puntos (token JWT-like) y >= 100 chars
-        if (dots != 2 || scanned.length() < 100) {
-          Serial.printf("[QR] RECHAZADO — dots=%d (necesita 2), len=%d (necesita >=100)\n",
-                        dots, scanned.length());
-          if (scanned.length() < 100)
+        // Requisitos: exactamente 2 puntos (token JWT-like) y >= QR_MIN_LEN.
+        if (dots != 2 || scanned.length() < QR_MIN_LEN) {
+          Serial.printf("[QR] RECHAZADO — dots=%d (necesita 2), len=%d (necesita >=%d)\n",
+                        dots, scanned.length(), QR_MIN_LEN);
+          if (scanned.length() < QR_MIN_LEN)
             Serial.println("[QR]   → posible lectura parcial o token truncado");
           if (dots > 2)
             Serial.println("[QR]   → scanner añade puntos extra (prefijo/sufijo?)");
           if (dots < 2)
             Serial.println("[QR]   → faltan puntos — token malformado o scanner omite '.'");
-          // Sin relayClick(): el feedback acústico pulsaba el relé (y con la
-          // cerradura conectada disparaba el solenoide) en cada lectura
-          // rechazada. En producto el relé solo se acciona por apertura real.
+          // FIX #1: encolar telemetría (sin HTTP en el callback USB). Sin
+          // relayClick(): el relé solo se acciona por apertura real.
+          qrRejectText    = scanned;
+          qrRejectLen     = (int) scanned.length();
+          qrRejectDots    = dots;
+          qrRejectPending = true;
           scanned = "";
           return;
         }
@@ -1039,6 +1100,16 @@ void loop() {
     } else {
       Serial.println(">> ACCESO DENEGADO");
     }
+  }
+
+  // ── FIX #1: telemetría de rechazo QR diferida (nunca HTTP en el callback) ──
+  // LOW-POWER: no enviar con el relé activo (no solapar TLS con la bobina).
+  if (qrRejectPending && !relayPulsing) {
+    qrRejectPending = false;
+    esp_task_wdt_reset();
+    delay(HTTP_GAP_MS);          // respiro de rail antes de la petición TLS
+    reportQrRejected(qrRejectLen, qrRejectDots, qrRejectText);
+    esp_task_wdt_reset();
   }
 
   // ── F33: heartbeat de SCANNER diferido ─────────────────────────────
