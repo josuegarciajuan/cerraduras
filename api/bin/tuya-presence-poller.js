@@ -261,6 +261,36 @@ function verificationWindow(live, now) {
 }
 
 /**
+ * F44+ (RF-51.1.6): true when a credited exit cycle is still awaiting
+ * verification, so the poller must NOT stop even if `presence_state=PRESENT`.
+ *
+ * After the guest is confirmed inside (`entry_confirmed_at`), a new opening
+ * followed by a close is a *potential exit*. If we stop sampling just because
+ * the radar still reads PRESENT (stale value, or a target beyond the door), the
+ * real `none` when the guest leaves is never captured, `last_absent_since`
+ * stays NULL and the exit rule can never fire (validated on PROTO2: the radar
+ * reports `none` ~3 s after the guest exits).
+ *
+ * Requires a door CLOSED whose close is within `exit_check_seconds`, plus a
+ * credited cycle: opening at/after entry confirmation, then a close.
+ */
+function pendingExitVerification(liveData, now) {
+  if (!liveData) return false;
+  now = now || Date.now();
+  const stay = liveData.active_stay || null;
+  if (!stay || !stay.entry_confirmed_at) return false;
+  const io = liveData.iot_session || {};
+  if ((io.door_state || 'UNKNOWN') !== 'CLOSED') return false;
+  const entryTs = epochMs(stay.entry_confirmed_at);
+  const openTs  = epochMs(io.last_open_at);
+  const closeTs = epochMs(io.last_close_at);
+  if (entryTs === null || openTs === null || closeTs === null) return false;
+  // Credited cycle: an opening posterior to the entry confirmation, then closed.
+  if (!(openTs >= entryTs) || !(closeTs >= openTs)) return false;
+  return (now - closeTs) < resolveExitCheckMs(liveData);
+}
+
+/**
  * Pure gate: should this cycle spend Tuya quota? Decides ONLY from the /live
  * domain snapshot (RF-45.2) — no `presenceConfirmed`-style sticky flag.
  */
@@ -275,8 +305,12 @@ function shouldCapture(liveData, now) {
   const deadline = epochMs(liveData.exit_deadline);
 
   // ── Stops by domain state (RF-45.1) ──
+  // F44+ (RF-51.1.6): no parar como "huésped dentro" si hay un ciclo de salida
+  // acreditado pendiente de verificación; hay que capturar el `none` real aunque
+  // la lectura actual sea PRESENT (obsoleta o de un objetivo fuera de la puerta).
   const inside = stayStatus === 'OCCUPIED' && pres === 'PRESENT' && door === 'CLOSED'
-    && !!(stay && stay.entry_confirmed_at);      // huésped dentro
+    && !!(stay && stay.entry_confirmed_at)         // huésped dentro
+    && !pendingExitVerification(liveData, now);
   if (inside) return false;
 
   const empty = !stay && pres === 'ABSENT' && deadline === null; // habitación 100% vacía
@@ -519,6 +553,7 @@ module.exports = {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  pendingExitVerification,
   epochMs,
   resolveEntryWindowMs,
   resolveExitCheckMs,
