@@ -704,11 +704,14 @@ $router->get(
     '/dashboard-api/system-status',
     function (\App\Http\Request $request): \App\Http\Response {
         $processes = [
-            'exit-scan'              => ['label' => 'Regla de Salida (Exit)',   'run_key' => 'exit-scan',               'pattern' => 'bin/exit-scan.php'],
-            'overstay-scan'          => ['label' => 'Overstay Scanner',         'run_key' => 'overstay-scan',           'pattern' => 'bin/overstay-scan.php'],
-            'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php'],
-            'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php'],
-            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'run_key' => 'presence-poller-manager', 'pattern' => 'bin/presence-poller-manager.sh'],
+            // F46: estos workers viven bajo systemd (Restart=always). La detección
+            // usa `systemctl is-active` + MainPID; como hay MainPID, NO se cae al
+            // recuento por patrón (que con workers one-shot daría falsos 0).
+            'exit-scan'              => ['label' => 'Regla de Salida (Exit)',   'run_key' => 'exit-scan',               'pattern' => 'bin/exit-scan.php',              'systemd_unit' => 'cerraduras-worker@exit-scan'],
+            'overstay-scan'          => ['label' => 'Overstay Scanner',         'run_key' => 'overstay-scan',           'pattern' => 'bin/overstay-scan.php',          'systemd_unit' => 'cerraduras-worker@overstay-scan'],
+            'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php',          'systemd_unit' => 'cerraduras-worker@outbox-worker'],
+            'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php',        'systemd_unit' => 'cerraduras-worker@anomaly-scanner'],
+            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'run_key' => 'presence-poller-manager', 'pattern' => 'bin/presence-poller-manager.sh', 'systemd_unit' => 'cerraduras-presence-poller'],
             // F44 (RF-50.2.4): el consumer Pulsar es dueño único de systemd.
             'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer', 'systemd_unit' => 'cerraduras-pulsar-consumer'],
         ];
