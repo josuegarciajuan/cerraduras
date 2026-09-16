@@ -1984,8 +1984,8 @@ activo tras consolidar + ABSENT.
 `api/logs/test-results.log`.
 **Contenido**:
 - [x] RF-46.4 y RF-49.2.3; `design.md` §5; `contracts.md` §3.3; esta sección.
-- [ ] `bash bin/run-tests.sh` → 0 failures y log actualizado.
-- [ ] Añadir la fila F42/BLOCK 34 a la tabla de fases de `AGENTS.md`.
+- [x] `bash bin/run-tests.sh` → 0 failures y log actualizado (247 passed, 0 failed, 7 skipped).
+- [x] Añadir la fila F42/BLOCK 34 a la tabla de fases de `AGENTS.md`.
 
 **Criterio de aceptación**: runner con 0 failures; AGENTS.md y log actualizados.
 **Test propio**: regresión completa.
