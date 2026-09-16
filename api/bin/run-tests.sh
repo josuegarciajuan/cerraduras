@@ -3128,12 +3128,14 @@ F44_CAL=$($MYSQL -sN -e "SELECT CONCAT(
         COALESCE(JSON_VALUE(meta_json,'\$.calibration.far_detection'),''),'|',
         COALESCE(JSON_VALUE(meta_json,'\$.calibration.sensitivity'),''))
     FROM devices WHERE external_id='bf9a278e76e2c3f01ay0cs' LIMIT 1" 2>/dev/null || echo "")
-if [ "$F44_CAL" = "75|10" ]; then
-    pass "F44: PROTO2 calibrado far_detection=75cm sensitivity=10"
+# El 24G V3 rechaza 75 cm (piso de firmware); el mínimo efectivo es 150 cm (1.5 m).
+# Se acepta 75 (si el firmware lo permitiera) o 150, siempre con sensibilidad máxima.
+if [ "$F44_CAL" = "75|10" ] || [ "$F44_CAL" = "150|10" ]; then
+    pass "F44: PROTO2 calibrado (radio mínimo ${F44_CAL%|*}cm, sensibilidad 10)"
 elif [ -z "$F44_CAL" ] || [ "$F44_CAL" = "|" ]; then
     skip "F44 calibración PROTO2" "sin snapshot de calibración aún"
 else
-    fail "F44: calibración PROTO2 esperada 75|10" "got '$F44_CAL'"
+    fail "F44: calibración PROTO2 esperada 75|10 o 150|10" "got '$F44_CAL'"
 fi
 
 # =============================================================================
