@@ -78,6 +78,7 @@ use App\Http\Controllers\CrmController;
 use App\Http\Controllers\DevEchoController;
 use App\Http\Controllers\EventStreamController;
 use App\Http\Controllers\DeviceController;
+use App\Http\Controllers\QrRejectionController;
 use App\Http\Controllers\DevicePackController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\DebtController;
@@ -936,6 +937,7 @@ $deviceRepo = new DeviceRepository($pdo);
 $deviceService = new DeviceService($deviceRepo, $roomRepo);
 $switchService = new SwitchService($deviceRepo, $roomRepo);
 $deviceController = new DeviceController($deviceService);
+$qrRejectionController = new QrRejectionController($pdo);
 $commandQueueRepo = new \App\Domain\Devices\CommandQueueRepository($pdo);
 
 // Device Packs (F25)
@@ -1924,6 +1926,14 @@ $router->post(
 $router->post(
     '/api/v1/devices/identify',
     [$deviceController, 'identify'],
+    $authFactory(['qr:validate'])
+);
+
+// Telemetría de lecturas QR que el firmware descartó antes de validar (FIX #1).
+// El ESP32 manda len/dots/hex de la lectura rechazada para diagnóstico.
+$router->post(
+    '/api/v1/devices/qr-rejected',
+    [$qrRejectionController, 'store'],
     $authFactory(['qr:validate'])
 );
 

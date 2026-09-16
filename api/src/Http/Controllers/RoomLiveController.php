@@ -163,37 +163,21 @@ final class RoomLiveController
         $gapSeconds = null; // F31: exposed for dashboard verification-hold computation
 
         // RF-30: room-level override takes precedence over room_type config
+        $rt = $this->roomTypes !== null
+            ? $this->roomTypes->findById($room->roomTypeId)
+            : null;
+
         $gapSeconds = $room->presenceCheckSeconds;
         if ($gapSeconds === null) {
-            $rt = $this->roomTypes !== null
-                ? $this->roomTypes->findById($room->roomTypeId)
-                : null;
-            $gapSeconds = $rt !== null
-                ? $rt->exitPresenceGapSeconds
-                : 15;
+            $gapSeconds = $rt !== null ? $rt->exitPresenceGapSeconds : 15;
         }
 
         // F44 (RF-51.2/51.4/51.6): ventanas configurables del poller de presencia.
         // `entry_window_seconds`: muestreo tras la apertura hasta detectar presencia.
         // `exit_check_seconds`: muestreo post-cierre para decidir la salida real.
-        $entryWindowSeconds = 90;
-        try {
-            $wStmt = $this->pdo->prepare(
-                'SELECT rt.presence_entry_window_seconds AS w
-                   FROM rooms r
-                   INNER JOIN room_types rt ON rt.id = r.room_type_id
-                  WHERE r.id = :rid
-                  LIMIT 1'
-            );
-            $wStmt->execute([':rid' => $roomId]);
-            $wRow = $wStmt->fetch(\PDO::FETCH_ASSOC);
-            if ($wRow !== false && $wRow['w'] !== null) {
-                $entryWindowSeconds = (int) $wRow['w'];
-            }
-        } catch (\Throwable $e) {
-            // Columna aún no migrada (0109): se usa el default sin romper /live.
-        }
-        $exitCheckSeconds = $gapSeconds + 10;
+        // Fallback retrocompatible: entry 90 s; exit = gap + 10 s.
+        $entryWindowSeconds = $rt !== null ? $rt->presenceEntryWindowSeconds : 90;
+        $exitCheckSeconds   = $rt !== null ? $rt->exitCheckSeconds : ($gapSeconds + 10);
 
         if ($session !== null
             && $session->presenceState === \App\Domain\Presence\IotSession::PRESENCE_ABSENT

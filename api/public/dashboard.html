@@ -704,6 +704,12 @@ let _pollShouldStop = false;      // F33x: flag to stop leaked poll cycle when S
 let _lastSseEventAt = 0;         // epoch ms del último evento SSE recibido
 let _sseWatchdogTimer = null;    // interval handle del watchdog
 let _lastCountdownResyncAt = 0;  // throttle de resyncLive() al agotarse el conteo
+// FIX #3: un OPEN+CLOSE rápido puede colapsarse en el mismo ciclo SSE y la
+// puerta nunca se pinta abierta. Se fuerza un pulso mínimo legible a partir de
+// los eventos PROXIMITY recientes.
+let _doorPulseUntil = 0;
+let _lastDoorOpenEventMs = 0;
+const DOOR_PULSE_HOLD_MS = 1200;
 const SSE_SILENCE_MS = 5000;         // >5 s sin señal → resync puntual de /live
 const SSE_FORCE_RECONNECT_MS = 15000; // >15 s sin señal → reconectar EventSource
 
@@ -764,13 +770,31 @@ function renderSensorSvg() {
   const presence = io.presence_state || 'UNKNOWN';
   const stay = lastLiveData.active_stay;
 
+  // FIX #3: derivar un pulso mínimo de apertura desde los eventos PROXIMITY.
+  // Si el sensor reportó OPEN y CLOSED casi a la vez (o en el mismo ciclo SSE),
+  // `io.door_state` ya llega CLOSED y la puerta no se vería abrir. Mantenemos
+  // el estado "abierta" ~DOOR_PULSE_HOLD_MS desde el OPEN real.
+  const toMsDoor = (typeof Choreography !== 'undefined' && Choreography.parseTime)
+    ? Choreography.parseTime
+    : function (v) { return v ? Date.parse(String(v) + 'Z') : 0; };
+  let latestOpenMs = 0;
+  (lastLiveData.recent_presence || []).forEach(function (e) {
+    if (e.sensor !== 'PROXIMITY' || e.value !== 'OPEN') return;
+    latestOpenMs = Math.max(latestOpenMs, toMsDoor(e.occurred_at));
+  });
+  if (latestOpenMs > _lastDoorOpenEventMs) {
+    _lastDoorOpenEventMs = latestOpenMs;
+    _doorPulseUntil = Math.max(_doorPulseUntil, latestOpenMs + DOOR_PULSE_HOLD_MS);
+  }
+  const doorOpen = (realDoor === 'OPEN') || (Date.now() < _doorPulseUntil);
+
   // ── Door animation ──
   const doorG = document.getElementById('door-group');
   const doorLine = document.getElementById('door-line');
   const latch = document.getElementById('latch');
   const latchGroup = document.getElementById('latch-group');
 
-  if (realDoor === 'OPEN') {
+  if (doorOpen) {
     // rota +80deg → la puerta abre hacia dentro de la habitación (hacia arriba en SVG)
     doorG.style.transform = 'rotate(80deg)';
     doorG.style.transition = 'transform 0.15s ease';
@@ -806,7 +830,7 @@ function renderSensorSvg() {
   // Bulb is ON when door is physically open (guest entering/exiting) or
   // when presence is confirmed inside the room. This ties the SVG bulb
   // to real sensor state, not to the last commanded switch action.
-  const bulbShouldBeOn = stay && (realDoor === 'OPEN' || presence === 'PRESENT');
+  const bulbShouldBeOn = stay && (doorOpen || presence === 'PRESENT');
 
   if (bulbShouldBeOn) {
     bulbGlass.setAttribute('fill','#ffd740');
@@ -2359,6 +2383,9 @@ function updateSensorPanel(data) {
   const exitDl = data.exit_deadline ? new Date(data.exit_deadline) : null;
   const lastCloseAt = io.last_close_at ? new Date(io.last_close_at) : null;
   const gapSecs = data.gap_seconds || 15;
+  // F44 fix: usar las ventanas REALES del backend, no el gap.
+  const entryWindowSecs = data.entry_window_seconds || 90;
+  const exitCheckSecs = data.exit_check_seconds || (gapSecs + 10);
 
   if (currentState === 'VERIFICANDO_ENTRADA' && io.last_close_at) {
     // RF-46.4: ventana de entrada — puerta cerrada sin presencia confirmada.
@@ -2366,7 +2393,7 @@ function updateSensorPanel(data) {
     const closeMs = (typeof Choreography !== 'undefined' && Choreography.parseTime)
       ? Choreography.parseTime(io.last_close_at)
       : Date.parse(String(io.last_close_at) + 'Z');
-    const entryLeft = Math.max(0, Math.ceil((closeMs + gapSecs * 1000 - Date.now()) / 1000));
+    const entryLeft = Math.max(0, Math.ceil((closeMs + entryWindowSecs * 1000 - Date.now()) / 1000));
     cdEl.textContent = '❓ entrada (' + entryLeft + 's)';
     cdEl.className = 'value val-yellow';
   } else if (exitDl && exitDl > new Date()) {
@@ -2375,9 +2402,9 @@ function updateSensorPanel(data) {
     cdEl.className = 'value val-yellow';
   } else if (stay && stay.status === 'OCCUPIED' && door === 'CLOSED'
              && presence === 'PRESENT' && lastCloseAt
-             && (new Date() - lastCloseAt) < (gapSecs + 10) * 1000) {
+             && (new Date() - lastCloseAt) < exitCheckSecs * 1000) {
     // F31: Verification hold — waiting for presence sensor to clear after door close
-    const holdLeft = Math.max(0, Math.floor(((lastCloseAt.getTime() + (gapSecs + 10) * 1000) - Date.now()) / 1000));
+    const holdLeft = Math.max(0, Math.floor(((lastCloseAt.getTime() + exitCheckSecs * 1000) - Date.now()) / 1000));
     cdEl.textContent = '⏳ verificando (' + holdLeft + 's)';
     cdEl.className = 'value val-yellow';
   } else if (cooldown) {
@@ -2807,7 +2834,7 @@ function updateCountdown() {
   const deadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
   const now = new Date();
   const gapSeconds = data.gap_seconds || 15;
-  const totalSec = Math.max(1, gapSeconds);
+  const entryWindowSeconds = data.entry_window_seconds || 90;
   const toMs = (typeof Choreography !== 'undefined' && Choreography.parseTime)
     ? Choreography.parseTime
     : function (v) { return v ? Date.parse(String(v) + 'Z') : 0; };
@@ -2826,11 +2853,15 @@ function updateCountdown() {
   if (!exitActive && !entryActive) { group.style.display = 'none'; return; }
 
   let remainMs;
+  let totalSec;
   if (entryActive) {
+    // F44 fix: la ventana de entrada real es `entry_window_seconds`, no el gap.
+    totalSec = Math.max(1, entryWindowSeconds);
     const closeMs = toMs(io.last_close_at);
     if (!closeMs) { group.style.display = 'none'; return; }
     remainMs = (closeMs + totalSec * 1000) - now.getTime();
   } else {
+    totalSec = Math.max(1, gapSeconds);
     remainMs = deadline - now;
   }
 
