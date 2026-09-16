@@ -8,7 +8,7 @@ declare(strict_types=1);
  *   - The rule no longer depends on the current door state; it requires a
  *     *credited door cycle* posterior to the entry confirmation:
  *       stay.entry_confirmed_at set
- *       last_open_at > entry_confirmed_at
+ *       last_open_at >= entry_confirmed_at
  *       last_close_at >= last_open_at
  *       now - last_close_at <= DOOR_CYCLE_MAX_S (300 s)
  *       presence_state = ABSENT sustained >= gap
@@ -168,8 +168,13 @@ if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_ABSENT, $
 // T4: no new opening after entry confirmation → no fire
 $entryAfterOpen = gmdate('Y-m-d H:i:s', $t0 - 5) . '.000';
 if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_ABSENT, $absent10), makeStay($entryAfterOpen), 5, $t0) === false) {
-    ok('T4: last_open_at <= entry_confirmed_at → no fire');
-} else { bad('T4: last_open_at <= entry_confirmed_at → no fire'); }
+    ok('T4: last_open_at < entry_confirmed_at → no fire');
+} else { bad('T4: last_open_at < entry_confirmed_at → no fire'); }
+
+// T4b: same-second entry-close / exit-open (open == entry) → fire (F41 granularity)
+if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_ABSENT, $absent10), makeStay($open30), 5, $t0) === true) {
+    ok('T4b: last_open_at == entry_confirmed_at → fire (second granularity)');
+} else { bad('T4b: last_open_at == entry_confirmed_at → fire (second granularity)'); }
 
 // T5: credited cycle + ABSENT + gap met → fire
 if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_ABSENT, $absent10), $stayOk, 5, $t0) === true) {
