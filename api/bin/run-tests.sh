@@ -3069,6 +3069,23 @@ else
     skip "JS: tuya-pulsar-consumer.test.js" "fichero no encontrado"
 fi
 
+# ── 35.0b Unit JS: prueba de paseo (RF-52.4, sin red/BD) ───────────────────
+F44_WALK_JS="tests/Unit/cal-walktest.test.js"
+if [ -f "$F44_WALK_JS" ]; then
+    F44_W_OUT=$(node "$F44_WALK_JS" 2>&1)
+    F44_W_RC=$?
+    F44_W_SUM=$(echo "$F44_W_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F44_W_SUM" ] && F44_W_SUM="exit=$F44_W_RC"
+    if [ "$F44_W_RC" -eq 0 ]; then
+        pass "JS: cal-walktest.test.js ($F44_W_SUM)"
+    else
+        fail "JS: cal-walktest.test.js" \
+            "$F44_W_SUM — $(echo "$F44_W_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: cal-walktest.test.js" "fichero no encontrado"
+fi
+
 # ── 35.1 Migración 0109: columna de ventana de entrada ─────────────────────
 F44_COL=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='room_types'

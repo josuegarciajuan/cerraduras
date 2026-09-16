@@ -20,6 +20,7 @@ const {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  pendingExitVerification,
   epochMs,
   resolveEntryWindowMs,
   resolveExitCheckMs,
@@ -254,9 +255,89 @@ check('shouldCapture: real /live shape (MySQL UTC, door CLOSED, entry pending) �
     exitCheck: 25,
   }), NOW) === true);
 
+// ─── 6b. F44+ RF-51.1.6: ciclo de salida no detiene el muestreo ────────
+// Regresión PROTO2: al cerrar la puerta tras una salida el radar aún lee
+// PRESENT; si el gate paraba, se perdía el `none` posterior (≈3 s) y la salida
+// nunca se confirmaba.
+
+const exitCycleLive = live({
+  iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+         last_open_at: iso(NOW - 6000), last_close_at: iso(NOW - 3000) },
+  stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 60000), first_entry_at: iso(NOW - 90000) },
+  exitCheck: 40, gap: 15,
+});
+
+check('pendingExitVerification: ciclo de salida acreditado dentro de ventana → true',
+  pendingExitVerification(exitCycleLive, NOW) === true);
+
+check('shouldCapture: ciclo de salida + PRESENT + CLOSED reciente → capture (no parar)',
+  shouldCapture(exitCycleLive, NOW) === true);
+
+check('pendingExitVerification: timestamps MySQL UTC sin zona → true',
+  pendingExitVerification(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+           last_open_at: mysqlUtc(NOW - 6000), last_close_at: mysqlUtc(NOW - 3000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: mysqlUtc(NOW - 60000) },
+    exitCheck: 40,
+  }), NOW) === true);
+
+check('shouldCapture: salida real (MySQL UTC) con PRESENT obsoleto → capture',
+  shouldCapture(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+           last_open_at: mysqlUtc(NOW - 7000), last_close_at: mysqlUtc(NOW - 4000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: mysqlUtc(NOW - 70000), first_entry_at: mysqlUtc(NOW - 90000) },
+    exitCheck: 40, gap: 15,
+  }), NOW) === true);
+
+// El cierre de la propia entrada (apertura anterior a la confirmación) SÍ para.
+check('pendingExitVerification: cierre de entrada (open < entry_confirmed) → false',
+  pendingExitVerification(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+           last_open_at: iso(NOW - 9000), last_close_at: iso(NOW - 3000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 3000) },
+    exitCheck: 40,
+  }), NOW) === false);
+
+check('shouldCapture: cierre de entrada + PRESENT + CLOSED → stop (dentro)',
+  shouldCapture(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+           last_open_at: iso(NOW - 9000), last_close_at: iso(NOW - 3000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 3000), first_entry_at: iso(NOW - 9000) },
+  }), NOW) === false);
+
+check('pendingExitVerification: ventana exit_check agotada → false',
+  pendingExitVerification(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT',
+           last_open_at: iso(NOW - 60000), last_close_at: iso(NOW - 50000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 90000) },
+    exitCheck: 40,
+  }), NOW) === false);
+
+check('pendingExitVerification: puerta OPEN → false',
+  pendingExitVerification(live({
+    iot: { door_state: 'OPEN', last_open_at: iso(NOW - 3000), last_close_at: iso(NOW - 1000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 60000) },
+    exitCheck: 40,
+  }), NOW) === false);
+
+check('pendingExitVerification: sin entry_confirmed_at → false',
+  pendingExitVerification(live({
+    iot: { door_state: 'CLOSED', last_open_at: iso(NOW - 6000), last_close_at: iso(NOW - 3000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: null },
+    exitCheck: 40,
+  }), NOW) === false);
+
+check('pendingExitVerification: sin ciclo acreditado (solo cierre) → false',
+  pendingExitVerification(live({
+    iot: { door_state: 'CLOSED', presence_state: 'PRESENT', last_close_at: iso(NOW - 3000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 60000) },
+    exitCheck: 40,
+  }), NOW) === false);
+
 // ─── 7. Module is require-safe ─────────────────────────────────────────
 check('module exports the pure gate (require did not start the poller)',
-  typeof shouldCapture === 'function' && typeof nextCaptureState === 'function');
+  typeof shouldCapture === 'function' && typeof nextCaptureState === 'function'
+  && typeof pendingExitVerification === 'function');
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' presence-poller gate: ' + passed + ' passed, ' + failed + ' failed\n');

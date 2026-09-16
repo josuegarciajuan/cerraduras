@@ -626,6 +626,7 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-51.1.3**: La ventana de entrada se mantiene hasta detectar presencia o agotar `entry_window_seconds` (configurable, por defecto 90 s).
 - **RF-51.1.4**: Al **cerrarse la puerta con presencia confirmada** (huésped dentro) se detiene el muestreo y se asume presencia hasta la siguiente apertura.
 - **RF-51.1.5**: Al **cerrarse la puerta sin presencia** se mantiene el muestreo hasta `exit_check_seconds` (configurable; por defecto `gap_seconds + 10 s`) para decidir si la persona salió o solo se abrió y cerró la puerta.
+- **RF-51.1.6**: Al cerrarse la puerta tras un **ciclo de salida acreditado** (una apertura posterior a `entry_confirmed_at`, seguida de cierre) el muestreo **no se detiene** aunque `presence_state` sea `PRESENT`: se mantiene hasta observar `ABSENT` o agotar `exit_check_seconds`. Evita perder el `none` real por una lectura `PRESENT` obsoleta o de un objetivo fuera del radio útil (F44+).
 
 ### RF-51.2: Frescura dentro de la ventana
 - **RF-51.2.1**: Dentro de una ventana activa, el intervalo entre llamadas a Tuya debe ser el mínimo viable sin saturar cuota (objetivo 2 s), nunca el intervalo lento histórico de 5 s.
@@ -648,3 +649,8 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-52.3.1**: El panel debe permitir fijar radio (`far_detection`, respetando `dp_caps`) y sensibilidad (`sensitivity`), persistiéndolo por dispositivo/habitación.
 - **RF-52.3.2**: Para detección ágil en rango corto (~1 m) con corte eficaz al salir del rango, se usará el menor radio del rango del dispositivo (paso 75 cm en 24G V3) y sensibilidad máxima.
 - **RF-52.3.3**: Si el firmware del dispositivo impone un radio mínimo superior (p.ej. el 24G V3 rechaza 75 cm y su mínimo efectivo es 150 cm), se usará ese mínimo con sensibilidad máxima y se documentará la limitación.
+
+### RF-52.4: Prueba de paseo y DP de distancia no fiable
+- **RF-52.4.1**: El panel debe ofrecer un modo **prueba de paseo** guiado que muestre en vivo `presence_state` mientras el técnico se coloca en el límite deseado y luego se aleja, para elegir empíricamente `far_detection` (respetando `dp_caps`; mínimo efectivo 150 cm en 24G V3) y `sensitivity`.
+- **RF-52.4.2**: El modo prueba de paseo aplica los cambios en vivo (`persist:false`) y solo persiste el snapshot con la acción explícita de guardar; debe respetar el cooldown de cuota de la calibración.
+- **RF-52.4.3**: El 24G V3 declara `target_dis_closest` pero **no reporta distancia utilizable** (siempre 0). Ninguna decisión de presencia puede basarse en ese DP ni prometerse umbrales métricos por distancia con este modelo.

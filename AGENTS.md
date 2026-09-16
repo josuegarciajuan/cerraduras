@@ -114,6 +114,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |
 | **F42 Ventana de verificación de entrada** | **BLOCK 34** | **Completado** |
 | **F44 Tiempo real sensores + presencia bajo demanda** | **BLOCK 35** | **Completado** |
+| **F44+ Salida fiable + prueba de paseo** | **BLOCK 33/35** | **Completado** |
 
 ### F44 — Tiempo real de sensores y presencia bajo demanda (RF-50/51/52)
 
@@ -135,6 +136,23 @@ hasta el momento (regresión completa). Debe ejecutarse:
   es 150 cm (1.5 m) con sensibilidad 10. El 24G no admitiría un radio real de 1 m.
 - **Tests**: BLOCK 35 del runner + `tests/Unit/tuya-pulsar-consumer.test.js` y casos F44 en
   `tests/Unit/presence-poller-gate.test.js` (invocados con `node`), y `tests/Unit/TuyaPresenceMoveTest.php`.
+
+### F44+ — Salida fiable y prueba de paseo (RF-51.1.6 / RF-52.4)
+
+- **Bug corregido (RF-51.1.6)**: al cerrarse la puerta tras un ciclo de salida acreditado
+  (apertura posterior a `entry_confirmed_at` + cierre posterior) el gate del poller **ya no para**
+  aunque `presence_state` siga en `PRESENT`; sigue muestreando hasta `exit_check_seconds`. Antes
+  paraba justo al cerrar y perdía el `none` real (~3 s tras salir, validado en PROTO2), dejando
+  `last_absent_since=NULL`, la regla de salida sin disparar y el monigote dentro.
+  Implementado en `pendingExitVerification()` (`api/bin/tuya-presence-poller.js`).
+- **Prueba de paseo (RF-52.4)**: modo guiado en el modal `#cal-modal` (fase límite → alejamiento →
+  recomendación) para elegir el radio empíricamente. Lógica pura en
+  `api/public/assets/cal-walktest.js` (`suggestFarAction`), UI en `api/public/dashboard.html`.
+  Aplica en vivo (`persist:false`) y solo persiste al guardar; respeta el cooldown de cuota.
+- **Distancia no fiable (RF-52.4.3)**: el 24G V3 declara `target_dis_closest` pero reporta siempre
+  0 (95/95 lecturas); no se usa para decidir presencia ni para umbrales métricos.
+- **Tests**: casos RF-51.1.6 en `tests/Unit/presence-poller-gate.test.js` (BLOCK 33) y
+  `tests/Unit/cal-walktest.test.js` (BLOCK 35.0b).
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 

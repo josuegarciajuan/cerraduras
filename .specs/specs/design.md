@@ -2294,6 +2294,16 @@ Esto elimina la doble conexión Reader y el doble reenvío al webhook.
 - Throttle dentro de ventana: 2 s; muestreo inmediato al entrar en ventana (`lastTuyaCallAt=0`).
 - Watchdog 120 s / cooldown 30 s sin cambios.
 
+**RF-51.1.6 — ciclo de salida acreditado**: la parada "huésped dentro consolidado" se
+**anula** mientras exista `pendingExitVerification(live, now)`: `entry_confirmed_at` presente,
+`door=CLOSED`, una apertura posterior a la confirmación y su cierre (`last_open_at >=
+entry_confirmed_at`, `last_close_at >= last_open_at`) dentro de `exit_check_seconds`. En ese
+caso el poller sigue muestreando aunque `presence_state=PRESENT`, para capturar el `none` real
+y permitir que `ExitRuleEvaluator` confirme la salida. Fuera de esa ventana, o si el cierre es
+el de la propia consolidación de entrada (`last_open_at < entry_confirmed_at`), aplica la parada
+normal. Justificación (validación PROTO2): el radar reporta `none` ~3 s después de salir; el
+gate perdía ese `none` al parar en el cierre con `PRESENT` obsoleto.
+
 ### 13.4 Ventanas configurables
 `room_types.presence_entry_window_seconds` (default 90) — migración `0109`.
 `/live` expone `entry_window_seconds` y `exit_check_seconds = gap_seconds + 10`.
@@ -2306,3 +2316,24 @@ La presencia efectiva es `presence_state ∈ {presence, move}`; `far_detection` 
 ### 13.6 SSE
 Ante el evento `close` del servidor el panel programa `connectSSE()` con backoff
 exponencial (2 s → 30 s), reseteado en `connected`. No hay degradación permanente a polling.
+
+### 13.7 Prueba de paseo (RF-52.4)
+Dentro del modal `#cal-modal` se añade un modo guiado **sin backend nuevo**: reutiliza
+`GET /dashboard-api/presence-calibrate/status` y `POST /dashboard-api/presence-calibrate/set`
+respetando el cooldown de cuota existente (~2 s). Secuencia:
+1. **Límite**: el técnico se coloca en la distancia máxima deseada y pulsa "Iniciar prueba";
+   el panel muestrea en vivo el badge (`presence`/`move`/`none`).
+2. **Alejamiento**: el técnico se aleja; el panel confirma que pasa a `none` y en cuántos
+   segundos (retención).
+3. **Recomendación**: función pura `suggestFarAction(readings, caps)` que propone subir/bajar
+   `far_detection` un paso (`far_step`) según si detecta o no en el límite. Se aplica en vivo
+   (`persist:false`) y solo "Guardar" persiste el snapshot (`devices.meta_json.calibration`).
+La UI muestra explícitamente que el 24G V3 **no reporta distancia** (el campo "objetivo" queda
+en `—`), para no prometer umbrales métricos.
+
+### 13.8 `target_dis_closest` no fiable en 24G V3 (RF-52.4.3)
+El 24G V3 (producto `5lld8pgsoynvctqa`, `hps`) declara el DP `target_dis_closest` pero reporta
+**siempre 0** (verificado: 95/95 lecturas del poller y pushes nativos del webhook). El ZY-M100 sí
+reporta distancia. Por tanto no se implementa corte por distancia; el único control de alcance es
+`far_detection` + `sensitivity` (paso de 75 cm, mínimo efectivo 150 cm) y el apantallado/
+reorientación física documentados como recomendación operativa.
