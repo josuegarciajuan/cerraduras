@@ -6,6 +6,7 @@
 <title>Cerraduras — Test Room</title>
 <script src="/assets/qrcode.min.js"></script>
 <script src="/assets/choreography.js"></script>
+<script src="/assets/cal-walktest.js"></script>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -377,6 +378,19 @@
     <div class="cal-range-labels"><span>0</span><span>3</span><span>6</span><span>9</span></div>
 
     <div class="cal-readback" id="cal-readback">—</div>
+
+    <!-- F44+ (RF-52.4): prueba de paseo — elige el radio empíricamente -->
+    <div id="cal-walktest" style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <strong style="font-size:0.8rem">🏃 Prueba de paseo</strong>
+        <span id="cal-walk-status" style="font-size:0.7rem;color:var(--text-dim)">Listo</span>
+      </div>
+      <div class="cal-hint" id="cal-walk-hint">Colócate en el límite deseado (p. ej. la puerta) y pulsa Iniciar; aléjate cuando se te indique. La distancia del objetivo no está disponible en este modelo.</div>
+      <div style="margin-top:8px">
+        <button class="btn" id="cal-walk-btn" onclick="calWalkToggle()">▶ Iniciar prueba</button>
+      </div>
+      <div id="cal-walk-result" hidden style="margin-top:8px;font-size:0.75rem"></div>
+    </div>
 
     <div class="cal-actions">
       <button class="btn btn-config" id="cal-refresh-btn" onclick="calRefresh()">🔄 Refrescar</button>
@@ -3161,6 +3175,7 @@ async function openCalibrateModal() {
   _calCaps = null;
   _calQuotaUntil = 0;
   _calLastReadAt = 0;
+  calWalkReset();
   calSetBusy(true, 'Consultando sensor…');
 
   try {
@@ -3215,6 +3230,8 @@ async function calAutoReapplyIfNeeded() {
 
 function closeCalibrateModal() {
   if (_calDebounce) { clearTimeout(_calDebounce); _calDebounce = null; }
+  if (_calWalk) _calWalk.running = false;   // F44+ (RF-52.4): detener prueba de paseo
+  _calWalk = null;
   calEl('cal-modal').classList.remove('open');
   calState = null;
   _calBusy = false;
@@ -3459,6 +3476,135 @@ async function calCancel() {
   }
   calSetBusy(false);
   closeCalibrateModal();
+}
+
+// ── F44+ (RF-52.4): prueba de paseo ──────────────────────────────────────
+// El 24G V3 no reporta distancia, así que el radio se elige empíricamente: el
+// técnico se coloca en el límite (fase A) y luego se aleja (fase B). La
+// recomendación la calcula la función pura CalWalkTest.suggestFarAction()
+// (assets/cal-walktest.js).
+const CAL_WALK_READS = 8;   // lecturas por fase (~1.5 s c/u → ~12 s)
+let _calWalk = null;
+
+function calWalkSetStatus(txt) {
+  const el = calEl('cal-walk-status');
+  if (el) el.textContent = txt || '';
+}
+function calWalkSetHint(txt) {
+  const el = calEl('cal-walk-hint');
+  if (el) el.textContent = txt || '';
+}
+
+// Piso efectivo del firmware para el radio (RF-52.3.3): el 24G V3 rechaza 75 cm.
+function calEffectiveFarMin(caps) {
+  if (!caps) return 0;
+  if (caps.far_effective_min != null) return caps.far_effective_min;
+  if (caps.far_min === 75 && (caps.far_step || 1) === 75) return 150;
+  return caps.far_min || 0;
+}
+
+function calWalkRunning() { return !!(_calWalk && _calWalk.running); }
+
+function calWalkReset() {
+  _calWalk = null;
+  calWalkSetStatus('Listo');
+  const b = calEl('cal-walk-btn');
+  if (b) b.textContent = '▶ Iniciar prueba';
+  const r = calEl('cal-walk-result');
+  if (r) { r.hidden = true; r.innerHTML = ''; }
+  calWalkSetHint('Colócate en el límite deseado (p. ej. la puerta) y pulsa Iniciar; aléjate cuando se te indique. La distancia del objetivo no está disponible en este modelo.');
+}
+
+function calWalkStop(msg) {
+  if (_calWalk) _calWalk.running = false;
+  calWalkSetStatus(msg || 'Detenida');
+  const b = calEl('cal-walk-btn');
+  if (b) b.textContent = '▶ Repetir prueba';
+}
+
+async function calWalkToggle() {
+  if (calWalkRunning()) { calWalkStop('Cancelada'); return; }
+  if (!calState || !calState.hasSensor) { calSetError('Esta habitación no tiene sensor de presencia.'); return; }
+  if (!window.CalWalkTest) { calSetError('assets/cal-walktest.js no cargado'); return; }
+  if (_calBusy) { calSetError('Espera a que termine la operación en curso.'); return; }
+
+  _calWalk = { running: true, a: [], b: [], bucket: 'a' };
+  const res = calEl('cal-walk-result'); if (res) { res.hidden = true; res.innerHTML = ''; }
+  const btn = calEl('cal-walk-btn'); if (btn) btn.textContent = '⏹ Parar';
+  calSetError('');
+
+  try {
+    calWalkSetStatus('Fase 1/2 · Límite');
+    calWalkSetHint('Ponte en el límite deseado (p. ej. la puerta) y muévete suavemente.');
+    for (let i = 0; i < CAL_WALK_READS; i++) await calWalkSample();
+    if (!calWalkRunning()) return;
+
+    _calWalk.bucket = 'b';
+    calWalkSetStatus('Fase 2/2 · Alejamiento');
+    calWalkSetHint('Ahora aléjate de la habitación y quédate fuera hasta que termine el conteo.');
+    for (let i = 0; i < CAL_WALK_READS; i++) await calWalkSample();
+  } catch (e) {
+    calSetError(e && e.message ? e.message : 'Prueba interrumpida');
+    calWalkStop('Error');
+    return;
+  }
+
+  _calWalk.running = false;
+  const btn2 = calEl('cal-walk-btn'); if (btn2) btn2.textContent = '▶ Repetir prueba';
+  calWalkSetStatus('Resultado');
+  calWalkRenderResult();
+}
+
+async function calWalkSample() {
+  if (!calWalkRunning()) throw new Error('cancelada');
+  const data = await calReadStatus();
+  const st = (data && data.presence_state) || null;
+  _calWalk[_calWalk.bucket].push({ t: Date.now(), state: st });
+  await calSleep(CAL_COOLDOWN_MS);
+}
+
+function calWalkRenderResult() {
+  const box = calEl('cal-walk-result');
+  if (!box || !_calWalk) return;
+  const M = window.CalWalkTest;
+  const currentFar = (calState.appliedFar != null) ? calState.appliedFar : calState.readFar;
+  const s = M.suggestFarAction({
+    boundary: _calWalk.a,
+    away: _calWalk.b,
+    currentFar: currentFar,
+    caps: _calCaps,
+    effectiveMin: calEffectiveFarMin(_calCaps),
+  });
+  const b = s.summary.boundary, a = s.summary.away;
+  const label = {
+    keep:     '✅ Radio correcto',
+    increase: '⬆️ Subir radio',
+    decrease: '⬇️ Bajar radio',
+    shield:   '🧱 Reorientar o apantallar',
+    no_data:  '❔ Sin datos',
+  }[s.action] || s.action;
+  const canApply = (s.far != null && s.far !== currentFar);
+  box.hidden = false;
+  box.innerHTML =
+    '<div style="font-weight:600;margin-bottom:4px">' + label + '</div>' +
+    '<div style="color:var(--text-dim)">Límite: ' + b.detectedCount + '/' + b.total + ' detectado · ' +
+    'Alejamiento: ' + a.detectedCount + '/' + a.total + ' detectado</div>' +
+    '<div style="margin-top:4px">' + s.reason + '</div>' +
+    (canApply
+      ? '<div style="margin-top:8px"><button class="btn btn-config" onclick="calWalkApply(' + s.far + ')">' +
+        'Aplicar sugerencia (' + (s.far / 100).toFixed(2) + ' m)</button></div>'
+      : '');
+}
+
+// Aplica en vivo (persist:false) el valor sugerido por la prueba de paseo.
+async function calWalkApply(farCm) {
+  if (!calState || !calState.hasSensor || _calBusy) return;
+  const far = calSnapFar(farCm);
+  const fr = calEl('cal-far-range');
+  if (fr) fr.value = far;
+  calState.farTarget = far; _calDirtyFar = true;
+  calRenderReadout('far', far);
+  await calApplyChanged();
 }
 
 // Manual refresh (no automatic polling).
