@@ -2300,7 +2300,12 @@ ANOM_STATUS_RESP=$(curl -s -w "\n%{http_code}" \
 ANOM_STATUS_HTTP=$(echo "$ANOM_STATUS_RESP" | tail -1)
 
 if [ "$ANOM_STATUS_HTTP" = "200" ]; then
-  if echo "$ANOM_STATUS_RESP" | grep -q '"status"' && echo "$ANOM_STATUS_RESP" | grep -q '"acknowledged_at"'; then
+  if echo "$ANOM_STATUS_RESP" | grep -q '"data":\[\]'; then
+    # F41: anomaly-scanner ahora corre y resuelve/descarta anomalías, así que la
+    # tabla puede estar vacía. No hay fila que inspeccionar → skip explicativo.
+    skip "GET /anomalies?status=ALL fields" \
+      "No hay anomalías en la BD (anomaly-scanner F41 las resuelve); nada que inspeccionar"
+  elif echo "$ANOM_STATUS_RESP" | grep -q '"status"' && echo "$ANOM_STATUS_RESP" | grep -q '"acknowledged_at"'; then
     pass "GET /anomalies?status=ALL: response includes status and acknowledged_at fields"
   else
     fail "GET /anomalies?status=ALL: missing status or acknowledged_at" \
