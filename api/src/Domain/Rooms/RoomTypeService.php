@@ -31,6 +31,10 @@ final class RoomTypeService
     private const MAX_COOL    = 600;
     private const MIN_QR_WIN  = 5;   // minutes
     private const MAX_QR_WIN  = 240;
+    private const MIN_ENTRY_WIN  = 1;   // seconds (política ≥40 fijada en migración/config)
+    private const MAX_ENTRY_WIN  = 600;
+    private const MIN_EXIT_CHECK = 1;   // seconds (política ≥40 fijada en migración/config)
+    private const MAX_EXIT_CHECK = 600;
 
     public function __construct(RoomTypeRepositoryInterface $repo)
     {
@@ -61,7 +65,9 @@ final class RoomTypeService
         int $graceMinutes,
         int $exitPresenceGapSeconds,
         int $reentryCooldownSeconds,
-        int $qrUsageWindowMinutes
+        int $qrUsageWindowMinutes,
+        int $presenceEntryWindowSeconds = 90,
+        int $exitCheckSeconds = 40
     ): RoomType {
         $code = trim($code);
         $name = trim($name);
@@ -71,7 +77,9 @@ final class RoomTypeService
             $graceMinutes,
             $exitPresenceGapSeconds,
             $reentryCooldownSeconds,
-            $qrUsageWindowMinutes
+            $qrUsageWindowMinutes,
+            $presenceEntryWindowSeconds,
+            $exitCheckSeconds
         );
 
         if ($this->repo->findByCode($code) !== null) {
@@ -88,7 +96,9 @@ final class RoomTypeService
             $graceMinutes,
             $exitPresenceGapSeconds,
             $reentryCooldownSeconds,
-            $qrUsageWindowMinutes
+            $qrUsageWindowMinutes,
+            $presenceEntryWindowSeconds,
+            $exitCheckSeconds
         );
 
         return $this->getOrFail($id);
@@ -126,9 +136,14 @@ final class RoomTypeService
         $gap = $fields['exit_presence_gap_seconds'] ?? $current->exitPresenceGapSeconds;
         $cool = $fields['reentry_cooldown_seconds'] ?? $current->reentryCooldownSeconds;
         $qr = $fields['qr_usage_window_minutes'] ?? $current->qrUsageWindowMinutes;
-        $this->validateRanges((int) $grace, (int) $gap, (int) $cool, (int) $qr);
+        $entryWin = $fields['presence_entry_window_seconds'] ?? $current->presenceEntryWindowSeconds;
+        $exitChk = $fields['exit_check_seconds'] ?? $current->exitCheckSeconds;
+        $this->validateRanges((int) $grace, (int) $gap, (int) $cool, (int) $qr, (int) $entryWin, (int) $exitChk);
 
-        foreach (['grace_minutes','exit_presence_gap_seconds','reentry_cooldown_seconds','qr_usage_window_minutes'] as $k) {
+        foreach ([
+            'grace_minutes','exit_presence_gap_seconds','reentry_cooldown_seconds','qr_usage_window_minutes',
+            'presence_entry_window_seconds','exit_check_seconds',
+        ] as $k) {
             if (array_key_exists($k, $fields) && $fields[$k] !== null) {
                 $sanitized[$k] = (int) $fields[$k];
             }
@@ -173,7 +188,7 @@ final class RoomTypeService
         }
     }
 
-    private function validateRanges(int $grace, int $gap, int $cool, int $qr): void
+    private function validateRanges(int $grace, int $gap, int $cool, int $qr, int $entryWin = 90, int $exitChk = 40): void
     {
         if ($grace < self::MIN_GRACE || $grace > self::MAX_GRACE) {
             throw new UnprocessableException(
@@ -201,6 +216,20 @@ final class RoomTypeService
                 'invalid_range',
                 'qr_usage_window_minutes out of range',
                 ['min' => self::MIN_QR_WIN, 'max' => self::MAX_QR_WIN]
+            );
+        }
+        if ($entryWin < self::MIN_ENTRY_WIN || $entryWin > self::MAX_ENTRY_WIN) {
+            throw new UnprocessableException(
+                'invalid_range',
+                'presence_entry_window_seconds out of range',
+                ['min' => self::MIN_ENTRY_WIN, 'max' => self::MAX_ENTRY_WIN]
+            );
+        }
+        if ($exitChk < self::MIN_EXIT_CHECK || $exitChk > self::MAX_EXIT_CHECK) {
+            throw new UnprocessableException(
+                'invalid_range',
+                'exit_check_seconds out of range',
+                ['min' => self::MIN_EXIT_CHECK, 'max' => self::MAX_EXIT_CHECK]
             );
         }
     }

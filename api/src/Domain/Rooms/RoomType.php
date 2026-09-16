@@ -15,6 +15,12 @@ namespace App\Domain\Rooms;
  *  - reentry_cooldown_seconds   how long the door stays "hot-locked" after
  *                               an auto exit to mitigate reentries.
  *  - qr_usage_window_minutes    exp - iat for QR tokens issued for this type.
+ *  - presence_entry_window_seconds  F44/RF-51.2: seconds the presence poller
+ *                               keeps sampling after a door OPEN until presence
+ *                               is detected (>= 40 by policy).
+ *  - exit_check_seconds         F44/RF-51.4: seconds the presence poller keeps
+ *                               sampling after a door CLOSE to decide the exit
+ *                               (>= 40 by policy).
  */
 final class RoomType
 {
@@ -25,6 +31,8 @@ final class RoomType
     public int $exitPresenceGapSeconds;
     public int $reentryCooldownSeconds;
     public int $qrUsageWindowMinutes;
+    public int $presenceEntryWindowSeconds;
+    public int $exitCheckSeconds;
 
     public function __construct(
         int $id,
@@ -33,7 +41,9 @@ final class RoomType
         int $graceMinutes,
         int $exitPresenceGapSeconds,
         int $reentryCooldownSeconds,
-        int $qrUsageWindowMinutes
+        int $qrUsageWindowMinutes,
+        int $presenceEntryWindowSeconds = 90,
+        int $exitCheckSeconds = 40
     ) {
         $this->id = $id;
         $this->code = $code;
@@ -42,6 +52,8 @@ final class RoomType
         $this->exitPresenceGapSeconds = $exitPresenceGapSeconds;
         $this->reentryCooldownSeconds = $reentryCooldownSeconds;
         $this->qrUsageWindowMinutes = $qrUsageWindowMinutes;
+        $this->presenceEntryWindowSeconds = $presenceEntryWindowSeconds;
+        $this->exitCheckSeconds = $exitCheckSeconds;
     }
 
     /**
@@ -57,6 +69,8 @@ final class RoomType
             'exit_presence_gap_seconds' => $this->exitPresenceGapSeconds,
             'reentry_cooldown_seconds' => $this->reentryCooldownSeconds,
             'qr_usage_window_minutes' => $this->qrUsageWindowMinutes,
+            'presence_entry_window_seconds' => $this->presenceEntryWindowSeconds,
+            'exit_check_seconds' => $this->exitCheckSeconds,
         ];
     }
 }

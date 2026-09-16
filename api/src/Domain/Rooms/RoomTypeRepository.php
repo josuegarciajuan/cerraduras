@@ -26,7 +26,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
     {
         $rows = $this->pdo->query(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
-                    reentry_cooldown_seconds, qr_usage_window_minutes
+                    reentry_cooldown_seconds, qr_usage_window_minutes,
+                    presence_entry_window_seconds, exit_check_seconds
              FROM room_types
              ORDER BY id ASC'
         )->fetchAll(PDO::FETCH_ASSOC);
@@ -38,7 +39,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
     {
         $stmt = $this->pdo->prepare(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
-                    reentry_cooldown_seconds, qr_usage_window_minutes
+                    reentry_cooldown_seconds, qr_usage_window_minutes,
+                    presence_entry_window_seconds, exit_check_seconds
              FROM room_types WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -50,7 +52,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
     {
         $stmt = $this->pdo->prepare(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
-                    reentry_cooldown_seconds, qr_usage_window_minutes
+                    reentry_cooldown_seconds, qr_usage_window_minutes,
+                    presence_entry_window_seconds, exit_check_seconds
              FROM room_types WHERE code = :c LIMIT 1'
         );
         $stmt->execute([':c' => $code]);
@@ -64,13 +67,16 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
         int $graceMinutes,
         int $exitPresenceGapSeconds,
         int $reentryCooldownSeconds,
-        int $qrUsageWindowMinutes
+        int $qrUsageWindowMinutes,
+        int $presenceEntryWindowSeconds = 90,
+        int $exitCheckSeconds = 40
     ): int {
         $stmt = $this->pdo->prepare(
             'INSERT INTO room_types
                 (code, name, grace_minutes, exit_presence_gap_seconds,
-                 reentry_cooldown_seconds, qr_usage_window_minutes)
-             VALUES (:code, :name, :g, :ex, :re, :qr)'
+                 reentry_cooldown_seconds, qr_usage_window_minutes,
+                 presence_entry_window_seconds, exit_check_seconds)
+             VALUES (:code, :name, :g, :ex, :re, :qr, :ew, :xc)'
         );
         $stmt->execute([
             ':code' => $code,
@@ -79,6 +85,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             ':ex' => $exitPresenceGapSeconds,
             ':re' => $reentryCooldownSeconds,
             ':qr' => $qrUsageWindowMinutes,
+            ':ew' => $presenceEntryWindowSeconds,
+            ':xc' => $exitCheckSeconds,
         ]);
         return (int) $this->pdo->lastInsertId();
     }
@@ -101,6 +109,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             'exit_presence_gap_seconds' => ':ex',
             'reentry_cooldown_seconds' => ':re',
             'qr_usage_window_minutes' => ':qr',
+            'presence_entry_window_seconds' => ':ew',
+            'exit_check_seconds' => ':xc',
         ];
         $sets = [];
         $params = [':id' => $id];
@@ -139,7 +149,9 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             (int) $row['grace_minutes'],
             (int) $row['exit_presence_gap_seconds'],
             (int) $row['reentry_cooldown_seconds'],
-            (int) $row['qr_usage_window_minutes']
+            (int) $row['qr_usage_window_minutes'],
+            (int) ($row['presence_entry_window_seconds'] ?? 90),
+            (int) ($row['exit_check_seconds'] ?? 40)
         );
     }
 }
