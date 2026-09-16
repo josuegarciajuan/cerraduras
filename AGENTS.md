@@ -112,6 +112,18 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F38 Workers (QR maestro)** | **BLOCK 29** | **Pendiente** |
 | **F39 Estado verídico de dispositivos** | **BLOCK 30** | **Completado** |
 | **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |
+| **F42 Ventana de verificación de entrada** | **BLOCK 34** | **Completado** |
+
+### F42 — Ventana de verificación de entrada (RF-46.4)
+
+Tras QR + apertura + cierre sin presencia aún, el monigote **permanece en el umbral** (no vuelve
+fuera) con la puerta cerrada, `?` y conteo `gap_seconds`. Si el radar confirma presencia dentro de
+la ventana (aunque sea tras el cierre), el monigote avanza al interior; si la ventana se agota, se
+asume que no entró nadie y se exige una nueva apertura. Una entrada sin consolidar **no** muestra
+el conteo de salida (`exit_deadline` exige `entry_confirmed_at`).
+
+- **Tests**: BLOCK 34 del runner + casos T-w1…T-w7 en `tests/Unit/choreography.test.js` y
+  sección F42 en `tests/Unit/IotSessionServiceTest.php` (autodescubierto en BLOCK 1).
 
 ### F39 — Estado verídico de dispositivos (panel "Dispositivos")
 

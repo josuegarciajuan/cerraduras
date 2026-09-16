@@ -723,7 +723,7 @@ const MONIGOTE_POS = {
   WAITING:     { tx:292, ty:308 }   // at door threshold during verification
 };
 
-// 21 states: name → { icon, desc, bgColor, monigote, door, bulb, phase }
+// 22 states: name → { icon, desc, bgColor, monigote, door, bulb, phase }
 const STATES = {
   LOADING:             { icon:'⏳', desc:'Conectando con la API...',         bg:'rgba(20,20,34,0.6)',     moni:'OUTSIDE', door:'closed', bulb:false, phase:'Inicializando' },
   ESPERANDO:           { icon:'🏨', desc:'Habitación lista. Sin reservas.',  bg:'rgba(20,20,34,0.6)',     moni:'OUTSIDE', door:'closed', bulb:false, phase:'Habitación libre' },
@@ -743,6 +743,7 @@ const STATES = {
   ANOMALIA_PA:         { icon:'⚠️', desc:'Puerta abierta sin presencia.',     bg:'rgba(255,145,0,0.15)',   moni:'INSIDE',  door:'open',   bulb:true,  phase:'Anomalía: puerta abierta sin presencia' },
   SALIDA_DETECTADA:    { icon:'🚪', desc:'Salida detectada. Cerrando...',     bg:'rgba(255,215,64,0.08)',  moni:'OUTSIDE',  door:'open',  bulb:false, phase:'Salida detectada' },
   VERIFICANDO_PRESENCIA:{ icon:'⏳', desc:'Puerta cerrada. Comprobando presencia...', bg:'rgba(255,215,64,0.10)', moni:'WAITING', door:'closed', bulb:true,  phase:'Verificando presencia — cuenta atrás' },
+  VERIFICANDO_ENTRADA:{ icon:'❓', desc:'Puerta cerrada. ¿Entró el huésped?', bg:'rgba(255,215,64,0.10)', moni:'WAITING', door:'closed', bulb:false, phase:'Verificando entrada — cuenta atrás' },
   PUERTA_ABIERTA:      { icon:'🚪', desc:'Puerta abierta. ¿Sale el huésped?', bg:'rgba(255,215,64,0.12)',  moni:'WAITING', door:'open',   bulb:true,  phase:'Puerta abierta — posible salida' },
   EXCESO_TIEMPO:       { icon:'⏰', desc:'Tiempo excedido. Posible deuda.',   bg:'rgba(255,82,82,0.18)',   moni:'INSIDE',  door:'closed', bulb:true,  phase:'Exceso de tiempo — deuda' },
   SENSORES_DESCONECTADOS:{ icon:'📡', desc:'Sensores sin respuesta.',         bg:'rgba(120,120,120,0.12)', moni:'OUTSIDE', door:'closed', bulb:false, phase:'Sensores desconectados' }
@@ -967,6 +968,8 @@ function updatePollingFrequency(stateName, door, presence, stayStatus, exitDeadl
     freq = stayStatus === 'OCCUPIED' ? 4 : 3;
   }
   if (stateName === 'VERIFICANDO_PRESENCIA' && !exitDeadline) freq = 4;
+  // RF-46.4: ventana de entrada — captura rápida para confirmar presencia.
+  if (stateName === 'VERIFICANDO_ENTRADA') freq = 4;
   // Exit transition: keep scanning to verify room is truly empty
   if (stateName === 'SALIDA_DETECTADA' || stateName === 'HUESPED_HA_SALIDO') freq = 10;
   if (stateName === 'OCUPADA' || stateName === 'ESPERANDO' || stateName === 'ESPERANDO_HUESPED' || stateName === 'QR_DISPONIBLE') freq = 0;
@@ -1150,6 +1153,7 @@ function applyState(stateName) {
     const io = lastLiveData.iot_session || {};
     const insideWithPresence = (stateName === 'OCUPADA' && (io.presence_state === 'PRESENT'));
     const verifying = (stateName === 'VERIFICANDO_PRESENCIA');
+    const verifyingEntry = (stateName === 'VERIFICANDO_ENTRADA');
     const doorOpenPostEntry = (stateName === 'PUERTA_ABIERTA');
     const exitDetected = (stateName === 'HUESPED_HA_SALIDO' || stateName === 'SALIDA_DETECTADA');
     const qrValidated = (stateName === 'QR_OK');
@@ -1188,7 +1192,7 @@ function applyState(stateName) {
       armR.setAttribute('stroke','#ffd740');
       armR.setAttribute('stroke-width','3');
       if (prev !== 'QR_OK') triggerQrFlash();
-    } else if (verifying || doorOpenPostEntry) {
+    } else if (verifying || verifyingEntry || doorOpenPostEntry) {
       moniFace.style.display = 'none';
       moniCheck.style.display = 'none';
       moniHead.setAttribute('fill','rgba(255,215,64,0.6)');
@@ -2331,7 +2335,16 @@ function updateSensorPanel(data) {
   const lastCloseAt = io.last_close_at ? new Date(io.last_close_at) : null;
   const gapSecs = data.gap_seconds || 15;
 
-  if (exitDl && exitDl > new Date()) {
+  if (currentState === 'VERIFICANDO_ENTRADA' && io.last_close_at) {
+    // RF-46.4: ventana de entrada — puerta cerrada sin presencia confirmada.
+    // `last_close_at` es UTC sin zona: parsear con Choreography.parseTime.
+    const closeMs = (typeof Choreography !== 'undefined' && Choreography.parseTime)
+      ? Choreography.parseTime(io.last_close_at)
+      : Date.parse(String(io.last_close_at) + 'Z');
+    const entryLeft = Math.max(0, Math.ceil((closeMs + gapSecs * 1000 - Date.now()) / 1000));
+    cdEl.textContent = '❓ entrada (' + entryLeft + 's)';
+    cdEl.className = 'value val-yellow';
+  } else if (exitDl && exitDl > new Date()) {
     const sec = Math.max(0, Math.floor((exitDl - new Date()) / 1000));
     cdEl.textContent = '⏳ ' + sec + 's (salida)';
     cdEl.className = 'value val-yellow';
@@ -2750,15 +2763,17 @@ function toggleEventDetail(row) {
 // ╚══════════════════════════════════════════════════════════╝
 
 /**
- * F41·TSK-F41-14 (RF-49.2): conteo por temporizador LOCAL.
+ * F41·TSK-F41-14 (RF-49.2) + F42 (RF-46.4): conteo por temporizador LOCAL.
  * No depende de que lleguen eventos: calcula el restante con el reloj del
- * navegador mientras exista una verificación de salida real. A 0 pide resync
- * (la confirmación la decide el backend, no el cliente).
+ * navegador mientras exista una verificación real (de salida o de entrada) y
+ * se ancla a `exit_deadline` (salida) o a `last_close_at + gap_seconds` (entrada).
+ * A 0 pide resync (la confirmación la decide el backend, no el cliente).
  */
 function updateCountdown() {
   const el = document.getElementById('countdown-text');
   const group = document.getElementById('countdown-group');
   const arc = document.getElementById('countdown-arc');
+  const labelEl = document.getElementById('countdown-label');
   if (!group || !el) return;
 
   const data = lastLiveData || {};
@@ -2766,27 +2781,44 @@ function updateCountdown() {
   const stay = data.active_stay;
   const deadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
   const now = new Date();
+  const gapSeconds = data.gap_seconds || 15;
+  const totalSec = Math.max(1, gapSeconds);
+  const toMs = (typeof Choreography !== 'undefined' && Choreography.parseTime)
+    ? Choreography.parseTime
+    : function (v) { return v ? Date.parse(String(v) + 'Z') : 0; };
 
-  // RF-49.2.2: solo visible con verificación activa (deadline + ausencia + cerrado + OCCUPIED).
-  const active = !!deadline
+  // RF-49.2.2: salida (deadline + ausencia + cerrado + OCCUPIED).
+  const exitActive = !!deadline
     && io.presence_state === 'ABSENT'
     && io.door_state === 'CLOSED'
     && !!stay && stay.status === 'OCCUPIED';
-  if (!active) { group.style.display = 'none'; return; }
 
-  const remainMs = deadline - now;
+  // RF-46.4: entrada (puerta cerrada sin presencia, ventana de verificación).
+  const entryActive = currentState === 'VERIFICANDO_ENTRADA'
+    && io.door_state === 'CLOSED'
+    && !!stay && stay.status === 'OCCUPIED';
+
+  if (!exitActive && !entryActive) { group.style.display = 'none'; return; }
+
+  let remainMs;
+  if (entryActive) {
+    const closeMs = toMs(io.last_close_at);
+    if (!closeMs) { group.style.display = 'none'; return; }
+    remainMs = (closeMs + totalSec * 1000) - now.getTime();
+  } else {
+    remainMs = deadline - now;
+  }
+
   if (remainMs <= 0) {
     group.style.display = 'none';
     if (Date.now() - _lastCountdownResyncAt > 5000) {
       _lastCountdownResyncAt = Date.now();
-      resyncLive(); // el vacío lo confirma el backend
+      resyncLive(); // la confirmación la decide el backend
     }
     return;
   }
 
   const sec = Math.max(0, Math.floor(remainMs / 1000));
-  const gapSeconds = data.gap_seconds || 15;
-  const totalSec = Math.max(1, gapSeconds);
   const elapsed = totalSec - sec;
   const pct = Math.min(1.0, Math.max(0.0, elapsed / totalSec));
   const circumference = 169.65; // 2*pi*27
@@ -2797,6 +2829,7 @@ function updateCountdown() {
     arc.setAttribute('stroke-dashoffset', offset);
     arc.setAttribute('stroke-dasharray', circumference);
   }
+  if (labelEl) labelEl.textContent = entryActive ? 'ventana entrada' : 'ventana presencia';
   // Blinking effect + circular arc
   el.style.opacity = (Math.floor(Date.now() / 500) % 2 === 0) ? '1' : '0.3';
   el.textContent = sec;

@@ -529,6 +529,13 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-46.3.1**: La posición del avatar debe reconciliarse con el estado de dominio real (estancia, puerta, presencia), no solo con eventos sueltos.
 - **RF-46.3.2**: Al recargar o resincronizar el panel, la posición debe reflejar el estado real y no una secuencia parcial de eventos.
 
+### RF-46.4: Ventana de verificación de entrada (F42)
+- **RF-46.4.1**: Tras un QR validado, una apertura acreditada y el cierre de la puerta, si aún no se ha detectado presencia, el avatar debe permanecer en el umbral (no volver fuera), con la puerta cerrada, símbolo de interrogación y un conteo de espera visible durante `gap_seconds`.
+- **RF-46.4.2**: Si la presencia se detecta dentro de la ventana, el avatar debe avanzar al interior y la entrada debe consolidarse (aunque el radar confirme después del cierre).
+- **RF-46.4.3**: Si la ventana se agota sin presencia, se asume que no entró nadie: el avatar vuelve fuera, la entrada queda sin consolidar y se exige una nueva apertura acreditada para reintentar la entrada.
+- **RF-46.4.4**: Mientras la puerta esté abierta con presencia detectada, el avatar espera en el umbral sin contar; al cerrarse la puerta, avanza al interior.
+- **RF-46.4.5**: Una entrada sin consolidar no debe mostrar el conteo de salida ni emitir `exit_deadline`.
+
 ## RF-47: Verificación y confirmación de salida
 
 ### RF-47.1: Precondición de la verificación
@@ -577,9 +584,10 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-49.1.2**: La resincronización no debe requerir intervención manual ni recargar la página.
 - **RF-49.1.3**: Tras resincronizar, la posición del avatar, la estancia y el estado de sensores mostrados deben corresponder al estado real del backend.
 
-### RF-49.2: Conteo de verificación de salida visible
-- **RF-49.2.1**: Mientras exista una verificación de salida activa, el panel debe mostrar de forma fiable el conteo restante.
+### RF-49.2: Conteo de verificación visible
+- **RF-49.2.1**: Mientras exista una verificación activa (de salida o de entrada, RF-46.4), el panel debe mostrar de forma fiable el conteo restante.
 - **RF-49.2.2**: El conteo debe reflejar el estado real (inicio, cancelación por reaparición de presencia, confirmación) y no quedar congelado ni mostrarse cuando ya no hay verificación.
+- **RF-49.2.3**: El conteo de entrada se ancla al cierre de puerta (`last_close_at`) y usa `gap_seconds`; el de salida se ancla a `exit_deadline`.
 
 ### RF-49.3: Trazabilidad de la coreografía
 - **RF-49.3.1**: Las transiciones de coreografía (umbral, interior, verificación de salida, salida confirmada) deben ser observables y diagnosticables a partir de logs o estado consultable.

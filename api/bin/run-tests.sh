@@ -2937,6 +2937,112 @@ print('OK' if stay.get('entry_confirmed_at') else 'FAIL ec=' + str(stay.get('ent
 fi
 
 # =============================================================================
+# BLOCK 34 — F42: ventana de verificación de entrada (RF-46.4)
+# Trazabilidad: RF-46.4, RF-47 · contracts.md §3.3 · TSK-F42-04
+#
+# Cubre:
+#   - entrada no consolidada (ciclo puerta acreditado, sin presencia) ⇒
+#     exit_deadline=null (no debe aparecer conteo de salida)
+#   - presencia dentro del gap tras el cierre ⇒ entry_confirmed_at se fija
+#   - tras confirmar, ABSENT + puerta cerrada ⇒ exit_deadline activo
+# =============================================================================
+block "BLOCK 34 — F42: ventana de verificación de entrada"
+
+F42_ROOM=1
+F42_SIM_KEY=$(get_key SIM-CLIENT)
+
+if [ "$SERVER_UP" != true ]; then
+    skip "BLOCK 34 — F42" "servidor HTTP no disponible"
+elif [ -z "$F42_SIM_KEY" ]; then
+    skip "BLOCK 34 — F42" "Clave SIM-CLIENT no disponible en $KEYS_FILE"
+else
+    f42_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+    f42_reset() {
+        curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -d "{\"room_id\":$F42_ROOM}" \
+            "${API_BASE}/dashboard-api/rooms/reset" 2>/dev/null || echo "000"
+    }
+    f42_live() { curl -s --max-time 5 "${API_BASE}/api/v1/rooms/$F42_ROOM/live" 2>/dev/null; }
+    f42_sim() {  # $1 = presence|door ; $2 = body JSON
+        curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "X-API-Key: $F42_SIM_KEY" -H 'Content-Type: application/json' \
+            -d "$2" "${API_BASE}/sim/rooms/$F42_ROOM/$1" 2>/dev/null || echo "000"
+    }
+
+    f42_reset >/dev/null 2>&1 || true
+    F42_T=$(date -u +%s)
+
+    # Estancia OCCUPIED SIN entry_confirmed_at (entrada en curso, sin consolidar).
+    F42_STAY=$($MYSQL -sN -e "INSERT INTO stays
+        (room_id,status,duracion_minutos,first_entry_at,reserved_at,vb6_codtic,vb6_codcli)
+        VALUES ($F42_ROOM,'OCCUPIED',60,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),1,1);
+        SELECT LAST_INSERT_ID();" 2>/dev/null || echo "0")
+
+    if [ -z "$F42_STAY" ] || [ "$F42_STAY" = "0" ]; then
+        skip "BLOCK 34 — F42" "No se pudo crear estancia OCCUPIED"
+    else
+        $MYSQL -sN -e "UPDATE rooms SET status='OCCUPIED' WHERE id=$F42_ROOM" 2>/dev/null || true
+
+        # Ciclo de puerta acreditado sin presencia: OPEN → CLOSED.
+        f42_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$(f42_iso $((F42_T + 1)))\"}" >/dev/null
+        f42_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$(f42_iso $((F42_T + 2)))\"}" >/dev/null
+        # Ausencia sostenida con la entrada aún sin confirmar.
+        f42_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"ABSENT\",\"occurred_at\":\"$(f42_iso $((F42_T + 3)))\"}" >/dev/null
+
+        F42_DEAD_ENTRY=$(f42_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('ERR'); sys.exit(0)
+print('OK' if not d.get('exit_deadline') else 'FAIL ' + str(d.get('exit_deadline')))
+" 2>/dev/null)
+        if [ "$F42_DEAD_ENTRY" = "OK" ]; then
+            pass "F42: entrada sin confirmar → exit_deadline=null (string vacío)"
+        else
+            fail "F42: exit_deadline no debe emitirse sin entry_confirmed_at" "$F42_DEAD_ENTRY"
+        fi
+
+        # Presencia tardía dentro del gap (2 s tras el cierre) → consolida entrada.
+        f42_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$(f42_iso $((F42_T + 4)))\"}" >/dev/null
+        F42_EC=$(f42_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('ERR'); sys.exit(0)
+stay = d.get('active_stay') or {}
+print('OK' if stay.get('entry_confirmed_at') else 'FAIL ec=' + str(stay.get('entry_confirmed_at')))
+" 2>/dev/null)
+        if [ "$F42_EC" = "OK" ]; then
+            pass "F42: PRESENT tras el cierre → entry_confirmed_at fijado"
+        else
+            fail "F42: consolidación de entrada por presencia tardía" "$F42_EC"
+        fi
+
+        # Con la entrada confirmada, ABSENT + puerta cerrada → exit_deadline activo.
+        f42_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"ABSENT\",\"occurred_at\":\"$(f42_iso $((F42_T + 5)))\"}" >/dev/null
+        F42_DEAD_EXIT=$(f42_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('ERR'); sys.exit(0)
+print('OK' if d.get('exit_deadline') else 'NULL')
+" 2>/dev/null)
+        if [ "$F42_DEAD_EXIT" = "OK" ]; then
+            pass "F42: entrada confirmada + ABSENT → exit_deadline activo"
+        else
+            fail "F42: exit_deadline tras confirmar entrada" "got '$F42_DEAD_EXIT'"
+        fi
+
+        # Cleanup: deja room 1 sin estancia de prueba.
+        f42_reset >/dev/null 2>&1 || true
+    fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

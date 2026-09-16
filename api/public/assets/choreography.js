@@ -40,6 +40,7 @@
     DENTRO:               'OCUPADA',
     POSIBLE_SALIDA:       'PUERTA_ABIERTA',
     VERIFICANDO:          'VERIFICANDO_PRESENCIA',
+    VERIFICANDO_ENTRADA:  'VERIFICANDO_ENTRADA',
     SALIDA_CONFIRMADA:    'HUESPED_HA_SALIDO',
     SALIDA_DETECTADA:     'SALIDA_DETECTADA',
     QR_RECHAZADO:         'QR_RECHAZADO',
@@ -63,6 +64,9 @@
       entryDoorOpenedAt:   0,
       entryPresenceSeen:   false,
       entryConsolidatedAt: 0,
+      // RF-46.4: la ventana de verificación de entrada se agotó sin presencia;
+      // se exige una nueva apertura acreditada para reintentar la entrada.
+      entryTimedOut:       false,
       // Salida en curso (POSIBLE_SALIDA → VERIFICANDO → SALIDA_CONFIRMADA)
       exitActive:          false,
       exitDoorOpenedAt:    0,
@@ -165,6 +169,7 @@
       ep.entryDoorOpenedAt = 0;
       ep.entryPresenceSeen = false;
       ep.entryConsolidatedAt = 0;
+      ep.entryTimedOut = false;
     }
 
     function consolidateEntry(atMs) {
@@ -173,6 +178,7 @@
       ep.entryActive = false;
       ep.entryQrAt = 0;
       ep.entryDoorOpenedAt = 0;
+      ep.entryTimedOut = false;
     }
 
     function clearExit() {
@@ -262,7 +268,9 @@
         // T4/T6/T7: puerta abierta → umbral (CROSSING). No es salida.
         if (door === 'OPEN') {
           ep.entryActive = true;
-          if (!ep.entryDoorOpenedAt) ep.entryDoorOpenedAt = lastOpenMs || nowMs;
+          // RF-46.4: una nueva apertura re-arma la ventana de entrada agotada.
+          if (!ep.entryDoorOpenedAt || ep.entryTimedOut) ep.entryDoorOpenedAt = lastOpenMs || nowMs;
+          ep.entryTimedOut = false;
           if (presence === 'PRESENT') ep.entryPresenceSeen = true;
           return out('EN_UMBRAL');
         }
@@ -274,14 +282,33 @@
 
         // door === CLOSED
         var openingEvidenced = ep.entryDoorOpenedAt > 0 || prevDoor === 'OPEN' || entryConfirmedMs > 0;
-        if (entryConfirmedMs || (openingEvidenced && (ep.entryPresenceSeen || presence === 'PRESENT'))) {
-          // T8: consolidar entrada al cerrar con presencia confirmada o vista al abrir.
+        // T8: consolidar entrada al cerrar con presencia confirmada o vista al abrir.
+        // RF-46.4: si la ventana ya expiró, una presencia posterior NO consolida;
+        // hace falta una nueva apertura acreditada (entryTimedOut se limpia en OPEN).
+        if (entryConfirmedMs
+            || (openingEvidenced && !ep.entryTimedOut && (ep.entryPresenceSeen || presence === 'PRESENT'))) {
           consolidateEntry(lastCloseMs);
           return out('DENTRO');
         }
+
+        // ── RF-46.4: ventana de verificación de entrada ──
+        // Ciclo acreditado (abrió y cerró) sin presencia aún: el monigote espera
+        // en el umbral con `?` y conteo durante gap_seconds. Si la presencia llega
+        // dentro de la ventana, el bloque T8 anterior ya consolidó DENTRO; si
+        // expira, se asume que no entró nadie y se exige una nueva apertura.
+        var entryOpenMs  = ep.entryDoorOpenedAt || lastOpenMs;
+        var creditedClose = lastCloseMs > 0 && entryOpenMs > 0 && lastCloseMs >= entryOpenMs;
+        if (creditedClose && !ep.entryTimedOut && presence !== 'PRESENT') {
+          if ((nowMs - lastCloseMs) < gapSecs * 1000) {
+            return out('VERIFICANDO_ENTRADA');
+          }
+          ep.entryTimedOut = true; // no llegó a entrar nadie
+          return out('ESPERANDO_APERTURA');
+        }
+
         if (ep.entryActive || qrBroadMs) return out('ESPERANDO_APERTURA');
         // Sin evento de apertura (recarga del panel): reconciliar con el dominio real.
-        if (presence === 'PRESENT') {
+        if (presence === 'PRESENT' && !ep.entryTimedOut) {
           consolidateEntry(lastCloseMs);
           return out('DENTRO');
         }
