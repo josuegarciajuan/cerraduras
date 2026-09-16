@@ -18,7 +18,9 @@ use App\Support\Clock;
  * current door state. It requires a *credited door cycle* posterior to the
  * entry confirmation:
  *   a) stay.entry_confirmed_at is set (guest was confirmed inside);
- *   b) last_open_at > entry_confirmed_at (a new opening happened from inside);
+ *   b) last_open_at >= entry_confirmed_at (an opening happened from inside).
+ *      Non-strict because occurred_at has second granularity: a same-second
+ *      entry-close / exit-open must still count as a credited cycle.
  *   c) last_close_at >= last_open_at (the door was closed);
  *   d) the close is not arbitrarily old (DOOR_CYCLE_MAX_S = 300 s);
  *   e) presence_state = ABSENT sustained >= gap seconds.
@@ -122,8 +124,10 @@ final class ExitRuleEvaluator
             return false;
         }
 
-        // (b) Credited cycle: open after entry confirmation, then closed.
-        if (!($openTs > $entryTs)) {
+        // (b) Credited cycle: an opening at/after entry confirmation, then closed.
+        // Non-strict comparison: occurred_at has second granularity, so a
+        // same-second entry-close / exit-open is still a valid exit cycle.
+        if (!($openTs >= $entryTs)) {
             return false;
         }
         if (!($closeTs >= $openTs)) {
