@@ -877,3 +877,482 @@ El registro de auditoría del claim incluye `chip_id`, `status_before`,
 - `200`: `{ "ok": true, "saved": {…snapshot persistido…}, "elapsed_ms": … }`.
 - Efecto: escribe los DP `far_detection`/`sensitivity` en el dispositivo Tuya y
   persiste el snapshot en `devices.meta_json.calibration` de la habitación.
+
+---
+
+# Fase 41 — Contratos: Robustez del pipeline de sensores y coreografía
+
+## 0. Alcance y trazabilidad
+
+Este apartado formaliza **solo los cambios de contrato observables externamente**
+(esquema de BD, endpoints HTTP/SSE y semántica de deduplicación) introducidos por la Fase 41.
+La refactorización de atomicidad (lock de fila, `SELECT … FOR UPDATE`) es **interna** y no
+cambia la forma externa de ningún endpoint.
+
+| RF | Contrato afectado | Sección |
+|----|-------------------|---------|
+| RF-43 | (interno) punto único de escritura; sin cambio de forma HTTP | §7 |
+| RF-44 | Migración `0108`; semántica `applied`/`discard_reason` | §1, §2 |
+| RF-46 / RF-47 | `GET /api/v1/rooms/{id}/live` (campos nuevos y semántica de `exit_deadline`) | §3 |
+| RF-49 | `GET /dashboard-api/event-stream` (evento `ping`) | §4 |
+| RF-48 | `GET /dashboard-api/system-status` (esquema nuevo) | §5 |
+| RF-47 | `POST /dashboard-api/rooms/reset` (limpieza de marcas) | §6 |
+
+---
+
+## 1. Migración `0108_sensor_event_ordering.sql`
+
+Archivo nuevo: `api/migrations/0108_sensor_event_ordering.sql` (siguiente libre tras `0107`).
+Aditiva y nullable; segura de aplicar en caliente sobre producción.
+
+### 1.1 DDL exacto
+
+```sql
+-- 0108_sensor_event_ordering.sql — Orden temporal, idempotencia y consolidación de entrada
+-- Trazabilidad: RF-43, RF-44, RF-46, RF-47.
+
+ALTER TABLE iot_sessions
+  ADD COLUMN last_door_event_at     DATETIME(3) NULL DEFAULT NULL AFTER last_absent_since,
+  ADD COLUMN last_presence_event_at DATETIME(3) NULL DEFAULT NULL AFTER last_door_event_at,
+  ADD COLUMN last_door_value        VARCHAR(8)  NULL DEFAULT NULL AFTER last_presence_event_at,
+  ADD COLUMN last_presence_value    VARCHAR(8)  NULL DEFAULT NULL AFTER last_door_value;
+
+ALTER TABLE presence_events
+  ADD COLUMN event_fingerprint CHAR(40)    NULL DEFAULT NULL AFTER source_event_id,
+  ADD COLUMN applied           TINYINT(1)  NULL DEFAULT NULL AFTER event_fingerprint,
+  ADD COLUMN discard_reason    VARCHAR(16) NULL DEFAULT NULL AFTER applied,
+  ADD UNIQUE KEY uq_presence_fingerprint (event_fingerprint),
+  ADD KEY idx_presence_room_occurred (room_id, occurred_at);
+
+ALTER TABLE stays
+  ADD COLUMN entry_confirmed_at DATETIME(3) NULL DEFAULT NULL AFTER first_entry_at;
+```
+
+### 1.2 Semántica de las columnas nuevas
+
+**`iot_sessions`** (marcas de orden temporal por sensor):
+
+| Columna | Tipo | Null | Semántica |
+|---------|------|------|-----------|
+| `last_door_event_at` | `DATETIME(3)` | sí | `occurred_at` del último evento de puerta **aplicado**. |
+| `last_presence_event_at` | `DATETIME(3)` | sí | `occurred_at` del último evento de presencia **aplicado**. |
+| `last_door_value` | `VARCHAR(8)` | sí | Último valor de puerta aplicado: `OPEN` \| `CLOSED`. |
+| `last_presence_value` | `VARCHAR(8)` | sí | Último valor de presencia aplicado: `PRESENT` \| `ABSENT`. |
+
+**`presence_events`** (auditoría de aplicación y deduplicación):
+
+| Columna | Tipo | Null | Semántica |
+|---------|------|------|-----------|
+| `event_fingerprint` | `CHAR(40)` | sí | Identidad lógica del hecho (SHA-1 hexadecimal de 40 chars). `UNIQUE`. |
+| `applied` | `TINYINT(1)` | sí | `1` = aplicado al estado; `0` = descartado; `NULL` = fila legacy. |
+| `discard_reason` | `VARCHAR(16)` | sí | `duplicate` \| `stale` \| `noop` (solo si `applied = 0`). |
+
+**`stays`**:
+
+| Columna | Tipo | Null | Semántica |
+|---------|------|------|-----------|
+| `entry_confirmed_at` | `DATETIME(3)` | sí | Instante en que la entrada del huésped quedó confirmada (puerta cerrada con presencia vista durante la apertura). `NULL` = aún no confirmado. Es la autoridad de "huésped dentro" para la coreografía y la precondición de salida. |
+
+> `first_entry_at` se conserva tal cual (informativo). `entry_confirmed_at` lo complementa y
+> **no lo reemplaza** en el modelo de datos.
+
+### 1.3 Compatibilidad y rollback
+
+- **Aditiva**: ninguna columna existente se modifica ni se elimina; los endpoints actuales
+  que no leen los campos nuevos siguen funcionando.
+- **Nullable**: las filas existentes quedan con `NULL`. Los consumidores deben tratar `NULL`
+  como "desconocido/legacy" (p. ej. no usar `applied` para decidir).
+- **`UNIQUE` sobre columna nullable**: MySQL/MariaDB permiten múltiples `NULL`, por lo que las
+  filas legacy de `presence_events` no colisionan entre sí.
+- **Rollback**: `DROP COLUMN` de las 8 columnas nuevas + `DROP INDEX uq_presence_fingerprint`
+  y `DROP INDEX idx_presence_room_occurred`. Es reversible a nivel de esquema, pero
+  **destruye** la información de orden/consolidación acumulada; hacerlo solo con backup previo
+  y tras confirmar que no hay procesos dependientes.
+
+---
+
+## 2. Semántica de deduplicación y orden de eventos
+
+### 2.1 Identidad lógica (fingerprint)
+
+```
+event_fingerprint = SHA1( room_id | sensor | value | floor(occurred_at, segundo) )
+```
+
+- Salida: 40 caracteres hexadecimales (`CHAR(40)`).
+- Incluye `value`, de modo que `OPEN` y `CLOSED` en el mismo segundo son hechos distintos.
+- Trunca `occurred_at` a segundo (precisión real de la fuente Tuya/poller).
+- `source_event_id` (id de transporte) **se conserva** y su `UNIQUE` sigue vigente; el
+  fingerprint es una segunda capa que cubre reenvíos con distinto `t`.
+
+### 2.2 Valores de `applied` y `discard_reason`
+
+| `applied` | `discard_reason` | Significado |
+|-----------|------------------|-------------|
+| `1` | `NULL` | El evento se aplicó al estado IoT. |
+| `0` | `duplicate` | Ya existía un evento con el mismo `event_fingerprint` (o `source_event_id`). No altera el estado. |
+| `0` | `stale` | `occurred_at` es anterior al último evento aplicado del mismo sensor. No revierte transiciones más nuevas. |
+| `0` | `noop` | El valor ya estaba vigente; no representa una transición. |
+| `NULL` | `NULL` | Fila previa a la migración `0108` (legacy); no participa en la decisión. |
+
+- Todo evento recibido se persiste íntegro (auditoría bruta), **aunque no se aplique**
+  (RF-44.3). Un descarte nunca borra evidencia.
+- El evento queda auditable con `applied`/`discard_reason` rellenados en la misma transacción
+  que aplica el estado.
+
+### 2.3 Regla de decisión (contrato de dominio)
+
+| Caso | `discard_reason` |
+|------|------------------|
+| Fingerprint ya existente | `duplicate` |
+| `occurred_at < last_<sensor>_event_at` | `stale` |
+| `occurred_at == last_<sensor>_event_at` y `value == last_<sensor>_value` | `duplicate` |
+| `value == last_<sensor>_value` (sin cambio) | `noop` |
+| En cualquier otro caso | se **aplica** (`applied = 1`) |
+
+---
+
+## 3. `GET /api/v1/rooms/{id}/live`
+
+Endpoint y forma general **sin cambios**. Se añaden campos aditivos y se precisa la semántica
+de `exit_deadline`. El mismo payload es el que viaja en el evento SSE `state` (§4).
+
+### 3.1 Campos nuevos en `iot_session`
+
+| Campo | Tipo | Null | Descripción |
+|-------|------|------|-------------|
+| `last_door_event_at` | string ISO-8601 UTC | sí | `occurred_at` del último evento de puerta aplicado. |
+| `last_presence_event_at` | string ISO-8601 UTC | sí | `occurred_at` del último evento de presencia aplicado. |
+| `last_door_value` | string | sí | `OPEN` \| `CLOSED` aplicado. |
+| `last_presence_value` | string | sí | `PRESENT` \| `ABSENT` aplicado. |
+
+### 3.2 Campo nuevo en `active_stay`
+
+| Campo | Tipo | Null | Descripción |
+|-------|------|------|-------------|
+| `entry_confirmed_at` | string ISO-8601 UTC | sí | Confirmación de entrada (huésped dentro). Autoridad de `hasBeenInside` para la coreografía y precondición de la regla de salida. |
+
+Cuando no hay estancia activa, `active_stay` sigue siendo `null` y el campo no aparece.
+
+### 3.3 Campos con cambio de semántica (retrocompatible)
+
+| Campo | Contrato anterior | Contrato Fase 41 |
+|-------|-------------------|------------------|
+| `exit_deadline` | Se emitía con `presence_state=ABSENT` + `door_state=CLOSED` + ancla en `last_close_at`/`last_open_at` dentro de la ventana. | Se mantiene el campo y su tipo (ISO-8601 UTC o `null`). Se emite **solo** cuando `presence_state=ABSENT`, existe un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes, `last_close_at >= last_open_at`) y la puerta está `CLOSED`. Se limpia (`null`) si la puerta se reabre o reaparece presencia. El poller lo usa como señal de ventana de verificación. |
+| `gap_seconds` | Override de habitación > tipo de habitación > 15 s. | Sin cambios. |
+| `first_entry_at` | Se usaba como indicador de "dentro". | Se mantiene informativo. La autoridad de "dentro" pasa a `active_stay.entry_confirmed_at`. |
+| `iot_session.last_open_at` / `last_close_at` | Anclas de la regla de salida. | Sin cambios de formato; siguen siendo las anclas del ciclo de puerta. No se expone ningún campo compuesto `door_cycle`: los consumidores lo derivan de estos dos. |
+
+**Nota (retrocompatibilidad)**: los campos nuevos son aditivos; ningún campo existente cambia
+de nombre ni de tipo. Un consumidor que ignore `entry_confirmed_at` y
+`last_*_event_at`/`last_*_value` sigue funcionando con la semántica anterior.
+
+### 3.4 Ejemplo de respuesta (fragmento)
+
+```json
+{
+  "room_id": 12,
+  "code": "PROTO2",
+  "status": "OCCUPIED",
+  "presence_check_seconds": null,
+  "cooldown_until": null,
+  "iot_session": {
+    "door_state": "CLOSED",
+    "presence_state": "PRESENT",
+    "last_open_at": "2026-09-16T10:20:01.000Z",
+    "last_close_at": "2026-09-16T10:20:05.000Z",
+    "last_absent_since": null,
+    "last_door_event_at": "2026-09-16T10:20:05.000Z",
+    "last_presence_event_at": "2026-09-16T10:20:06.000Z",
+    "last_door_value": "CLOSED",
+    "last_presence_value": "PRESENT"
+  },
+  "active_stay": {
+    "id": 305,
+    "status": "OCCUPIED",
+    "duracion_minutos": 60,
+    "first_entry_at": "2026-09-16T10:19:55.000Z",
+    "entry_confirmed_at": "2026-09-16T10:20:05.000Z",
+    "exited_at": null
+  },
+  "exit_deadline": null,
+  "gap_seconds": 15,
+  "qr_status": { "...": "sin cambios" },
+  "recent_events": [],
+  "recent_presence": [],
+  "anomalies": []
+}
+```
+
+`exit_deadline` con conteo activo (fragmento):
+
+```json
+{
+  "iot_session": {
+    "door_state": "CLOSED",
+    "presence_state": "ABSENT",
+    "last_open_at": "2026-09-16T11:00:00.000Z",
+    "last_close_at": "2026-09-16T11:00:03.000Z",
+    "last_absent_since": "2026-09-16T11:00:04.000Z"
+  },
+  "active_stay": { "status": "OCCUPIED", "entry_confirmed_at": "2026-09-16T10:20:05.000Z" },
+  "exit_deadline": "2026-09-16T11:00:19.000Z",
+  "gap_seconds": 15
+}
+```
+
+---
+
+## 4. `GET /dashboard-api/event-stream?room_id=N`
+
+Sin cambios en cabeceras, autenticación ni ciclo de vida. Se añade un evento de latido.
+
+### 4.1 Tabla de eventos SSE
+
+| `event` | `data` | Cuándo se emite |
+|---------|--------|-----------------|
+| `connected` | `{ "room_id": N, "ts": "ISO-8601Z" }` | Al establecer el stream. |
+| `state` | Mismo payload que `GET /api/v1/rooms/{id}/live` (§3). | Cuando cambia el fingerprint del estado (Tier 1) o en el primer ciclo. |
+| `ping` | `{ "room_id": N, "ts": "ISO-8601Z" }` | Cada ~5 s mientras el stream está vivo. |
+| `close` | `{ "reason": "max_lifetime" \| "too_many_connections", ... }` | Al cerrar el stream por límite de vida o de conexiones. |
+
+El comentario `keepalive` (`: keepalive <ISO>`, cada 15 s) se mantiene **además** para evitar
+timeouts de proxies; no es visible para `EventSource` y no sustituye a `ping`.
+
+### 4.2 Contrato del evento `ping`
+
+```text
+event: ping
+data: {"room_id":12,"ts":"2026-09-16T11:00:00Z"}
+```
+
+- Frecuencia objetivo: **~5 s** (mientras el stream está abierto).
+- El panel lo usa como señal de vida: si no recibe `state` ni `ping` durante > 5 s (pestaña
+  visible), dispara una resincronización puntual de `/live`; si el silencio supera ~15 s,
+  fuerza la reconexión del stream (RF-49.1).
+- `ping` no modifica ningún estado de dominio ni de UI.
+
+### 4.3 Compatibilidad
+
+- El objeto `state` **no se reestructura**: conserva sus claves actuales. Los campos aditivos
+  de §3 viajan dentro de `iot_session` y `active_stay`.
+- Un cliente que ignore el evento `ping` sigue funcionando (los eventos desconocidos se
+  descartan en `EventSource` sin listener).
+
+---
+
+## 5. `GET /dashboard-api/system-status`
+
+Esquema ampliado. Retrocompatible en campos: `label`, `online` y `pid` se conservan.
+
+### 5.1 Esquema
+
+Respuesta `200`, objeto `{clave: worker}` con las claves exactas:
+
+| Clave | Worker supervisado | `expected` |
+|-------|--------------------|-----------|
+| `exit-scan` | `bin/exit-scan.php` | 1 |
+| `overstay-scan` | `bin/overstay-scan.php` | 1 |
+| `outbox-worker` | `bin/outbox-worker.php` | 1 |
+| `anomaly-scanner` | `bin/anomaly-scanner.php` | 1 |
+| `presence-poller-manager` | `bin/presence-poller-manager.sh` | 1 |
+| `pulsar-consumer` | `tuya-pulsar-consumer` | 1 |
+
+Cada entrada:
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `label` | string | Nombre legible (sin cambios). |
+| `online` | bool | `instances >= 1`. Deriva de `instances`. |
+| `pid` | int \| null | PID representativo (el primero), o `null` si no hay. Retrocompatible. |
+| `expected` | int | Instancias esperadas (siempre `1`). |
+| `instances` | int | Nº real de procesos vivos con ese patrón. |
+| `pids` | int[] | Lista de PIDs; `[]` si no hay procesos. |
+| `healthy` | bool | `instances === expected`. |
+| `degraded` | bool | `instances > expected` (duplicado/huérfano). |
+
+### 5.2 Ejemplo de respuesta
+
+```json
+{
+  "exit-scan": {
+    "label": "Regla de Salida (Exit)",
+    "online": true,
+    "pid": 12345,
+    "expected": 1,
+    "instances": 1,
+    "pids": [12345],
+    "healthy": true,
+    "degraded": false
+  },
+  "overstay-scan": {
+    "label": "Overstay Scanner",
+    "online": true,
+    "pid": 12346,
+    "expected": 1,
+    "instances": 1,
+    "pids": [12346],
+    "healthy": true,
+    "degraded": false
+  },
+  "outbox-worker": {
+    "label": "Outbox Worker",
+    "online": true,
+    "pid": 12347,
+    "expected": 1,
+    "instances": 1,
+    "pids": [12347],
+    "healthy": true,
+    "degraded": false
+  },
+  "anomaly-scanner": {
+    "label": "Anomaly Scanner",
+    "online": true,
+    "pid": 12348,
+    "expected": 1,
+    "instances": 1,
+    "pids": [12348],
+    "healthy": true,
+    "degraded": false
+  },
+  "presence-poller-manager": {
+    "label": "Gestor Poller Presencia",
+    "online": true,
+    "pid": 12349,
+    "expected": 1,
+    "instances": 1,
+    "pids": [12349],
+    "healthy": true,
+    "degraded": false
+  },
+  "pulsar-consumer": {
+    "label": "Eventos Tuya (Pulsar)",
+    "online": false,
+    "pid": null,
+    "expected": 1,
+    "instances": 0,
+    "pids": [],
+    "healthy": false,
+    "degraded": false
+  }
+}
+```
+
+### 5.3 Reglas de estado
+
+| Situación | `online` | `healthy` | `degraded` |
+|-----------|----------|-----------|------------|
+| 1 proceso vivo | `true` | `true` | `false` |
+| 0 procesos | `false` | `false` | `false` |
+| >1 proceso (duplicado/huérfano) | `true` | `false` | `true` |
+
+- No hay endpoint de escritura: `system-status` es de solo lectura.
+- Los procesos que no coinciden con ningún patrón no aparecen.
+
+---
+
+## 6. `POST /dashboard-api/rooms/reset`
+
+### 6.1 Request / Response
+
+```text
+POST /dashboard-api/rooms/reset
+Content-Type: application/json
+Body: { "room_id": 12 }
+
+Response 200 (forma sin cambios):
+{
+  "ok": true,
+  "room_id": 12,
+  "status": "FREE",
+  "message": "Habitación reseteada. Panel en blanco."
+}
+
+Response 400: {"error":"room_id required"}
+Response 404: {"error":"room_not_found"}
+```
+
+### 6.2 Estado que limpia (ampliado)
+
+Además de lo que ya limpia hoy (QRs activos, estancias activas, `rooms.status/cooldown`,
+`last_open_at`, `last_absent_since`, `exit_evaluated_at`, deudas, outbox y luz), debe limpiar
+**todas** las marcas temporales y el estado de deduplicación de la habitación:
+
+| Tabla | Campos que se reinician |
+|-------|-------------------------|
+| `iot_sessions` | `door_state='CLOSED'`, `presence_state='ABSENT'`, `last_open_at=NULL`, **`last_close_at=NULL`**, `last_absent_since=NULL`, `exit_evaluated_at=NULL`, `last_door_event_at=NULL`, `last_presence_event_at=NULL`, `last_door_value=NULL`, `last_presence_value=NULL`. |
+| `stays` | Las estancias activas pasan a `CLOSED`; `entry_confirmed_at` de esas estancias deja de usarse (la siguiente estancia nace con `NULL`). |
+| `presence_events` | No se borra la auditoría; el reset no reescribe `applied`/`discard_reason` (la auditoría es inmutable). La deduplicación por fingerprint se reinicia de facto al no haber estado previo que descartar. |
+
+**Nota (RC-6)**: hoy `last_close_at` no se limpiaba, de modo que tras un reset el ciclo de
+puerta anterior seguía "acreditado". Con este contrato, un reset deja la habitación lista para
+una secuencia de apertura/cierre nueva (RF-47.5).
+
+- La forma de la respuesta no cambia; solo cambia el conjunto de campos internos limpiados.
+- La operación sigue siendo idempotente: repetir el reset no falla.
+
+---
+
+## 7. Contratos internos (sin cambio observable)
+
+- **`IotSessionService::processEvent(array $event, string $correlationId): array`**: se
+  conserva como punto de entrada público, con la **misma firma y el mismo retorno**
+  (`{accepted, derived_state}`). La atomicidad (lock de fila), el orden temporal y la
+  idempotencia son cambios **internos**. El webhook y los tests existentes no requieren
+  cambios de llamada.
+- **`IotSessionRepositoryInterface::upsert()`**: deja de ser el camino de escritura de estado
+  usado por el servicio, pero su contrato no se elimina; el servicio pasa a usar operaciones
+  internas de lock/update. No es observable externamente.
+- **Poller de presencia**: `ENTRY_WINDOW_MS` (90 s) y el watchdog de captura máxima (120 s)
+  son estado **interno** del proceso Node; no se exponen en `/live` ni en la API.
+- **`DOOR_CYCLE_MAX_S`**: constante de dominio con valor por defecto **300 s**; no es
+  configuración externa ni campo de API.
+- **Anomalías A1–A8**: siguen siendo informativas; su contrato (F35) no cambia.
+
+---
+
+## 8. Nota de no regresión
+
+Los siguientes contratos **no cambian** con la Fase 41:
+
+- **QR**: `POST /api/v1/qr/validate`, formato de token, códigos de error y `qr_status` en
+  `/live`.
+- **Workers (F38)**: CRUD de trabajadores y roles, `POST /api/v1/workers/qr/validate`,
+  `GET /api/v1/rooms/{id}/occupants`, `GET /api/v1/workers/inside`, `access_events` kind
+  `WORKER_EXIT`. El cierre de `worker_session` por evento de puerta se mantiene.
+- **Anomalías (F35)**: enum A1–A8, severidades, estados `OPEN`/`ACKNOWLEDGED`/`DISMISSED`,
+  endpoints `/api/v1/anomalies*` y su presencia en `/live` (`anomalies`). No bloquean el flujo.
+- **Dispositivos (RF-42)**: `GET /dashboard-api/device-status`, `pack-detail`,
+  `ping-all-devices` y la semántica `online`/`unknown` de dispositivos Tuya cloud.
+- **Calibración (RF-41)**: `presence-calibrate/status` y `/set`.
+- **Fábrica (F39/F40)**: `factory-devices/announce`, `claim` y binding.
+- **Firmware ESP32**: ningún endpoint del sketch (`heartbeat`, `identify`, `commands`,
+  `command-result`, blink) cambia.
+- El evento SSE `connected`/`close` y el comentario `keepalive` conservan su contrato.
+
+---
+
+## 9. Discrepancias documentadas con `design.md`
+
+Se adoptan las resoluciones del usuario. Las siguientes diferencias con lo redactado en
+`design.md` §7/§8 quedan documentadas (no bloquean):
+
+1. **Claves de `system-status`**: `design.md` §7.2 proponía `tuya-presence-poller` y
+   `tuya-pulsar-consumer`. La resolución fija `presence-poller-manager` y `pulsar-consumer`
+   (además de añadir `outbox-worker` y `anomaly-scanner`). Este contrato usa las claves de la
+   resolución. Si se necesita compatibilidad estricta de claves con consumidores antiguos,
+   puede añadirse un alias temporal, pero no forma parte de este contrato.
+2. **`healthy`**: `design.md` §7.2 definía `healthy = online ∧ instances == 1`. La resolución
+   define `healthy = instances === expected` (con `expected = 1`). Se adopta la resolución;
+   en la práctica coinciden salvo por la interpretación de `online`.
+3. **`exit_deadline`**: `design.md` §8.1 decía que se calcula "sin exigir estado actual
+   `CLOSED`" para la **regla interna** de salida. La resolución exige `door_state=CLOSED` para
+   **emitir el campo** `exit_deadline` en `/live`. Se documenta la distinción: la regla de
+   confirmación no depende del estado actual de puerta (usa ciclo acreditado), mientras que el
+   campo de UI sí requiere `CLOSED`; si la puerta queda inconsistente, el backend puede
+   confirmar igualmente la salida vía `exit-scan`.
+4. **Forma del evento SSE `state`**: la resolución indica que "el objeto `state` no cambia de
+   forma". Se interpreta como que **no se reestructura** (conserva sus claves); los campos
+   aditivos de §3 viajan anidadados en `iot_session`/`active_stay`, sin romper consumidores.
+5. **`ENTRY_WINDOW_MS` y `DOOR_CYCLE_MAX_S`**: coherentes con `design.md` §4 y §3;
+   respectivamente interno del poller (90 s) y constante de dominio (300 s).

@@ -1318,3 +1318,605 @@ pero `rooms.pack_id` distinto) y es la base para eliminar el fallback legacy en 
 - [x] CRM `/panel`: detalle de habitación muestra estado real de dispositivos del pack.
 - [x] Tests: BLOCK 30 en `run-tests.sh` (contrato device-status + ping sin cuota). Trazabilidad RF-42.
 - [x] Docs: requisitos (RF-42), diseño, AGENTS.md (F39).
+
+---
+
+# Fase 41 — Tareas: Robustez del pipeline de sensores y coreografía
+
+**Objetivo**: eliminar la pérdida de escrituras del estado IoT por habitación (RC-1), fijar el
+orden temporal e idempotencia real de eventos (RC-2), corregir la coreografía de entrada/salida
+del panel (RC-3/RC-6), desactivar el poller por estado de dominio (RC-5) y dejar la infra de
+workers en instancia única y observable (RC-4).
+
+**Trazabilidad global**: RF-43…RF-49 · `requirements.md` §Fase 41 · `design.md` §1–§12 ·
+`contracts.md` §1–§9.
+
+**Regla de cierre AGENTS.md**: la fase NO se cierra hasta que
+`cd /root/cerraduras/api && bash bin/run-tests.sh` termine con **0 failures**.
+
+## Convenciones
+
+- IDs `TSK-F41-<n>`.
+- **Tests unitarios PHP**: `api/tests/Unit/<Nombre>Test.php`, script plano con `pass()`/`fail()`
+  (se autodescubren en **BLOCK 1**).
+- **Tests unitarios JS**: `api/tests/Unit/<nombre>.test.js`, Node plano (sin framework),
+  exit code `0` = OK. No hay runner JS: se invocan explícitamente desde `run-tests.sh`.
+- **Tests HTTP**: nuevo **BLOCK 33** en `api/bin/run-tests.sh` (último bloque existente:
+  BLOCK 32 — F43 Sensor 24G V3). No quedan placeholders, el bloque se inserta antes del
+  `RESUMEN`, al final del fichero.
+- **Claves API**: siempre desde `api/seeds/dev_api_keys.txt` (`ADMIN-CLI`, `SIM-CLIENT`,
+  `RPI-DEV`, `VB6-MAIN`, `TUYA-BRIDGE`); nunca hardcodear. Usar `--idem "f41-<caso>-$RANDOM"`
+  en los POST que lo requieran.
+- Tests stateful: comprobar estado de BD y `skip` con mensaje explicativo si no se cumple.
+
+## Orden de ejecución y dependencias
+
+```
+F41a (tests RED) → F41b (migración/modelos) → F41c (atomicidad) → F41d (orden/dedup)
+   → F41e (regla de salida + reset + /live) → F41f (poller) → F41g (panel)
+   → F41h (infra) → F41i (HTTP/regresión) → F41j (cierre)
+```
+
+---
+
+## F41a: Especificación / tests primero (TDD puro)
+
+> Se escribe el test y se observa fallar (RED) **antes** de tocar dominio. Los tests de esta
+> subsección quedan en rojo hasta que las implementaciones de F41b–F41e los pongan en verde;
+> es el estado esperado mientras la fase está abierta.
+
+### TSK-F41-01: Test unitario de orden y deduplicación (`decide()`)
+
+**Objetivo**: fijar por contrato el comportamiento de la decisión de aplicación de eventos
+(duplicado / atrasado / noop / aplicar) y de la identidad lógica (fingerprint).
+**Trazabilidad**: RF-44.1, RF-44.2, RF-44.3 · `contracts.md` §2.
+**Archivos**:
+- `api/tests/Unit/SensorEventDecisionTest.php` (nuevo).
+
+**Dependencias**: ninguna (es el primer test de la fase).
+**Contenido del test**:
+- [ ] Fingerprint = `sha1(room_id|sensor|value|segundo)`; mismo hecho con `t` distinto en el
+      mismo segundo ⇒ `duplicate`; `OPEN` vs `CLOSED` en el mismo segundo ⇒ no colisionan.
+- [ ] `occurred_at` anterior al último aplicado del mismo sensor ⇒ `stale`.
+- [ ] Mismo instante y mismo valor ⇒ `duplicate`.
+- [ ] Mismo valor vigente ⇒ `noop`.
+- [ ] Caso nuevo ⇒ `apply`.
+- [ ] El evento bruto se devuelve/registra siempre (aplicado o descartado).
+
+**Criterio de aceptación**: el test existe, **falla** por método/clase aún inexistente (RED) y
+cubre los 5 casos; al implementarse TSK-F41-07 pasa a verde sin modificar el test.
+**Test propio**: unitario PHP (RED) — autodescubierto en BLOCK 1.
+
+---
+
+### TSK-F41-02: Test unitario de la regla de salida con ciclo acreditado
+
+**Objetivo**: fijar la nueva semántica de `ExitRuleEvaluator` (precondición de ciclo de puerta
+acreditado + `entry_confirmed_at` + gap) y **actualizar los tests existentes** que fijan la
+semántica antigua.
+**Trazabilidad**: RF-47.1, RF-47.2, RF-47.3, RF-47.4 · `contracts.md` §1, §3.
+**Archivos**:
+- `api/tests/Unit/ExitRuleEvaluatorTest.php` (modificar/extender).
+
+**Dependencias**: TSK-F41-01 (convenciones de helpers de test).
+**Contenido del test**:
+- [ ] OpenSinClose (hay `last_open_at`, no `last_close_at`) ⇒ no dispara.
+- [ ] Close sin ciclo (`last_close_at < last_open_at`) ⇒ no dispara.
+- [ ] Sin `entry_confirmed_at` (stay null o fecha null) ⇒ no dispara.
+- [ ] `last_open_at <= entry_confirmed_at` (sin nueva apertura desde dentro) ⇒ no dispara.
+- [ ] Ciclo completo + ABSENT + gap cumplido ⇒ dispara.
+- [ ] Ciclo completo + ABSENT + gap **no** cumplido ⇒ no dispara.
+- [ ] `door_state=OPEN` con ciclo acreditado ⇒ **dispara** (ya no depende del estado actual).
+- [ ] Cierre con antigüedad > `DOOR_CYCLE_MAX_S` (300 s) ⇒ no dispara.
+- [ ] Reapertura / reaparece `PRESENT` ⇒ cancela (`last_absent_since = null`) ⇒ no dispara.
+- [ ] Actualizar los casos existentes que asumían `DOOR_CLOSE_WINDOW_S=60` y «door OPEN ⇒ no
+      fire» (T1b, T2, T3, T5, T6) a la nueva semántica, dejando traza en el propio test.
+
+**Criterio de aceptación**: el test fija los 9 comportamientos y **falla** con la implementación
+actual (RED); al implementarse TSK-F41-08 pasa a verde.
+**Test propio**: unitario PHP (RED) — BLOCK 1.
+
+---
+
+## F41b: Migración y modelos
+
+### TSK-F41-03: Migración `0108` + hidratación de modelos
+
+**Objetivo**: crear el esquema de orden/dedup y consolidación de entrada, y exponerlo en los
+modelos/repositorios.
+**Trazabilidad**: RF-43, RF-44, RF-46, RF-47 · `contracts.md` §1.
+**Archivos**:
+- `api/migrations/0108_sensor_event_ordering.sql` (nuevo)
+- `api/src/Domain/Presence/IotSession.php`
+- `api/src/Domain/Presence/PresenceEvent.php`
+- `api/src/Domain/Stays/Stay.php`
+- `api/src/Domain/Presence/IotSessionRepository.php`
+- `api/src/Domain/Presence/PresenceEventRepository.php`
+- `api/src/Domain/Stays/StayRepository.php`
+
+**Dependencias**: TSK-F41-02.
+**Contenido**:
+- [ ] Aplicar el DDL exacto de `contracts.md` §1.1 (4 columnas en `iot_sessions`, 3 + `UNIQUE`
+      + índice en `presence_events`, 1 en `stays`), aditivo y nullable.
+- [ ] Añadir los campos a `IotSession` (constructor + `toArray()`), `PresenceEvent`
+      (`fingerprint`, `applied`, `discardReason`) y `Stay` (`entryConfirmedAt`).
+- [ ] Hidratar las columnas nuevas en los `SELECT` y en `hydrate()` correspondientes.
+- [ ] `php bin/migrate.php` marca `0108` como aplicada (idempotente en re-ejecución).
+
+**Criterio de aceptación**: `php bin/db-check.php` conecta; `DESCRIBE` de las 3 tablas muestra
+las columnas con tipos/nullables correctos; un `fetch` de una fila de prueba devuelve los campos
+nuevos (o `null`) sin errores.
+**Test propio**: verificación de migración vía BLOCK 2 (schema) + caso en TSK-F41-18.
+
+---
+
+## F41c: Atomicidad (RF-43)
+
+### TSK-F41-04: Repositorio con lock de fila y escrituras por columna
+
+**Objetivo**: dotar al repositorio de las primitivas de escritura atómica.
+**Trazabilidad**: RF-43.1, RF-43.2 · `contracts.md` §7 · `design.md` §1.2.
+**Archivos**:
+- `api/src/Domain/Presence/IotSessionRepositoryInterface.php`
+- `api/src/Domain/Presence/IotSessionRepository.php`
+- `api/tests/Unit/AbsenceTimerTest.php` (fakes)
+- `api/tests/Unit/IotSessionServiceTest.php` (fakes)
+- `api/tests/Unit/ExitRuleEvaluatorTest.php` (fakes)
+
+**Dependencias**: TSK-F41-03.
+**Contenido**:
+- [ ] `lockByRoomId()`: `INSERT … ON DUPLICATE KEY UPDATE id=id` + `SELECT … FOR UPDATE` dentro
+      de la transacción abierta.
+- [ ] `updateState()`: `UPDATE` solo de las columnas de estado por `id`.
+- [ ] `markExitEvaluated()`: update condicional que devuelve `false` si ya estaba marcado.
+- [ ] Actualizar **todos** los fakes de test que implementan la interfaz (romperá BLOCK 1 si no).
+
+**Criterio de aceptación**: BLOCK 1 en verde tras adaptar los fakes; `lockByRoomId()` lanza si
+no hay transacción activa (guard); `markExitEvaluated()` es idempotente.
+**Test propio**: unitario PHP (fakes) + concurrencia real en TSK-F41-18.
+
+---
+
+### TSK-F41-05: `processEvent()` atómico con transacción y efectos post-commit
+
+**Objetivo**: convertir el ciclo leer-modificar-escribir en atómico, sin I/O externo bajo lock.
+**Trazabilidad**: RF-43.1, RF-43.2, RF-43.3 · `design.md` §1.3, §1.4.
+**Archivos**:
+- `api/src/Domain/Presence/IotSessionService.php`
+
+**Dependencias**: TSK-F41-04.
+**Contenido**:
+- [ ] Estructura `audit (fuera de tx) → beginTransaction → lockByRoomId → mutate → updateState
+      → commit → efectos post-commit`.
+- [ ] Reintentos acotados (3) con backoff + jitter ante deadlock (`1213`) o lock wait timeout
+      (`1205`); rollback antes de reintentar.
+- [ ] Mover `switchService->turnOn/Off`, gateway `lock` y detección de anomalías **fuera** del
+      lock (post-commit).
+- [ ] Conservar la firma pública `processEvent(array $event, string $correlationId): array` y su
+      retorno `{accepted, derived_state}` (contrato interno, `contracts.md` §7).
+
+**Criterio de aceptación**: BLOCK 1 en verde; dos `processEvent()` concurrentes de la misma
+habitación no se pisan (cubierto en TSK-F41-18); no hay llamadas a Tuya/gateway con la fila
+bloqueada (revisión de código + trazas).
+**Test propio**: unitario existente (`IotSessionServiceTest`) adaptado + HTTP concurrencia.
+
+---
+
+### TSK-F41-06: `exit-scan` usa el camino idempotente sin reescribir sensores
+
+**Objetivo**: que el worker de salida no compita en escritura con el webhook de puerta.
+**Trazabilidad**: RF-48.3, RF-43.2, RF-47.4 · `design.md` §3.3, §7.1.
+**Archivos**:
+- `api/src/Domain/Presence/ExitActionService.php` (`executeIfPending()`)
+- `api/bin/exit-scan.php`
+
+**Dependencias**: TSK-F41-04, TSK-F41-08.
+**Contenido**:
+- [ ] `executeIfPending(roomId, correlationId)`: nueva transacción, re-lock de sesión + stay,
+      re-validación de la regla, `markExitEvaluated()` condicional y solo entonces efectos.
+- [ ] `exit-scan.php` llama a `executeIfPending()`; **elimina** cualquier llamada a
+      `upsert()`/`updateState()` de estado de sensores.
+- [ ] Conservar `tick=5s`, `SIGTERM`/`SIGINT` y `PdoFactory::ping()`.
+
+**Criterio de aceptación**: `exit-scan.php` no contiene llamadas que escriban
+`door_state`/`presence_state`; dos ejecuciones concurrentes producen un único cierre de estancia
+y una única transición de `stay`.
+**Test propio**: cubierto por TSK-F41-18 (idempotencia de salida).
+
+---
+
+## F41d: Orden temporal e idempotencia (RF-44)
+
+### TSK-F41-07: Fingerprint, auditoría de aplicación y `decide()`
+
+**Objetivo**: aplicar eventos por orden temporal, descartar duplicados/atrasados/noop y auditar
+siempre el evento bruto.
+**Trazabilidad**: RF-44.1, RF-44.2, RF-44.3 · `contracts.md` §1, §2.
+**Archivos**:
+- `api/src/Domain/Presence/PresenceEventRepositoryInterface.php`
+- `api/src/Domain/Presence/PresenceEventRepository.php`
+- `api/src/Domain/Presence/IotSessionService.php`
+- `api/src/Infrastructure/Gateways/Sensor/TuyaSensorIngress.php`
+- `api/tests/Unit/SensorEventDecisionTest.php` (lo pone en verde)
+
+**Dependencias**: TSK-F41-01 (test RED), TSK-F41-03, TSK-F41-05.
+**Contenido**:
+- [ ] `insertOrGet()`: calcula `event_fingerprint` y devuelve el evento existente ante `1062`
+      (por fingerprint o `source_event_id`).
+- [ ] `markAudit(id, applied, reason)`: rellena `applied`/`discard_reason`.
+- [ ] Implementar `decide()` y `mutate()` según `design.md` §2.4, actualizando
+      `last_<sensor>_event_at` y `last_<sensor>_value`.
+- [ ] `TuyaSensorIngress`: conservar `source_event_id`, guardar `t` crudo en `meta_json.tuya_t`
+      y calcular `occurred_at` truncado a segundo para el fingerprint.
+- [ ] Garantizar que un descarte no muta estado y que el evento bruto queda persistido.
+
+**Criterio de aceptación**: `php tests/Unit/SensorEventDecisionTest.php` → 0 failures; BLOCK 1 en
+verde; un evento viejo no revierte un `CLOSED` nuevo (caso unitario).
+**Test propio**: unitario PHP (TSK-F41-01 en verde).
+
+---
+
+## F41e: Regla de salida, reset y exposición (RF-47)
+
+### TSK-F41-08: `entry_confirmed_at` y regla de salida con ciclo acreditado
+
+**Objetivo**: implementar la precondición de entrada confirmada y la regla sin depender del
+estado actual de puerta, con cota y cancelación.
+**Trazabilidad**: RF-47.1…RF-47.4 · `contracts.md` §1, §3.
+**Archivos**:
+- `api/src/Domain/Presence/ExitRuleEvaluator.php`
+- `api/src/Domain/Presence/IotSessionService.php` (consolidación al `CLOSED`)
+- `api/src/Domain/Stays/StayRepository.php` (`lockActiveForRoom`)
+- `api/tests/Unit/ExitRuleEvaluatorTest.php` (lo pone en verde)
+
+**Dependencias**: TSK-F41-02, TSK-F41-03, TSK-F41-05.
+**Contenido**:
+- [ ] Constante `DOOR_CYCLE_MAX_S = 300` (dominio, sin config externa).
+- [ ] `evaluate()`: exige `entry_confirmed_at`, `last_open_at > entry_confirmed_at`, ciclo
+      `last_close_at >= last_open_at`, cota `now - last_close_at <= 300`, `ABSENT` + gap.
+- [ ] En `mutate()` de `CLOSED`: fijar `stays.entry_confirmed_at` si hay presencia vista
+      durante la apertura (`presence_state=PRESENT` o `last_presence_value=PRESENT` con
+      `last_presence_event_at >= last_open_at`).
+- [ ] Cancelación: `PRESENT` limpia `last_absent_since` (ya en `mutate()`).
+
+**Criterio de aceptación**: `php tests/Unit/ExitRuleEvaluatorTest.php` → 0 failures; BLOCK 1 en
+verde.
+**Test propio**: unitario PHP (TSK-F41-02 en verde).
+
+---
+
+### TSK-F41-09: Reset de habitación limpia todas las marcas
+
+**Objetivo**: que un reset deje la habitación lista para una secuencia nueva.
+**Trazabilidad**: RF-47.5 · `contracts.md` §6.
+**Archivos**:
+- `api/src/Http/Controllers/QrTestController.php`
+
+**Dependencias**: TSK-F41-03.
+**Contenido**:
+- [ ] En `roomsReset()`, añadir `last_close_at`, `last_door_event_at`,
+      `last_presence_event_at`, `last_door_value`, `last_presence_value` al `ON DUPLICATE KEY
+      UPDATE` (además de los ya limpiados).
+- [ ] No borrar `presence_events` (auditoría inmutable); no cambiar la forma de la respuesta.
+
+**Criterio de aceptación**: tras reset, `SELECT` de la sesión devuelve todas las marcas en
+`NULL` salvo `door_state='CLOSED'`/`presence_state='ABSENT'`; una apertura+cierre posterior se
+registra y acredita un ciclo nuevo.
+**Test propio**: HTTP en TSK-F41-18.
+
+---
+
+### TSK-F41-10: `/live` y SSE `state` con campos nuevos y `exit_deadline` coherente
+
+**Objetivo**: exponer los campos nuevos y la semántica de `exit_deadline` formalizada.
+**Trazabilidad**: RF-46, RF-47 · `contracts.md` §3.
+**Archivos**:
+- `api/src/Http/Controllers/RoomLiveController.php`
+- `api/src/Http/Controllers/EventStreamController.php`
+
+**Dependencias**: TSK-F41-03, TSK-F41-08.
+**Contenido**:
+- [ ] `iot_session`: `last_door_event_at`, `last_presence_event_at`, `last_door_value`,
+      `last_presence_value`.
+- [ ] `active_stay`: `entry_confirmed_at`.
+- [ ] `exit_deadline`: emitir solo con `presence_state=ABSENT` + ciclo acreditado + `door_state=CLOSED`;
+      `null` si la puerta se reabre o reaparece presencia.
+- [ ] Mantener intactos el resto de campos y `gap_seconds`.
+
+**Criterio de aceptación**: `GET /api/v1/rooms/1/live` incluye los 5 campos nuevos (JSON válido);
+`fetchFullState()` de SSE devuelve el mismo payload; `exit_deadline` es `null` con puerta abierta
+o presencia.
+**Test propio**: HTTP en TSK-F41-18.
+
+---
+
+## F41f: Poller de presencia (RF-45)
+
+### TSK-F41-11: `isCaptureWindow()` por estado de dominio
+
+**Objetivo**: decidir la captura con el estado de dominio del snapshot, sin banderas pegajosas.
+**Trazabilidad**: RF-45.1, RF-45.2 · `contracts.md` §7 · `design.md` §4.
+**Archivos**:
+- `api/bin/tuya-presence-poller.js`
+
+**Dependencias**: TSK-F41-10.
+**Contenido**:
+- [ ] Paradas: `inside` (OCCUPIED + PRESENT + CLOSED + `entry_confirmed_at`) y `empty`
+      (sin stay + ABSENT + sin deadline).
+- [ ] Capturas: `door=OPEN`, `exit_deadline` activo, `entryInProgress` (derivada de
+      `qr_status` + `active_stay` + `iot_session`, `ENTRY_WINDOW_MS=90s` interno) y
+      `verificationWindow` (`last_close_at` dentro de `gap+10s`).
+- [ ] Eliminar `presenceConfirmed` u otras banderas pegajosas; usar solo el snapshot.
+- [ ] Conservar throttle (5 s / 2 s con deadline) y backoff de cuota (10 min).
+
+**Criterio de aceptación**: el log deja de llamar a Tuya con el huésped dentro o con la
+habitación vacía; `node --check api/bin/tuya-presence-poller.js` OK.
+**Test propio**: unitario JS en TSK-F41-12.
+
+---
+
+### TSK-F41-12: Watchdog de captura máxima + tests unitarios JS
+
+**Objetivo**: evitar bucles infinitos de captura y fijar el gate con tests.
+**Trazabilidad**: RF-45.3 · `design.md` §4.3, §4.4.
+**Archivos**:
+- `api/bin/tuya-presence-poller.js`
+- `api/tests/Unit/presence-gate.test.js` (nuevo)
+
+**Dependencias**: TSK-F41-11.
+**Contenido**:
+- [ ] `CAPTURE_MAX_MS=120000`, `CAPTURE_COOLDOWN_MS=30000`; al superar el máximo: log de
+      diagnóstico, parar y cooldown. Un cambio de `door` rearma.
+- [ ] Exportar `isCaptureWindow()`/`nextCaptureState()` para test (módulo Node).
+- [ ] Test JS: `inside`, `empty`, `OPEN`, `deadline`, `entryInProgress`,
+      `verificationWindow`, watchdog dispara a los 120 s, cooldown, rearme por cambio de puerta.
+- [ ] Invocar `node api/tests/Unit/presence-gate.test.js` desde `run-tests.sh` (BLOCK 33),
+      mapeando su exit code a `pass`/`fail`.
+
+**Criterio de aceptación**: `node tests/Unit/presence-gate.test.js` exit `0`; el runner lo
+reporta como un PASS más.
+**Test propio**: unitario JS (nuevo).
+
+---
+
+## F41g: Máquina de estados del panel (RF-46 / RF-49)
+
+### TSK-F41-13: `deriveChoreography()` pura por episodios (T1–T18)
+
+**Objetivo**: reemplazar la derivación acoplada por una función pura de episodios, sin bandera
+pegajosa.
+**Trazabilidad**: RF-46.1, RF-46.2, RF-46.3, RF-47.3 · `design.md` §5.
+**Archivos**:
+- `api/public/dashboard.html`
+- `api/tests/Unit/choreography.test.js` (nuevo, recomendado)
+
+**Dependencias**: TSK-F41-10.
+**Contenido**:
+- [ ] Implementar `deriveChoreography(snapshot, episodes, now)` pura (sin `Date.now()` ni DOM).
+- [ ] Estados lógicos y mapeo a claves UI existentes; tiempo de umbral (`EN_UMBRAL`) con puerta
+      abierta y consolidación `DENTRO` al cerrar con `entry_confirmed_at`/presencia vista.
+- [ ] Sustituir `_presenceDetectedDuringOpen` por `entryEpisode.presenceSeenWhileOpen`
+      (reiniciado al consolidar y al cambiar de `stayId`).
+- [ ] Distinguir entrada/salida con `entry_confirmed_at` + `last_open_at > entry_confirmed_at`,
+      no con la ventana QR de 120 s.
+- [ ] `processLiveData()` solo invoca la función y aplica `episodeUpdates`.
+- [ ] Cubrir T1–T18 de `design.md` §5.3 con tests de la función pura.
+
+**Criterio de aceptación**: test JS de coreografía exit `0`; en el panel, tras QR + OPEN el
+avatar queda en umbral y al cerrar pasa a dentro; una apertura tras entrada confirmada muestra
+`POSIBLE_SALIDA` y nunca un salto directo QR→dentro.
+**Test propio**: unitario JS (función pura).
+
+---
+
+### TSK-F41-14: Watchdog SSE y conteo por temporizador local
+
+**Objetivo**: detectar silencio del stream y resincronizar; mostrar el conteo de forma fiable.
+**Trazabilidad**: RF-49.1, RF-49.2, RF-49.3 · `contracts.md` §4 · `design.md` §6.
+**Archivos**:
+- `api/public/dashboard.html`
+
+**Dependencias**: TSK-F41-13, TSK-F41-15.
+**Contenido**:
+- [ ] `_lastSseEventAt` actualizado en `connected`, `state` y `ping`; watchdog (1 s) que
+      resincroniza `/live` tras >5 s de silencio (pestaña visible) y fuerza `connectSSE()` a
+      los >15 s; throttle para no repetir fetch.
+- [ ] `updateCountdown()` en `setInterval(250 ms)` mientras haya `exit_deadline`; ocultar si no
+      hay deadline / presencia / `door=CLOSED` / estancia `OCCUPIED`; a 0 → `resyncLive()`.
+- [ ] Trazabilidad de transiciones de coreografía bajo flag `DEBUG_CHOREO`.
+
+**Criterio de aceptación**: con el stream vivo pero sin `state`, el panel se resincroniza en
+≤ ~6 s; el conteo avanza en cliente aunque no lleguen eventos y desaparece al cancelarse.
+**Test propio**: manual (worktree/webapp) + cobertura parcial del test puro de coreografía.
+
+---
+
+### TSK-F41-15: Evento SSE `ping` en backend
+
+**Objetivo**: emitir una señal de vida nombrada cada ~5 s.
+**Trazabilidad**: RF-49.1 · `contracts.md` §4.
+**Archivos**:
+- `api/src/Http/Controllers/EventStreamController.php`
+
+**Dependencias**: ninguna adicional.
+**Contenido**:
+- [ ] Emitir `event: ping` con `data: {"room_id":N,"ts":"<ISO-8601Z>"}` cada ~5 s.
+- [ ] Conservar el comentario `keepalive` cada 15 s y los eventos `connected`/`state`/`close`.
+
+**Criterio de aceptación**: `curl -N` al stream muestra `event: ping` con el payload esperado y
+sin alterar `state`.
+**Test propio**: HTTP/SSE en TSK-F41-18.
+
+---
+
+## F41h: Infraestructura de workers (RF-48)
+
+### TSK-F41-16: `stop-all.sh`/`start-all.sh` deterministas e instancia única
+
+**Objetivo**: eliminar wrappers huérfanos y garantizar una instancia por worker.
+**Trazabilidad**: RF-48.1, RF-48.4 · `design.md` §7.1.
+**Archivos**:
+- `stop-all.sh` (nuevo)
+- `start-all.sh`
+
+**Dependencias**: TSK-F41-06.
+**Contenido**:
+- [ ] `stop-all.sh`: matar primero los wrappers (`bash -c … bin/<worker>`), después los hijos
+      (`php bin/<worker>.php`, `node …`), espera acotada y escalado `TERM → KILL`.
+- [ ] `start-all.sh` invoca `stop-all.sh` al inicio; lanza cada worker con `setsid` y PID file
+      en `api/run/<worker>.pid`; si el PID vive, no relanza.
+- [ ] Incluir `exit-scan`, `overstay-scan`, `outbox-worker`, `anomaly-scanner`,
+      `presence-poller-manager` y `pulsar-consumer`.
+- [ ] Documentar en el propio script el patrón de parada (sin `reset --hard` ni comandos
+      destructivos de git).
+
+**Criterio de aceptación**: dos ejecuciones seguidas de `start-all.sh` dejan exactamente una
+instancia por worker (`pgrep -fc`); tras `stop-all.sh` no quedan procesos.
+**Test propio**: verificación manual + `instances` en TSK-F41-18.
+
+---
+
+### TSK-F41-17: `system-status` ampliado (6 workers, `instances`/`healthy`/`degraded`)
+
+**Objetivo**: exponer instancias y salud de los workers.
+**Trazabilidad**: RF-48.2 · `contracts.md` §5.
+**Archivos**:
+- `api/public/index.php`
+
+**Dependencias**: TSK-F41-16.
+**Contenido**:
+- [ ] Ampliar a las 6 claves: `exit-scan`, `overstay-scan`, `outbox-worker`,
+      `anomaly-scanner`, `presence-poller-manager`, `pulsar-consumer`.
+- [ ] Campos: `label`, `online`, `pid`, `expected=1`, `instances`, `pids` (`[]` si no hay),
+      `healthy = instances === expected`, `degraded = instances > expected`.
+- [ ] Conservar el frontend existente: `renderSystemStatus()` usa `label`/`online` (sigue
+      funcionando).
+
+**Criterio de aceptación**: la respuesta JSON contiene las 6 claves y los 8 campos; con 0
+instancias `pids=[]`, `online=false`, `healthy=false`; con 1, `healthy=true`.
+**Test propio**: HTTP en TSK-F41-18.
+
+---
+
+## F41i: Tests HTTP / regresión
+
+### TSK-F41-18: BLOCK 33 — escenarios de coreografía, concurrencia y contratos
+
+**Objetivo**: cubrir de extremo a extremo la fase en el runner acumulativo.
+**Trazabilidad**: RF-43…RF-49 · `contracts.md` §3, §4, §5, §6.
+**Archivos**:
+- `api/bin/run-tests.sh` (nuevo BLOCK 33, antes del `RESUMEN`)
+
+**Dependencias**: TSK-F41-12, TSK-F41-17 (y por transitividad todas las anteriores).
+**Contenido** (usar `/sim/rooms/1/{door,presence}` con `SIM-CLIENT`, `ADMIN-CLI` para panel,
+claves de `seeds/dev_api_keys.txt` y `--idem`):
+- [ ] Invocación JS: `node tests/Unit/presence-gate.test.js` mapeada a `pass`/`fail`.
+- [ ] **Entrada umbral→dentro**: reset → QR/pack → `door OPEN` → `presence PRESENT` →
+      `GET /live` (avatar/estado `EN_UMBRAL`, `last_open_at`/`last_presence_event_at`) →
+      `door CLOSED` → `GET /live` (`entry_confirmed_at` no nulo, estado dentro).
+- [ ] **Apertura+cierre con presencia**: dentro con PRESENT y `door CLOSED` ⇒ `exit_deadline=null`.
+- [ ] **Sensores dentro**: con el huésped dentro, `door OPEN` y `door CLOSED` se registran
+      (`last_door_event_at` cambia y `last_door_value` = valor enviado) — antes no ocurría.
+- [ ] **Salida con conteo**: `door OPEN` → `door CLOSED` → `presence ABSENT` ⇒ `exit_deadline`
+      no nulo; esperar el gap ⇒ estancia `EXITED`, `room FREE`, (luz off best-effort).
+- [ ] **Reaparición cancela**: misma secuencia pero `presence PRESENT` antes del gap ⇒
+      `exit_deadline=null` y estancia `OCCUPIED`.
+- [ ] **Concurrencia (RC-1)**: dos `POST /sim/rooms/1/door` **simultáneos** (OPEN y CLOSED,
+      lanzados en background con `curl … &` + `wait`) ⇒ `GET /live` final con
+      `last_door_value=CLOSED` y `door_state=CLOSED` (no debe quedar OPEN).
+- [ ] **Idempotencia de salida**: dos evaluaciones concurrentes ⇒ un solo cierre (un solo
+      `exit_detected_at`/transición).
+- [ ] **`/live` campos nuevos**: presencia de los 5 campos y tipo correcto.
+- [ ] **`system-status`**: 6 claves, `expected=1`, `pids` array, `healthy`/`degraded` coherentes.
+- [ ] **Reset limpia marcas**: tras reset, `last_close_at`, `last_door_event_at`,
+      `last_presence_event_at`, `last_door_value`, `last_presence_value` a `null`.
+- [ ] **SSE `ping`**: lectura con `curl -N --max-time 6` del stream contiene `event: ping`.
+- [ ] Marcar `skip` con mensaje si la BD/estado no permite un caso stateful.
+
+**Criterio de aceptación**: `bash bin/run-tests.sh` incluye BLOCK 33 y todos sus casos pasan
+(0 failures) en una BD en el estado esperado.
+**Test propio**: HTTP/integración (nuevo bloque).
+
+---
+
+## F41j: Cierre de fase
+
+### TSK-F41-19: Regresión completa, documentación y log
+
+**Objetivo**: cerrar la fase con evidencia.
+**Trazabilidad**: AGENTS.md (tabla de fases y testing obligatorio).
+**Archivos**:
+- `AGENTS.md`
+- `api/logs/test-results.log` (generado por el runner)
+- `.specs/specs/tasks.md` (marcar las casillas de esta fase)
+
+**Dependencias**: TSK-F41-18.
+**Contenido**:
+- [ ] Ejecutar `cd /root/cerraduras/api && bash bin/run-tests.sh` → **0 failures**.
+- [ ] Actualizar la tabla de fases de `AGENTS.md`: añadir
+      `| **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |`.
+- [ ] Confirmar que el bloque del runner (tabla de fases) refleja BLOCK 33.
+- [ ] Registrar el resultado en `api/logs/test-results.log` (lo escribe el runner; verificar).
+- [ ] Marcar `- [x]` en todas las tareas F41 al completarlas.
+
+**Criterio de aceptación**: runner con `0 failures`; AGENTS.md y tasks.md actualizados; log con
+la ejecución final.
+**Test propio**: ejecución de regresión completa.
+
+---
+
+## Tabla resumen de tareas F41
+
+| TSK | Título | RF | Archivos principales | Test |
+|-----|--------|----|----------------------|------|
+| F41-01 | Test orden/dedup `decide()` (RED) | RF-44 | `tests/Unit/SensorEventDecisionTest.php` | unit PHP |
+| F41-02 | Test regla de salida + migrar tests viejos (RED) | RF-47 | `tests/Unit/ExitRuleEvaluatorTest.php` | unit PHP |
+| F41-03 | Migración 0108 + hidratación | RF-43/44/46/47 | `migrations/0108_*`, `IotSession`, `PresenceEvent`, `Stay` + repos | BLOCK 2 |
+| F41-04 | `lockByRoomId`/`updateState`/`markExitEvaluated` | RF-43 | `IotSessionRepository*` + fakes de test | unit PHP |
+| F41-05 | `processEvent()` atómico + post-commit | RF-43 | `IotSessionService.php` | unit + HTTP |
+| F41-06 | `exit-scan` idempotente sin escribir sensores | RF-43/47/48 | `ExitActionService.php`, `bin/exit-scan.php` | HTTP |
+| F41-07 | Fingerprint + `decide()` + auditoría | RF-44 | `PresenceEventRepository*`, `TuyaSensorIngress.php` | unit PHP |
+| F41-08 | `entry_confirmed_at` + ciclo acreditado | RF-47 | `ExitRuleEvaluator.php`, `StayRepository.php` | unit PHP |
+| F41-09 | Reset limpia marcas | RF-47.5 | `QrTestController.php` | HTTP |
+| F41-10 | `/live` + SSE campos nuevos y deadline | RF-46/47 | `RoomLiveController.php`, `EventStreamController.php` | HTTP |
+| F41-11 | Gate del poller por dominio | RF-45 | `bin/tuya-presence-poller.js` | unit JS |
+| F41-12 | Watchdog 120 s/30 s + tests JS | RF-45.3 | `tuya-presence-poller.js`, `tests/Unit/presence-gate.test.js` | unit JS |
+| F41-13 | `deriveChoreography()` pura T1–T18 | RF-46/47 | `dashboard.html`, `tests/Unit/choreography.test.js` | unit JS |
+| F41-14 | Watchdog SSE + conteo local | RF-49 | `dashboard.html` | manual |
+| F41-15 | Evento SSE `ping` | RF-49 | `EventStreamController.php` | HTTP/SSE |
+| F41-16 | `stop-all.sh`/`start-all.sh` + PID files | RF-48 | `start-all.sh`, `stop-all.sh` | manual |
+| F41-17 | `system-status` ampliado | RF-48.2 | `public/index.php` | HTTP |
+| F41-18 | BLOCK 33: coreografía, concurrencia, contratos | RF-43…49 | `bin/run-tests.sh` | HTTP |
+| F41-19 | Cierre: regresión + docs + log | — | `AGENTS.md`, `logs/test-results.log` | regresión |
+
+**Número de BLOCK elegido**: **BLOCK 33** (último existente: BLOCK 32 — F43 Sensor 24G V3; sin
+placeholders pendientes; se inserta antes del `RESUMEN`).
+
+---
+
+## Riesgos de secuenciación detectados
+
+1. **Tests existentes que fijan la semántica antigua** — `api/tests/Unit/ExitRuleEvaluatorTest.php`
+   (T1b «door OPEN ⇒ no fire», T2/T3/T5, T6 dependiente de `DOOR_CLOSE_WINDOW_S=60`) quedará en
+   rojo al cambiar `evaluate()`. Se resuelve en **TSK-F41-02** actualizando esos casos a la nueva
+   semántica; hasta TSK-F41-08 BLOCK 1 tendrá fallos conocidos y acotados a ese fichero.
+2. **Cambio de interfaz rompe fakes** — añadir métodos a `IotSessionRepositoryInterface` rompe
+   los fakes de `AbsenceTimerTest.php`, `IotSessionServiceTest.php` y `ExitRuleEvaluatorTest.php`;
+   añadir `lockActiveForRoom` a `StayRepositoryInterface` afecta además a
+   `QrValidateServiceTest.php`, `DebtsServiceTest.php`, `StayStateMachineTest.php`,
+   `QrIssueServiceTest.php`. **TSK-F41-04 debe actualizar todos los fakes en el mismo paso**;
+   de lo contrario BLOCK 1 cae entero.
+3. **Ventana RED entre F41a y F41d/F41e** — los tests de F41a quedan en rojo hasta sus
+   implementaciones (F41-07/F41-08). Es el estado esperado en una fase abierta; no cerrar la fase
+   (TSK-F41-19) hasta que BLOCK 1 esté 100 % verde.
+4. **Dependencia F41-06 → F41-08** — `executeIfPending()` necesita la regla revisada; no se
+   puede adelantar el worker sin la nueva semántica.
+5. **Sin runner JS** — el poller y `deriveChoreography()` no se autodescubren; hay que añadir la
+   invocación `node` explícita en BLOCK 33 (TSK-F41-12) o los tests JS no se ejecutarán.
+6. **Datos vivos fuera de git** — `api/seeds/dev_api_keys.txt` no existe en el worktree
+   (gitignored); los tests HTTP deben hacer `skip` explicativo si falta, y las claves se leen
+   siempre del fichero (nunca hardcodeadas).
+7. **Instancia única vs. entorno de desarrollo** — `stop-all.sh` mata procesos por patrón; debe
+   acotarse a `bin/` y no tocar el servidor PHP (`php -S`) ni los tests.
+8. **`FOR UPDATE` y `exit-scan`** — si TSK-F41-06 no elimina la escritura de sensores del worker,
+   la concurrencia seguirá produciendo lost updates aunque F41-05 esté correcto.

@@ -1349,3 +1349,904 @@ que lanzaba `check` a cerradura/relé y lector QR y los hacía actuar en bucle).
 verificación se hace SOLO al cargar la página o pulsar "Comprobar dispositivos". El
 heartbeat del chip ESP32 mantiene el estado online; el lector de `device-status` (GET,
 solo lectura) refresca el panel sin actuar hardware.
+
+---
+
+# Fase 41 — Diseño: Robustez del pipeline de sensores y coreografía del panel
+
+> **Trazabilidad**: RF-43 … RF-49 (`requirements.md` §Fase 41). Este diseño no incluye
+> código de negocio; define módulos, algoritmos, esquema de datos y contratos a formalizar
+> en `contracts.md`. Los nombres concretos de columnas/clases propuestos aquí son
+> decisiones de diseño y deben quedar reflejados en `contracts.md` antes de implementar.
+
+## 0. Resumen y trazabilidad
+
+| RF | Problema (causa raíz) | Sección | Componente principal |
+|----|------------------------|---------|----------------------|
+| RF-43 | RC-1: lost update no atómico en `iot_sessions` | §1 | `IotSessionService` + `IotSessionRepository` (lock de fila) |
+| RF-44 | RC-2: sin orden temporal ni idempotencia real | §2 | `PresenceEventRepository` + columnas nuevas (`iot_sessions`, `presence_events`) |
+| RF-47 | RC-6: la regla de salida exige `door=CLOSED` y no limpia el reset | §3 | `ExitRuleEvaluator` + `ExitActionService` |
+| RF-45 | RC-5: `isCaptureWindow()` depende de `door_state` y de una bandera pegajosa | §4 | `bin/tuya-presence-poller.js` |
+| RF-46 / RF-47 | RC-3: coreografía confundida por ventana QR y `_presenceDetectedDuringOpen` | §5 | `dashboard.html` (`deriveChoreography()`) |
+| RF-49 | Pérdida de stream / conteo no fiable | §6 | `dashboard.html` + `EventStreamController` |
+| RF-48 | RC-4: workers huérfanos y ausentes | §7 | `start-all.sh`/`stop-all.sh` + `/dashboard-api/system-status` |
+| Contratos | Campos nuevos que deben exponerse | §8 | `/live`, SSE, `/dashboard-api/system-status` |
+
+**Principio rector**: el estado IoT de una habitación es la fuente de verdad y tiene un
+**único escritor autoritativo**. Todo lo demás (frontend, poller, exit-scan) **deriva** de
+ese estado, nunca lo reescribe.
+
+---
+
+## 1. Atomicidad del estado IoT por habitación (RF-43)
+
+### 1.1 Diagnóstico del lost update
+
+`IotSessionService::processEvent()` ejecuta hoy:
+
+```
+rooms->findById()                  (I/O)
+presenceEvents->insert()           (I/O)
+iotSessions->findByRoomId()        (I/O — LECTURA sin lock)
+... mutación en memoria ...
+iotSessions->upsert()              (I/O — reescribe TODAS las columnas)
+```
+
+Con `PHP_CLI_SERVER_WORKERS=8` y varios productores de la misma habitación (webhook de
+puerta + webhook de presencia + `exit-scan` con 9 instancias), dos hilos pueden leer el
+mismo snapshot y el último `upsert()` gana, pisando la transición del otro. Evidencia real:
+`last_close_at`/`door_state='CLOSED'` quedó sobrescrito por `door_state='OPEN'` al aplicar una
+escritura de presencia que arrastraba un snapshot viejo.
+
+`INSERT … ON DUPLICATE KEY UPDATE` **no lo arregla por sí solo**: aunque el motor resuelva la
+inserción/actualización de forma atómica a nivel de fila, la sentencia escribe los valores de
+un *snapshot leído antes* (`:door`, `:pres`, `:open`, `:close`, …). Sigue siendo
+read-modify-write a nivel de aplicación: no existe la decisión "¿este evento es más nuevo
+que el estado actual?" dentro de la operación atómica.
+
+### 1.2 Punto único de escritura
+
+Se introduce un **escritor único** (`IotSessionService::applyEvent()`, evolución de
+`processEvent()`) que envuelve todo el ciclo leer-modificar-escribir en una transacción con
+**lectura bloqueante de la fila** (`SELECT … FOR UPDATE`). Requisitos:
+
+- Solo `IotSessionService` puede escribir `door_state`, `presence_state`, `last_open_at`,
+  `last_close_at`, `last_absent_since` y las nuevas marcas de orden.
+- `ExitRuleEvaluator` / `ExitActionService` **no** escriben estado de sensores: como mucho
+  actualizan `exit_evaluated_at` con un update condicional (`markExitEvaluated()`), dentro de
+  su propia transacción y re-validando la precondición.
+- `QrTestController::roomsReset` usa una sentencia de reset explícita y documentada (no es una
+  escritura de sensor).
+- Webhooks de puerta y presencia, y cualquier futuro productor, entran por `applyEvent()`.
+
+Interfaz propuesta:
+
+```php
+interface IotSessionRepositoryInterface
+{
+    public function findByRoomId(int $roomId): ?IotSession;
+
+    /** SELECT ... FOR UPDATE dentro de una transacción ya abierta.
+     *  Crea la fila si no existe (INSERT no-op) y la devuelve bloqueada. */
+    public function lockByRoomId(int $roomId): IotSession;
+
+    /** UPDATE por id de las columnas de estado (no reescribe el resto). */
+    public function updateState(IotSession $session): void;
+
+    /** Update condicional de exit_evaluated_at; devuelve false si otro ya lo marcó. */
+    public function markExitEvaluated(int $roomId, string $nowUtc): bool;
+}
+```
+
+`lockByRoomId()` materializa la fila con un no-op antes de bloquear (evita el caso "fila
+ausente" y garantiza lock real incluso en `READ COMMITTED`):
+
+```sql
+INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
+VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE id = id;   -- no-op: crea la fila si falta y toma el lock
+
+SELECT id, room_id, stay_id, door_state, presence_state,
+       last_open_at, last_close_at, last_absent_since, exit_evaluated_at,
+       last_door_event_at, last_presence_event_at,
+       last_door_value, last_presence_value
+FROM iot_sessions
+WHERE room_id = :rid
+FOR UPDATE;
+```
+
+### 1.3 Pseudocódigo del algoritmo de aplicación
+
+```
+función applyEvent(event, correlationId):
+    # (A) Auditoría bruta fuera de la transacción de estado: idempotente por fingerprint.
+    #     Registra SIEMPRE el evento, aunque luego no se aplique (RF-44.3).
+    raw = presenceEvents.insertOrGet(event)        # 1062 en source_event_id/fingerprint → existente
+
+    decision = null
+    para intento en 1..3:
+        intenta:
+            pdo.beginTransaction()
+            session = iotSessions.lockByRoomId(roomId)      # SELECT ... FOR UPDATE
+
+            # (B) Decisión de aplicación: duplicado / atrasado / noop / aplicar (RF-44)
+            decision = decide(event, session)
+
+            si decision != APLICAR:
+                presenceEvents.markAudit(raw.id, applied=false, reason=decision)
+                pdo.commit()
+                returns {accepted:true, derived_state: session.toArray()}
+
+            # (C) Mutación pura sobre el snapshot bloqueado
+            mutate(session, event)                           # actualiza estado + marcas de orden
+            iotSessions.updateState(session)                 # UPDATE por id
+            presenceEvents.markAudit(raw.id, applied=true, reason=null)
+            pdo.commit()
+            rompe
+        captura Deadlock(1213/40001) o LockWaitTimeout(1205):
+            pdo.rollback()
+            si intento == 3: relanza
+            backoff(20 * intento ms + jitter)
+
+    # (D) Efectos externos SIEMPRE post-commit y fuera del lock (no I/O pesado bajo lock)
+    si se aplicó PROXIMITY=OPEN: switch.turnOn(roomId) best-effort
+    anomalyService.detectAndPersist(sessionFresh, event) best-effort (A1–A8, informativas)
+    exitActionService.executeIfPending(roomId, correlationId)   # §3.3 (re-lockea)
+
+    returns {accepted:true, derived_state: refreshedSession.toArray()}
+```
+
+Puntos clave:
+
+- **El lock solo cubre la decisión + el `UPDATE`**. Ninguna llamada a Tuya, gateway de
+  cerradura o cálculo de anomalías ocurre mientras la fila está bloqueada. Objetivo: lock
+  < 20 ms.
+- El `exit-scan` jamás llama a `updateState()`; delega en `executeIfPending()`.
+- Un fallo tras el commit (p. ej. la luz) no revierte el estado de sensores; se registra.
+
+### 1.4 Deadlocks y reintentos
+
+- Orden de adquisición único: **primero `iot_sessions`, después `stays`** (o ninguna otra
+  tabla). `executeIfPending()` respeta el mismo orden para evitar ciclos.
+- Reintento acotado (3) con backoff + jitter ante `1213` (deadlock) y `1205` (lock wait
+  timeout). Si se agota, se responde error reintentable y el evento ya quedó auditado; el
+  `outbox`/reintento del emisor no pierde el hecho.
+- `innodb_lock_wait_timeout` se mantiene bajo (p. ej. 5 s) para que un lock atascado no
+  bloquee workers de otras habitaciones; el lock es **por habitación**, no global, así que
+  habitaciones distintas no compiten.
+
+### 1.5 Por qué no basta el upsert a ciegas
+
+| Alternativa | Motivo de descarte |
+|---|---|
+| `INSERT … ON DUPLICATE KEY UPDATE` con `VALUES()` | Escribe el snapshot completo; una escritura vieja revierte columnas nuevas. No expresa "aplicar solo si es más reciente". |
+| `UPDATE` condicional por columna (`GREATEST`, `IF`) | Puede arreglar una columna, pero el estado derivado es multivariable (door + presence + timestamps + regla de ciclo). No equivale a "aplicar el evento X sobre el estado más reciente". |
+| Cola de eventos + worker único | Correcto pero introduce latencia y un bus nuevo; el lock de fila por habitación es suficiente y de menor alcance. |
+| `SELECT` sin lock + reintento optimista (versión) | Requiere columna de versión y reintentos en todos los call sites; el `FOR UPDATE` es más simple y el contention es por habitación. |
+
+---
+
+## 2. Orden temporal e idempotencia de eventos (RF-44)
+
+### 2.1 Identidad lógica de evento (fingerprint)
+
+`source_event_id` actual (`tuya-<devId>-<t>`) es un id de **transporte**: si Pulsar reenvía el
+mismo hecho con otro `t` (o el poller lo reenvía con su propio `now`), se procesa como nuevo.
+Se añade una identidad **lógica**:
+
+```
+fingerprint = sha1( room_id | sensor | value | floor(occurred_at a segundo) )
+```
+
+- Incluye `value`, así `OPEN` y `CLOSED` en el mismo segundo se conservan ambos.
+- Trunca a segundo porque la fuente (`t` de Tuya en ms) y el poller (`Date.now()`) no aportan
+  resolución fiable; dos eventos idénticos en el mismo segundo son el mismo hecho a efectos de
+  dominio.
+- Se persiste con índice `UNIQUE` (`uq_presence_fingerprint`); `1062` ⇒ duplicado.
+
+**Trade-off** frente a una ventana anti-rebote temporal (p. ej. descartar mismo valor < 1 s):
+la ventana descarta también transiciones legítimas rápidas (rebote real de puerta) y depende
+de reloj; el fingerprint es determinista y solo colapsa eventos **idénticos** en el mismo
+segundo, que por definición son un no-op de estado. La ventana se usa solo como criterio
+secundario de `noop` (mismo valor que el ya aplicado), nunca para borrar hechos.
+
+### 2.2 Columnas de orden en `iot_sessions`
+
+| Columna | Tipo | Semántica |
+|---|---|---|
+| `last_door_event_at` | `DATETIME(3) NULL` | `occurred_at` del último evento de puerta **aplicado**. |
+| `last_presence_event_at` | `DATETIME(3) NULL` | `occurred_at` del último evento de presencia **aplicado**. |
+| `last_door_value` | `VARCHAR(8) NULL` | Último valor de puerta aplicado (`OPEN`/`CLOSED`). |
+| `last_presence_value` | `VARCHAR(8) NULL` | Último valor de presencia aplicado (`PRESENT`/`ABSENT`). |
+
+Con esto, un evento con `occurred_at` anterior al último aplicado de su sensor se descarta
+(`atrasado`) sin corromper el estado, y no hace falta leer `presence_events` para decidir.
+
+### 2.3 Auditoría de aplicación en `presence_events`
+
+| Columna | Tipo | Semántica |
+|---|---|---|
+| `event_fingerprint` | `CHAR(40) NULL` | Identidad lógica; `UNIQUE`. NULL en filas legacy. |
+| `applied` | `TINYINT(1) NULL` | `1` aplicado, `0` descartado, `NULL` pendiente/legacy. |
+| `discard_reason` | `VARCHAR(16) NULL` | `duplicate` \| `stale` \| `noop`. |
+
+El evento bruto se inserta **siempre** (RF-44.3.1); `applied`/`discard_reason` se rellenan en
+la misma transacción del estado. Un descarte no borra evidencia.
+
+### 2.4 Decisión de aplicación (`decide()`)
+
+```
+función decide(event, session):
+    si event.sensor == PROXIMITY:
+        lastAt = session.last_door_event_at
+        lastVal = session.last_door_value
+    sino:
+        lastAt = session.last_presence_event_at
+        lastVal = session.last_presence_value
+
+    # 1) Duplicado lógico exacto: ya existe fingerprint (detectado en insertOrGet) → duplicate
+    # 2) Atrasado: el hecho ocurrió antes que el último aplicado de ese sensor
+    si lastAt != null y event.occurred_at < lastAt:
+        returns ATRASADO
+
+    # 3) Mismo instante y mismo valor → no aporta transición (Pulsar reenvía)
+    si lastAt != null y event.occurred_at == lastAt y event.value == lastVal:
+        returns DUPLICADO
+
+    # 4) Valor ya vigente sin cambio → noop (evita reescrituras y ruido)
+    si event.value == lastVal:
+        returns NOOP
+
+    returns APLICAR
+```
+
+`mutate()` al aplicar:
+
+```
+si sensor == PROXIMITY:
+    session.last_door_event_at = event.occurred_at
+    session.last_door_value    = event.value
+    si value == OPEN:
+        door_state = OPEN;  last_open_at = occurred_at
+    sino si value == CLOSED:
+        door_state = CLOSED; last_close_at = occurred_at
+        si presence_state == ABSENT y last_absent_since == null: last_absent_since = occurred_at
+        # Consolidación de entrada (§3.3): presencia vista durante la apertura
+        si hay stay activo y (presence_state == PRESENT
+             o (last_presence_value == PRESENT y last_presence_event_at >= last_open_at)):
+            stays.entry_confirmed_at = occurred_at (si null)
+        # F38 Escenario B: cierre de worker_session (se mantiene)
+sino si sensor == PRESENCE:
+    session.last_presence_event_at = event.occurred_at
+    session.last_presence_value    = event.value
+    si value == PRESENT:
+        presence_state = PRESENT; last_absent_since = null      # cancela conteo (RF-47.3)
+    sino si value == ABSENT:
+        si presence_state != ABSENT: last_absent_since = occurred_at
+        presence_state = ABSENT
+```
+
+### 2.5 Ajuste de `TuyaSensorIngress`
+
+- Se conserva `source_event_id` para idempotencia de transporte, pero **deja de ser la única
+  defensa**; el fingerprint cubre reenvíos con distinto `t`.
+- `occurred_at` sigue derivándose de `t` (segundos). Se guarda el `t` crudo (ms) en
+  `meta_json.tuya_t` para auditoría fina.
+- El poller ya envía `t = now.getTime()` (ms); su truncado a segundo alimenta el fingerprint.
+
+### 2.6 Migración `0108` (siguiente libre tras `0107`)
+
+Nombre propuesto: `0108_sensor_event_ordering.sql`. Aditiva y nullable (segura en caliente):
+
+```sql
+-- 0108_sensor_event_ordering.sql — Orden temporal, idempotencia y consolidación de entrada
+-- Trazabilidad: RF-43, RF-44, RF-46, RF-47.
+
+ALTER TABLE iot_sessions
+  ADD COLUMN last_door_event_at     DATETIME(3) NULL AFTER last_absent_since,
+  ADD COLUMN last_presence_event_at DATETIME(3) NULL AFTER last_door_event_at,
+  ADD COLUMN last_door_value        VARCHAR(8)  NULL AFTER last_presence_event_at,
+  ADD COLUMN last_presence_value    VARCHAR(8)  NULL AFTER last_door_value;
+
+ALTER TABLE presence_events
+  ADD COLUMN event_fingerprint CHAR(40)    NULL AFTER source_event_id,
+  ADD COLUMN applied           TINYINT(1)  NULL AFTER event_fingerprint,
+  ADD COLUMN discard_reason    VARCHAR(16) NULL AFTER applied,
+  ADD UNIQUE KEY uq_presence_fingerprint (event_fingerprint),
+  ADD KEY idx_presence_room_occ (room_id, occurred_at);
+
+ALTER TABLE stays
+  ADD COLUMN entry_confirmed_at DATETIME(3) NULL AFTER first_entry_at;
+```
+
+> `entry_confirmed_at` es la marca autoritativa de "huésped confirmado dentro" (sustituye el
+> uso de `first_entry_at`, que se fija al validar el QR **antes** de entrar y por eso confunde
+> una apertura tardía con una salida — RC-3).
+
+---
+
+## 3. Regla de salida y verificación (RF-47)
+
+### 3.1 Cambios conceptuales
+
+1. **No depender del estado actual de puerta**: la condición pasa de `door_state == CLOSED` a
+   exigir un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes y
+   `last_close_at >= last_open_at`). Así, aunque `door_state` quede inconsistente, la salida
+   no se bloquea.
+2. **Precondición de presencia**: el huésped debe haber sido confirmado dentro
+   (`stays.entry_confirmed_at IS NOT NULL`) **y** debe existir una **nueva apertura posterior**
+   a esa confirmación (`last_open_at > entry_confirmed_at`). Esto evita que un falso `ABSENT`
+   del radar cierre la estancia sin que nadie haya abierto la puerta desde dentro.
+3. **Conteo anclado a `last_absent_since`** (sin cambios): el gap es
+   `room.presence_check_seconds ?? room_type.exit_presence_gap_seconds ?? 15`.
+4. **Cancelación**: si llega `PRESENT`, `last_absent_since` se limpia y `exit_deadline`
+   desaparece; la habitación vuelve a `OCCUPIED`.
+
+### 3.2 `ExitRuleEvaluator::evaluate()` revisado
+
+```
+función evaluate(session, stay, gapSeconds, nowTs):
+    si stay == null o stay.entry_confirmed_at == null: returns false
+    si session.last_open_at == null o session.last_close_at == null: returns false
+    openTs  = epoch(session.last_open_at)
+    closeTs = epoch(session.last_close_at)
+    entryTs = epoch(stay.entry_confirmed_at)
+
+    # (a) ciclo de puerta completo, posterior a la confirmación de entrada
+    si !(openTs > entryTs): returns false
+    si !(closeTs >= openTs): returns false
+    # (b) el ciclo no es arbitrariamente viejo (cota de seguridad)
+    si (nowTs - closeTs) > DOOR_CYCLE_MAX_S: returns false
+
+    # (c) ausencia sostenida
+    si session.presence_state != ABSENT: returns false
+    si session.last_absent_since == null: returns false
+    absentTs = epoch(session.last_absent_since)
+    returns (nowTs - absentTs) >= gapSeconds
+```
+
+`DOOR_CYCLE_MAX_S` sustituye al antiguo `DOOR_CLOSE_WINDOW_S=60` como cota superior (default
+propuesto 300 s, configurable), manteniendo compatibilidad con radares de retención lenta.
+Se conserva `shouldExit(roomId, nowTs)` cargando stay activo + sesión.
+
+### 3.3 `ExitActionService::executeIfPending()`
+
+La ejecución de efectos debe ser idempotente y atómica con la precondición, aunque la dispare
+el webhook o el `exit-scan`:
+
+```
+función executeIfPending(roomId, correlationId):
+    para intento en 1..3:
+        intenta:
+            pdo.beginTransaction()
+            session = iotSessions.lockByRoomId(roomId)      # mismo orden de lock
+            stay    = stays.lockActiveForRoom(roomId)        # SELECT ... FOR UPDATE
+            room    = rooms.findById(roomId)
+            si !evaluate(session, stay, gapSeconds, now):     # re-validación bajo lock
+                pdo.commit(); returns false                   # otro ya salió / se canceló
+            si !iotSessions.markExitEvaluated(roomId, now):   # update condicional
+                pdo.commit(); returns false                   # ya marcado por otro worker
+            # efectos (lock de puerta, EXITED, cooldown, FREE, luz, worker_sessions)
+            exitAction.applyEffects(room, session, stay, roomType, correlationId, now)
+            pdo.commit()
+            returns true
+        captura Deadlock/LockWaitTimeout:
+            pdo.rollback(); backoff; continúa
+```
+
+- `markExitEvaluated()` con `WHERE room_id=:rid AND (exit_evaluated_at IS NULL OR
+  exit_evaluated_at < :close_at)` da idempotencia real entre webhook y N instancias de
+  `exit-scan`.
+- Los efectos externos (gateway `lock`, `turnOff`) se ejecutan después de validar la
+  precondición. Si fallan, la estancia ya transicionó y se registra el fallo en
+  `access_events` (best-effort, como hoy).
+- El `entry_confirmed_at` no se borra al salir: queda como histórico de la estancia; la nueva
+  estancia nace con `NULL`.
+
+### 3.4 Reset de habitación
+
+`POST /dashboard-api/rooms/reset` debe limpiar, además de lo actual (`last_open_at`,
+`last_absent_since`, `exit_evaluated_at`), las **nuevas marcas** y el `last_close_at`
+(hoy no se limpia — RC-6):
+
+```sql
+ON DUPLICATE KEY UPDATE
+  door_state='CLOSED', presence_state='ABSENT',
+  last_open_at=NULL, last_close_at=NULL, last_absent_since=NULL, exit_evaluated_at=NULL,
+  last_door_event_at=NULL, last_presence_event_at=NULL,
+  last_door_value=NULL, last_presence_value=NULL,
+  updated_at=UTC_TIMESTAMP(3)
+```
+
+Así una nueva secuencia de apertura/cierre se detecta inmediatamente tras el reset.
+
+---
+
+## 4. Gate del poller de presencia (RF-45)
+
+### 4.1 Principio
+
+`isCaptureWindow()` se rediseña para decidir **solo con el estado de dominio del snapshot
+`/live`** (sin banderas pegajosas locales), y para tener una parada explícita por estado y un
+watchdog de captura máxima. Se elimina `presenceConfirmed`; el estado "dentro" se deriva de
+`active_stay.status == OCCUPIED ∧ presence == PRESENT ∧ door == CLOSED ∧ entry_confirmed_at`
+presente.
+
+### 4.2 Pseudocódigo
+
+```
+función isCaptureWindow(live, now):
+    si !live: returns false
+    io   = live.iot_session || {}
+    door = io.door_state || 'UNKNOWN'
+    pres = io.presence_state || 'UNKNOWN'
+    stay = live.active_stay
+    stayStatus = stay ? stay.status : null
+    deadline = live.exit_deadline ? epoch(live.exit_deadline) : null
+
+    # ── PARADAS por estado de dominio (RF-45.1) ──
+    inside = (stayStatus == 'OCCUPIED' && pres == 'PRESENT' && door == 'CLOSED'
+              && stay.entry_confirmed_at)                    # huésped dentro
+    si inside: return false
+
+    empty  = (!stay && pres == 'ABSENT' && !deadline)         # habitación 100% vacía
+    si empty: return false
+
+    # ── CAPTURA (RF-45.1.3) ──
+    si door == 'OPEN': return true                            # entrada/salida en curso
+    si deadline != null && deadline > now: return true        # verificación de salida
+    si entryInProgress(live, now): return true                # QR reciente, aún no consolidado
+    si verificationWindow(live, now): return true             # cierre reciente + gap
+
+    return false
+
+función entryInProgress(live, now):
+    # solo para "seguir capturando mientras el huésped aún no está dentro";
+    # NO se usa para distinguir entrada de salida (eso lo hace entry_confirmed_at)
+    return live.qr_status?.consumed == true
+        && !live.active_stay?.entry_confirmed_at
+        && now - lastQrConsumedAt < ENTRY_WINDOW_MS          # p. ej. 90_000
+
+función verificationWindow(live, now):
+    io = live.iot_session || {}
+    si !io.last_close_at: return false
+    gapMs = (live.gap_seconds || 15) * 1000
+    return (now - epoch(io.last_close_at)) < (gapMs + 10_000)
+```
+
+### 4.3 Watchdog de captura máxima (RF-45.3)
+
+```
+estado local: captureStartedAt = 0, captureBlockedUntil = 0
+
+en cada tick:
+    capturing = isCaptureWindow(live, now)
+
+    si capturing y captureStartedAt == 0: captureStartedAt = now
+    si !capturing:
+        captureStartedAt = 0
+        captureBlockedUntil = 0
+
+    si capturing y (now - captureStartedAt) > CAPTURE_MAX_MS (120_000):
+        log "⚠ watchdog de captura: forzando parada (door=..., stay=..., deadline=...)"
+        captureBlockedUntil = now + CAPTURE_COOLDOWN_MS (30_000)
+        captureStartedAt = 0
+        capturing = false
+
+    si now < captureBlockedUntil: capturing = false
+
+    # un cambio de puerta rearma inmediatamente (nueva ventana legítima)
+    si door != lastDoorState: captureBlockedUntil = 0
+```
+
+### 4.4 Caso "puerta atascada en OPEN"
+
+Con la puerta atascada, `door == 'OPEN'` haría capturar para siempre. El watchdog corta a los
+120 s, **registra el diagnóstico** y deja de consumir cuota; un cambio de puerta (al
+recuperarse) rearma la captura. El poller nunca queda en bucle infinito de llamadas a Tuya.
+
+### 4.5 Cuota Tuya
+
+| Situación | Llamada a Tuya |
+|---|---|
+| `inside` (OCCUPIED + PRESENT + CLOSED) | **No** |
+| `empty` (sin stay + ABSENT + sin deadline) | **No** |
+| `door == OPEN` | Sí (intervalo estándar 5 s) |
+| `deadline` activo | Sí (intervalo rápido 2 s) |
+| `entryInProgress` / `verificationWindow` | Sí (estándar) |
+| watchdog disparado | **No** durante 30 s |
+
+Se conserva el backoff de 10 min ante `quota exhausted`.
+
+---
+
+## 5. Máquina de estados del monigote (RF-46 / RF-47)
+
+### 5.1 Episodios (sustituye la bandera pegajosa)
+
+Se reemplaza `_presenceDetectedDuringOpen` por un modelo de **episodio** explícito y
+reiniciables:
+
+```
+entryEpisode = {
+  stayId, qrAt, doorOpenedAt, presenceSeenWhileOpen, consolidatedAt
+}
+exitEpisode = {
+  stayId, doorOpenedAt, closedAt, presenceSeenWhileClosed, absentAt, deadline
+}
+hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad del backend
+```
+
+- `entryEpisode.presenceSeenWhileOpen` se pone a `true` si llega PRESENT con la puerta abierta;
+  **se limpia al consolidar DENTRO/OCUPADA** (nunca queda pegada).
+- La distinción entrada/salida usa `hasBeenInside` (backend) + `last_open_at` posterior, **no**
+  una ventana QR de 120 s. La ventana QR solo se usa para "entrada en curso" (aún sin
+  consolidar).
+- El episodio se reinicia cuando cambia `stayId`.
+
+### 5.2 Estados (lógicos) y mapeo a la UI
+
+| Estado lógico | UI key (existente) | Monigote | Significado |
+|---|---|---|---|
+| `LOADING` | `LOADING` | `OUTSIDE` | Sin datos aún. |
+| `FREE` | `ESPERANDO` | `OUTSIDE` | Habitación libre sin estancia. |
+| `QR_DISPONIBLE` | `QR_DISPONIBLE` | `NEAR_QR` | QR escaneable. |
+| `QR_OK` | `QR_OK` | `AT_QR` | QR validado, puerta aún no abierta. |
+| `ESPERANDO_APERTURA` | `QR_ESPERANDO` | `AT_QR` | QR validado, se espera el evento OPEN. |
+| `EN_UMBRAL` | `HUESPED_EN_PUERTA` | `CROSSING` | Puerta abierta, avatar en el umbral. |
+| `DENTRO` | `OCUPADA` | `INSIDE` | Entrada consolidada (puerta cerrada + presencia). |
+| `POSIBLE_SALIDA` | `PUERTA_ABIERTA` | `WAITING` | Apertura tras entrada confirmada. |
+| `VERIFICANDO` | `VERIFICANDO_PRESENCIA` | `WAITING` | Puerta cerrada + ausencia; conteo activo. |
+| `SALIDA_CONFIRMADA` | `SALIDA_DETECTADA` / `HUESPED_HA_SALIDO` | `OUTSIDE` | Estancia cerrada; luz off. |
+| `ANOMALIA_*`, `EXCESO_TIEMPO`, `LIMPIEZA`, `FUERA_SERVICIO`, `ANTI_REENTRADA`, `SIN_CONFIGURAR`, `SENSORES_DESCONECTADOS` | igual | igual | Sin cambios (A1–A8 informativas, RF-35). |
+
+### 5.3 Tabla de transiciones
+
+| # | Origen | Guarda | Acción | Destino |
+|---|---|---|---|---|
+| T1 | `LOADING` | llegan sensores reales | — | `FREE`/`QR_*` |
+| T2 | `FREE` | `qr.scannable` | — | `QR_DISPONIBLE` |
+| T3 | `QR_DISPONIBLE` | `QR_VALIDATE OK` reciente | inicia `entryEpisode(qrAt)` | `QR_OK` |
+| T4 | `QR_OK` | `door == OPEN` | `entryEpisode.doorOpenedAt = last_open_at` | `EN_UMBRAL` |
+| T5 | `QR_OK` | `door == UNKNOWN` y QR reciente | — | `ESPERANDO_APERTURA` |
+| T6 | `ESPERANDO_APERTURA` | `door == OPEN` | igual que T4 | `EN_UMBRAL` |
+| T7 | `EN_UMBRAL` | `door == OPEN` y PRESENT | `entryEpisode.presenceSeenWhileOpen = true` | `EN_UMBRAL` |
+| T8 | `EN_UMBRAL` | `door == CLOSED` y (`entry_confirmed_at` o `presenceSeenWhileOpen`) | consolida entrada; limpia `entryEpisode` | `DENTRO` |
+| T9 | `DENTRO` | `door == OPEN` y `entry_confirmed_at` y `last_open_at > entry_confirmed_at` | inicia `exitEpisode` | `POSIBLE_SALIDA` |
+| T10 | `DENTRO` | `presence == ABSENT` sin apertura | — (no cierra estancia) | `DENTRO` |
+| T11 | `POSIBLE_SALIDA` | `door == CLOSED` | `exitEpisode.closedAt = last_close_at` | `VERIFICANDO` si `presence == ABSENT`; si no, `DENTRO` |
+| T12 | `POSIBLE_SALIDA` | PRESENT y `door == OPEN` | mantiene | `POSIBLE_SALIDA` |
+| T13 | `VERIFICANDO` | llega PRESENT | cancela conteo (`last_absent_since = null`) | `DENTRO` |
+| T14 | `VERIFICANDO` | `presence == ABSENT` y `deadline` activo | muestra conteo local | `VERIFICANDO` |
+| T15 | `VERIFICANDO` | `deadline` cumplido y estancia `EXITED` | limpia episodios | `SALIDA_CONFIRMADA` |
+| T16 | `SALIDA_CONFIRMADA` | `room FREE` sin estancia | — | `FREE` |
+| T17 | cualquiera | `stay.status == EXITED` precedido de OCCUPIED | — | `SALIDA_CONFIRMADA` |
+| T18 | cualquiera | anomalías A1–A8 activas | **no altera** la coreografía (solo badge) | mismo estado |
+
+> **RF-46.1.2**: si el evento OPEN se pierde, T4 no dispara; pero `entry_confirmed_at` se fija
+> en el backend al aplicar CLOSED con presencia, así que T8 consolida `DENTRO` y el avatar no
+> salta a interior sin pasar por umbral: mientras `door == OPEN` el estado es `EN_UMBRAL`, y
+> si el OPEN nunca llega, se muestra `ESPERANDO_APERTURA` (T5) en vez de `DENTRO`.
+
+### 5.4 Función pura `deriveChoreography()`
+
+La máquina es una **función pura y testeable**: recibe el snapshot + episodios + `now`, no lee
+`Date.now()` ni el DOM, y devuelve estado + mutaciones de episodio:
+
+```js
+function deriveChoreography(snapshot, episodes, now) {
+  // snapshot: { door, presence, stayStatus, entryConfirmedAt, exitDeadline,
+  //             lastOpenAt, lastCloseAt, gapSeconds, qrConsumed, qrOkAt, anomalies, roomStatus }
+  // episodes: { entry, exit, hasBeenInside }
+  // returns:  { state, episodeUpdates }
+}
+```
+
+`processLiveData()` solo la invoca y aplica `episodeUpdates` a las variables de módulo
+(eliminando `_presenceDetectedDuringOpen`). Los casos de la tabla T1–T18 se cubren con tests
+unitarios de la función pura (sin navegador).
+
+### 5.5 Diagramas de secuencia
+
+**Entrada (RF-46):**
+
+```mermaid
+sequenceDiagram
+    participant H as Huésped
+    participant L as Lector QR
+    participant API as API
+    participant DB as iot_sessions (FOR UPDATE)
+    participant P as Poller presencia
+    participant D as Dashboard
+
+    H->>L: escanea QR
+    L->>API: POST /qr/validate
+    API->>API: QR OK → stay OCCUPIED
+    API-->>D: SSE state (QR_OK)
+    D->>D: QR_OK (avatar AT_QR)
+    H->>API: PROXIMITY=OPEN (webhook/Pulsar)
+    API->>DB: tx lock → door=OPEN, last_open_at
+    API-->>D: SSE state
+    D->>D: EN_UMBRAL (avatar CROSSING)
+    Note over P: /live door=OPEN → captura
+    P->>API: PRESENCE=PRESENT
+    API->>DB: tx lock → presence=PRESENT, last_presence_event_at
+    API-->>D: SSE state
+    D->>D: EN_UMBRAL + presenceSeenWhileOpen=true
+    H->>API: PROXIMITY=CLOSED
+    API->>DB: tx lock → door=CLOSED, last_close_at
+    API->>API: entry_confirmed_at = close
+    API-->>D: SSE state
+    D->>D: DENTRO / OCUPADA (avatar INSIDE)
+    Note over P: gate "inside" → deja de llamar a Tuya
+```
+
+**Salida (RF-47):**
+
+```mermaid
+sequenceDiagram
+    participant H as Huésped
+    participant API as API
+    participant DB as iot_sessions (FOR UPDATE)
+    participant P as Poller
+    participant X as exit-scan
+    participant D as Dashboard
+
+    Note over P,X: stay OCCUPIED + entry_confirmed_at
+    H->>API: PROXIMITY=OPEN
+    API->>DB: tx lock → door=OPEN, last_open_at
+    API-->>D: SSE state → POSIBLE_SALIDA
+    Note over P: captura (door OPEN)
+    P->>API: PRESENCE=ABSENT
+    API->>DB: tx lock → presence=ABSENT, last_absent_since
+    H->>API: PROXIMITY=CLOSED
+    API->>DB: tx lock → door=CLOSED, last_close_at
+    API-->>D: SSE state → VERIFICANDO (conteo)
+    X->>API: executeIfPending() (re-valida bajo lock)
+    alt presencia reaparece
+        P->>API: PRESENCE=PRESENT
+        API->>DB: last_absent_since=NULL
+        API-->>D: SSE state → DENTRO (conteo cancelado)
+    else gap cumplido sin presencia
+        X->>API: applyEffects()
+        API->>API: stay EXITED + lock + room FREE + luz OFF
+        API-->>D: SSE state → SALIDA_CONFIRMADA (avatar OUTSIDE)
+    end
+```
+
+---
+
+## 6. Auto-recuperación y observabilidad del panel (RF-49)
+
+### 6.1 Watchdog del stream SSE
+
+Problema: `EventSource` reconecta solo si el socket cae; si el servidor sigue conectado pero
+deja de emitir `state`, el panel queda congelado sin detectarlo. Diseño:
+
+```js
+let _lastSseEventAt = 0;   // se actualiza en 'connected', 'state' y 'ping'
+const SSE_SILENCE_MS = 5000;
+const SSE_FORCE_RECONNECT_MS = 15000;
+
+setInterval(() => {
+  if (!_sseConnected) return;
+  if (document.visibilityState !== 'visible') return;
+  const silence = Date.now() - _lastSseEventAt;
+  if (silence > SSE_SILENCE_MS) {
+    resyncLive();                       // fetch puntual a /live + processLiveData
+    _lastSseEventAt = Date.now();        // evita tormenta de fetches
+  }
+  if (silence > SSE_FORCE_RECONNECT_MS) connectSSE();   // reabre el stream
+}, 1000);
+```
+
+Para que la señal de vida sea fiable, el servidor emite un evento SSE nombrado `ping` cada 5 s
+(el `keepalive` actual es un **comentario** y no dispara listeners JS). Ver §8.
+
+### 6.2 Conteo por temporizador local
+
+`updateCountdown()` deja de depender exclusivamente de la llegada de eventos: se ejecuta en un
+`setInterval(…, 250)` mientras exista `exit_deadline`, y:
+
+- calcula `sec = max(0, floor((deadline − now)/1000))` localmente;
+- oculta el grupo si no hay deadline, si `presence != ABSENT`, si `door != CLOSED` o si la
+  estancia no está `OCCUPIED` (RF-49.2.2);
+- al llegar a 0, llama a `resyncLive()` para reflejar la confirmación real (no inventa el
+  cierre en cliente);
+- al reaparecer presencia (`presence == PRESENT`) o desaparecer el deadline, oculta el conteo
+  de inmediato.
+
+### 6.3 Trazabilidad de la coreografía
+
+`deriveChoreography()` registra en consola (y opcionalmente en un buffer visible) cada
+transición con `{from, to, guard, snapshotMin}` bajo un flag `DEBUG_CHOREO`, permitiendo
+diagnosticar la coreografía desde el propio panel sin acceso a BD.
+
+---
+
+## 7. Infraestructura de workers (RF-48)
+
+### 7.1 Arranque/parada determinista
+
+`start-all.sh` arranca cada worker con un wrapper `while true; do php bin/...; sleep N; done`
+lanzado con `nohup bash -c`. Al reiniciar, `pkill` puede matar al hijo `php` mientras el
+wrapper lo relanza, o dejar wrappers vivos: resultado, 9 instancias de `exit-scan`.
+
+Diseño:
+
+- **`stop-all.sh`** dedicado y llamado al inicio de `start-all.sh`:
+  1. `pkill -TERM -f 'bash -c .*bin/exit-scan'` y equivalentes para cada worker (mata el
+     wrapper **primero**, para que no relance);
+  2. `pkill -TERM -f 'php .*bin/<worker>.php'` / `node .*tuya-presence-poller` /
+     `tuya-pulsar-consumer`;
+  3. bucle de espera (p. ej. hasta 5 s) hasta que no queden procesos; si persisten,
+     `pkill -KILL`;
+  4. el manager de presencia (`presence-poller-manager.sh`) también se detiene antes de
+     relanzarlo (su reconciliación hace `pgrep` y evitaría duplicados, pero no mata wrappers).
+- **Instancia única**: cada worker se lanza con `setsid` y escribe su PID en
+  `api/run/<worker>.pid`. `start-all.sh` verifica con `flock`/PID file; si ya hay una
+  instancia viva, no lanza otra. Se elimina el patrón `while true` para `exit-scan` (el propio
+  script ya tiene su bucle interno de 5 s) y se estandariza para el resto con supervisión por
+  systemd o un único supervisor con backoff.
+- **`exit-scan` sin escritura de sensores**: llama a `ExitActionService::executeIfPending()`
+  (que re-lockea y re-valida), nunca a `updateState()` ni `upsert()`.
+
+### 7.2 `/dashboard-api/system-status` ampliado
+
+La implementación actual (`api/public/index.php`) solo mira `tuya-presence-poller`,
+`tuya-pulsar-consumer`, `exit-scan` y `overstay-scan` con `pgrep … | head -1`. Se amplía:
+
+| Worker | Patrón | ¿Requerido? |
+|---|---|---|
+| `tuya-presence-poller` | `tuya-presence-poller` | Sí |
+| `tuya-pulsar-consumer` | `tuya-pulsar-consumer` | Sí |
+| `exit-scan` | `bin/exit-scan` | Sí (exactamente 1) |
+| `overstay-scan` | `bin/overstay-scan` | Sí (exactamente 1) |
+| `outbox-worker` | `bin/outbox-worker` | Sí (exactamente 1) |
+| `anomaly-scanner` | `bin/anomaly-scanner` | Sí (exactamente 1) |
+
+Respuesta ampliada (aditiva, retrocompatible con `renderSystemStatus`):
+
+```json
+{
+  "exit-scan": {
+    "label": "Regla de Salida (Exit)",
+    "online": true,
+    "pid": 12345,
+    "pids": [12345],
+    "instances": 1,
+    "healthy": true
+  }
+}
+```
+
+`healthy = online && instances == 1` (para los workers requeridos); `instances > 1` se marca
+como **condición anómala** (duplicado).
+
+### 7.3 Reset de habitación
+
+Además de §3.4, el reset limpia contadores locales de workers solo si aplica (no hay estado
+local persistente). El `presence-poller-manager` reconciliará por BD.
+
+---
+
+## 8. Contratos a formalizar (`contracts.md`)
+
+### 8.1 `GET /api/v1/rooms/{id}/live` y evento SSE `state`
+
+Campos **nuevos** (aditivos; los existentes no cambian de nombre):
+
+| Ruta JSON | Tipo | Semántica |
+|---|---|---|
+| `iot_session.last_door_event_at` | string ISO/null | `occurred_at` del último evento de puerta aplicado. |
+| `iot_session.last_presence_event_at` | string ISO/null | `occurred_at` del último evento de presencia aplicado. |
+| `iot_session.last_door_value` | string/null | `OPEN`/`CLOSED` aplicado. |
+| `iot_session.last_presence_value` | string/null | `PRESENT`/`ABSENT` aplicado. |
+| `active_stay.entry_confirmed_at` | string ISO/null | Confirmación de "dentro" (autoridad de `hasBeenInside`). |
+
+Cambios de semántica (documentar explícitamente):
+
+| Campo | Antes | Ahora |
+|---|---|---|
+| `exit_deadline` | requería `door_state == CLOSED` | se calcula con ciclo de puerta acreditado, sin exigir estado actual CLOSED. |
+| `gap_seconds` | sin cambios | sin cambios (override de room > room_type > 15). |
+| `first_entry_at` | se usaba como "dentro" | se mantiene informativo; `entry_confirmed_at` es la autoridad de coreografía. |
+
+Evento SSE nuevo:
+
+| Evento | Frecuencia | Payload | Uso |
+|---|---|---|---|
+| `ping` | cada 5 s | `{ "ts": "<ISO>" }` | watchdog de silencio del panel (RF-49). |
+
+### 8.2 `GET /dashboard-api/system-status`
+
+| Campo | Tipo | Semántica |
+|---|---|---|
+| `<worker>.instances` | int | Nº de procesos vivos con ese patrón. |
+| `<worker>.pids` | int[] | Lista de PIDs. |
+| `<worker>.healthy` | bool | `online ∧ instances == 1` (workers requeridos). |
+| `<worker>.label`, `online`, `pid` | — | Se conservan (retrocompatibilidad). |
+
+Se añaden las claves `outbox-worker` y `anomaly-scanner`.
+
+### 8.3 Migración
+
+`0108_sensor_event_ordering.sql` (§2.6) debe reflejarse en `contracts.md` como cambio de
+esquema (columnas aditivas y nullable, sin ruptura).
+
+---
+
+## 9. Archivos afectados
+
+| Archivo | Cambio |
+|---|---|
+| `api/migrations/0108_sensor_event_ordering.sql` | **Nuevo** — columnas de orden/auditoría + `stays.entry_confirmed_at`. |
+| `api/src/Domain/Presence/IotSession.php` | Campos nuevos + `toArray()` extendido. |
+| `api/src/Domain/Presence/IotSessionRepositoryInterface.php` | `lockByRoomId`, `updateState`, `markExitEvaluated`. |
+| `api/src/Domain/Presence/IotSessionRepository.php` | Implementación con lock y updates por columnas. |
+| `api/src/Domain/Presence/PresenceEventRepository.php` / interface | Fingerprint, `applied`, `discard_reason`, `insertOrGet`/`markAudit`. |
+| `api/src/Domain/Presence/IotSessionService.php` | `applyEvent()` con transacción + `decide()` + `mutate()` + post-commit. |
+| `api/src/Infrastructure/Gateways/Sensor/TuyaSensorIngress.php` | Guardar `tuya_t` crudo; conservar `source_event_id`. |
+| `api/src/Domain/Presence/ExitRuleEvaluator.php` | Precondiciones por ciclo + `entry_confirmed_at` + `DOOR_CYCLE_MAX_S`. |
+| `api/src/Domain/Presence/ExitActionService.php` | `executeIfPending()` idempotente bajo lock. |
+| `api/bin/exit-scan.php` | Usar `executeIfPending()`; no escribir sensores. |
+| `api/bin/tuya-presence-poller.js` | `isCaptureWindow()` por dominio + watchdog + sin bandera pegajosa. |
+| `start-all.sh` + `stop-all.sh` | Parada determinista, instancia única, PID files. |
+| `api/public/index.php` | `system-status` ampliado; reset de habitación (§3.4). |
+| `api/src/Http/Controllers/QrTestController.php` | `roomsReset()` limpia nuevas marcas y `last_close_at`. |
+| `api/src/Http/Controllers/RoomLiveController.php` | Campos nuevos; `exit_deadline` sin exigir CLOSED. |
+| `api/src/Http/Controllers/EventStreamController.php` | Campos nuevos; evento SSE `ping`; deadline coherente. |
+| `api/public/dashboard.html` | `deriveChoreography()` pura; watchdog SSE; conteo local. |
+| `api/tests/Unit/*` y `api/bin/run-tests.sh` | Tests unitarios puros + bloque HTTP de la fase. |
+
+---
+
+## 10. Riesgos y regresiones
+
+| Riesgo | Probabilidad | Impacto | Mitigación |
+|---|---|---|---|
+| `FOR UPDATE` con 8 workers PHP (webhook de puerta + presencia) | Media | Latencia del webhook | Lock **por habitación** y breve (<20 ms); sin I/O externo bajo lock; no hay contención entre habitaciones. |
+| Deadlock entre `iot_sessions` y `stays` | Baja | Error 500 puntual | Orden único de adquisición; reintento 3× con backoff. |
+| `SELECT … FOR UPDATE` sobre fila inexistente | Baja | Lock no efectivo | `INSERT … ON DUPLICATE KEY UPDATE id=id` antes del `SELECT FOR UPDATE`. |
+| Regla de salida dispara de más (falso `ABSENT` con huésped dentro) | Media | Cierre indebido | Exigir `entry_confirmed_at` **y** `last_open_at > entry_confirmed_at` (nueva apertura); sin apertura no hay salida. |
+| Salida no dispara si el cierre se pierde | Media | Estancia colgada | Ya no exige `door_state == CLOSED`; si falta `last_close_at` el caso es ambigüedad de hardware y lo cubren anomalías A5/A7 y el watchdog del poller. |
+| Cuota Tuya | Media | Bloqueo temporal de API | Paradas `inside`/`empty`, watchdog 120 s, backoff 10 min, intervalo rápido solo con `deadline`. |
+| Duplicados con fingerprint colapsan transiciones legítimas | Baja | Pérdida de un evento | Fingerprint incluye `value`; solo colapsa mismo sensor+valor en el mismo segundo (no-op de estado). |
+| Cambio de `entry_confirmed_at` rompe lógica que usaba `first_entry_at` | Media | Overstay/analytics | `first_entry_at` se conserva; `entry_confirmed_at` es aditivo. Revisar consumidores de `first_entry_at`. |
+| SSE `ping` nuevo y watchdog provocan fetches en cascada | Baja | Carga | Throttle: `resyncLive()` como máximo 1/5 s; reconexión forzada a los 15 s. |
+| Reintentos no idempotentes en `executeIfPending` | Baja | Doble cierre de worker_sessions | `markExitEvaluated` condicional bajo lock evita el segundo efecto. |
+| Regresión del firmware/QR (F1, F39, F40) | Baja | — | No se toca el sketch; F41 es backend + poller + panel + infra. |
+
+---
+
+## 11. Estrategia de pruebas (TDD, AGENTS.md)
+
+Al ser lógica de dominio y de UI, se prioriza **función pura primero**:
+
+1. **Unitarios PHP** (`api/tests/Unit/*Test.php`, auto-descubiertos por el runner):
+   - `IotSessionEventOrderingTest`: `decide()` con eventos atrasados, duplicados, noop y
+     aplicables; verifica que un evento viejo no revierte un `CLOSED` nuevo.
+   - `ExitRuleEvaluatorTest`: ciclo completo + `entry_confirmed_at` → true; sin nueva apertura
+     → false; `PRESENT` → false; `gap` no cumplido → false; `door_state=OPEN` con cierre
+     acreditado → true (no depende del estado actual).
+   - `ChoreographyTest` (si la función pura se porta a PHP) o tests JS del `deriveChoreography`.
+2. **Unitarios JS** del poller: exportar `isCaptureWindow()`/`watchdog()` y testear `inside`,
+   `empty`, `OPEN`, `deadline`, watchdog y rearme.
+3. **Tests HTTP/integración**: nuevo bloque en `api/bin/run-tests.sh` (BLOCK reservado) que
+   cubra `/live` con campos nuevos, `system-status` con `instances/healthy`, y el reset de
+   habitación limpiando `last_close_at`.
+4. **Regresión completa**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con 0 failures
+   antes de cerrar la fase.
+
+Se sigue el ciclo RED → GREEN → REFACTOR: cada test se escribe y falla antes de implementar.
+
+---
+
+## 12. Lo que NO cambia
+
+- El sketch ESP32 (`scanner-relay-prod.ino`) y su flujo QR/USB/relé/GPIO4/watchdog.
+- Los contratos públicos existentes de QR (`/qr/validate`, firmas HMAC) y de trabajadores.
+- Las anomalías A1–A8: siguen siendo informativas y no bloquean el flujo (RF-35, RF-49.4).
+- El modelo canónico device → pack → room (F30) y la verificación de dispositivos (F39/RF-42).
+- Los umbrales de negocio existentes (`exit_presence_gap_seconds`, cooldown de reentrada).
+- El firmware y los secretos: este diseño no introduce credenciales nuevas.
