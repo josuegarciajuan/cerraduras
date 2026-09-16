@@ -1036,9 +1036,9 @@ Cuando no hay estancia activa, `active_stay` sigue siendo `null` y el campo no a
 
 ### 3.3 Campos con cambio de semántica (retrocompatible)
 
-| Campo | Contrato anterior | Contrato Fase 41 |
+| Campo | Contrato anterior | Contrato Fase 41 / 42 |
 |-------|-------------------|------------------|
-| `exit_deadline` | Se emitía con `presence_state=ABSENT` + `door_state=CLOSED` + ancla en `last_close_at`/`last_open_at` dentro de la ventana. | Se mantiene el campo y su tipo (ISO-8601 UTC o `null`). Se emite **solo** cuando `presence_state=ABSENT`, existe un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes, `last_close_at >= last_open_at`) y la puerta está `CLOSED`. Se limpia (`null`) si la puerta se reabre o reaparece presencia. El poller lo usa como señal de ventana de verificación. |
+| `exit_deadline` | Se emitía con `presence_state=ABSENT` + `door_state=CLOSED` + ancla en `last_close_at`/`last_open_at` dentro de la ventana. | Se mantiene el campo y su tipo (ISO-8601 UTC o `null`). Se emite **solo** cuando `presence_state=ABSENT`, existe un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes, `last_close_at >= last_open_at`), la puerta está `CLOSED` **y `active_stay.entry_confirmed_at` no es nulo** (F42 / RF-46.4). Se limpia (`null`) si la puerta se reabre, reaparece presencia o la entrada aún no se ha consolidado. El poller lo usa como señal de ventana de verificación. |
 | `gap_seconds` | Override de habitación > tipo de habitación > 15 s. | Sin cambios. |
 | `first_entry_at` | Se usaba como indicador de "dentro". | Se mantiene informativo. La autoridad de "dentro" pasa a `active_stay.entry_confirmed_at`. |
 | `iot_session.last_open_at` / `last_close_at` | Anclas de la regla de salida. | Sin cambios de formato; siguen siendo las anclas del ciclo de puerta. No se expone ningún campo compuesto `door_cycle`: los consumidores lo derivan de estos dos. |
@@ -1046,6 +1046,12 @@ Cuando no hay estancia activa, `active_stay` sigue siendo `null` y el campo no a
 **Nota (retrocompatibilidad)**: los campos nuevos son aditivos; ningún campo existente cambia
 de nombre ni de tipo. Un consumidor que ignore `entry_confirmed_at` y
 `last_*_event_at`/`last_*_value` sigue funcionando con la semántica anterior.
+
+**Nota F42 (RF-46.4)**: la ventana de verificación de entrada es **client-side**. El panel la
+deriva de `iot_session.last_close_at` + `gap_seconds` mientras `active_stay.entry_confirmed_at`
+es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
+`entry_confirmed_at` al recibir `PRESENCE=PRESENT` con `door_state=CLOSED` dentro de
+`gap_seconds` del cierre; con la puerta abierta no consolida.
 
 ### 3.4 Ejemplo de respuesta (fragmento)
 

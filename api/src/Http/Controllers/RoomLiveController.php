@@ -153,10 +153,12 @@ final class RoomLiveController
             }
         }
 
-        // Exit deadline (F41, contracts.md §3.3): emitted only with
-        // presence=ABSENT + a credited door cycle + door=CLOSED. The internal
-        // exit rule no longer requires the current door state; the UI field
-        // does, so a stuck door does not freeze the countdown on screen.
+        // Exit deadline (F41/F42, contracts.md §3.3): emitted only with
+        // presence=ABSENT + a credited door cycle + door=CLOSED + entry confirmed.
+        // F42 (RF-46.4): sin `entry_confirmed_at` no hay salida posible; evita que
+        // la ventana de ENTRADA no consolidada muestre un conteo de salida. The
+        // internal exit rule no longer requires the current door state; the UI
+        // field does, so a stuck door does not freeze the countdown on screen.
         $exitDeadline = null;
         $gapSeconds = null; // F31: exposed for dashboard verification-hold computation
 
@@ -177,6 +179,8 @@ final class RoomLiveController
             && $session->lastAbsentSince !== null
             && $session->lastOpenAt !== null
             && $session->lastCloseAt !== null
+            && $stayData !== null
+            && !empty($stayData['entry_confirmed_at'])
         ) {
             $openTs   = strtotime($session->lastOpenAt . ' UTC');
             $closeTs  = strtotime($session->lastCloseAt . ' UTC');

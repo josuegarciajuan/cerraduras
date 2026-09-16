@@ -299,6 +299,14 @@ final class IotSessionService
             if ($value === PresenceEvent::VALUE_PRESENT) {
                 $session->presenceState   = IotSession::PRESENCE_PRESENT;
                 $session->lastAbsentSince = null; // cancels the exit countdown (RF-47.3)
+
+                // F42 (RF-46.4): el radar puede confirmar presencia DESPUÉS del
+                // cierre. Con la puerta cerrada y dentro de la ventana de entrada
+                // (gap), consolidamos la entrada. Nunca con la puerta abierta:
+                // así el avatar espera en el umbral hasta que cierre (RF-46.1.3).
+                if ($session->doorState === IotSession::DOOR_CLOSED) {
+                    $this->consolidateEntry($session, $activeStay, $evtUtc, $room, true);
+                }
             } elseif ($value === PresenceEvent::VALUE_ABSENT) {
                 if ($session->presenceState !== IotSession::PRESENCE_ABSENT) {
                     $session->lastAbsentSince = $evtUtc;
@@ -309,11 +317,21 @@ final class IotSessionService
     }
 
     /**
-     * F41: set stays.entry_confirmed_at when a CLOSE follows an opening during
+     * F41/F42: set stays.entry_confirmed_at when a CLOSE follows an opening during
      * which presence was seen (contracts.md §1.2 / design.md §2.4).
+     *
+     * @param bool $requireRecentClose F42 (RF-46.4): cuando la consolidación la
+     *        dispara una presencia TARDÍA (puerta ya cerrada), exige que el cierre
+     *        sea reciente (<= gap de la habitación). Fuera de la ventana, la entrada
+     *        no se consolida: se requiere una nueva apertura acreditada.
      */
-    private function consolidateEntry(IotSession $session, ?Stay $activeStay, string $evtUtc): void
-    {
+    private function consolidateEntry(
+        IotSession $session,
+        ?Stay      $activeStay,
+        string     $evtUtc,
+        ?Room      $room = null,
+        bool       $requireRecentClose = false
+    ): void {
         if ($activeStay === null || $activeStay->entryConfirmedAt !== null) {
             return;
         }
@@ -329,10 +347,26 @@ final class IotSessionService
             $seenDuringOpen = $presenceTs !== false && $openTs !== false && $presenceTs >= $openTs;
         }
 
-        if ($seenDuringOpen) {
-            $activeStay->entryConfirmedAt = $evtUtc;
-            $this->stays->update($activeStay->id, ['entry_confirmed_at' => $evtUtc]);
+        if (!$seenDuringOpen) {
+            return;
         }
+
+        if ($requireRecentClose) {
+            if ($session->doorState !== IotSession::DOOR_CLOSED || $session->lastCloseAt === null) {
+                return;
+            }
+            $closeTs = strtotime($session->lastCloseAt . ' UTC');
+            $evtTs   = strtotime($evtUtc . ' UTC');
+            $gap     = $room !== null && $this->exitEvaluator !== null
+                ? $this->exitEvaluator->resolveGapSeconds($room)
+                : 15;
+            if ($closeTs === false || $evtTs === false || ($evtTs - $closeTs) > $gap) {
+                return;
+            }
+        }
+
+        $activeStay->entryConfirmedAt = $evtUtc;
+        $this->stays->update($activeStay->id, ['entry_confirmed_at' => $evtUtc]);
     }
 
     /**

@@ -1894,6 +1894,118 @@ placeholders pendientes; se inserta antes del `RESUMEN`).
 
 ---
 
+## F42: Ventana de verificación de entrada (RF-46.4)
+
+**Contexto**: al escanear un QR, abrir y cerrar la puerta sin que el radar haya detectado aún
+presencia, el monigote volvía fuera (lector QR) y no había ventana de espera. Además,
+`exit_deadline` se emitía sin `entry_confirmed_at`, mostrando un conteo de salida durante la
+entrada.
+
+### TSK-F42-01: `deriveChoreography()` — estado `VERIFICANDO_ENTRADA`
+
+**Objetivo**: función pura con la ventana de entrada y `entryTimedOut`.
+**Trazabilidad**: RF-46.4.1–46.4.5 · `design.md` §5.
+**Archivos**: `api/public/assets/choreography.js`
+**Contenido**:
+- [x] `emptyEpisodes().entryTimedOut`; reset en `startEntry()`/`consolidateEntry()` y en OPEN.
+- [x] Bloque `door == CLOSED` de entrada: ciclo acreditado + sin PRESENT + `now - last_close_at < gap`
+      ⇒ `VERIFICANDO_ENTRADA`; al agotar ⇒ `entryTimedOut = true` ⇒ `ESPERANDO_APERTURA`.
+- [x] T8 no consolida si `entryTimedOut` (la presencia tardía exige nueva apertura).
+- [x] `LOGICAL_TO_UI.VERIFICANDO_ENTRADA`.
+
+**Criterio de aceptación**: test JS de coreografía en verde (casos T-w1…T-w7).
+**Test propio**: unitario JS.
+
+### TSK-F42-02: Panel — umbral, `?` y conteo de entrada
+
+**Objetivo**: render del nuevo estado y conteo anclado a `last_close_at`.
+**Trazabilidad**: RF-46.4.1, RF-49.2.1/49.2.3 · `design.md` §5.
+**Archivos**: `api/public/dashboard.html`
+**Contenido**:
+- [x] `STATES.VERIFICANDO_ENTRADA` (moni `WAITING`, `door:'closed'`, icono `❓`).
+- [x] `applyState()`: `verifyingEntry` pinta el `?`.
+- [x] `updateCountdown()`: modo entrada (`currentState === 'VERIFICANDO_ENTRADA'` + `CLOSED` +
+      `OCCUPIED`), ancla `last_close_at + gap_seconds`, etiqueta "ventana entrada".
+- [x] `updatePollingFrequency()`: `VERIFICANDO_ENTRADA` → 4 (captura rápida).
+- [x] `updateSensorPanel()`: indicador "❓ entrada (Ns)".
+
+**Criterio de aceptación**: el conteo avanza en cliente y desaparece al consolidar/expirar.
+**Test propio**: manual (webapp) + cobertura de la función pura.
+
+### TSK-F42-03: Backend — consolidación de entrada por presencia tardía
+
+**Objetivo**: fijar `entry_confirmed_at` si el PRESENT llega tras el cierre dentro del gap.
+**Trazabilidad**: RF-46.4.2 · `contracts.md` §1.2/§3.
+**Archivos**: `api/src/Domain/Presence/IotSessionService.php`
+**Contenido**:
+- [x] En `SENSOR_PRESENCE`/`PRESENT`, con `door_state == CLOSED`, invocar
+      `consolidateEntry(..., requireRecentClose: true)`.
+- [x] `consolidateEntry()`: parámetros `?Room $room`, `bool $requireRecentClose`; exige cierre
+      dentro de `resolveGapSeconds($room)`.
+- [x] Con la puerta abierta NO consolida (el avatar espera en el umbral, RF-46.1.3).
+
+**Criterio de aceptación**: unit tests PHP F42 en verde.
+**Test propio**: unitario PHP (`IotSessionServiceTest.php`).
+
+### TSK-F42-04: Backend — `exit_deadline` exige `entry_confirmed_at`
+
+**Objetivo**: no emitir el conteo de salida en una entrada sin consolidar.
+**Trazabilidad**: RF-46.4.5 · `contracts.md` §3.3.
+**Archivos**: `api/src/Http/Controllers/RoomLiveController.php`,
+`api/src/Http/Controllers/EventStreamController.php`
+**Contenido**:
+- [x] Añadir a la guarda de `exit_deadline`: `active_stay.entry_confirmed_at` no nulo.
+- [x] Documentar la precondición en `contracts.md` §3.3.
+
+**Criterio de aceptación**: `/live` devuelve `exit_deadline=null` con entrada sin confirmar;
+activo tras consolidar + ABSENT.
+**Test propio**: HTTP (BLOCK 34).
+
+### TSK-F42-05: Tests JS/PHP y BLOCK 34
+
+**Objetivo**: cobertura acumulada de la fase.
+**Trazabilidad**: RF-46.4 · `design.md` §5.
+**Archivos**: `api/tests/Unit/choreography.test.js`, `api/tests/Unit/IotSessionServiceTest.php`,
+`api/bin/run-tests.sh`
+**Contenido**:
+- [x] T-w1…T-w7 en `choreography.test.js` (ventana, expiración, rearme, presencia tardía).
+- [x] Casos F42 en `IotSessionServiceTest.php` (dentro/fuera de gap, puerta abierta).
+- [x] BLOCK 34 en el runner: `exit_deadline` nulo sin confirmar, consolidación por PRESENT
+      tardío, `exit_deadline` activo tras confirmar.
+
+**Criterio de aceptación**: BLOCK 1 y BLOCK 34 en verde.
+**Test propio**: unitario + HTTP.
+
+### TSK-F42-06: Specs y regresión
+
+**Objetivo**: cerrar la fase con documentación y regresión completa.
+**Trazabilidad**: AGENTS.md.
+**Archivos**: `.specs/specs/{requirements,design,contracts,tasks}.md`, `AGENTS.md`,
+`api/logs/test-results.log`.
+**Contenido**:
+- [x] RF-46.4 y RF-49.2.3; `design.md` §5; `contracts.md` §3.3; esta sección.
+- [ ] `bash bin/run-tests.sh` → 0 failures y log actualizado.
+- [ ] Añadir la fila F42/BLOCK 34 a la tabla de fases de `AGENTS.md`.
+
+**Criterio de aceptación**: runner con 0 failures; AGENTS.md y log actualizados.
+**Test propio**: regresión completa.
+
+### Tabla resumen de tareas F42
+
+| TSK | Título | RF | Archivos principales | Test |
+|-----|--------|----|----------------------|------|
+| F42-01 | `deriveChoreography()` `VERIFICANDO_ENTRADA` | RF-46.4 | `choreography.js` | unit JS |
+| F42-02 | Panel: umbral + `?` + conteo | RF-46.4/49.2 | `dashboard.html` | manual |
+| F42-03 | Consolidación por presencia tardía | RF-46.4.2 | `IotSessionService.php` | unit PHP |
+| F42-04 | `exit_deadline` exige `entry_confirmed_at` | RF-46.4.5 | `RoomLiveController.php`, `EventStreamController.php` | HTTP |
+| F42-05 | Tests + BLOCK 34 | RF-46.4 | `choreography.test.js`, `IotSessionServiceTest.php`, `run-tests.sh` | unit + HTTP |
+| F42-06 | Specs + regresión | — | `.specs/`, `AGENTS.md`, log | regresión |
+
+**Número de BLOCK elegido**: **BLOCK 34** (último existente: BLOCK 33 — F41; se inserta antes del
+`RESUMEN`).
+
+---
+
 ## Riesgos de secuenciación detectados
 
 1. **Tests existentes que fijan la semántica antigua** — `api/tests/Unit/ExitRuleEvaluatorTest.php`

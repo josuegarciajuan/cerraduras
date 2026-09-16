@@ -358,6 +358,66 @@ try {
     bad('T8: unknown room → NotFoundException', get_class($e).': '.$e->getMessage());
 }
 
+// ============================================================================
+// F42 (RF-46.4): consolidación de entrada por presencia tardía (tras el cierre)
+// ============================================================================
+echo "\nF42 · ventana de verificación de entrada (RF-46.4)\n";
+
+function makeOccupiedStay(int $id, int $roomId, ?string $entryConfirmedAt = null): Stay {
+    return new Stay(
+        $id, $roomId, Stay::STATUS_OCCUPIED, 60,
+        '2026-04-28 09:00:00.000', '2026-04-28 09:00:00.000', null, null,
+        null, null, null, null, null, null, null, null, null,
+        '2026-04-28 09:00:00.000', '2026-04-28 09:00:00.000',
+        $entryConfirmedAt
+    );
+}
+
+// Habitaciones 2, 3 y 4 (room_type 1 → gap=5s), aisladas del estado de la sala 1.
+$roomRepo->byId[2] = new Room(2, '102', 1, null, Room::STATUS_OCCUPIED, true, null);
+$roomRepo->byId[3] = new Room(3, '103', 1, null, Room::STATUS_OCCUPIED, true, null);
+$roomRepo->byId[4] = new Room(4, '104', 1, null, Room::STATUS_OCCUPIED, true, null);
+
+// ── Caso 1: PRESENT dentro de la ventana (gap=5s) → consolida la entrada ──
+$stayLate = makeOccupiedStay(77, 2);
+$stayRepo->byId[77] = $stayLate;
+$stayRepo->activeByRoom[2] = $stayLate;
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T11:00:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(2, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN,   '2026-04-28T11:00:00Z', 'f42-a-open'), 'corr-f42-a');
+$svc->processEvent(makeEvent(2, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T11:00:01Z', 'f42-a-close'), 'corr-f42-a');
+if ($stayLate->entryConfirmedAt === null) ok('F42: cierre sin presencia NO consolida');
+else bad('F42: cierre sin presencia NO consolida', "got {$stayLate->entryConfirmedAt}");
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T11:00:03Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(2, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T11:00:03Z', 'f42-a-present'), 'corr-f42-a');
+if ($stayLate->entryConfirmedAt !== null) ok('F42: PRESENT dentro de gap consolida entrada');
+else bad('F42: PRESENT dentro de gap consolida entrada', 'entryConfirmedAt sigue null');
+
+// ── Caso 2: PRESENT fuera de la ventana (> gap) → NO consolida ──
+$stayLate2 = makeOccupiedStay(78, 3);
+$stayRepo->byId[78] = $stayLate2;
+$stayRepo->activeByRoom[3] = $stayLate2;
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T12:00:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN,   '2026-04-28T12:00:00Z', 'f42-b-open'), 'corr-f42-b');
+$svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T12:00:01Z', 'f42-b-close'), 'corr-f42-b');
+Clock::freeze(new DateTimeImmutable('2026-04-28T12:00:09Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T12:00:09Z', 'f42-b-present'), 'corr-f42-b');
+if ($stayLate2->entryConfirmedAt === null) ok('F42: PRESENT fuera de gap NO consolida (exige nueva apertura)');
+else bad('F42: PRESENT fuera de gap NO consolida', "got {$stayLate2->entryConfirmedAt}");
+
+// ── Caso 3: PRESENT con la puerta ABIERTA → NO consolida aún (espera al cierre) ──
+$stayOpen = makeOccupiedStay(79, 4);
+$stayRepo->byId[79] = $stayOpen;
+$stayRepo->activeByRoom[4] = $stayOpen;
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T13:00:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(4, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T13:00:00Z', 'f42-c-open'), 'corr-f42-c');
+$svc->processEvent(makeEvent(4, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T13:00:01Z', 'f42-c-present'), 'corr-f42-c');
+if ($stayOpen->entryConfirmedAt === null) ok('F42: PRESENT con puerta abierta NO consolida (umbral)');
+else bad('F42: PRESENT con puerta abierta NO consolida', "got {$stayOpen->entryConfirmedAt}");
+
 Clock::unfreeze();
 
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";

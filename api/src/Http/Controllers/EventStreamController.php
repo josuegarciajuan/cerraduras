@@ -294,14 +294,18 @@ final class EventStreamController
             $exitDeadline = null;
             $gapSeconds   = $this->resolveGapSeconds($roomId, (int) ($roomRow['presence_check_seconds'] ?? 0));
 
-            // F41 (contracts.md §3.3): presence ABSENT + credited door cycle
-            // (open then close) + door CLOSED. Deadline anchored to last_absent_since.
+            // F41/F42 (contracts.md §3.3): presence ABSENT + credited door cycle
+            // (open then close) + door CLOSED + entry confirmed. F42 (RF-46.4):
+            // sin `entry_confirmed_at` no hay salida posible; evita un conteo de
+            // salida durante una entrada aún no consolidada.
             if ($sessionRow !== false
                 && ($sessionRow['presence_state'] ?? '') === 'ABSENT'
                 && ($sessionRow['door_state'] ?? '') === 'CLOSED'
                 && !empty($sessionRow['last_absent_since'])
                 && !empty($sessionRow['last_open_at'])
                 && !empty($sessionRow['last_close_at'])
+                && $stayData !== null
+                && !empty($stayData['entry_confirmed_at'])
             ) {
                 $openTs   = strtotime((string) $sessionRow['last_open_at'] . ' UTC');
                 $closeTs  = strtotime((string) $sessionRow['last_close_at'] . ' UTC');

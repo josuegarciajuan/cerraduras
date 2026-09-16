@@ -209,6 +209,81 @@ r = deriveChoreography(baseSnap({
 eq('T18 A1 + PRESENT sin QR → ANOMALIA_PA (badge)', r.state, 'ANOMALIA_PA');
 
 // ============================================================================
+// F42 · RF-46.4: ventana de verificación de entrada
+// ============================================================================
+console.log('\nF42 · Ventana de verificación de entrada (RF-46.4)\n');
+
+// Setup: QR validado + apertura acreditada; cerramos la puerta sin presencia.
+const openAt  = iso(T0 + 5000);
+const closeAt = iso(T0 + 8000);
+ep = emptyEpisodes(305);
+r = deriveChoreography(baseSnap({ door: 'UNKNOWN', qrRecentAt: T0, qrRecentResult: 'OK' }), ep, T0);
+ep = r.episodeUpdates;
+r = deriveChoreography(baseSnap({
+  door: 'OPEN', lastOpenAt: openAt, prevDoor: 'UNKNOWN'
+}), ep, T0 + 5000);
+ep = r.episodeUpdates;
+eq('V1 apertura previa → EN_UMBRAL', r.state, 'HUESPED_EN_PUERTA');
+
+function entryClosedSnap(over) {
+  return baseSnap(Object.assign({
+    door: 'CLOSED', presence: 'ABSENT',
+    lastOpenAt: openAt, lastCloseAt: closeAt, lastAbsentSince: closeAt,
+    prevDoor: 'OPEN'
+  }, over || {}));
+}
+
+// T-w1: cierre sin presencia dentro de la ventana → VERIFICANDO_ENTRADA (umbral, '?').
+r = deriveChoreography(entryClosedSnap(), ep, T0 + 10000);
+eq('T-w1 cierre sin presencia → VERIFICANDO_ENTRADA', r.state, 'VERIFICANDO_ENTRADA');
+eq('T-w1 lógico', r.logical, 'VERIFICANDO_ENTRADA');
+ep = r.episodeUpdates;
+check('T-w1 no consolida entrada (timedOut=false)', ep.entryTimedOut === false && ep.entryConsolidatedAt === 0);
+
+// T-w2: justo antes de agotar la ventana (gap=15) sigue esperando.
+r = deriveChoreography(entryClosedSnap(), ep, T0 + 8000 + 14 * 1000);
+eq('T-w2 a gap-1s → sigue VERIFICANDO_ENTRADA', r.state, 'VERIFICANDO_ENTRADA');
+ep = r.episodeUpdates;
+
+// T-w3: la ventana expira → se asume que no entró nadie; vuelve fuera.
+r = deriveChoreography(entryClosedSnap(), ep, T0 + 8000 + 16 * 1000);
+eq('T-w3 expira → vuelve fuera (QR_ESPERANDO)', r.state, 'QR_ESPERANDO');
+ep = r.episodeUpdates;
+check('T-w3 marca entryTimedOut', ep.entryTimedOut === true);
+
+// T-w4: presencia después de expirar NO consolida (requiere nueva apertura).
+r = deriveChoreography(entryClosedSnap({ presence: 'PRESENT', prevDoor: 'CLOSED' }), ep, T0 + 8000 + 30 * 1000);
+eq('T-w4 presencia tras expirar → sigue fuera', r.state, 'QR_ESPERANDO');
+ep = r.episodeUpdates;
+
+// T-w5: una nueva apertura re-arma la ventana.
+r = deriveChoreography(baseSnap({
+  door: 'OPEN', presence: 'PRESENT', lastOpenAt: iso(T0 + 40000), prevDoor: 'CLOSED'
+}), ep, T0 + 40000);
+eq('T-w5 nueva apertura → EN_UMBRAL otra vez', r.state, 'HUESPED_EN_PUERTA');
+ep = r.episodeUpdates;
+check('T-w5 limpia entryTimedOut', ep.entryTimedOut === false);
+
+// T-w6: cierre con presencia vista → consolida DENTRO.
+r = deriveChoreography(entryClosedSnap({
+  presence: 'PRESENT', lastOpenAt: iso(T0 + 40000), lastCloseAt: iso(T0 + 43000),
+  prevDoor: 'OPEN'
+}), ep, T0 + 43000);
+eq('T-w6 cierre con presencia → OCUPADA', r.state, 'OCUPADA');
+
+// T-w7: presencia DENTRO de la ventana → avanza al interior.
+ep = emptyEpisodes(305);
+r = deriveChoreography(baseSnap({ door: 'UNKNOWN', qrRecentAt: T0, qrRecentResult: 'OK' }), ep, T0);
+ep = r.episodeUpdates;
+r = deriveChoreography(baseSnap({ door: 'OPEN', lastOpenAt: openAt, prevDoor: 'UNKNOWN' }), ep, T0 + 5000);
+ep = r.episodeUpdates;
+r = deriveChoreography(entryClosedSnap(), ep, T0 + 10000);
+ep = r.episodeUpdates;
+r = deriveChoreography(entryClosedSnap({ presence: 'PRESENT', prevDoor: 'CLOSED' }), ep, T0 + 18000);
+eq('T-w7 presencia dentro de ventana → OCUPADA', r.state, 'OCUPADA');
+eq('T-w7 lógico DENTRO', r.logical, 'DENTRO');
+
+// ============================================================================
 // Resultado
 // ============================================================================
 console.log('\nTotal: ' + PASS + ' passed, ' + FAIL + ' failed\n');

@@ -1869,13 +1869,17 @@ reiniciables:
 
 ```
 entryEpisode = {
-  stayId, qrAt, doorOpenedAt, presenceSeenWhileOpen, consolidatedAt
+  stayId, qrAt, doorOpenedAt, presenceSeenWhileOpen, consolidatedAt, timedOut
 }
 exitEpisode = {
   stayId, doorOpenedAt, closedAt, presenceSeenWhileClosed, absentAt, deadline
 }
 hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad del backend
 ```
+
+- `entryEpisode.timedOut` (F42 / RF-46.4): se pone a `true` cuando la ventana de
+  verificación de entrada se agota sin presencia; bloquea la consolidación por una
+  presencia posterior y se limpia en la siguiente apertura (`door == OPEN`).
 
 - `entryEpisode.presenceSeenWhileOpen` se pone a `true` si llega PRESENT con la puerta abierta;
   **se limpia al consolidar DENTRO/OCUPADA** (nunca queda pegada).
@@ -1894,6 +1898,7 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 | `QR_OK` | `QR_OK` | `AT_QR` | QR validado, puerta aún no abierta. |
 | `ESPERANDO_APERTURA` | `QR_ESPERANDO` | `AT_QR` | QR validado, se espera el evento OPEN. |
 | `EN_UMBRAL` | `HUESPED_EN_PUERTA` | `CROSSING` | Puerta abierta, avatar en el umbral. |
+| `VERIFICANDO_ENTRADA` | `VERIFICANDO_ENTRADA` | `WAITING` | F42: puerta cerrada tras apertura acreditada, sin presencia aún; conteo `gap_seconds` + `?`. |
 | `DENTRO` | `OCUPADA` | `INSIDE` | Entrada consolidada (puerta cerrada + presencia). |
 | `POSIBLE_SALIDA` | `PUERTA_ABIERTA` | `WAITING` | Apertura tras entrada confirmada. |
 | `VERIFICANDO` | `VERIFICANDO_PRESENCIA` | `WAITING` | Puerta cerrada + ausencia; conteo activo. |
@@ -1912,6 +1917,10 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 | T6 | `ESPERANDO_APERTURA` | `door == OPEN` | igual que T4 | `EN_UMBRAL` |
 | T7 | `EN_UMBRAL` | `door == OPEN` y PRESENT | `entryEpisode.presenceSeenWhileOpen = true` | `EN_UMBRAL` |
 | T8 | `EN_UMBRAL` | `door == CLOSED` y (`entry_confirmed_at` o `presenceSeenWhileOpen`) | consolida entrada; limpia `entryEpisode` | `DENTRO` |
+| T8b | `EN_UMBRAL` | `door == CLOSED`, ciclo acreditado, sin PRESENT y `now - last_close_at < gap` | `entryEpisode.timedOut = false` | `VERIFICANDO_ENTRADA` (umbral, `?`, conteo) |
+| T8c | `VERIFICANDO_ENTRADA` | llega PRESENT (aunque sea tras el cierre, dentro del gap) | consolida entrada (backend fija `entry_confirmed_at`); limpia `entryEpisode` | `DENTRO` |
+| T8d | `VERIFICANDO_ENTRADA` | `now - last_close_at >= gap` sin PRESENT | `entryEpisode.timedOut = true`; exige nueva apertura | `ESPERANDO_APERTURA` (fuera) |
+| T8e | `EN_UMBRAL` | `door == OPEN` con `entryEpisode.timedOut` | re-ancla `doorOpenedAt`; limpia `timedOut` | `EN_UMBRAL` |
 | T9 | `DENTRO` | `door == OPEN` y `entry_confirmed_at` y `last_open_at > entry_confirmed_at` | inicia `exitEpisode` | `POSIBLE_SALIDA` |
 | T10 | `DENTRO` | `presence == ABSENT` sin apertura | — (no cierra estancia) | `DENTRO` |
 | T11 | `POSIBLE_SALIDA` | `door == CLOSED` | `exitEpisode.closedAt = last_close_at` | `VERIFICANDO` si `presence == ABSENT`; si no, `DENTRO` |
@@ -1927,6 +1936,14 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 > en el backend al aplicar CLOSED con presencia, así que T8 consolida `DENTRO` y el avatar no
 > salta a interior sin pasar por umbral: mientras `door == OPEN` el estado es `EN_UMBRAL`, y
 > si el OPEN nunca llega, se muestra `ESPERANDO_APERTURA` (T5) en vez de `DENTRO`.
+
+> **RF-46.4 (F42)**: la ventana de entrada reutiliza `gap_seconds` (config por habitación/tipo).
+> El backend consolida `entry_confirmed_at` cuando llega PRESENT **con la puerta cerrada** y
+> dentro del gap (`IotSessionService::consolidateEntry(..., requireRecentClose: true)`); con la
+> puerta abierta no consolida, para que el avatar espere en el umbral (RF-46.1.3).
+> `exit_deadline` solo se emite si `entry_confirmed_at` está fijado (RoomLiveController y
+> EventStreamController, alineados con `ExitRuleEvaluator`), de modo que una entrada sin
+> consolidar nunca muestra el conteo de salida.
 
 ### 5.4 Función pura `deriveChoreography()`
 
