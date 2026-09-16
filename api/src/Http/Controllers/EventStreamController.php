@@ -34,19 +34,18 @@ final class EventStreamController
     /**
      * @var int maximum connection lifetime in seconds.
      *
-     * Fase B: bajado de 1800 a 300. El servidor PHP built-in no detecta de forma
-     * fiable la desconexión del cliente, así que un SSE muerto retiene un worker
-     * hasta este límite; con 8 workers, varios SSE zombies agotan el pool y el
-     * panel cae a polling lento. Acotarlo a 5 min limita el daño. El cliente
-     * reconecta de inmediato (EventSource + `retry`).
+     * Fase B: bajado de 1800 a 60. El servidor PHP built-in NO detecta la
+     * desconexión del cliente (`connection_aborted()` no se activa aunque se
+     * escriba), así que un SSE muerto retiene un worker hasta este límite; con
+     * 8 workers, varios SSE zombies agotan el pool → el nuevo SSE no se sirve →
+     * el panel cae a polling lento → retraso >10 s. Acotarlo a 60 s limita la
+     * fuga y el cliente reconecta en ~0,5 s (EventSource + `retry`), sin huecos
+     * visibles.
      */
-    private const MAX_LIFETIME_S = 300;
+    private const MAX_LIFETIME_S = 60;
 
     /** @var int seconds between keepalive comments */
     private const KEEPALIVE_S = 15;
-
-    /** @var int seconds between abort-probe heartbeats (Fase B: detección de cliente muerto) */
-    private const HEARTBEAT_S = 1;
 
     /** @var int seconds between named `ping` events (F41, contracts.md §4) */
     private const PING_S = 5;
@@ -133,7 +132,6 @@ final class EventStreamController
         $startTime       = time();
         $lastKeepalive   = $startTime;
         $lastPing        = $startTime;
-        $lastHeartbeat   = $startTime;
         $loopCount       = 0;
 
         try {
@@ -178,20 +176,6 @@ final class EventStreamController
                     $this->sendEvent('ping', ['room_id' => $roomId, 'ts' => gmdate('Y-m-d\TH:i:s\Z')]);
                     $pingEvents++;
                     $lastPing = $now;
-                }
-
-                // Fase B: heartbeat de 1 s + sonda de aborto. El servidor built-in
-                // no nota un cliente muerto hasta que se le escribe; así liberamos
-                // el worker en ~1 s en vez de esperar al max_lifetime (fuga de
-                // workers → SSE caído → polling lento → retraso >10 s).
-                if ($now - $lastHeartbeat >= self::HEARTBEAT_S) {
-                    echo ": hb\n\n";
-                    flush();
-                    $lastHeartbeat = $now;
-                    if (connection_aborted()) {
-                        $reason = 'client_abort';
-                        break;
-                    }
                 }
 
                 // Re-check connection before sleeping
