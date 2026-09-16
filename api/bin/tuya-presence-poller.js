@@ -210,7 +210,17 @@ const CAPTURE_COOLDOWN_MS   = 30000;   // watchdog: cooldown before a new captur
 
 function epochMs(value) {
   if (!value) return null;
-  const ms = new Date(value).getTime();
+  let s = String(value).trim();
+  // F44 fix: /live exposes MySQL UTC DATETIME strings without a zone
+  // ("2026-09-16 14:23:24.297"). `new Date(s)` would read them as LOCAL time,
+  // shifting the capture windows by the server offset (Europe/Madrid → +2h) and
+  // so `entryInProgress`/`verificationWindow` never opened: after a QR entry the
+  // poller made zero Tuya calls and presence was never detected. Force UTC when
+  // the value carries no explicit zone.
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const ms = Date.parse(s);
   return Number.isFinite(ms) ? ms : null;
 }
 
@@ -509,6 +519,7 @@ module.exports = {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  epochMs,
   resolveEntryWindowMs,
   resolveExitCheckMs,
   ENTRY_WINDOW_MS,

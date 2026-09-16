@@ -20,6 +20,7 @@ const {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  epochMs,
   resolveEntryWindowMs,
   resolveExitCheckMs,
   ENTRY_WINDOW_MS,
@@ -43,6 +44,9 @@ function check(name, cond) {
 
 const NOW = 1800000000000; // fixed epoch for deterministic tests
 function iso(ms) { return new Date(ms).toISOString(); }
+// Production /live shape: MySQL UTC DATETIME without zone (what the poller
+// actually receives). Regression: these used to be parsed as local time.
+function mysqlUtc(ms) { return iso(ms).replace('T', ' ').replace('Z', ''); }
 
 function live({ iot = {}, stay = null, deadline = null, qr = {}, gap = 15, entryWindow = null, exitCheck = null } = {}) {
   const out = {
@@ -204,7 +208,53 @@ check('verificationWindow: expires with configured exit_check_seconds',
     exitCheck: 25,
   }), NOW) === false);
 
-// ─── 6. Module is require-safe ─────────────────────────────────────────
+// ─── 6. UTC MySQL timestamps without zone (real /live format) ──────────
+// Regression (F44): /live sends "YYYY-MM-DD HH:MM:SS.mmm" (UTC, no `Z`).
+// `new Date()` parsed it as local time, so entry/verify windows never opened
+// and the poller made zero Tuya calls after a QR entry.
+check('epochMs: MySQL UTC timestamp without zone parses as UTC',
+  epochMs(mysqlUtc(NOW)) === NOW);
+
+check('epochMs: explicit-Z ISO timestamp still parses as UTC',
+  epochMs(iso(NOW)) === NOW);
+
+check('entryInProgress: MySQL UTC first_entry_at within window → capture',
+  entryInProgress(live({
+    iot: { door_state: 'CLOSED', presence_state: 'ABSENT' },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: null, first_entry_at: mysqlUtc(NOW - 30000) },
+    qr: { consumed: true, stay_id: 1 },
+  }), NOW) === true);
+
+check('entryInProgress: MySQL UTC beyond ENTRY_WINDOW_MS → no capture',
+  entryInProgress(live({
+    iot: { door_state: 'CLOSED' },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: null, first_entry_at: mysqlUtc(NOW - ENTRY_WINDOW_MS - 1000) },
+    qr: { consumed: true, stay_id: 1 },
+  }), NOW) === false);
+
+check('verificationWindow: MySQL UTC last_close_at within window → capture',
+  verificationWindow(live({
+    iot: { door_state: 'CLOSED', last_close_at: mysqlUtc(NOW - 5000) },
+    gap: 15,
+  }), NOW) === true);
+
+check('verificationWindow: MySQL UTC last_close_at beyond window → no capture',
+  verificationWindow(live({
+    iot: { door_state: 'CLOSED', last_close_at: mysqlUtc(NOW - 30000) },
+    gap: 15,
+  }), NOW) === false);
+
+check('shouldCapture: real /live shape (MySQL UTC, door CLOSED, entry pending) → capture',
+  shouldCapture(live({
+    iot: { door_state: 'CLOSED', presence_state: 'ABSENT', last_close_at: mysqlUtc(NOW - 2000) },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: null, first_entry_at: mysqlUtc(NOW - 20000) },
+    qr: { consumed: true, stay_id: 1 },
+    gap: 15,
+    entryWindow: 90,
+    exitCheck: 25,
+  }), NOW) === true);
+
+// ─── 7. Module is require-safe ─────────────────────────────────────────
 check('module exports the pure gate (require did not start the poller)',
   typeof shouldCapture === 'function' && typeof nextCaptureState === 'function');
 
