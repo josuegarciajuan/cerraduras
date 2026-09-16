@@ -169,8 +169,8 @@ final class QrTestController
         // ── Step 4: Clean IoT session ──
         $this->pdo->prepare(
             "INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
-             VALUES (:rid, 'CLOSED', 'ABSENT', UTC_TIMESTAMP(3))
-             ON DUPLICATE KEY UPDATE door_state = 'CLOSED', presence_state = 'ABSENT',
+             VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
+             ON DUPLICATE KEY UPDATE door_state = 'UNKNOWN', presence_state = 'UNKNOWN',
                      last_open_at = NULL, last_close_at = NULL, last_absent_since = NULL,
                      exit_evaluated_at = NULL, last_door_event_at = NULL, last_presence_event_at = NULL,
                      last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"
@@ -238,8 +238,8 @@ final class QrTestController
         // ── Clean IoT session ──
         $this->pdo->prepare(
             "INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
-             VALUES (:rid, 'CLOSED', 'ABSENT', UTC_TIMESTAMP(3))
-             ON DUPLICATE KEY UPDATE door_state = 'CLOSED', presence_state = 'ABSENT',
+             VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
+             ON DUPLICATE KEY UPDATE door_state = 'UNKNOWN', presence_state = 'UNKNOWN',
                      last_open_at = NULL, last_close_at = NULL, last_absent_since = NULL,
                      exit_evaluated_at = NULL, last_door_event_at = NULL, last_presence_event_at = NULL,
                      last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"

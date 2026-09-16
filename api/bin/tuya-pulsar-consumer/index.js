@@ -338,27 +338,37 @@ function connect() {
     },
   });
 
-  let keepAliveTimer = null;
+  let keepAliveTimer = null;   // timer del heartbeat proactivo
+
+  // FIX (push fiable): heartbeat proactivo. Antes solo se enviaba ping como
+  // RESPUESTA a un ping del servidor; si Tuya no pingueaba primero, el cliente
+  // quedaba mudo y el servidor cerraba la conexión con code=1001 (flapping
+  // histórico: 7.6k cierres → mensajes perdidos). Enviamos ping cada 30 s.
+  const HEARTBEAT_MS = 30000;
+  function startHeartbeat() {
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.ping(ACCESS_ID); } catch (e) { /* best-effort */ }
+      }
+    }, HEARTBEAT_MS);
+  }
+  function stopHeartbeat() {
+    if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  }
 
   ws.on('open', () => {
     console.log('[WS] ✅ Connected to Tuya Message Service');
     consecutiveFails = 0;
     reconnectDelay = 5000;
+    startHeartbeat();
     // RF-50.3: recuperar transiciones perdidas durante el hueco del WS.
     resyncKnownDevices('ws-open').catch((e) =>
       console.error(`[RESYNC] error: ${e.message}`));
   });
 
-  ws.on('ping', () => {
-    clearTimeout(keepAliveTimer);
-    ws.pong(ACCESS_ID);
-    keepAliveTimer = setTimeout(() => ws.ping(ACCESS_ID), 30000);
-  });
-
-  ws.on('pong', () => {
-    clearTimeout(keepAliveTimer);
-    keepAliveTimer = setTimeout(() => ws.ping(ACCESS_ID), 30000);
-  });
+  ws.on('ping', () => { ws.pong(ACCESS_ID); });
+  ws.on('pong', () => { /* liveness del servidor */ });
 
   ws.on('message', async (raw) => {
     try {
@@ -418,7 +428,7 @@ function connect() {
   });
 
   ws.on('close', (code, reason) => {
-    clearTimeout(keepAliveTimer);
+    stopHeartbeat();
     consecutiveFails++;
     // Exponential backoff for persistent failures (409 = subscription conflict, etc.)
     if (code === 1006 || code === 4000 || code === 4001) {

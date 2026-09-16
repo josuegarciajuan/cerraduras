@@ -1116,10 +1116,11 @@ $router->post(
             $pdo->prepare("UPDATE stays SET status = 'CLOSED', closed_at = UTC_TIMESTAMP(3) WHERE room_id = :rid AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')")
                 ->execute([':rid' => $roomId]);
 
-            // 5. Reset IoT session
+            // 5. Reset IoT session — estado UNKNOWN (honesto): el reset no puede
+            //    afirmar CLOSED sin consultar el sensor real.
             $pdo->prepare("INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
-                           VALUES (:rid, 'CLOSED', 'ABSENT', UTC_TIMESTAMP(3))
-                           ON DUPLICATE KEY UPDATE door_state = 'CLOSED', presence_state = 'ABSENT', last_open_at = NULL, last_absent_since = NULL, exit_evaluated_at = NULL, updated_at = UTC_TIMESTAMP(3)")
+                           VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
+                           ON DUPLICATE KEY UPDATE door_state = 'UNKNOWN', presence_state = 'UNKNOWN', last_open_at = NULL, last_absent_since = NULL, exit_evaluated_at = NULL, updated_at = UTC_TIMESTAMP(3)")
                 ->execute([':rid' => $roomId]);
 
             // 5. Track liveness on RPI
