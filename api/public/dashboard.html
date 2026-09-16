@@ -2074,21 +2074,25 @@ function connectSSE() {
     disconnectSSE();
     // Switch to polling fallback while we reconnect
     startPollingFallback();
-    // F44 (RF-50.4): el cierre del servidor (max_lifetime 30 min) NO debe dejar
-    // el panel en polling permanente → reconectar SSE con backoff.
-    scheduleSseReconnect();
+    // Fase B: el servidor cierra a propósito por max_lifetime (5 min); reconectar
+    // INMEDIATO (500 ms) para no dejar huecos largos de polling.
+    _sseReconnectDelay = 2000;
+    if (_sseReconnectTimeout) { clearTimeout(_sseReconnectTimeout); }
+    _sseReconnectTimeout = setTimeout(function() {
+      _sseReconnectTimeout = null;
+      if (!_eventSource) connectSSE();
+    }, 500);
   });
 
   _eventSource.onerror = function(e) {
-    // EventSource auto-reconnects by default. Only switch to polling
-    // if the connection has been down for more than 5 seconds.
+    // Fase B: arrancar el fallback SIEMPRE (también si el SSE nunca llegó a
+    // conectar) para que el panel no dependa de un bucle de 2 s sin SSE.
     if (_sseConnected) {
       console.warn('[SSE] Connection error (will auto-reconnect)');
-      _sseConnected = false;
-      updateSseIndicator(false);
-      // Start fallback polling immediately while SSE reconnects
-      startPollingFallback();
     }
+    _sseConnected = false;
+    updateSseIndicator(false);
+    startPollingFallback();
   };
 
   _eventSource.onopen = function() {
