@@ -1311,6 +1311,10 @@ una secuencia de apertura/cierre nueva (RF-47.5).
   internas de lock/update. No es observable externamente.
 - **Poller de presencia**: `ENTRY_WINDOW_MS` (90 s) y el watchdog de captura máxima (120 s)
   son estado **interno** del proceso Node; no se exponen en `/live` ni en la API.
+- **`pendingExitVerification(live, now)`** (RF-51.1.6): función **interna** del poller, sin
+  representación HTTP. Determina si, tras un ciclo de salida acreditado, el muestreo debe
+  continuar pese a `presence_state=PRESENT`. No altera la forma de `/live` ni del webhook;
+  solo decide si el proceso gasta cuota Tuya.
 - **`DOOR_CYCLE_MAX_S`**: constante de dominio con valor por defecto **300 s**; no es
   configuración externa ni campo de API.
 - **Anomalías A1–A8**: siguen siendo informativas; su contrato (F35) no cambia.
@@ -1399,6 +1403,10 @@ Se añaden dos campos, sin romper consumidores existentes:
 - `far_detection` es config (cm) del dispositivo; solo aparece en `/dashboard-api/presence-calibrate/*`
   y en la calibración (`/simula` conserva su semántica propia de simulación).
 - Presencia efectiva = `presence_state ∈ {presence, move}` → `PRESENT`; `none` → `ABSENT`.
+- **`target_dis_closest` (RF-52.4.3)**: el 24G V3 lo declara pero reporta siempre `0`; no forma
+  parte de ninguna decisión de presencia. El modo **prueba de paseo** (RF-52.4) reutiliza los
+  endpoints `presence-calibrate/status|set` sin cambios de contrato (mismos campos, `persist:false`
+  para aplicar en vivo).
 
 ### 4. `system-status` (RF-50.2.4)
 

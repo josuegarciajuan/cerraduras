@@ -2080,8 +2080,24 @@ activo tras consolidar + ABSENT.
 ## F44e: Calibración (RF-52.3)
 
 ### TSK-F44-07: Calibrar PROTO2 a rango corto
-- **Cambio**: `POST /dashboard-api/presence-calibrate/set {room_id:12, far_detection:75, sensitivity:10}`.
+- **Cambio**: `POST /dashboard-api/presence-calibrate/set {room_id:12, far_detection:150, sensitivity:10}`
+  (el 24G V3 rechaza 75 cm; mínimo efectivo 150 cm, RF-52.3.3).
 - **Test propio**: BLOCK 35 (read-back `GET status`).
+
+## F44g: Salida fiable y prueba de paseo (RF-51.1.6 / RF-52.4)
+
+### TSK-F44-09: Ciclo de salida no detiene el muestreo
+- **Cambio**: `api/bin/tuya-presence-poller.js` — nueva función pura `pendingExitVerification(live, now)`
+  (ciclo acreditado `last_open_at >= entry_confirmed_at` + `last_close_at >= last_open_at` dentro de
+  `exit_check_seconds`); se excluye del stop `inside` de `shouldCapture()`; se exporta para tests.
+- **Test propio**: `tests/Unit/presence-poller-gate.test.js` (BLOCK 33) — regresión del caso
+  "ciclo de salida + PRESENT + CLOSED → capture".
+
+### TSK-F44-10: Modo prueba de paseo
+- **Cambio**: `api/public/dashboard.html` — bloque guiado en `#cal-modal` (límite → alejamiento →
+  recomendación) y función pura `suggestFarAction(readings, caps)`; reutiliza
+  `presence-calibrate/status|set` con `persist:false` y respeta el cooldown de cuota.
+- **Test propio**: `tests/Unit/cal-walktest.test.js` (recomendación) + BLOCK 35.
 
 ## F44f: Cierre
 
@@ -2101,3 +2117,5 @@ activo tras consolidar + ABSENT.
 | F44-06 | SSE reconnect | RF-50.4 | `public/dashboard.html` | BLOCK 35 |
 | F44-07 | Calibrar PROTO2 | RF-52.3 | datos/dispositivo | BLOCK 35 |
 | F44-08 | BLOCK 35 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+| F44-09 | Ciclo de salida no detiene muestreo | RF-51.1.6 | `bin/tuya-presence-poller.js` | unit JS (BLOCK 33) |
+| F44-10 | Modo prueba de paseo | RF-52.4 | `public/dashboard.html` | unit JS + BLOCK 35 |
