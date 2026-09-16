@@ -139,7 +139,11 @@ final class TuyaSensorIngress implements SensorIngressInterface
                 'provider'        => self::PROVIDER,
                 'occurred_at'     => $this->tsToIso($raw['ts'] ?? $raw['t'] ?? null),
                 'source_event_id' => null,
-                'meta'            => ['_noop' => true, 'tuya_dev_id' => $devId],
+                'meta'            => [
+                    '_noop'       => true,
+                    'tuya_dev_id' => $devId,
+                    'tuya_t'      => $raw['ts'] ?? $raw['t'] ?? null,
+                ],
             ];
         }
 
@@ -207,6 +211,9 @@ final class TuyaSensorIngress implements SensorIngressInterface
                     'tuya_dp'      => $code,
                     'tuya_dev_id'  => $devId,
                     'tuya_raw_val' => $value,
+                    // F41: raw millisecond timestamp kept for fine-grained audit
+                    // (fingerprint/ordering use the second-truncated occurred_at).
+                    'tuya_t'       => $t,
                 ],
             ];
         }
@@ -219,7 +226,11 @@ final class TuyaSensorIngress implements SensorIngressInterface
             'provider'        => self::PROVIDER,
             'occurred_at'     => $this->tsToIso($raw['ts'] ?? $raw['t'] ?? null),
             'source_event_id' => null,
-            'meta'            => ['_noop' => true, 'tuya_dev_id' => $devId],
+            'meta'            => [
+                '_noop'       => true,
+                'tuya_dev_id' => $devId,
+                'tuya_t'      => $raw['ts'] ?? $raw['t'] ?? null,
+            ],
         ];
     }
 

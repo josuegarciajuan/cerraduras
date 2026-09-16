@@ -91,6 +91,22 @@ final class StayRepository implements StayRepositoryInterface
     }
 
     /**
+     * F41: locking variant used by the exit rule under transaction. Callers must
+     * have an open transaction (same order as iot_sessions → stays).
+     */
+    public function lockActiveForRoom(int $roomId): ?Stay
+    {
+        $stmt = $this->pdo->prepare(
+            $this->baseSelect() .
+            " WHERE room_id = :rid AND status IN ('RESERVED','OCCUPIED','OVERSTAY')
+              ORDER BY id DESC LIMIT 1 FOR UPDATE"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $this->hydrate($row);
+    }
+
+    /**
      * @param array<string,mixed> $filters Supported keys:
      *   room_id, status, vb6_codtic, vb6_codalq, from (ISO), to (ISO)
      * @return list<Stay>
@@ -161,6 +177,7 @@ final class StayRepository implements StayRepositoryInterface
         $allowed = [
             'status' => ':status',
             'first_entry_at' => ':first_entry_at',
+            'entry_confirmed_at' => ':entry_confirmed_at',
             'exit_detected_at' => ':exit_detected_at',
             'closed_at' => ':closed_at',
             'vb6_codalq' => ':codalq',
@@ -198,7 +215,7 @@ final class StayRepository implements StayRepositoryInterface
     private function baseSelect(): string
     {
         return 'SELECT id, room_id, status, duracion_minutos,
-                       reserved_at, first_entry_at, exit_detected_at, closed_at,
+                       reserved_at, first_entry_at, entry_confirmed_at, exit_detected_at, closed_at,
                        vb6_codalq, vb6_codtic, vb6_codcli, vb6_codart, vb6_codlot,
                        vb6_codhab_raw, vb6_temporada, vb6_empresa, vb6_departamento,
                        created_at, updated_at
@@ -229,7 +246,8 @@ final class StayRepository implements StayRepositoryInterface
             self::nullableInt($row['vb6_empresa']),
             self::nullableInt($row['vb6_departamento']),
             (string) $row['created_at'],
-            (string) $row['updated_at']
+            (string) $row['updated_at'],
+            self::nullableStr($row['entry_confirmed_at'])
         );
     }
 

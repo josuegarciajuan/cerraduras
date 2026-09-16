@@ -20,6 +20,13 @@ interface StayRepositoryInterface
     public function findActiveForRoom(int $roomId): ?Stay;
 
     /**
+     * F41 (RF-47): same as findActiveForRoom() but takes a row lock
+     * (SELECT ... FOR UPDATE) inside an already-open transaction. Used by the
+     * exit rule so the stay preconditions are re-validated atomically.
+     */
+    public function lockActiveForRoom(int $roomId): ?Stay;
+
+    /**
      * @param array<string,mixed> $filters
      * @return list<Stay>
      */

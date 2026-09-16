@@ -77,7 +77,9 @@ final class RoomLiveController
         $iotData = $session !== null
             ? $session->toArray()
             : ['door_state' => 'UNKNOWN', 'presence_state' => 'UNKNOWN',
-               'last_open_at' => null, 'last_close_at' => null, 'last_absent_since' => null];
+               'last_open_at' => null, 'last_close_at' => null, 'last_absent_since' => null,
+               'last_door_event_at' => null, 'last_presence_event_at' => null,
+               'last_door_value' => null, 'last_presence_value' => null];
 
         // Active stay
         $activeStay = $this->stays->findActiveForRoom($roomId);
@@ -88,6 +90,8 @@ final class RoomLiveController
                 'status'          => $activeStay->status,
                 'duracion_minutos' => $activeStay->duracionMinutos,
                 'first_entry_at'   => $activeStay->firstEntryAt,
+                // F41: authoritative "guest inside" mark for the choreography.
+                'entry_confirmed_at' => $activeStay->entryConfirmedAt,
                 'exited_at'        => $activeStay->exitDetectedAt,
             ];
         }
@@ -149,10 +153,10 @@ final class RoomLiveController
             }
         }
 
-        // Exit deadline (F31): anchored to last_close_at (fallback to last_open_at
-        // for legacy rows where last_close_at is null).
-        // Compute condition: presence=ABSENT, door=CLOSED, close-time in window,
-        // last_absent_since is set.
+        // Exit deadline (F41, contracts.md §3.3): emitted only with
+        // presence=ABSENT + a credited door cycle + door=CLOSED. The internal
+        // exit rule no longer requires the current door state; the UI field
+        // does, so a stuck door does not freeze the countdown on screen.
         $exitDeadline = null;
         $gapSeconds = null; // F31: exposed for dashboard verification-hold computation
 
@@ -171,21 +175,19 @@ final class RoomLiveController
             && $session->presenceState === \App\Domain\Presence\IotSession::PRESENCE_ABSENT
             && $session->doorState === \App\Domain\Presence\IotSession::DOOR_CLOSED
             && $session->lastAbsentSince !== null
+            && $session->lastOpenAt !== null
+            && $session->lastCloseAt !== null
         ) {
-            // F31: anchor to last_close_at, fallback to last_open_at
-            $anchor = $session->lastCloseAt ?? $session->lastOpenAt;
-            if ($anchor !== null) {
-                $anchorTs   = strtotime($anchor . ' UTC');
-                $absentTs   = strtotime($session->lastAbsentSince . ' UTC');
-                $nowTs      = \App\Support\Clock::nowUtc()->getTimestamp();
-                $closeWindowS = \App\Domain\Presence\ExitRuleEvaluator::DOOR_CLOSE_WINDOW_S;
+            $openTs   = strtotime($session->lastOpenAt . ' UTC');
+            $closeTs  = strtotime($session->lastCloseAt . ' UTC');
+            $absentTs = strtotime($session->lastAbsentSince . ' UTC');
 
-                if ($anchorTs !== false && $absentTs !== false
-                    && ($nowTs - $anchorTs) <= $closeWindowS
-                ) {
-                    $deadlineTs = $absentTs + $gapSeconds;
-                    $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
-                }
+            // Credited cycle: opened then closed (close >= open).
+            if ($openTs !== false && $closeTs !== false && $absentTs !== false
+                && $closeTs >= $openTs
+            ) {
+                $deadlineTs   = $absentTs + $gapSeconds;
+                $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
             }
         }
 

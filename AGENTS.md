@@ -111,6 +111,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | F37 Configuración + filtro anomalías | BLOCK 27, BLOCK 28 | Completado |
 | **F38 Workers (QR maestro)** | **BLOCK 29** | **Pendiente** |
 | **F39 Estado verídico de dispositivos** | **BLOCK 30** | **Completado** |
+| **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |
 
 ### F39 — Estado verídico de dispositivos (panel "Dispositivos")
 
@@ -130,6 +131,29 @@ haya sonda fresca su estado es **`unknown` ("sin verificar", ámbar)**, no verde
 Modelo de datos (migración `0103`): `devices.online_state` + `devices.online_probed_at`
 (última sonda Tuya real). `last_seen_at` sigue siendo solo actividad, ya no prueba conexión
 para Tuya cloud.
+
+### F41 — Robustez del pipeline de sensores y coreografía
+
+- **Atomicidad (RF-43)**: `IotSessionService::processEvent()` es el único escritor del
+  estado IoT por habitación: auditoría fuera de transacción → `SELECT … FOR UPDATE` sobre
+  `iot_sessions` → decisión → `UPDATE` por columnas → commit; los efectos externos (luz,
+  anomalías, regla de salida) corren post-commit y fuera del lock.
+- **Orden y deduplicación (RF-44)**: migración `0108` (`event_fingerprint` UNIQUE +
+  `applied`/`discard_reason`). Un evento atrasado (`stale`) o reenviado (`duplicate`) no
+  revierte el estado; todo se audita en `presence_events`.
+- **Gate del poller (RF-45)**: `tuya-presence-poller.js` decide la ventana de captura por
+  estado de dominio y aplica watchdog (120 s) + cooldown para no consumir cuota Tuya.
+- **Coreografía (RF-46/47)**: `entry_confirmed_at` en `stays` es la autoridad de "huésped
+  dentro"; `exit_deadline` se emite solo con `ABSENT` + ciclo de puerta acreditado +
+  `CLOSED`, y se cancela al reaparecer presencia.
+- **Workers (RF-48)**: `system-status` expone 6 workers con
+  `expected/instances/pids/healthy/degraded`; `start-all.sh`/`stop-all.sh` garantizan
+  instancia única.
+- **SSE (RF-49)**: el stream `event-stream` emite `event: ping` cada ~5 s como señal de
+  vida del panel.
+- **Tests**: BLOCK 33 del runner + `tests/Unit/choreography.test.js` y
+  `tests/Unit/presence-poller-gate.test.js` (invocados con `node` desde el bloque, ya que
+  no se autodescubren).
 
 ## Operaciones
 

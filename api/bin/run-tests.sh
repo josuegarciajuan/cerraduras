@@ -2574,6 +2574,331 @@ else
 fi
 
 # =============================================================================
+# BLOCK 33 — F41: robustez de sensores y coreografía
+# Trazabilidad: RF-43…RF-49 · contracts.md §3, §4, §5, §6 · TSK-F41-18
+#
+# Cubre: orden/deduplicación del pipeline (migración 0108), /live con campos
+# nuevos, system-status ampliado, reset que limpia marcas, concurrencia
+# (OPEN∥CLOSED) y coreografía de entrada/salida. Los tests JS no son *Test.php
+# y no se autodescubren → se invocan explícitamente con node.
+# =============================================================================
+block "BLOCK 33 — F41: robustez de sensores y coreografía"
+
+# ── 33.0 Unit tests JS (poller + coreografía). No dependen del servidor. ──────
+for F41_JS in tests/Unit/choreography.test.js tests/Unit/presence-poller-gate.test.js; do
+    if [ ! -f "$F41_JS" ]; then
+        skip "JS: $F41_JS" "fichero no encontrado"
+        continue
+    fi
+    F41_JS_OUT=$(node "$F41_JS" 2>&1)
+    F41_JS_RC=$?
+    F41_JS_SUM=$(echo "$F41_JS_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F41_JS_SUM" ] && F41_JS_SUM="exit=$F41_JS_RC"
+    if [ "$F41_JS_RC" -eq 0 ]; then
+        pass "JS: $(basename "$F41_JS") ($F41_JS_SUM)"
+    else
+        fail "JS: $(basename "$F41_JS")" \
+            "$F41_JS_SUM — $(echo "$F41_JS_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+done
+
+# ── 33.1 system-status: esquema ampliado de 6 workers (contrato §5) ──────────
+if [ "$SERVER_UP" != true ]; then
+    skip "F41 system-status" "servidor HTTP no disponible"
+else
+    F41_SS_JSON=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/system-status" 2>/dev/null)
+    F41_SS_RES=$(echo "$F41_SS_JSON" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print('ERR ' + str(e)); sys.exit(0)
+keys = ['exit-scan','overstay-scan','outbox-worker','anomaly-scanner','presence-poller-manager','pulsar-consumer']
+missing = [k for k in keys if k not in d]
+bad = []
+for k in keys:
+    v = d.get(k)
+    if not isinstance(v, dict):
+        bad.append(k + ':not_object'); continue
+    for f in ('expected','instances','pids','healthy','degraded'):
+        if f not in v:
+            bad.append(k + ':' + f)
+    if v.get('expected') != 1:
+        bad.append(k + ':expected')
+    if not isinstance(v.get('pids'), list):
+        bad.append(k + ':pids')
+    inst = v.get('instances'); exp = v.get('expected')
+    if v.get('healthy') is not (inst == exp):
+        bad.append(k + ':healthy')
+    if v.get('degraded') is not (inst > exp):
+        bad.append(k + ':degraded')
+print('OK' if not missing and not bad else 'FAIL missing=' + str(missing) + ' bad=' + str(bad))
+" 2>/dev/null)
+    case "$F41_SS_RES" in
+        OK*)   pass "F41 system-status: 6 workers con expected/instances/pids/healthy/degraded" ;;
+        FAIL*) fail "F41 system-status: esquema §5" "${F41_SS_RES#FAIL }" ;;
+        *)     fail "F41 system-status: parse" "${F41_SS_RES:-respuesta vacía}" ;;
+    esac
+fi
+
+# ── 33.2 Prerrequisitos de los casos stateful ────────────────────────────────
+F41_ROOM=1
+F41_SIM_KEY=$(get_key SIM-CLIENT)
+F41_SCHEMA=$($MYSQL -sN -e "SHOW COLUMNS FROM presence_events LIKE 'event_fingerprint'" 2>/dev/null || echo "")
+F41_ROOM_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'last_door_value'" 2>/dev/null || echo "")
+
+if [ "$SERVER_UP" != true ]; then
+    skip "F41 stateful (reset/orden/concurrencia/coreografía)" "servidor HTTP no disponible"
+elif [ -z "$F41_SCHEMA" ] || [ -z "$F41_ROOM_COL" ]; then
+    skip "F41 stateful (reset/orden/concurrencia/coreografía)" \
+        "Migración 0108 no aplicada (faltan event_fingerprint / last_door_value)"
+elif [ -z "$F41_SIM_KEY" ]; then
+    skip "F41 stateful (reset/orden/concurrencia/coreografía)" \
+        "Clave SIM-CLIENT no disponible en $KEYS_FILE"
+else
+    # Helpers locales del bloque (no tocan los helpers globales del runner).
+    f41_iso()       { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+    f41_mysql_utc() { date -u -d "@$1" '+%Y-%m-%d %H:%M:%S.000'; }
+    f41_reset() {
+        local out
+        out=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -d "{\"room_id\":$F41_ROOM}" \
+            "${API_BASE}/dashboard-api/rooms/reset" 2>/dev/null) || out="000"
+        echo "$out"
+    }
+    f41_live() { curl -s --max-time 5 "${API_BASE}/api/v1/rooms/$F41_ROOM/live" 2>/dev/null; }
+    f41_sim() {   # $1 = presence|door ; $2 = body JSON
+        local out
+        out=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "X-API-Key: $F41_SIM_KEY" -H 'Content-Type: application/json' \
+            -d "$2" "${API_BASE}/sim/rooms/$F41_ROOM/$1" 2>/dev/null) || out="000"
+        echo "$out"
+    }
+
+    # ── 33.3 Reset limpia todas las marcas (contrato §6.2, RF-47.5) ──────────
+    http_test POST /dashboard-api/rooms/reset 200 \
+        "F41 reset: POST /dashboard-api/rooms/reset → 200" \
+        --idem "f41-reset-$(date +%s)" \
+        --body "{\"room_id\":$F41_ROOM}"
+
+    F41_MARKS=$($MYSQL -sN -e "SELECT CONCAT(
+        IFNULL(last_close_at,'NULL'),'|',
+        IFNULL(last_absent_since,'NULL'),'|',
+        IFNULL(last_open_at,'NULL'),'|',
+        IFNULL(last_door_event_at,'NULL'),'|',
+        IFNULL(last_presence_event_at,'NULL'),'|',
+        IFNULL(last_door_value,'NULL'),'|',
+        IFNULL(last_presence_value,'NULL'))
+        FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    if [ "$F41_MARKS" = "NULL|NULL|NULL|NULL|NULL|NULL|NULL" ]; then
+        pass "F41 reset: limpia close/absent/open + last_*_event_at + last_*_value"
+    elif [ "$F41_MARKS" = "ERR" ] || [ -z "$F41_MARKS" ]; then
+        skip "F41 reset: verificación de marcas" "BD no accesible o fila iot_sessions ausente"
+    else
+        fail "F41 reset: no limpió todas las marcas" "got '$F41_MARKS'"
+    fi
+
+    # ── 33.4 /live: campos nuevos en iot_session y active_stay (contrato §3) ─
+    F41_STAY_ID=$($MYSQL -sN -e "INSERT INTO stays
+        (room_id,status,duracion_minutos,first_entry_at,reserved_at,vb6_codtic,vb6_codcli)
+        VALUES ($F41_ROOM,'OCCUPIED',60,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),1,1);
+        SELECT LAST_INSERT_ID();" 2>/dev/null || echo "0")
+    if [ -z "$F41_STAY_ID" ] || [ "$F41_STAY_ID" = "0" ]; then
+        skip "F41 /live campos nuevos" "No se pudo crear estancia OCCUPIED de prueba"
+        skip "F41 orden: secuencia de entrada" "Depende de la estancia de prueba"
+    else
+        $MYSQL -sN -e "UPDATE rooms SET status='OCCUPIED', simulated_override=1 WHERE id=$F41_ROOM" 2>/dev/null || true
+
+        F41_LIVE_CHECK=$(f41_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print('ERR ' + str(e)); sys.exit(0)
+iot = d.get('iot_session') or {}
+need = ['last_door_event_at','last_presence_event_at','last_door_value','last_presence_value']
+missing = [k for k in need if k not in iot]
+stay = d.get('active_stay')
+stay_ok = (stay is not None) and ('entry_confirmed_at' in stay)
+print('OK' if not missing and stay_ok else 'FAIL missing=' + str(missing) + ' entry_confirmed_key=' + str(stay_ok))
+" 2>/dev/null)
+        case "$F41_LIVE_CHECK" in
+            OK*)   pass "F41 /live: 4 marcas nuevas en iot_session + active_stay.entry_confirmed_at" ;;
+            FAIL*) fail "F41 /live: campos en /live" "${F41_LIVE_CHECK#FAIL }" ;;
+            *)     fail "F41 /live: parse" "${F41_LIVE_CHECK:-respuesta vacía}" ;;
+        esac
+
+        # Secuencia de entrada: PRESENT → OPEN → CLOSED ⇒ entrada consolidada.
+        F41_TB=$((F41_NOW + 10))
+        F41_TS_PRESENT=$(f41_iso $((F41_TB + 1)))
+        F41_TS_OPEN=$(f41_iso $((F41_TB + 2)))
+        F41_TS_CLOSE=$(f41_iso $((F41_TB + 3)))
+        F41_R1=$(f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$F41_TS_PRESENT\"}")
+        F41_R2=$(f41_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$F41_TS_OPEN\"}")
+        F41_R3=$(f41_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$F41_TS_CLOSE\"}")
+
+        F41_ORD=$(f41_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('ERR'); sys.exit(0)
+iot = d.get('iot_session') or {}
+stay = d.get('active_stay') or {}
+ok = (iot.get('last_door_value') == 'CLOSED'
+      and iot.get('last_presence_value') == 'PRESENT'
+      and iot.get('last_door_event_at')
+      and stay.get('entry_confirmed_at'))
+print('OK' if ok else 'FAIL door=' + str(iot.get('last_door_value')) +
+      ' pres=' + str(iot.get('last_presence_value')) +
+      ' ec=' + str(stay.get('entry_confirmed_at')))
+" 2>/dev/null)
+        if [ "$F41_R1" = "202" ] && [ "$F41_R2" = "202" ] && [ "$F41_R3" = "202" ] && [ "$F41_ORD" = "OK" ]; then
+            pass "F41 orden entrada: PRESENT→OPEN→CLOSED consolida entry_confirmed_at"
+        else
+            fail "F41 orden entrada (PRESENT→OPEN→CLOSED)" \
+                "codes=$F41_R1/$F41_R2/$F41_R3 live=$F41_ORD"
+        fi
+    fi
+
+    # ── 33.5 Deduplicación: reenvío idéntico no se aplica dos veces (RF-44) ─
+    f41_reset >/dev/null 2>&1 || true
+    F41_TD=$((F41_NOW + 200))
+    F41_TS_DUP=$(f41_iso $((F41_TD + 1)))
+    F41_TS_DUP_MYSQL=$(f41_mysql_utc $((F41_TD + 1)))
+    f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$F41_TS_DUP\"}" >/dev/null
+    F41_RC_DUP=$(f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$F41_TS_DUP\"}")
+    F41_DUP_ROWS=$($MYSQL -sN -e "SELECT COUNT(*) FROM presence_events WHERE room_id=$F41_ROOM AND sensor='PRESENCE' AND value='PRESENT' AND occurred_at='$F41_TS_DUP_MYSQL'" 2>/dev/null || echo "-1")
+    F41_DUP_APPLIED=$($MYSQL -sN -e "SELECT COUNT(*) FROM presence_events WHERE room_id=$F41_ROOM AND sensor='PRESENCE' AND value='PRESENT' AND occurred_at='$F41_TS_DUP_MYSQL' AND applied=1" 2>/dev/null || echo "-1")
+    F41_DUP_LIVE=$($MYSQL -sN -e "SELECT IFNULL(last_presence_value,'NULL') FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    if [ "$F41_DUP_ROWS" = "-1" ]; then
+        skip "F41 dedup: reenvío idéntico" "BD no accesible"
+    elif [ "$F41_RC_DUP" = "202" ] && [ "$F41_DUP_ROWS" = "1" ] && [ "$F41_DUP_APPLIED" = "1" ] && [ "$F41_DUP_LIVE" = "PRESENT" ]; then
+        # El fingerprint UNIQUE evita la segunda fila; markAudit no reescribe una
+        # fila ya aplicada, así que el estado no cambia dos veces.
+        pass "F41 dedup: reenvío idéntico → 1 fila de auditoría, 1 aplicación (fingerprint UNIQUE)"
+    else
+        fail "F41 dedup: reenvío idéntico" \
+            "code=$F41_RC_DUP rows=$F41_DUP_ROWS applied=$F41_DUP_APPLIED live=$F41_DUP_LIVE"
+    fi
+
+    # ── 33.6 Orden: un evento atrasado se descarta como stale (RF-44) ───────
+    F41_TS=$((F41_NOW + 300))
+    f41_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$(f41_iso $((F41_TS + 2)))\"}" >/dev/null
+    F41_RC_STALE=$(f41_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$(f41_iso $((F41_TS + 1)))\"}")
+    F41_STALE_ROWS=$($MYSQL -sN -e "SELECT COUNT(*) FROM presence_events WHERE room_id=$F41_ROOM AND sensor='PROXIMITY' AND value='OPEN' AND occurred_at='$(f41_mysql_utc $((F41_TS + 1)))' AND applied=0 AND discard_reason='stale'" 2>/dev/null || echo "-1")
+    F41_STALE_VAL=$($MYSQL -sN -e "SELECT IFNULL(last_door_value,'NULL') FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    if [ "$F41_STALE_ROWS" = "-1" ]; then
+        skip "F41 orden: evento atrasado (stale)" "BD no accesible"
+    elif [ "$F41_RC_STALE" = "202" ] && [ -n "$F41_STALE_ROWS" ] && [ "$F41_STALE_ROWS" -ge 1 ] && [ "$F41_STALE_VAL" = "CLOSED" ]; then
+        pass "F41 orden: evento atrasado → applied=0 discard_reason='stale' (no revierte CLOSED)"
+    else
+        fail "F41 orden: evento atrasado (stale)" \
+            "code=$F41_RC_STALE stale_rows=$F41_STALE_ROWS door=$F41_STALE_VAL"
+    fi
+
+    # ── 33.7 Concurrencia OPEN ∥ CLOSED: gana el occurred_at más reciente ───
+    f41_reset >/dev/null 2>&1 || true
+    F41_TC=$((F41_NOW + 400))
+    F41_OPEN_TS=$(f41_iso $((F41_TC + 1)))
+    F41_CLOSE_TS=$(f41_iso $((F41_TC + 2)))
+    F41_MKT_O=$(mktemp); F41_MKT_C=$(mktemp)
+    curl -s -o /dev/null -w '%{http_code}' -X POST \
+        -H "X-API-Key: $F41_SIM_KEY" -H 'Content-Type: application/json' \
+        -d "{\"state\":\"OPEN\",\"occurred_at\":\"$F41_OPEN_TS\"}" \
+        "${API_BASE}/sim/rooms/$F41_ROOM/door" >"$F41_MKT_O" 2>/dev/null &
+    F41_PID_O=$!
+    curl -s -o /dev/null -w '%{http_code}' -X POST \
+        -H "X-API-Key: $F41_SIM_KEY" -H 'Content-Type: application/json' \
+        -d "{\"state\":\"CLOSED\",\"occurred_at\":\"$F41_CLOSE_TS\"}" \
+        "${API_BASE}/sim/rooms/$F41_ROOM/door" >"$F41_MKT_C" 2>/dev/null &
+    F41_PID_C=$!
+    wait "$F41_PID_O" 2>/dev/null; wait "$F41_PID_C" 2>/dev/null
+    F41_CODE_O=$(cat "$F41_MKT_O" 2>/dev/null); F41_CODE_C=$(cat "$F41_MKT_C" 2>/dev/null)
+    rm -f "$F41_MKT_O" "$F41_MKT_C"
+    F41_CONC=$($MYSQL -sN -e "SELECT CONCAT(IFNULL(door_state,'?'),'|',IFNULL(last_door_value,'NULL')) FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    # Guard de determinismo: si ambos POST cayeron en el mismo microsegundo, el
+    # source_event_id generado por el endpoint colisiona y uno se audita como
+    # duplicado. En ese caso no se puede medir el orden por occurred_at → skip.
+    F41_CONC_ROWS=$($MYSQL -sN -e "SELECT COUNT(*) FROM presence_events WHERE room_id=$F41_ROOM AND sensor='PROXIMITY' AND occurred_at IN ('$(f41_mysql_utc $((F41_TC + 1)))','$(f41_mysql_utc $((F41_TC + 2)))')" 2>/dev/null || echo "-1")
+    if [ "$F41_CONC_ROWS" = "1" ]; then
+        skip "F41 concurrencia: OPEN∥CLOSED" \
+            "Colisión de source_event_id en el mismo microsegundo (no medible); reintentar"
+    elif [ "$F41_CODE_O" = "202" ] && [ "$F41_CODE_C" = "202" ] && [ "$F41_CONC" = "CLOSED|CLOSED" ]; then
+        pass "F41 concurrencia: OPEN∥CLOSED → CLOSED (orden por occurred_at, no último escritor)"
+    else
+        fail "F41 concurrencia: OPEN∥CLOSED" \
+            "codes=$F41_CODE_O/$F41_CODE_C estado=$F41_CONC (esperado CLOSED|CLOSED)"
+    fi
+
+    # ── 33.8 Coreografía de salida: entry_confirmed_at + exit_deadline (RF-47)
+    f41_reset >/dev/null 2>&1 || true
+    F41_GSTAY=$($MYSQL -sN -e "INSERT INTO stays
+        (room_id,status,duracion_minutos,first_entry_at,reserved_at,vb6_codtic,vb6_codcli)
+        VALUES ($F41_ROOM,'OCCUPIED',60,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),1,1);
+        SELECT LAST_INSERT_ID();" 2>/dev/null || echo "0")
+    if [ -z "$F41_GSTAY" ] || [ "$F41_GSTAY" = "0" ]; then
+        skip "F41 coreografía: exit_deadline" "No se pudo crear estancia OCCUPIED"
+    else
+        $MYSQL -sN -e "UPDATE rooms SET status='OCCUPIED' WHERE id=$F41_ROOM" 2>/dev/null || true
+        F41_TG=$((F41_NOW + 600))
+        f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$(f41_iso $((F41_TG + 1)))\"}" >/dev/null
+        f41_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$(f41_iso $((F41_TG + 2)))\"}" >/dev/null
+        f41_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$(f41_iso $((F41_TG + 3)))\"}" >/dev/null
+
+        F41_EC=$(f41_live | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('ERR'); sys.exit(0)
+stay = d.get('active_stay') or {}
+print('OK' if stay.get('entry_confirmed_at') else 'FAIL ec=' + str(stay.get('entry_confirmed_at')))
+" 2>/dev/null)
+        if [ "$F41_EC" = "OK" ]; then
+            pass "F41 coreografía: entry_confirmed_at consolidado (OPEN + PRESENT + CLOSED)"
+        else
+            fail "F41 coreografía: entry_confirmed_at" "$F41_EC"
+        fi
+
+        # Con presencia y puerta cerrada no debe haber cuenta de salida.
+        f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"ABSENT\",\"occurred_at\":\"$(f41_iso $((F41_TG + 4)))\"}" >/dev/null
+        F41_DEAD_ABSENT=$(f41_live | python3 -c "import sys,json; print((json.load(sys.stdin).get('exit_deadline')) or 'NULL')" 2>/dev/null)
+        if [ -n "$F41_DEAD_ABSENT" ] && [ "$F41_DEAD_ABSENT" != "NULL" ]; then
+            pass "F41 coreografía: ABSENT + ciclo acreditado → exit_deadline activo"
+        else
+            fail "F41 coreografía: exit_deadline con ABSENT" "got '$F41_DEAD_ABSENT'"
+        fi
+
+        f41_sim presence "{\"sensor\":\"PRESENCE\",\"value\":\"PRESENT\",\"occurred_at\":\"$(f41_iso $((F41_TG + 5)))\"}" >/dev/null
+        F41_DEAD_PRESENT=$(f41_live | python3 -c "import sys,json; print((json.load(sys.stdin).get('exit_deadline')) or 'NULL')" 2>/dev/null)
+        if [ "$F41_DEAD_PRESENT" = "NULL" ]; then
+            pass "F41 coreografía: PRESENT cancela exit_deadline"
+        else
+            fail "F41 coreografía: cancelación de exit_deadline" "got '$F41_DEAD_PRESENT'"
+        fi
+
+        skip "F41 coreografía: stay EXITED tras el gap" \
+            "Confirmación real la hace el worker exit-scan (no determinista aquí); cubierto por BLOCK 22"
+    fi
+
+    # ── 33.9 SSE: evento de latido ping (contrato §4, RF-49.1) ──────────────
+    F41_SSE=$(curl -sN --max-time 8 "${API_BASE}/dashboard-api/event-stream?room_id=$F41_ROOM" 2>/dev/null | head -c 6000)
+    if echo "$F41_SSE" | grep -q '^event: ping'; then
+        pass "F41 SSE: el stream emite event: ping (RF-49.1)"
+    elif echo "$F41_SSE" | grep -q '^event: connected'; then
+        fail "F41 SSE: event ping ausente tras 8s" "se recibió connected pero no ping"
+    else
+        skip "F41 SSE: event ping" "Stream SSE sin salida utilizable (servidor/workers)"
+    fi
+
+    # ── Cleanup: cierra la estancia de prueba y restaura room 1 ─────────────
+    f41_reset >/dev/null 2>&1 || true
+    _restore_room1_state
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

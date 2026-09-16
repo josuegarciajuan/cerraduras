@@ -97,6 +97,7 @@ final class FakeStayRepo implements StayRepositoryInterface
     public function insertReserved(int $roomId, int $dur, array $refs): int { return 0; }
     public function findById(int $id): ?Stay { return $this->byId[$id] ?? null; }
     public function findActiveForRoom(int $roomId): ?Stay { return $this->activeByRoom[$roomId] ?? null; }
+    public function lockActiveForRoom(int $roomId): ?Stay { return $this->findActiveForRoom($roomId); }
     public function listFiltered(array $f, int $l = 50, int $o = 0): array { return []; }
     public function update(int $id, array $fields, ?string $expectedStatus = null): int
     {

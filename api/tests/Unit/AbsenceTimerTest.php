@@ -67,6 +67,28 @@ final class FakeIotSessionRepo implements IotSessionRepositoryInterface
     {
         $this->lastSaved = clone $session;
     }
+
+    // F41 interface additions (fakes: no real transaction/locking)
+    public function beginTransaction(): void {}
+    public function commit(): void {}
+    public function rollBack(): void {}
+    public function lockByRoomId(int $roomId): IotSession
+    {
+        if ($this->existing) return $this->existing;
+        return $this->makeSession($roomId);
+    }
+    public function updateState(IotSession $session): void
+    {
+        $this->lastSaved = clone $session;
+    }
+    public function markExitEvaluated(int $roomId, string $closeAtUtc): bool
+    {
+        if ($this->existing !== null) {
+            $this->existing->exitEvaluatedAt = $closeAtUtc;
+            $this->lastSaved = clone $this->existing;
+        }
+        return true;
+    }
 }
 
 final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
@@ -86,6 +108,25 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
         $this->lastInserted = compact('roomId','sensor','value','occurredAt','sourceEventId');
         return 1;
     }
+
+    public function insertOrGet(
+        int     $roomId,
+        string  $sensor,
+        string  $value,
+        string  $provider,
+        string  $occurredAt,
+        ?string $sourceEventId,
+        ?array  $meta
+    ): array {
+        $this->lastInserted = compact('roomId','sensor','value','occurredAt','sourceEventId');
+        return ['event' => new \App\Domain\Presence\PresenceEvent(
+            1, $roomId, $sensor, $value, $provider, $occurredAt,
+            $occurredAt, $sourceEventId, $meta,
+            \App\Domain\Presence\SensorEventDecision::fingerprint($roomId, $sensor, $value, $occurredAt)
+        ), 'is_new' => true];
+    }
+
+    public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
 
     public function listForRoom(int $roomId, int $limit = 20): array { return []; }
     /** @param array<string,mixed> $filters */
@@ -124,6 +165,7 @@ final class FakeStayRepo implements StayRepositoryInterface
     public function insertReserved(int $roomId, int $duracionMinutos, array $vb6Refs): int { return 0; }
     public function findById(int $id): ?Stay { return null; }
     public function findActiveForRoom(int $roomId): ?Stay { return null; }
+    public function lockActiveForRoom(int $roomId): ?Stay { return $this->findActiveForRoom($roomId); }
     public function listFiltered(array $filters, int $limit = 50, int $offset = 0): array { return []; }
     public function update(int $id, array $fields, ?string $expectedStatus = null): int { return 0; }
     public function count(array $filters): int { return 0; }
@@ -182,8 +224,14 @@ $fakeSessionRepo = new class implements IotSessionRepositoryInterface {
     public function findByRoomId(int $roomId): ?IotSession { return $this->s; }
     public function save(IotSession $session): void {}
     public function upsert(IotSession $session): void {}
+    public function beginTransaction(): void {}
+    public function commit(): void {}
+    public function rollBack(): void {}
+    public function lockByRoomId(int $roomId): IotSession { return $this->s; }
+    public function updateState(IotSession $session): void { $this->s = $session; }
+    public function markExitEvaluated(int $roomId, string $closeAtUtc): bool { return true; }
 };
-$exitEval = new ExitRuleEvaluator($fakeSessionRepo, $roomRepo, $rtRepo);
+$exitEval = new ExitRuleEvaluator($fakeSessionRepo, $roomRepo, $rtRepo, $stayRepo);
 
 $svc = new IotSessionService(
     $presRepo, $iotRepo, $roomRepo, $rtRepo, $stayRepo,
@@ -287,14 +335,24 @@ $testSession = new IotSession(
     0, 1, null,
     IotSession::DOOR_CLOSED,
     IotSession::PRESENCE_ABSENT,
-    gmdate('Y-m-d H:i:s', time() - 300),   // lastOpenAt: stale (door has been closed)
-    gmdate('Y-m-d H:i:s', time() - 5),     // lastCloseAt: recent (within 60s window)
+    gmdate('Y-m-d H:i:s', time() - 300),   // lastOpenAt: exit opening from inside
+    gmdate('Y-m-d H:i:s', time() - 5),     // lastCloseAt: recent (credited cycle)
     gmdate('Y-m-d H:i:s', time() - 25),    // lastAbsentSince: ABSENT for 25s
     null, ''
 );
+// F41: the rule also needs a confirmed entry and a credited exit cycle.
+$testStay = new Stay(
+    500, 1, Stay::STATUS_OCCUPIED, 60,
+    gmdate('Y-m-d H:i:s', time() - 500),   // reserved_at
+    gmdate('Y-m-d H:i:s', time() - 450),   // first_entry_at
+    null, null,                            // exit_detected_at, closed_at
+    null, null, null, null, null, null, null, null, null,   // vb6 refs (9)
+    gmdate('Y-m-d H:i:s', time() - 500), gmdate('Y-m-d H:i:s', time() - 500),
+    gmdate('Y-m-d H:i:s', time() - 400)    // entry_confirmed_at (before the exit opening)
+);
 
 // evaluate with room override 30s
-$shouldFire = $exitEval->evaluate($testSession, 30, time());
+$shouldFire = $exitEval->evaluate($testSession, $testStay, 30, time());
 if (!$shouldFire) {
     pass('Gap=30s override → 25s absent → does NOT fire');
 } else {
@@ -302,7 +360,7 @@ if (!$shouldFire) {
 }
 
 // evaluate with room_type fallback 15s
-$shouldFire = $exitEval->evaluate($testSession, 15, time());
+$shouldFire = $exitEval->evaluate($testSession, $testStay, 15, time());
 if ($shouldFire) {
     pass('Gap=15s fallback → 25s absent → FIRE');
 } else {

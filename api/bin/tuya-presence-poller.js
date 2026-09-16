@@ -8,10 +8,11 @@
  * The room is resolved dynamically via device → pack → room, so pack
  * re-assignments are followed without code edits.
  *
- * Only calls the Tuya Cloud API when the door is OPEN or within
- * an active verification window (exit_deadline on /live), reducing
- * API quota consumption by ~99%. The rest of the time it checks the
- * local /live endpoint (cost zero quota).
+ * Only calls the Tuya Cloud API when the /live domain state justifies it
+ * (door OPEN, exit_deadline, entry in progress or post-close verification
+ * window) and stops while the guest is inside or the room is empty. A 120s
+ * capture watchdog prevents infinite polling on a stuck door. The local
+ * /live check itself costs zero quota.
  *
  * Respects /simula far_detection≤1 → ABSENT rule and forwards
  * transitions to /api/v1/tuya/webhook.
@@ -44,17 +45,20 @@ const ACCESS_SECRET = process.env.TUYA_ACCESS_SECRET || '';
 // No sensor is hardcoded: the supervisor passes the device id as argv[2] (and
 // PRESENCE_DEVICE_ID env), one poller instance per PRESENCE device assigned to a pack.
 const DEVICE_ID     = process.argv[2] || process.env.PRESENCE_DEVICE_ID || '';
-if (DEVICE_ID === '') {
+if (DEVICE_ID === '' && require.main === module) {
   console.error('[config] ❌ device id required as argv[2] or PRESENCE_DEVICE_ID env (no sensor is hardcoded).');
   process.exit(1);
 }
-const ROOM_ID       = resolveRoomId();
+// Direct execution resolves the room via device → pack → room. When the module
+// is required by the unit tests it must stay side-effect free (no DB, no exit).
+const ROOM_ID       = require.main === module
+  ? resolveRoomId()
+  : (parseInt(process.env.ROOM_ID || '', 10) || 1);
 const POLL_MS              = 1000;       // local /live check interval (faster door-change detection)
 const TUYA_MIN_INTERVAL_MS = 5000;        // default min time between Tuya API calls (quota saving)
 const TUYA_FAST_INTERVAL_MS = 2000;        // faster throttle during countdown/verification (exit_deadline active)
 const WEBHOOK_URL   = 'http://127.0.0.1:8080/api/v1/tuya/webhook';
 const LIVE_URL      = `http://127.0.0.1:8080/api/v1/rooms/${ROOM_ID}/live`;
-const DOOR_WINDOW_MS = parseInt(process.env.PRESENCE_WINDOW_MS || '30000', 10); // max capture window after door change (default 30s)
 
 // ─── Dependencies ─────────────────────────────────────────────────────
 const crypto  = require('crypto');
@@ -94,10 +98,10 @@ let accessToken      = null;
 let tokenExpiry      = 0;
 let lastEffective    = null;
 let lastFarDet       = null;
-let lastDoorState    = null;
-let lastDoorChanged  = 0;
 let wasCapturing     = false;
-let presenceConfirmed = false; // stop polling once PRESENT is confirmed until next door change
+// Watchdog state for the capture gate (RF-45.3). Pure reducer `nextCaptureState()`
+// owns it; "inside/empty" is derived from each /live snapshot, never cached here.
+let captureState     = { captureStartedAt: 0, captureBlockedUntil: 0, lastDoorState: null };
 let seq              = 0;
 let startTime        = Date.now();
 let errorStreak      = 0;
@@ -197,52 +201,117 @@ async function forwardToWebhook(payload) {
 // ─── Timestamps ────────────────────────────────────────────────────────
 function ts() { return new Date().toISOString().replace('T',' ').substring(0,19); }
 
-// ─── Capture gate ─────────────────────────────────────────────────────
-function isCaptureWindow(liveData) {
+// ─── Capture gate (RF-45: domain state only, no sticky flags) ──────────
+// Internal state of the Node process — never exposed via /live or the API (contracts.md §7).
+const ENTRY_WINDOW_MS       = 90000;   // keep capturing while a QR entry is not yet consolidated
+const CAPTURE_MAX_MS        = 120000;  // watchdog: max continuous capture before forcing a stop
+const CAPTURE_COOLDOWN_MS   = 30000;   // watchdog: cooldown before a new capture window
+
+function epochMs(value) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// "Entrada en curso": a QR was consumed but the guest is not confirmed inside
+// yet. /live does not expose qr.consumed_at, so we anchor on the stay's
+// first_entry_at (set at QR validation); qr.consumed_at is used if a future
+// backend adds it.
+function entryInProgress(live, now) {
+  const qr = live.qr_status || {};
+  if (qr.consumed !== true) return false;
+  const stay = live.active_stay || null;
+  if (!stay || stay.entry_confirmed_at) return false; // already consolidated inside
+  const anchor = epochMs(qr.consumed_at || stay.first_entry_at);
+  if (anchor === null) return false;
+  return (now - anchor) < ENTRY_WINDOW_MS;
+}
+
+// Verification window after a door close: gap_seconds plus a margin for radar retention.
+function verificationWindow(live, now) {
+  const io = live.iot_session || {};
+  const closeAt = epochMs(io.last_close_at);
+  if (closeAt === null) return false;
+  const gapMs = (live.gap_seconds || 15) * 1000;
+  return (now - closeAt) < (gapMs + 10000);
+}
+
+/**
+ * Pure gate: should this cycle spend Tuya quota? Decides ONLY from the /live
+ * domain snapshot (RF-45.2) — no `presenceConfirmed`-style sticky flag.
+ */
+function shouldCapture(liveData, now) {
   if (!liveData) return false;
+  now = now || Date.now();
   const io = liveData.iot_session || {};
   const door = io.door_state || 'UNKNOWN';
-  const stay = liveData.active_stay;
-  const closeWindowS = liveData.gap_seconds || 15; // F31: effective gap for verification hold
+  const pres = io.presence_state || 'UNKNOWN';
+  const stay = liveData.active_stay || null;
+  const stayStatus = stay ? stay.status : null;
+  const deadline = epochMs(liveData.exit_deadline);
 
-  // Detect door state change → reset confirmed flag so we start polling again
-  if (door !== lastDoorState) {
-    lastDoorState = door;
-    lastDoorChanged = Date.now();
-    presenceConfirmed = false;
-  }
+  // ── Stops by domain state (RF-45.1) ──
+  const inside = stayStatus === 'OCCUPIED' && pres === 'PRESENT' && door === 'CLOSED'
+    && !!(stay && stay.entry_confirmed_at);      // huésped dentro
+  if (inside) return false;
 
-  // Gate 1: door open → capture
-  if (door === 'OPEN') return true;
+  const empty = !stay && pres === 'ABSENT' && deadline === null; // habitación 100% vacía
+  if (empty) return false;
 
-  // Gate 4 (F31): verification window after door close while stay is OCCUPIED.
-  // Keeps polling even if presence was previously confirmed, because the door
-  // opened and closed again — we need to verify whether the guest left or
-  // someone else entered. Uses last_close_at from /live as anchor.
-  if (stay && stay.status === 'OCCUPIED'
-      && door === 'CLOSED'
-      && io.last_close_at)
-  {
-    const closeAt = new Date(io.last_close_at).getTime();
-    // Verification window = gap_seconds + 10s margin (to tolerate radar retention)
-    const verifyWindowMs = (closeWindowS + 10) * 1000;
-    if ((Date.now() - closeAt) < verifyWindowMs) return true;
-  }
-
-  // Once presence is confirmed AND door is closed AND outside the verification
-  // window above, stop polling until next door event (guest is inside).
-  if (presenceConfirmed && door === 'CLOSED') return false;
-
-  // Gate 2: exit deadline active (verification window)
-  if (liveData.exit_deadline) {
-    const dl = new Date(liveData.exit_deadline);
-    if (dl > new Date()) return true;
-  }
-
-  // Gate 3: within DOOR_WINDOW_MS of last door state change
-  if (lastDoorChanged > 0 && (Date.now() - lastDoorChanged) < DOOR_WINDOW_MS) return true;
+  // ── Captures (RF-45.1.3) ──
+  if (door === 'OPEN') return true;              // entrada/salida en curso
+  if (deadline !== null && deadline > now) return true; // verificación de salida
+  if (entryInProgress(liveData, now)) return true;      // QR reciente, aún no consolidado
+  if (verificationWindow(liveData, now)) return true;   // cierre reciente + gap
 
   return false;
+}
+
+/**
+ * Pure watchdog reducer (RF-45.3). Given the /live snapshot, `now` and the
+ * previous watchdog state, returns the capture decision + new state. A stuck
+ * OPEN door is cut after CAPTURE_MAX_MS; the caller logs `watchdogFired`.
+ */
+function nextCaptureState(liveData, now, state) {
+  now = now || Date.now();
+  const prev = state || {};
+  const io = (liveData && liveData.iot_session) || {};
+  const door = io.door_state || 'UNKNOWN';
+
+  let captureStartedAt = prev.captureStartedAt || 0;
+  let captureBlockedUntil = prev.captureBlockedUntil || 0;
+  const lastDoorState = prev.lastDoorState != null ? prev.lastDoorState : null;
+
+  // A door change rearms immediately — a new legitimate window (RF-45.3.4).
+  if (door !== lastDoorState) captureBlockedUntil = 0;
+
+  let want = shouldCapture(liveData, now);
+
+  if (!want) {
+    // No domain-justified window: clear the watchdog entirely.
+    captureStartedAt = 0;
+    captureBlockedUntil = 0;
+  } else if (captureStartedAt === 0) {
+    captureStartedAt = now;
+  }
+
+  // Watchdog: max continuous capture (stuck OPEN door / inconsistent state).
+  let watchdogFired = false;
+  if (want && captureStartedAt > 0 && (now - captureStartedAt) > CAPTURE_MAX_MS) {
+    watchdogFired = true;
+    captureBlockedUntil = now + CAPTURE_COOLDOWN_MS;
+    captureStartedAt = 0;
+    want = false;
+  }
+
+  // Cooldown beats a still-true domain gate.
+  if (now < captureBlockedUntil) want = false;
+
+  return {
+    capturing: want,
+    watchdogFired,
+    state: { captureStartedAt, captureBlockedUntil, lastDoorState: door },
+  };
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────
@@ -250,10 +319,10 @@ async function main() {
   console.log(`[${ts()}] ═══ PRESENCE Poller (GATED) ═══`);
   console.log(`  Device : ${DEVICE_ID}`);
   console.log(`  Room   : ${ROOM_ID} (live gate)`);
-  console.log(`  Gate   : door OPEN | exit_deadline | ${DOOR_WINDOW_MS/1000}s post-door-change | verify-window post-close (F31)`);
+  console.log(`  Gate   : door OPEN | exit_deadline | entry-in-progress (<${ENTRY_WINDOW_MS/1000}s) | verify-window post-close`);
   console.log(`  Tuya   : min ${TUYA_MIN_INTERVAL_MS/1000}s between calls (quota saving)`);
   console.log(`  Rule   : far_detection≤1 → ABSENT`);
-  console.log(`  Stop   : PRESENT confirmed + door closed + outside verify-window → pause`);
+  console.log(`  Stop   : inside (OCCUPIED+PRESENT+CLOSED+entry_confirmed) | empty (no stay+ABSENT) | watchdog ${CAPTURE_MAX_MS/1000}s → cooldown ${CAPTURE_COOLDOWN_MS/1000}s`);
   console.log(`  Quota  : backoff 10min on exhaustion\n`);
 
   // Initial token (needed even for first Tuya call)
@@ -264,9 +333,9 @@ async function main() {
   try {
     const live = await fetchLiveState();
     const io = live ? (live.iot_session || {}) : {};
-    lastDoorState = io.door_state || 'UNKNOWN';
+    captureState.lastDoorState = io.door_state || 'UNKNOWN';
     lastEffective = io.presence_state || 'ABSENT';
-    console.log(`[${ts()}] 📡 Baseline from /live: door=${lastDoorState} pres=${lastEffective}`);
+    console.log(`[${ts()}] 📡 Baseline from /live: door=${captureState.lastDoorState} pres=${lastEffective}`);
   } catch (e) { /* non-critical */ }
 
   // ─── Poll loop ──────────────────────────────────────────────────
@@ -278,12 +347,20 @@ async function main() {
     let liveData = null;
     try { liveData = await fetchLiveState(); } catch (e) { /* ignore */ }
 
-    const capturing = isCaptureWindow(liveData);
+    const gate = nextCaptureState(liveData, Date.now(), captureState);
+    const capturing = gate.capturing;
+    captureState = gate.state;
     const quotaOn = quotaBackoffUntil > Date.now();
+
+    if (gate.watchdogFired) {
+      const io = (liveData && liveData.iot_session) || {};
+      const stay = (liveData && liveData.active_stay) || null;
+      console.error(`[${ts()}] ⚠ watchdog de captura: forzando parada (door=${io.door_state || 'UNKNOWN'}, stay=${stay ? stay.status : 'none'}, deadline=${(liveData && liveData.exit_deadline) || 'none'}) — cooldown ${CAPTURE_COOLDOWN_MS/1000}s`);
+    }
 
     // Log capture-window transitions
     if (capturing && !wasCapturing) {
-      console.log(`[${ts()}] 🎯 Entering capture window (door=${lastDoorState})`);
+      console.log(`[${ts()}] 🎯 Entering capture window (door=${captureState.lastDoorState})`);
     } else if (!capturing && wasCapturing) {
       console.log(`[${ts()}] 💤 Exiting capture window — back to idle`);
     }
@@ -293,7 +370,7 @@ async function main() {
       // Idle: no Tuya calls needed
       if (seq % 40 === 0) {  // heartbeat every ~60s
         const state = lastEffective || 'UNKNOWN';
-        console.log(`[${ts()}] 💤 idle (door=${lastDoorState}, not in capture window) state=${state}`);
+        console.log(`[${ts()}] 💤 idle (door=${captureState.lastDoorState}, not in capture window) state=${state}`);
       }
       continue;
     }
@@ -365,11 +442,10 @@ async function main() {
 
         lastEffective = effective;
 
-        // Once we confirm PRESENT, stop polling until the next door change.
-        // Guest is inside — no need to keep checking Tuya.
+        // No sticky pause here: the gate stops on the next /live snapshot once
+        // the domain state says "inside" (OCCUPIED+PRESENT+CLOSED+entry_confirmed).
         if (effective === 'PRESENT') {
-          presenceConfirmed = true;
-          console.log(`[${ts()}] ✅ Presence confirmed — pausing Tuya polls until next door event`);
+          console.log(`[${ts()}] ✅ Presence confirmed (gate will stop once stay is consolidated inside)`);
         }
       }
 
@@ -405,4 +481,18 @@ process.on('SIGINT', () => {
   running = false;
 });
 
-main();
+// Only start the poll loop when executed directly. Requiring the module (unit
+// tests) must not start the poller, touch the DB or the network.
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  shouldCapture,
+  nextCaptureState,
+  entryInProgress,
+  verificationWindow,
+  ENTRY_WINDOW_MS,
+  CAPTURE_MAX_MS,
+  CAPTURE_COOLDOWN_MS,
+};

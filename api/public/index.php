@@ -697,24 +697,43 @@ $router->get(
 );
 
 // GET /dashboard-api/system-status — health check of background processes
-// Returns online/offline status of key workers (poller, pulsar, exit-scan, overstay-scan).
+// F41 (contracts.md §5): 6 workers with expected/instances/pids/healthy/degraded.
+// label/online/pid are kept for the existing renderSystemStatus() frontend.
 $router->get(
     '/dashboard-api/system-status',
     function (\App\Http\Request $request): \App\Http\Response {
         $processes = [
-            'tuya-presence-poller'  => ['label' => 'Sensor Presencia (Poller)', 'pattern' => 'tuya-presence-poller'],
-            'tuya-pulsar-consumer'  => ['label' => 'Eventos Tuya (Pulsar)',    'pattern' => 'tuya-pulsar-consumer'],
-            'exit-scan'             => ['label' => 'Regla de Salida (Exit)',   'pattern' => 'bin/exit-scan'],
-            'overstay-scan'         => ['label' => 'Overstay Scanner',         'pattern' => 'bin/overstay-scan'],
+            'exit-scan'              => ['label' => 'Regla de Salida (Exit)',   'pattern' => 'bin/exit-scan.php'],
+            'overstay-scan'          => ['label' => 'Overstay Scanner',         'pattern' => 'bin/overstay-scan.php'],
+            'outbox-worker'          => ['label' => 'Outbox Worker',            'pattern' => 'bin/outbox-worker.php'],
+            'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'pattern' => 'bin/anomaly-scanner.php'],
+            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'pattern' => 'bin/presence-poller-manager.sh'],
+            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'pattern' => 'tuya-pulsar-consumer'],
         ];
 
         $result = [];
         foreach ($processes as $key => $cfg) {
-            $pid = trim((string) @exec('pgrep -f "' . $cfg['pattern'] . '" | head -1'));
+            $raw = trim((string) @exec('pgrep -f "' . $cfg['pattern'] . '"'));
+            $pids = [];
+            if ($raw !== '') {
+                foreach (preg_split('/\s+/', $raw) ?: [] as $candidate) {
+                    if (ctype_digit($candidate)) {
+                        $pids[] = (int) $candidate;
+                    }
+                }
+            }
+            $instances = count($pids);
+            $expected  = 1;
+
             $result[$key] = [
-                'label'   => $cfg['label'],
-                'online'  => $pid !== '' && is_numeric($pid),
-                'pid'     => $pid !== '' ? (int) $pid : null,
+                'label'     => $cfg['label'],
+                'online'    => $instances >= 1,
+                'pid'       => $instances > 0 ? $pids[0] : null,
+                'expected'  => $expected,
+                'instances' => $instances,
+                'pids'      => $pids,
+                'healthy'   => $instances === $expected,
+                'degraded'  => $instances > $expected,
             ];
         }
 
@@ -1643,10 +1662,13 @@ $anomalyPipeline   = new AnomalyPipeline($eventDetectors);
 $anomalyService    = new AnomalyService($anomalyPipeline, $anomalyRepo, $a5Detector);
 $anomalyController = new AnomalyController($anomalyService);
 
-$exitRuleEvaluator = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo);
+$exitRuleEvaluator = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo, $stayRepo);
 $exitActionService = new ExitActionService(
     $roomRepo, $iotSessionRepo, $stayStateMachine, $accessEventRepo, $switchService, $anomalyService,
-    $workerSessionRepo
+    $workerSessionRepo,
+    $stayRepo,            // F41: lockActiveForRoom() under the exit transaction
+    $exitRuleEvaluator,   // F41: re-validates the rule under the lock
+    $roomTypeRepo         // F41: cooldown config for executeIfPending()
 );
 $iotSessionService = new IotSessionService(
     $presenceEventRepo,

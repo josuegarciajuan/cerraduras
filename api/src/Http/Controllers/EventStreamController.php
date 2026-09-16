@@ -37,6 +37,9 @@ final class EventStreamController
     /** @var int seconds between keepalive comments */
     private const KEEPALIVE_S = 15;
 
+    /** @var int seconds between named `ping` events (F41, contracts.md §4) */
+    private const PING_S = 5;
+
     /** @var int max concurrent SSE connections per room (Fase 2 — T2.6) */
     private const MAX_CONNS_PER_ROOM = 10;
 
@@ -94,6 +97,7 @@ final class EventStreamController
         $lastFingerprint = '';
         $startTime       = time();
         $lastKeepalive   = $startTime;
+        $lastPing        = $startTime;
         $loopCount       = 0;
 
         try {
@@ -130,6 +134,12 @@ final class EventStreamController
                     $lastKeepalive = $now;
                 }
 
+                // F41 (RF-49.1): named liveness event for the panel SSE watchdog.
+                if ($now - $lastPing >= self::PING_S) {
+                    $this->sendEvent('ping', ['room_id' => $roomId, 'ts' => gmdate('Y-m-d\TH:i:s\Z')]);
+                    $lastPing = $now;
+                }
+
                 // Re-check connection before sleeping
                 if (connection_aborted()) {
                     break;
@@ -161,6 +171,11 @@ final class EventStreamController
                     COALESCE(s.last_close_at,      '') AS c3,
                     COALESCE(s.last_open_at,       '') AS c4,
                     COALESCE(s.last_absent_since,  '') AS c5,
+                    COALESCE(s.last_door_event_at,     '') AS c14,
+                    COALESCE(s.last_presence_event_at, '') AS c15,
+                    COALESCE(s.last_door_value,        '') AS c16,
+                    COALESCE(s.last_presence_value,    '') AS c17,
+                    COALESCE(st.entry_confirmed_at,    '') AS c18,
                     COALESCE(r.status,             '') AS c6,
                     COALESCE(r.cooldown_until,     '') AS c7,
                     COALESCE(st.status,            '') AS c8,
@@ -210,7 +225,9 @@ final class EventStreamController
 
             // IoT session
             $iotStmt = $this->pdo->prepare(
-                'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since FROM iot_sessions WHERE room_id = :rid'
+                'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
+                        last_door_event_at, last_presence_event_at, last_door_value, last_presence_value
+                   FROM iot_sessions WHERE room_id = :rid'
             );
             $iotStmt->execute([':rid' => $roomId]);
             $sessionRow = $iotStmt->fetch(\PDO::FETCH_ASSOC);
@@ -222,6 +239,10 @@ final class EventStreamController
                     'last_open_at'     => $sessionRow['last_open_at'],
                     'last_close_at'    => $sessionRow['last_close_at'],
                     'last_absent_since' => $sessionRow['last_absent_since'],
+                    'last_door_event_at'     => $sessionRow['last_door_event_at'] ?? null,
+                    'last_presence_event_at' => $sessionRow['last_presence_event_at'] ?? null,
+                    'last_door_value'        => $sessionRow['last_door_value'] ?? null,
+                    'last_presence_value'    => $sessionRow['last_presence_value'] ?? null,
                 ]
                 : [
                     'door_state'       => 'UNKNOWN',
@@ -229,11 +250,15 @@ final class EventStreamController
                     'last_open_at'     => null,
                     'last_close_at'    => null,
                     'last_absent_since' => null,
+                    'last_door_event_at'     => null,
+                    'last_presence_event_at' => null,
+                    'last_door_value'        => null,
+                    'last_presence_value'    => null,
                 ];
 
             // Active stay
             $stayStmt = $this->pdo->prepare(
-                "SELECT id, status, duracion_minutos, first_entry_at, exit_detected_at
+                "SELECT id, status, duracion_minutos, first_entry_at, entry_confirmed_at, exit_detected_at
                  FROM stays
                  WHERE room_id = :rid AND status IN ('RESERVED','OCCUPIED')
                  ORDER BY id DESC LIMIT 1"
@@ -248,6 +273,7 @@ final class EventStreamController
                     'status'          => $stayRow['status'],
                     'duracion_minutos' => (int) ($stayRow['duracion_minutos'] ?? 0),
                     'first_entry_at'  => $stayRow['first_entry_at'],
+                    'entry_confirmed_at' => $stayRow['entry_confirmed_at'] ?? null,
                     'exited_at'       => $stayRow['exit_detected_at'],
                 ];
             }
@@ -268,24 +294,24 @@ final class EventStreamController
             $exitDeadline = null;
             $gapSeconds   = $this->resolveGapSeconds($roomId, (int) ($roomRow['presence_check_seconds'] ?? 0));
 
+            // F41 (contracts.md §3.3): presence ABSENT + credited door cycle
+            // (open then close) + door CLOSED. Deadline anchored to last_absent_since.
             if ($sessionRow !== false
                 && ($sessionRow['presence_state'] ?? '') === 'ABSENT'
                 && ($sessionRow['door_state'] ?? '') === 'CLOSED'
                 && !empty($sessionRow['last_absent_since'])
+                && !empty($sessionRow['last_open_at'])
+                && !empty($sessionRow['last_close_at'])
             ) {
-                $anchor = $sessionRow['last_close_at'] ?? $sessionRow['last_open_at'];
-                if ($anchor !== null) {
-                    $anchorTs = strtotime($anchor . ' UTC');
-                    $absentTs = strtotime((string) $sessionRow['last_absent_since'] . ' UTC');
-                    $nowTs    = Clock::nowUtc()->getTimestamp();
-                    $closeWindowS = \App\Domain\Presence\ExitRuleEvaluator::DOOR_CLOSE_WINDOW_S;
+                $openTs   = strtotime((string) $sessionRow['last_open_at'] . ' UTC');
+                $closeTs  = strtotime((string) $sessionRow['last_close_at'] . ' UTC');
+                $absentTs = strtotime((string) $sessionRow['last_absent_since'] . ' UTC');
 
-                    if ($anchorTs !== false && $absentTs !== false
-                        && ($nowTs - $anchorTs) <= $closeWindowS
-                    ) {
-                        $deadlineTs = $absentTs + $gapSeconds;
-                        $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
-                    }
+                if ($openTs !== false && $closeTs !== false && $absentTs !== false
+                    && $closeTs >= $openTs
+                ) {
+                    $deadlineTs   = $absentTs + $gapSeconds;
+                    $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
                 }
             }
 
