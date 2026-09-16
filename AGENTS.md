@@ -115,6 +115,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F42 Ventana de verificación de entrada** | **BLOCK 34** | **Completado** |
 | **F44 Tiempo real sensores + presencia bajo demanda** | **BLOCK 35** | **Completado** |
 | **F44+ Salida fiable + prueba de paseo** | **BLOCK 33/35** | **Completado** |
+| **F46 Supervisión systemd de workers + latencia SSE** | **BLOCK 35** | **Completado** |
 
 ### F44 — Tiempo real de sensores y presencia bajo demanda (RF-50/51/52)
 
@@ -153,6 +154,27 @@ hasta el momento (regresión completa). Debe ejecutarse:
   0 (95/95 lecturas); no se usa para decidir presencia ni para umbrales métricos.
 - **Tests**: casos RF-51.1.6 en `tests/Unit/presence-poller-gate.test.js` (BLOCK 33) y
   `tests/Unit/cal-walktest.test.js` (BLOCK 35.0b).
+
+### F46 — Supervisión systemd de workers y latencia SSE
+
+- **Causa raíz (SSE)**: el servidor PHP built-in **no detecta la desconexión del cliente**
+  (`connection_aborted()` no se activa); cada SSE muerto retenía un worker hasta `max_lifetime`.
+  Con 8 workers, varios SSE zombie agotaban el pool → el SSE nuevo no se servía y el panel caía a
+  polling lento (la puerta aparecía con >10 s de retraso). Fix: `max_lifetime` 1800→60 s,
+  `retry: 3000`, reconexión inmediata (500 ms) en el cliente, fallback 1 s siempre, y
+  **16 workers** (`PHP_CLI_SERVER_WORKERS=16`). Instrumentación: `server_ts` en cada `state` y
+  `api/logs/event-stream.log` (open/close con `state_events`/`ping_events`/`reason`); badge
+  `?debug=1` en el panel.
+- **Causa raíz (presencia)**: el `presence-poller-manager` corría como wrapper `setsid` sin
+  supervisión; si moría, la presencia dejaba de muestrearse en silencio (el panel "no detectaba").
+  Fix: los workers de fondo pasan a **systemd** (`cerraduras-worker@<nombre>.service` con
+  `Restart=always`, `KillMode=control-group`) y el poller a `cerraduras-presence-poller.service`.
+  `start-all.sh`/`stop-all.sh` los gestionan con `systemctl` (no por patrón). `system-status`
+  detecta por unit (`systemctl is-active` + MainPID).
+- **Manager endurecido**: `discover_sensors` distingue error de BD de lista vacía → no mata
+  pollers ante un fallo transitorio.
+- **Runner**: `api/bin/worker-loop.sh` (mapa worker→comando+tick) usado por el template systemd.
+- **Tests**: `run-tests.sh` (regresión) y `system-status` con los 6 workers `healthy=true`.
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 
