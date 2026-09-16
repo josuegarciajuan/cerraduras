@@ -703,37 +703,106 @@ $router->get(
     '/dashboard-api/system-status',
     function (\App\Http\Request $request): \App\Http\Response {
         $processes = [
-            'exit-scan'              => ['label' => 'Regla de Salida (Exit)',   'pattern' => 'bin/exit-scan.php'],
-            'overstay-scan'          => ['label' => 'Overstay Scanner',         'pattern' => 'bin/overstay-scan.php'],
-            'outbox-worker'          => ['label' => 'Outbox Worker',            'pattern' => 'bin/outbox-worker.php'],
-            'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'pattern' => 'bin/anomaly-scanner.php'],
-            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'pattern' => 'bin/presence-poller-manager.sh'],
-            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'pattern' => 'tuya-pulsar-consumer'],
+            'exit-scan'              => ['label' => 'Regla de Salida (Exit)',   'run_key' => 'exit-scan',               'pattern' => 'bin/exit-scan.php'],
+            'overstay-scan'          => ['label' => 'Overstay Scanner',         'run_key' => 'overstay-scan',           'pattern' => 'bin/overstay-scan.php'],
+            'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php'],
+            'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php'],
+            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'run_key' => 'presence-poller-manager', 'pattern' => 'bin/presence-poller-manager.sh'],
+            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer'],
         ];
+
+        // F41: each supervised worker is a `bash -c "while true; do <cmd>; ..."`
+        // wrapper that writes its own PID to api/run/<run_key>.pid. The wrapper
+        // cmdline carries the marker "run/<run_key>.pid"; its short-lived php/node
+        // children do not. Counting the marker therefore counts supervisors (1 per
+        // wrapper), independent of whether a one-shot child is running right now.
+        $runDir = dirname(__DIR__) . '/run';
+
+        // Discard command-line noise: pgrep itself and the `sh -c pgrep ...`
+        // helper spawned by exec(). The real wrapper is a `bash -c` and must be
+        // kept, so POSIX shell helpers are filtered by argv[0], not by "-c".
+        $isNoiseProcess = static function (string $cmdline): bool {
+            if (str_contains($cmdline, 'pgrep')) {
+                return true;
+            }
+            $argv  = explode("\0", $cmdline);
+            $shell = basename($argv[0] ?? '');
+            return ($argv[1] ?? '') === '-c' && in_array($shell, ['sh', 'dash'], true);
+        };
 
         $result = [];
         foreach ($processes as $key => $cfg) {
+            $runKey  = $cfg['run_key'];
+            $pidFile = $runDir . '/' . $runKey . '.pid';
+            $marker  = 'run/' . $runKey . '.pid';
+            $pids    = [];
+
+            // Primary source of truth: live supervisors carry the PID-file marker.
             // exec() only returns the LAST output line, so it must be called with
             // the $output array to collect every PID (F41-17 instance counting).
             $pgrepOut = [];
-            @exec('pgrep -f -- ' . escapeshellarg($cfg['pattern']), $pgrepOut);
-            $pids = [];
+            @exec('pgrep -f -- ' . escapeshellarg($marker), $pgrepOut);
             foreach ($pgrepOut as $candidate) {
                 $candidate = trim((string) $candidate);
                 if ($candidate === '' || !ctype_digit($candidate)) {
                     continue;
                 }
                 $pid = (int) $candidate;
-                // Drop the helper shell/pgrep whose own cmdline carries the pattern.
                 $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
                 if ($cmdline === false
-                    || str_contains($cmdline, 'pgrep')
-                    || str_contains($cmdline, '-c')
+                    || !str_contains($cmdline, $marker)
+                    || $isNoiseProcess($cmdline)
                 ) {
                     continue;
                 }
                 $pids[] = $pid;
             }
+
+            // The PID file corroborates the supervisor when pgrep misses it and
+            // validates liveness (stale PID file after a crash must not count).
+            if (is_file($pidFile)) {
+                $raw = trim((string) @file_get_contents($pidFile));
+                if ($raw !== '' && ctype_digit($raw)) {
+                    $pid = (int) $raw;
+                    $alive = function_exists('posix_kill')
+                        ? @posix_kill($pid, 0)
+                        : file_exists('/proc/' . $pid);
+                    $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+                    if ($alive
+                        && $cmdline !== false
+                        && str_contains($cmdline, $marker)
+                        && !$isNoiseProcess($cmdline)
+                        && !in_array($pid, $pids, true)
+                    ) {
+                        $pids[] = $pid;
+                    }
+                }
+            }
+
+            // Fallback (legacy manual startup / no PID files yet): keep the robust
+            // per-pattern count that has always worked for ad-hoc runs.
+            if (count($pids) === 0) {
+                $patternOut = [];
+                @exec('pgrep -f -- ' . escapeshellarg($cfg['pattern']), $patternOut);
+                foreach ($patternOut as $candidate) {
+                    $candidate = trim((string) $candidate);
+                    if ($candidate === '' || !ctype_digit($candidate)) {
+                        continue;
+                    }
+                    $pid = (int) $candidate;
+                    // Drop the helper shell/pgrep whose own cmdline carries the pattern.
+                    $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+                    if ($cmdline === false
+                        || str_contains($cmdline, 'pgrep')
+                        || str_contains($cmdline, '-c')
+                    ) {
+                        continue;
+                    }
+                    $pids[] = $pid;
+                }
+            }
+
+            sort($pids);
             $instances = count($pids);
             $expected  = 1;
 

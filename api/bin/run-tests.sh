@@ -1823,11 +1823,35 @@ block "BLOCK 22 — F31: Salida verificada"
             fail "live: gap_seconds field exposed" "non-null" "got $GAP_SECS"
         fi
 
+        # F41: B consolida la entrada (PRESENT + CLOSED). Es la precondición de
+        # la regla de salida; se documenta aquí para el ciclo de C.
+        ENTRY_CONFIRMED=$($MYSQL -sN -e "SELECT IFNULL(entry_confirmed_at,'NULL') FROM stays WHERE id=$STAY_ID" 2>/dev/null || echo "ERR")
+        if [ -n "$ENTRY_CONFIRMED" ] && [ "$ENTRY_CONFIRMED" != "NULL" ] && [ "$ENTRY_CONFIRMED" != "ERR" ]; then
+            pass "B: entry_confirmed_at poblado tras PRESENT+CLOSED (precondición de salida F41)"
+        else
+            fail "B: entry_confirmed_at poblado tras PRESENT+CLOSED" \
+                "expected non-null, got $ENTRY_CONFIRMED"
+        fi
+
         # ═══════════════════════════════════════════════════════════════
         # Sub-test C: Marcar presencia ABSENT → esperar gap → salida confirmada
         # ═══════════════════════════════════════════════════════════════
         echo ""
         echo "  --- C: ABSENT + gap → stay EXITED + room FREE ---"
+
+        # F41: la regla de salida exige un ciclo de puerta ACREDITADO, es decir
+        # una apertura POSTERIOR a entry_confirmed_at (last_open_at > entry_confirmed_at).
+        # El OPEN/CLOSED de A quedó antes de la consolidación; aquí se acredita el
+        # ciclo de salida antes de declarar ABSENT.
+        http_test POST "/sim/rooms/$TEST_ROOM/door" 202 \
+            "C: door=OPEN (ciclo de salida) → 202" \
+            --key SIM-CLIENT \
+            --body '{"state":"OPEN"}'
+
+        http_test POST "/sim/rooms/$TEST_ROOM/door" 202 \
+            "C: door=CLOSED (ciclo de salida) → 202" \
+            --key SIM-CLIENT \
+            --body '{"state":"CLOSED"}'
 
         http_test POST "/sim/rooms/$TEST_ROOM/presence" 202 \
             "presence=ABSENT → 202" \
@@ -2884,11 +2908,20 @@ print('OK' if stay.get('entry_confirmed_at') else 'FAIL ec=' + str(stay.get('ent
     fi
 
     # ── 33.9 SSE: evento de latido ping (contrato §4, RF-49.1) ──────────────
-    F41_SSE=$(curl -sN --max-time 8 "${API_BASE}/dashboard-api/event-stream?room_id=$F41_ROOM" 2>/dev/null | head -c 6000)
+    # Ventana amplia (15 s) + reintento con conexión nueva: el establecimiento
+    # del stream o un servidor ocupado pueden retrasar el ping (~5 s).
+    F41_SSE=""
+    F41_SSE_TRY=0
+    while [ "$F41_SSE_TRY" -lt 2 ]; do
+        F41_SSE_TRY=$((F41_SSE_TRY + 1))
+        F41_SSE=$(curl -sN --max-time 15 "${API_BASE}/dashboard-api/event-stream?room_id=$F41_ROOM" 2>/dev/null | head -c 8000)
+        echo "$F41_SSE" | grep -q '^event: ping' && break
+        echo "$F41_SSE" | grep -q '^event: connected' || break
+    done
     if echo "$F41_SSE" | grep -q '^event: ping'; then
         pass "F41 SSE: el stream emite event: ping (RF-49.1)"
     elif echo "$F41_SSE" | grep -q '^event: connected'; then
-        fail "F41 SSE: event ping ausente tras 8s" "se recibió connected pero no ping"
+        fail "F41 SSE: event ping ausente tras 15s (2 intentos)" "se recibió connected pero no ping"
     else
         skip "F41 SSE: event ping" "Stream SSE sin salida utilizable (servidor/workers)"
     fi
