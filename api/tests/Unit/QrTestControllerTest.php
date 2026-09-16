@@ -217,12 +217,12 @@ if ($res->getStatusCode() === 200) {
         fail('roomsReset() revokes QRs', 'revoked_at is null');
     }
 
-    // Verify IoT reset
+    // Verify IoT reset (honest: UNKNOWN, no inventa CLOSED/ABSENT)
     $iotDoor = $pdo->query("SELECT door_state FROM iot_sessions WHERE room_id=1")->fetchColumn();
-    if ($iotDoor === 'CLOSED') {
-        pass('roomsReset() resets IoT session');
+    if ($iotDoor === 'UNKNOWN') {
+        pass('roomsReset() resets IoT session to UNKNOWN');
     } else {
-        fail('roomsReset() resets IoT session', "expected CLOSED, got $iotDoor");
+        fail('roomsReset() resets IoT session to UNKNOWN', "expected UNKNOWN, got $iotDoor");
     }
 
     // Verify debts cleaned
