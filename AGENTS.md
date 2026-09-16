@@ -131,6 +131,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `far_detection ≤ 1 → ABSENT` (el radio es config, no señal). `far_detection` solo en calibración.
 - **Panel (RF-50.4)**: ante el cierre del SSE (`max_lifetime` 30 min) el dashboard reconecta con
   backoff; nunca queda en polling permanente.
+- **Calibración PROTO2 (RF-52.3)**: el 24G V3 rechaza 75 cm (piso de firmware); el mínimo efectivo
+  es 150 cm (1.5 m) con sensibilidad 10. El 24G no admitiría un radio real de 1 m.
 - **Tests**: BLOCK 35 del runner + `tests/Unit/tuya-pulsar-consumer.test.js` y casos F44 en
   `tests/Unit/presence-poller-gate.test.js` (invocados con `node`), y `tests/Unit/TuyaPresenceMoveTest.php`.
 

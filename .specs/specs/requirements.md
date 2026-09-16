@@ -647,3 +647,4 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-52.3: Calibración de rango corto
 - **RF-52.3.1**: El panel debe permitir fijar radio (`far_detection`, respetando `dp_caps`) y sensibilidad (`sensitivity`), persistiéndolo por dispositivo/habitación.
 - **RF-52.3.2**: Para detección ágil en rango corto (~1 m) con corte eficaz al salir del rango, se usará el menor radio del rango del dispositivo (paso 75 cm en 24G V3) y sensibilidad máxima.
+- **RF-52.3.3**: Si el firmware del dispositivo impone un radio mínimo superior (p.ej. el 24G V3 rechaza 75 cm y su mínimo efectivo es 150 cm), se usará ese mínimo con sensibilidad máxima y se documentará la limitación.
