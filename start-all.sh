@@ -97,20 +97,28 @@ else
   echo "       (unit cerraduras-pulsar-consumer ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
-echo "[4/8] Tuya Presence Poller manager (multi-sensor, pack-aware)..."
-launch "presence-poller-manager" "bash bin/presence-poller-manager.sh" 60 "$LOG_DIR/presence-poller.log"
+echo "[4/8] Tuya Presence Poller manager (systemd — instancia única)..."
+# F46: el poller de presencia pasa a systemd (Restart=always). Antes era un
+# wrapper setsid sin supervisión: si moría, la presencia dejaba de muestrearse
+# en silencio (el panel "no detectaba" al huésped).
+if systemctl restart cerraduras-presence-poller 2>/dev/null; then
+  echo "       presence-poller: systemd (pid $(systemctl show -p MainPID --value cerraduras-presence-poller 2>/dev/null))"
+else
+  echo "       (unit cerraduras-presence-poller ausente — wrapper de respaldo)"
+  launch "presence-poller-manager" "bash bin/presence-poller-manager.sh" 60 "$LOG_DIR/presence-poller.log"
+fi
 
-echo "[5/8] Exit rule scanner (F28)..."
-launch "exit-scan" "php bin/exit-scan.php" 2 "$LOG_DIR/exit-scan.log"
-
-echo "[6/8] Overstay scanner..."
-launch "overstay-scan" "php bin/overstay-scan.php" 60 "$LOG_DIR/overstay-scan.log"
-
-echo "[7/8] Outbox worker (F14)..."
-launch "outbox-worker" "php bin/outbox-worker.php" 30 "$LOG_DIR/outbox-worker.log"
-
-echo "[8/8] Anomaly scanner (F35)..."
-launch "anomaly-scanner" "php bin/anomaly-scanner.php" 5 "$LOG_DIR/anomaly-scanner.log"
+echo "[5/8] Workers de fondo (systemd: exit-scan, overstay-scan, outbox-worker, anomaly-scanner)..."
+if systemctl restart cerraduras-worker@exit-scan cerraduras-worker@overstay-scan \
+     cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner 2>/dev/null; then
+  echo "       workers: systemd arrancados (Restart=always)"
+else
+  echo "       (units cerraduras-worker@ ausentes — wrappers de respaldo)"
+  launch "exit-scan" "php bin/exit-scan.php" 2 "$LOG_DIR/exit-scan.log"
+  launch "overstay-scan" "php bin/overstay-scan.php" 60 "$LOG_DIR/overstay-scan.log"
+  launch "outbox-worker" "php bin/outbox-worker.php" 30 "$LOG_DIR/outbox-worker.log"
+  launch "anomaly-scanner" "php bin/anomaly-scanner.php" 5 "$LOG_DIR/anomaly-scanner.log"
+fi
 
 sleep 2
 
