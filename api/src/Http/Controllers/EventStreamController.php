@@ -46,6 +46,9 @@ final class EventStreamController
     /** @var array<int, int> connection count per room */
     private static array $connCount = [];
 
+    /** @var int errors de fingerprint/full-state en ESTA conexión (instrumentación A, Fase A) */
+    private int $sseFingerprintErrors = 0;
+
     public function __construct(\PDO $pdo)
     {
         $this->pdo = $pdo;
@@ -67,9 +70,24 @@ final class EventStreamController
             header('Content-Type: text/event-stream; charset=utf-8');
             header('Cache-Control: no-cache');
             echo "event: close\ndata: {\"reason\":\"too_many_connections\",\"room_id\":{$roomId}}\n\n";
+            $this->logSse([
+                'event' => 'reject', 'room_id' => $roomId, 'ip' => $this->clientIp(),
+                'reason' => 'too_many_connections', 'conns' => self::$connCount[$roomId],
+            ]);
             exit(0);
         }
         self::$connCount[$roomId]++;
+
+        // ── Instrumentación (Fase A): traza de vida de la conexión SSE ──
+        $streamStart = microtime(true);
+        $stateEvents = 0;
+        $pingEvents  = 0;
+        $reason      = 'client_abort';
+        $this->logSse([
+            'event'   => 'open', 'room_id' => $roomId, 'ip' => $this->clientIp(),
+            'ua'      => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'conns'   => self::$connCount[$roomId],
+        ]);
 
         // ── SSE headers ──
         header('Content-Type: text/event-stream; charset=utf-8');
@@ -108,6 +126,7 @@ final class EventStreamController
 
                 // Check maximum lifetime
                 if ($now - $startTime > self::MAX_LIFETIME_S) {
+                    $reason = 'max_lifetime';
                     $this->sendEvent('close', ['reason' => 'max_lifetime', 'uptime_s' => $now - $startTime]);
                     break;
                 }
@@ -126,7 +145,9 @@ final class EventStreamController
                     // ── Tier 2: full state query (only on change) ──
                     $state = $this->fetchFullState($roomId);
                     if ($state !== null) {
+                        $state['server_ts'] = gmdate('Y-m-d\TH:i:s\Z'); // Fase A: medir latencia real
                         $this->sendEvent('state', $state);
+                        $stateEvents++;
                     }
                 } elseif ($now - $lastKeepalive >= self::KEEPALIVE_S) {
                     // Send periodic keepalive to prevent proxy timeouts
@@ -137,6 +158,7 @@ final class EventStreamController
                 // F41 (RF-49.1): named liveness event for the panel SSE watchdog.
                 if ($now - $lastPing >= self::PING_S) {
                     $this->sendEvent('ping', ['room_id' => $roomId, 'ts' => gmdate('Y-m-d\TH:i:s\Z')]);
+                    $pingEvents++;
                     $lastPing = $now;
                 }
 
@@ -150,6 +172,18 @@ final class EventStreamController
         } finally {
             // Release connection slot (Fase 2 — T2.6)
             self::$connCount[$roomId] = max(0, self::$connCount[$roomId] - 1);
+            // Fase A: traza de cierre con contadores (state vs ping) y motivo.
+            $this->logSse([
+                'event'        => 'close',
+                'room_id'      => $roomId,
+                'ip'           => $this->clientIp(),
+                'dur_s'        => round(microtime(true) - $streamStart, 1),
+                'reason'       => $reason,
+                'state_events' => $stateEvents,
+                'ping_events'  => $pingEvents,
+                'fp_errors'    => $this->sseFingerprintErrors,
+                'conns'        => self::$connCount[$roomId],
+            ]);
         }
 
         exit(0);
@@ -201,6 +235,7 @@ final class EventStreamController
         } catch (\Throwable $e) {
             // If DB is temporarily unavailable, return empty to trigger a full
             // fetch on the next cycle, rather than crashing the stream.
+            $this->sseFingerprintErrors++;
             return '';
         }
     }
@@ -545,6 +580,48 @@ final class EventStreamController
         }
 
         return 15;
+    }
+
+    /**
+     * Client IP as seen by the stream (last hop of X-Forwarded-For, else REMOTE_ADDR).
+     */
+    private function clientIp(): string
+    {
+        $xff = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+        if (is_string($xff) && trim($xff) !== '') {
+            $parts = array_map('trim', explode(',', $xff));
+            $last  = end($parts);
+            if (is_string($last) && $last !== '') {
+                return $last;
+            }
+        }
+        return (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    }
+
+    /**
+     * Fase A: append one JSON line to api/logs/event-stream.log.
+     *
+     * Low volume BY DESIGN: only `open`/`close`/`reject` (never per event), so it
+     * can stay enabled in production. Never breaks the stream on logging errors.
+     */
+    private function logSse(array $entry): void
+    {
+        try {
+            $line = json_encode(
+                array_merge(['ts' => gmdate('Y-m-d\TH:i:s\Z')], $entry),
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            );
+            if ($line === false) {
+                return;
+            }
+            $dir = dirname(__DIR__, 3) . '/logs';
+            if (!is_dir($dir)) {
+                return;
+            }
+            @file_put_contents($dir . '/event-stream.log', $line . "\n", FILE_APPEND | LOCK_EX);
+        } catch (\Throwable $e) {
+            // Never break the stream because of instrumentation.
+        }
     }
 
     /**
