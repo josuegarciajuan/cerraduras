@@ -20,7 +20,10 @@ const {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  resolveEntryWindowMs,
+  resolveExitCheckMs,
   ENTRY_WINDOW_MS,
+  EXIT_CHECK_MARGIN_MS,
   CAPTURE_MAX_MS,
   CAPTURE_COOLDOWN_MS,
 } = require(path.join(__dirname, '..', '..', 'bin', 'tuya-presence-poller.js'));
@@ -41,14 +44,17 @@ function check(name, cond) {
 const NOW = 1800000000000; // fixed epoch for deterministic tests
 function iso(ms) { return new Date(ms).toISOString(); }
 
-function live({ iot = {}, stay = null, deadline = null, qr = {}, gap = 15 } = {}) {
-  return {
+function live({ iot = {}, stay = null, deadline = null, qr = {}, gap = 15, entryWindow = null, exitCheck = null } = {}) {
+  const out = {
     iot_session: iot,
     active_stay: stay,
     exit_deadline: deadline,
     qr_status: qr,
     gap_seconds: gap,
   };
+  if (entryWindow !== null) out.entry_window_seconds = entryWindow;
+  if (exitCheck !== null) out.exit_check_seconds = exitCheck;
+  return out;
 }
 
 console.log('\n\u2500\u2500 presence-poller gate (Fase 41) \u2500\u2500');
@@ -165,7 +171,40 @@ r = nextCaptureState(rearmLive, rearmAt, blockedState);
 check('rearm: door change clears cooldown and a legitimate window captures again',
   r.capturing === true && r.state.captureBlockedUntil === 0 && r.watchdogFired === false);
 
-// ─── 5. Module is require-safe ─────────────────────────────────────────
+// ─── 5. F44: configurable windows (RF-51.2 / RF-51.4 / RF-51.6) ────────
+check('resolveEntryWindowMs: default when /live does not expose it',
+  resolveEntryWindowMs(live({})) === ENTRY_WINDOW_MS);
+
+check('resolveEntryWindowMs: honors live.entry_window_seconds',
+  resolveEntryWindowMs(live({ iot: {}, entryWindow: 30 })) === 30000);
+
+check('resolveExitCheckMs: default = gap + margin',
+  resolveExitCheckMs(live({ gap: 15 })) === 15000 + EXIT_CHECK_MARGIN_MS);
+
+check('resolveExitCheckMs: honors live.exit_check_seconds',
+  resolveExitCheckMs({ exit_check_seconds: 25 }) === 25000);
+
+check('entryInProgress: uses live.entry_window_seconds (30s) instead of 90s',
+  entryInProgress(live({
+    iot: { door_state: 'CLOSED' },
+    stay: { status: 'OCCUPIED', entry_confirmed_at: null, first_entry_at: iso(NOW - 40000) },
+    qr: { consumed: true, stay_id: 1 },
+    entryWindow: 30,
+  }), NOW) === false);
+
+check('verificationWindow: uses live.exit_check_seconds (25s)',
+  verificationWindow(live({
+    iot: { door_state: 'CLOSED', last_close_at: iso(NOW - 20000) },
+    exitCheck: 25,
+  }), NOW) === true);
+
+check('verificationWindow: expires with configured exit_check_seconds',
+  verificationWindow(live({
+    iot: { door_state: 'CLOSED', last_close_at: iso(NOW - 26000) },
+    exitCheck: 25,
+  }), NOW) === false);
+
+// ─── 6. Module is require-safe ─────────────────────────────────────────
 check('module exports the pure gate (require did not start the poller)',
   typeof shouldCapture === 'function' && typeof nextCaptureState === 'function');
 

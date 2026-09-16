@@ -55,8 +55,8 @@ const ROOM_ID       = require.main === module
   ? resolveRoomId()
   : (parseInt(process.env.ROOM_ID || '', 10) || 1);
 const POLL_MS              = 1000;       // local /live check interval (faster door-change detection)
-const TUYA_MIN_INTERVAL_MS = 5000;        // default min time between Tuya API calls (quota saving)
-const TUYA_FAST_INTERVAL_MS = 2000;        // faster throttle during countdown/verification (exit_deadline active)
+const TUYA_MIN_INTERVAL_MS = 2000;        // min time between Tuya calls INSIDE a capture window (RF-51.5)
+const TUYA_FAST_INTERVAL_MS = 2000;        // kept for compatibility (windows are always fast now)
 const WEBHOOK_URL   = 'http://127.0.0.1:8080/api/v1/tuya/webhook';
 const LIVE_URL      = `http://127.0.0.1:8080/api/v1/rooms/${ROOM_ID}/live`;
 
@@ -203,7 +203,8 @@ function ts() { return new Date().toISOString().replace('T',' ').substring(0,19)
 
 // ─── Capture gate (RF-45: domain state only, no sticky flags) ──────────
 // Internal state of the Node process — never exposed via /live or the API (contracts.md §7).
-const ENTRY_WINDOW_MS       = 90000;   // keep capturing while a QR entry is not yet consolidated
+const ENTRY_WINDOW_MS       = 90000;   // default: keep capturing while a QR entry is not yet consolidated
+const EXIT_CHECK_MARGIN_MS  = 10000;   // default margin added to gap_seconds for the post-close check
 const CAPTURE_MAX_MS        = 120000;  // watchdog: max continuous capture before forcing a stop
 const CAPTURE_COOLDOWN_MS   = 30000;   // watchdog: cooldown before a new capture window
 
@@ -211,6 +212,20 @@ function epochMs(value) {
   if (!value) return null;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+// F44 (RF-51.2/51.4/51.6): ventanas configurables por habitación/tipo. El
+// backend las expone en /live; si no llegan, se usan los defaults históricos.
+function resolveEntryWindowMs(live) {
+  const s = live ? Number(live.entry_window_seconds) : NaN;
+  return (Number.isFinite(s) && s > 0) ? s * 1000 : ENTRY_WINDOW_MS;
+}
+
+function resolveExitCheckMs(live) {
+  const s = live ? Number(live.exit_check_seconds) : NaN;
+  if (Number.isFinite(s) && s > 0) return s * 1000;
+  const gap = (live && Number(live.gap_seconds)) || 15;
+  return gap * 1000 + EXIT_CHECK_MARGIN_MS;
 }
 
 // "Entrada en curso": a QR was consumed but the guest is not confirmed inside
@@ -224,16 +239,15 @@ function entryInProgress(live, now) {
   if (!stay || stay.entry_confirmed_at) return false; // already consolidated inside
   const anchor = epochMs(qr.consumed_at || stay.first_entry_at);
   if (anchor === null) return false;
-  return (now - anchor) < ENTRY_WINDOW_MS;
+  return (now - anchor) < resolveEntryWindowMs(live);
 }
 
-// Verification window after a door close: gap_seconds plus a margin for radar retention.
+// Verification window after a door close: exit_check_seconds (o gap + margen).
 function verificationWindow(live, now) {
   const io = live.iot_session || {};
   const closeAt = epochMs(io.last_close_at);
   if (closeAt === null) return false;
-  const gapMs = (live.gap_seconds || 15) * 1000;
-  return (now - closeAt) < (gapMs + 10000);
+  return (now - closeAt) < resolveExitCheckMs(live);
 }
 
 /**
@@ -361,6 +375,9 @@ async function main() {
     // Log capture-window transitions
     if (capturing && !wasCapturing) {
       console.log(`[${ts()}] 🎯 Entering capture window (door=${captureState.lastDoorState})`);
+      // F44 (RF-51.2): muestreo INMEDIATO al abrirse la ventana (p.ej. puerta
+      // OPEN) sin esperar al throttle de 2 s.
+      lastTuyaCallAt = 0;
     } else if (!capturing && wasCapturing) {
       console.log(`[${ts()}] 💤 Exiting capture window — back to idle`);
     }
@@ -384,11 +401,9 @@ async function main() {
       continue;
     }
 
-    // Throttle: dynamic — faster (2s) during countdown/verification,
-    // standard (5s) during other capture windows
-    const hasDeadline = liveData && liveData.exit_deadline
-        && new Date(liveData.exit_deadline) > new Date();
-    const minInterval = hasDeadline ? TUYA_FAST_INTERVAL_MS : TUYA_MIN_INTERVAL_MS;
+    // Throttle (F44, RF-51.5): dentro de una ventana activa siempre 2 s; en
+    // reposo no se llega aquí porque `capturing` es false (0 llamadas).
+    const minInterval = TUYA_MIN_INTERVAL_MS;
     const sinceLastTuya = Date.now() - lastTuyaCallAt;
     if (sinceLastTuya < minInterval) {
       continue;  // still in capture window; will retry next tick
@@ -421,11 +436,13 @@ async function main() {
       const rawPresence = dps.presence_state || '';
       const distance    = dps.target_dis_closest;
 
-      // Effective presence: respect /simula OFF; accept both ZY-M100 ("presence")
-      // and 24G V3 ("move") as PRESENT.
-      const effective = (farDet <= 1)
-        ? 'ABSENT'
-        : ((rawPresence === 'presence' || rawPresence === 'move') ? 'PRESENT' : 'ABSENT');
+      // Effective presence (F44, RF-52): SOLO `presence_state` decide. `far_detection`
+      // es config de radio (cm), no señal de presencia: se elimina la regla far≤1
+      // (heredada del ZY-M100) que convertía el radio en un falso ABSENT.
+      // Se aceptan tanto ZY-M100 ("presence") como 24G V3 ("move") como PRESENT.
+      const effective = (rawPresence === 'presence' || rawPresence === 'move')
+        ? 'PRESENT'
+        : 'ABSENT';
 
       // Transition → forward to webhook
       if (effective !== lastEffective && lastEffective !== null) {
@@ -492,7 +509,11 @@ module.exports = {
   nextCaptureState,
   entryInProgress,
   verificationWindow,
+  resolveEntryWindowMs,
+  resolveExitCheckMs,
   ENTRY_WINDOW_MS,
+  EXIT_CHECK_MARGIN_MS,
   CAPTURE_MAX_MS,
   CAPTURE_COOLDOWN_MS,
+  TUYA_MIN_INTERVAL_MS,
 };

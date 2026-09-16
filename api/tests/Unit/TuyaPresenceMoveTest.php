@@ -155,11 +155,39 @@ if ($ev['value'] === 'ABSENT') {
     fail('_poller_effective override → expected ABSENT; got ' . json_encode($ev));
 }
 
-// T5: liveness is tracked for the resolved device
-if ($repo->lastSeenUpdates === 4) {
-    pass('updateLastSeen called once per event (4/4)');
+// T6a (F44/RF-52.1): far_detection is radio config, NOT a presence signal.
+// A payload carrying only far_detection (e.g. 1 = OFF on ZY-M100) must NOT emit
+// a PRESENCE/ABSENT event; it is a no-op for the domain.
+$ev = $ingress->normalize([
+    'devId'  => 'bf9a278e76e2c3f01ay0cs',
+    'status' => [['code' => 'far_detection', 'value' => 1, 't' => 1789000000000]],
+]);
+if (($ev['meta']['_noop'] ?? false) === true) {
+    pass('far_detection alone → no-op (radio config is not a presence signal)');
 } else {
-    fail('updateLastSeen calls expected 4; got ' . $repo->lastSeenUpdates);
+    fail('far_detection alone → expected _noop=true; got ' . json_encode($ev));
+}
+
+// T6b (F44/RF-52.2): presence is decided ONLY by presence_state, even with a
+// non-zero radio (500 cm). far_detection must not override the raw DP.
+$ev = $ingress->normalize([
+    'devId'  => 'bf9a278e76e2c3f01ay0cs',
+    'status' => [
+        ['code' => 'presence_state', 'value' => 'none', 't' => 1789000000000],
+        ['code' => 'far_detection', 'value' => 500, 't' => 1789000000000],
+    ],
+]);
+if ($ev['sensor'] === 'PRESENCE' && $ev['value'] === 'ABSENT') {
+    pass('presence_state="none" with radio 500cm → still ABSENT (radio does not override)');
+} else {
+    fail('presence_state="none" + far 500 → expected ABSENT; got ' . json_encode($ev));
+}
+
+// T5: liveness is tracked for the resolved device (6 actionable/no-op events)
+if ($repo->lastSeenUpdates === 6) {
+    pass('updateLastSeen called once per event (6/6)');
+} else {
+    fail('updateLastSeen calls expected 6; got ' . $repo->lastSeenUpdates);
 }
 
 // T6: unknown device → BadRequestException

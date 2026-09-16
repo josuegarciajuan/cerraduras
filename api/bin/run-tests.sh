@@ -3043,6 +3043,100 @@ print('OK' if d.get('exit_deadline') else 'NULL')
 fi
 
 # =============================================================================
+# BLOCK 35 — F44: tiempo real de sensores y presencia bajo demanda
+# Trazabilidad: RF-50, RF-51, RF-52 · contracts.md Anexo F44 · TSK-F44-08
+#
+# Cubre: consumer con devices dinámicos + resync (unit JS), migración 0109
+# (ventana de entrada), /live con ventanas configurables, instancia única del
+# consumer Pulsar en system-status, y calibración PROTO2 persistida (sin cuota).
+# =============================================================================
+block "BLOCK 35 — F44: tiempo real de sensores y presencia bajo demanda"
+
+# ── 35.0 Unit JS: consumer dinámico + resync (sin red/BD) ───────────────────
+F44_CONSUMER_JS="tests/Unit/tuya-pulsar-consumer.test.js"
+if [ -f "$F44_CONSUMER_JS" ]; then
+    F44_C_OUT=$(node "$F44_CONSUMER_JS" 2>&1)
+    F44_C_RC=$?
+    F44_C_SUM=$(echo "$F44_C_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F44_C_SUM" ] && F44_C_SUM="exit=$F44_C_RC"
+    if [ "$F44_C_RC" -eq 0 ]; then
+        pass "JS: tuya-pulsar-consumer.test.js ($F44_C_SUM)"
+    else
+        fail "JS: tuya-pulsar-consumer.test.js" \
+            "$F44_C_SUM — $(echo "$F44_C_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: tuya-pulsar-consumer.test.js" "fichero no encontrado"
+fi
+
+# ── 35.1 Migración 0109: columna de ventana de entrada ─────────────────────
+F44_COL=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='room_types'
+      AND COLUMN_NAME='presence_entry_window_seconds'" 2>/dev/null || echo "0")
+if [ "$F44_COL" = "1" ]; then
+    pass "F44: room_types.presence_entry_window_seconds existe (migración 0109)"
+else
+    fail "F44: falta presence_entry_window_seconds" \
+        "ejecuta: php bin/migrate.php (got '$F44_COL')"
+fi
+
+# ── 35.2 /live expone las ventanas configurables del poller ────────────────
+if [ "$SERVER_UP" != true ]; then
+    skip "F44 /live ventanas" "servidor HTTP no disponible"
+else
+    F44_LIVE=$(curl -s --max-time 5 "${API_BASE}/api/v1/rooms/12/live" 2>/dev/null)
+    F44_WIN=$(echo "$F44_LIVE" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print('ERR ' + str(e)); sys.exit(0)
+ew = d.get('entry_window_seconds'); ec = d.get('exit_check_seconds')
+print('OK' if isinstance(ew, int) and isinstance(ec, int) and ew > 0 and ec > 0 else ('FAIL ew=%s ec=%s' % (ew, ec)))
+" 2>/dev/null)
+    if [ "$F44_WIN" = "OK" ]; then
+        pass "F44: /live expone entry_window_seconds y exit_check_seconds"
+    else
+        fail "F44: /live debe exponer las ventanas del poller" "$F44_WIN"
+    fi
+fi
+
+# ── 35.3 system-status: instancia única del consumer Pulsar ────────────────
+if [ "$SERVER_UP" != true ]; then
+    skip "F44 pulsar-consumer instancia única" "servidor HTTP no disponible"
+else
+    F44_SS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/system-status" 2>/dev/null)
+    F44_INST=$(echo "$F44_SS" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print('ERR ' + str(e)); sys.exit(0)
+v = d.get('pulsar-consumer') or {}
+inst = v.get('instances'); exp = v.get('expected')
+print('OK' if inst == 1 and exp == 1 else ('FAIL instances=%s expected=%s' % (inst, exp)))
+" 2>/dev/null)
+    if [ "$F44_INST" = "OK" ]; then
+        pass "F44: pulsar-consumer con instancia única (instances=1)"
+    else
+        fail "F44: el consumer Pulsar debe tener 1 sola instancia" "$F44_INST"
+    fi
+fi
+
+# ── 35.4 Calibración PROTO2 persistida (sin consumo de cuota Tuya) ─────────
+F44_CAL=$($MYSQL -sN -e "SELECT CONCAT(
+        COALESCE(JSON_VALUE(meta_json,'\$.calibration.far_detection'),''),'|',
+        COALESCE(JSON_VALUE(meta_json,'\$.calibration.sensitivity'),''))
+    FROM devices WHERE external_id='bf9a278e76e2c3f01ay0cs' LIMIT 1" 2>/dev/null || echo "")
+if [ "$F44_CAL" = "75|10" ]; then
+    pass "F44: PROTO2 calibrado far_detection=75cm sensitivity=10"
+elif [ -z "$F44_CAL" ] || [ "$F44_CAL" = "|" ]; then
+    skip "F44 calibración PROTO2" "sin snapshot de calibración aún"
+else
+    fail "F44: calibración PROTO2 esperada 75|10" "got '$F44_CAL'"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

@@ -698,6 +698,7 @@ let _eventSource = null;         // EventSource instance
 let _sseConnected = false;      // true while SSE stream is active
 let _sseFallbackActive = false; // true when SSE failed and polling fallback is running
 let _sseReconnectTimeout = null; // delayed reconnect timer
+let _sseReconnectDelay = 2000;   // F44: backoff de reconexión tras cierre del stream
 let _pollShouldStop = false;      // F33x: flag to stop leaked poll cycle when SSE reconnects
 // F41·TSK-F41-14: watchdog de silencio del stream. Se refresca en connected/state/ping.
 let _lastSseEventAt = 0;         // epoch ms del último evento SSE recibido
@@ -1956,6 +1957,9 @@ function connectSSE() {
     _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
     _pollShouldStop = true; // F33x: kill any leaked poll cycle
     if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
+    // F44 (RF-50.4): conexión sana → resetear el backoff de reconexión.
+    _sseReconnectDelay = 2000;
+    if (_sseReconnectTimeout) { clearTimeout(_sseReconnectTimeout); _sseReconnectTimeout = null; }
     updateSseIndicator(true);
     console.log('[SSE] Connected to room ' + currentRoomId);
   });
@@ -1981,8 +1985,11 @@ function connectSSE() {
     _sseConnected = false;
     updateSseIndicator(false);
     disconnectSSE();
-    // Switch to polling fallback
+    // Switch to polling fallback while we reconnect
     startPollingFallback();
+    // F44 (RF-50.4): el cierre del servidor (max_lifetime 30 min) NO debe dejar
+    // el panel en polling permanente → reconectar SSE con backoff.
+    scheduleSseReconnect();
   });
 
   _eventSource.onerror = function(e) {
@@ -2065,6 +2072,24 @@ function disconnectSSE() {
   _sseConnected = false;
   updateSseIndicator(false);
   if (_sseReconnectTimeout) { clearTimeout(_sseReconnectTimeout); _sseReconnectTimeout = null; }
+}
+
+/**
+ * F44 (RF-50.4): reconexión programada del SSE tras un cierre del servidor
+ * (p.ej. max_lifetime de 30 min). Backoff exponencial acotado a 30 s; el
+ * evento `connected` resetea el backoff a 2 s.
+ */
+function scheduleSseReconnect() {
+  if (_sseReconnectTimeout) { clearTimeout(_sseReconnectTimeout); _sseReconnectTimeout = null; }
+  const delay = _sseReconnectDelay;
+  _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, 30000);
+  console.log('[SSE] Reconectando tras cierre en ' + (delay / 1000) + 's...');
+  _sseReconnectTimeout = setTimeout(function() {
+    _sseReconnectTimeout = null;
+    if (!_eventSource) {
+      connectSSE();
+    }
+  }, delay);
 }
 
 /**

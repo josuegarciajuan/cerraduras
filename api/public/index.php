@@ -708,7 +708,8 @@ $router->get(
             'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php'],
             'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php'],
             'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'run_key' => 'presence-poller-manager', 'pattern' => 'bin/presence-poller-manager.sh'],
-            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer'],
+            // F44 (RF-50.2.4): el consumer Pulsar es dueño único de systemd.
+            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer', 'systemd_unit' => 'cerraduras-pulsar-consumer'],
         ];
 
         // F41: each supervised worker is a `bash -c "while true; do <cmd>; ..."`
@@ -736,6 +737,18 @@ $router->get(
             $pidFile = $runDir . '/' . $runKey . '.pid';
             $marker  = 'run/' . $runKey . '.pid';
             $pids    = [];
+
+            // F44 (RF-50.2): worker gestionado por systemd (consumer Pulsar).
+            // Se cuenta su MainPID y se une con la detección por marcador para
+            // que un wrapper LEGADO duplicado se siga viendo como `degraded`.
+            if (!empty($cfg['systemd_unit'])) {
+                $unit   = (string) $cfg['systemd_unit'];
+                $active = trim((string) @shell_exec('systemctl is-active ' . escapeshellarg($unit) . ' 2>/dev/null'));
+                $mainPid = (int) trim((string) @shell_exec('systemctl show -p MainPID --value ' . escapeshellarg($unit) . ' 2>/dev/null'));
+                if ($active === 'active' && $mainPid > 0) {
+                    $pids[] = $mainPid;
+                }
+            }
 
             // Primary source of truth: live supervisors carry the PID-file marker.
             // exec() only returns the LAST output line, so it must be called with

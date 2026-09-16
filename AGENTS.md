@@ -113,6 +113,26 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F39 Estado verídico de dispositivos** | **BLOCK 30** | **Completado** |
 | **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |
 | **F42 Ventana de verificación de entrada** | **BLOCK 34** | **Completado** |
+| **F44 Tiempo real sensores + presencia bajo demanda** | **BLOCK 35** | **Completado** |
+
+### F44 — Tiempo real de sensores y presencia bajo demanda (RF-50/51/52)
+
+- **Consumer Pulsar, dueño único**: vive bajo `cerraduras-pulsar-consumer.service`. `start-all.sh`
+  solo lo reinicia con `systemctl`; `stop-all.sh` lo detiene con `systemctl stop` (no lo mata por
+  patrón para no chocar con `Restart=always`). Elimina la doble conexión Reader y el doble webhook.
+- **Devices dinámicos (RF-50.1)**: el consumer resuelve `external_id` desde la BD
+  (`kind IN ('PROXIMITY','PRESENCE')`) y reconcilia cada 60 s. Sin `SENSOR_DEVICE_IDS`.
+- **Resync puntual (RF-50.3)**: al (re)conectar el WS, `GET /devices/{id}/status` por sensor
+  rastreado (rate-limit 20 s) para recuperar transiciones perdidas en el hueco del Reader/latest.
+- **Poller bajo demanda (RF-51)**: muestreo inmediato al abrir puerta; 2 s dentro de ventana;
+  ventana de entrada `entry_window_seconds` (default 90) y post-cierre `exit_check_seconds`
+  (`gap_seconds + 10`); paradas por “huésped dentro” y “sala vacía”; migración `0109`.
+- **Presencia (RF-52)**: `presence_state ∈ {presence, move}` → PRESENT; se elimina la regla
+  `far_detection ≤ 1 → ABSENT` (el radio es config, no señal). `far_detection` solo en calibración.
+- **Panel (RF-50.4)**: ante el cierre del SSE (`max_lifetime` 30 min) el dashboard reconecta con
+  backoff; nunca queda en polling permanente.
+- **Tests**: BLOCK 35 del runner + `tests/Unit/tuya-pulsar-consumer.test.js` y casos F44 en
+  `tests/Unit/presence-poller-gate.test.js` (invocados con `node`), y `tests/Unit/TuyaPresenceMoveTest.php`.
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 
