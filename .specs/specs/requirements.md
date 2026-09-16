@@ -595,3 +595,55 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-49.4: Convivencia con anomalías informativas
 - **RF-49.4.1**: Las anomalías A1–A8 siguen siendo informativas y no pueden bloquear ni alterar la coreografía de entrada/salida, la desactivación del poller ni el cierre de estancia.
 - **RF-49.4.2**: Ninguna anomalía puede enmascarar la coreografía ni impedir la confirmación de salida cuando se cumplan las precondiciones de RF-47.1.
+
+## RF-50: Frescura y fiabilidad de la puerta (push Pulsar)
+
+### RF-50.1: Sin listas hardcodeadas
+- **RF-50.1.1**: El consumer Pulsar debe resolver los dispositivos que reenvía desde la fuente canónica (`devices` → `pack` → `room`), nunca desde una lista de `external_id` hardcodeada.
+- **RF-50.1.2**: Cualquier sensor de cualquier pack asignado (p.ej. PROTO2) debe entrar automáticamente en la ruta de tiempo real al reconciliarse la lista.
+- **RF-50.1.3**: La reconciliación de la lista debe ser periódica y no bloquear el bucle de mensajes.
+
+### RF-50.2: Instancia única del consumer
+- **RF-50.2.1**: El consumer Pulsar debe tener un único dueño (el unit systemd `cerraduras-pulsar-consumer.service`).
+- **RF-50.2.2**: El arranque (`start-all.sh`) no debe lanzar un segundo consumer; debe reiniciar el servicio existente.
+- **RF-50.2.3**: La parada (`stop-all.sh`) no debe matar por patrón el proceso gestionado por systemd; debe detenerlo por servicio.
+- **RF-50.2.4**: `system-status` debe exponer `instances` real y `healthy` del worker `pulsar-consumer`.
+
+### RF-50.3: Recuperación de eventos tras reconexión
+- **RF-50.3.1**: El Reader `messageId=latest` pierde mensajes durante el hueco de reconexión; al (re)conectar debe ejecutarse una resincronización puntual del estado de los sensores rastreados.
+- **RF-50.3.2**: La resincronización debe estar limitada en frecuencia (rate-limited) para no consumir cuota ante reconexiones frecuentes.
+- **RF-50.3.3**: La resincronización debe reenviar el estado por el mismo pipeline de ingesta (deduplicación incluida).
+
+### RF-50.4: Panel sin degradación permanente
+- **RF-50.4.1**: Si el stream SSE se cierra por parte del servidor (p.ej. `max_lifetime` de 30 min), el panel debe reconectar SSE automáticamente con backoff.
+- **RF-50.4.2**: El panel no puede quedar en modo polling permanente tras un cierre del servidor.
+
+## RF-51: Poller de presencia bajo demanda (ventanas acotadas)
+
+### RF-51.1: Muestreo solo en ventanas justificadas
+- **RF-51.1.1**: El poller de presencia solo consulta Tuya dentro de ventanas con justificación de dominio; en reposo (huésped dentro o habitación vacía) no realiza ninguna llamada.
+- **RF-51.1.2**: Al **abrirse la puerta** se inicia la ventana de entrada y debe hacerse un muestreo inmediato, sin esperar al throttle.
+- **RF-51.1.3**: La ventana de entrada se mantiene hasta detectar presencia o agotar `entry_window_seconds` (configurable, por defecto 90 s).
+- **RF-51.1.4**: Al **cerrarse la puerta con presencia confirmada** (huésped dentro) se detiene el muestreo y se asume presencia hasta la siguiente apertura.
+- **RF-51.1.5**: Al **cerrarse la puerta sin presencia** se mantiene el muestreo hasta `exit_check_seconds` (configurable; por defecto `gap_seconds + 10 s`) para decidir si la persona salió o solo se abrió y cerró la puerta.
+
+### RF-51.2: Frescura dentro de la ventana
+- **RF-51.2.1**: Dentro de una ventana activa, el intervalo entre llamadas a Tuya debe ser el mínimo viable sin saturar cuota (objetivo 2 s), nunca el intervalo lento histórico de 5 s.
+- **RF-51.2.2**: La ventana debe respetar el watchdog de captura máxima y el cooldown vigentes (RF-45.3).
+
+### RF-51.3: Configurabilidad
+- **RF-51.3.1**: `entry_window_seconds` debe ser configurable por tipo de habitación y exponerse en `/live`.
+- **RF-51.3.2**: `exit_check_seconds` debe derivarse de la configuración existente del gap de salida y exponerse en `/live`.
+
+## RF-52: Semántica de calibración y detección de presencia
+
+### RF-52.1: `far_detection` es configuración, no señal
+- **RF-52.1.1**: `far_detection` (radio de detección, cm) no puede traducirse por sí mismo en `ABSENT`; la regla heredada `far_detection ≤ 1 → ABSENT` queda eliminada del pipeline de producción.
+- **RF-52.1.2**: Un payload que solo contenga `far_detection` no debe generar un evento de presencia; se considera no-op.
+
+### RF-52.2: Presencia decidida por `presence_state`
+- **RF-52.2.1**: La presencia efectiva se decide exclusivamente por `presence_state`: `presence` o `move` → `PRESENT`; `none` → `ABSENT` (RF-43, 24G V3 incluido).
+
+### RF-52.3: Calibración de rango corto
+- **RF-52.3.1**: El panel debe permitir fijar radio (`far_detection`, respetando `dp_caps`) y sensibilidad (`sensitivity`), persistiéndolo por dispositivo/habitación.
+- **RF-52.3.2**: Para detección ágil en rango corto (~1 m) con corte eficaz al salir del rango, se usará el menor radio del rango del dispositivo (paso 75 cm en 24G V3) y sensibilidad máxima.

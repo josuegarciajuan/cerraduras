@@ -2267,3 +2267,42 @@ Se sigue el ciclo RED → GREEN → REFACTOR: cada test se escribe y falla antes
 - El modelo canónico device → pack → room (F30) y la verificación de dispositivos (F39/RF-42).
 - Los umbrales de negocio existentes (`exit_presence_gap_seconds`, cooldown de reentrada).
 - El firmware y los secretos: este diseño no introduce credenciales nuevas.
+
+---
+
+## 13. F44 — Tiempo real de sensores y presencia bajo demanda
+
+### 13.1 Consumer Pulsar: dueño único
+El consumer vive exclusivamente bajo `cerraduras-pulsar-consumer.service` (systemd).
+`start-all.sh` ejecuta `systemctl restart` (no lanza wrapper) y `stop-all.sh` ejecuta
+`systemctl stop` (no lo mata por patrón/cwd, para no chocar con `Restart=always`).
+Esto elimina la doble conexión Reader y el doble reenvío al webhook.
+
+### 13.2 Consumer Pulsar: devices dinámicos + resync
+- `resolveDeviceIds()` lee de la BD los `external_id` de `kind IN (PROXIMITY,PRESENCE)` y
+  se reconcilia cada 60 s. Sin ids hardcodeados.
+- Al `ws.on('open')` se ejecuta `resyncKnownDevices()`: una sonda `GET /v1.0/iot-03/devices/{id}/status`
+  por device rastreado (rate-limited a 20 s), normalizada con `buildStatusPayload()` y
+  reenviada al webhook. Cubre las transiciones perdidas durante el hueco del Reader.
+- Backoff de reconexión: base 2 s + jitter, máximo 60 s.
+
+### 13.3 Poller de presencia: ventanas
+`shouldCapture()` se mantiene (RF-45) con estos ajustes (RF-51):
+- Entrada: puerta OPEN o `entryInProgress` (< `entry_window_seconds`).
+- Tras cierre: `verificationWindow` (< `exit_check_seconds`).
+- Paradas: huésped dentro consolidado (`entry_confirmed_at` + PRESENT + CLOSED) y sala vacía.
+- Throttle dentro de ventana: 2 s; muestreo inmediato al entrar en ventana (`lastTuyaCallAt=0`).
+- Watchdog 120 s / cooldown 30 s sin cambios.
+
+### 13.4 Ventanas configurables
+`room_types.presence_entry_window_seconds` (default 90) — migración `0109`.
+`/live` expone `entry_window_seconds` y `exit_check_seconds = gap_seconds + 10`.
+
+### 13.5 Presencia y calibración
+La presencia efectiva es `presence_state ∈ {presence, move}`; `far_detection` no fuerza
+`ABSENT`. La calibración persiste `devices.meta_json.calibration` vía
+`/dashboard-api/presence-calibrate/set` (ya existente).
+
+### 13.6 SSE
+Ante el evento `close` del servidor el panel programa `connectSSE()` con backoff
+exponencial (2 s → 30 s), reseteado en `connected`. No hay degradación permanente a polling.

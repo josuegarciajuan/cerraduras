@@ -190,8 +190,9 @@ final class TuyaSensorIngress implements SensorIngressInterface
                 continue;
             }
 
-            // Poller override (RF-30): if the presence poller computed an effective
-            // state (e.g. far_detection≤1 forces ABSENT), use it over the raw DP.
+            // Poller override (RF-30/RF-52): if the presence poller computed an
+            // effective state, use it over the raw DP. `far_detection` is a radio
+            // config (cm), NOT a presence signal: it no longer forces ABSENT.
             if ($sensor === 'PRESENCE' && isset($raw['_poller_effective'])) {
                 $canonicalValue = $raw['_poller_effective'];
             }

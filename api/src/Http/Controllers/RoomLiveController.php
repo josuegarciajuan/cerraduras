@@ -173,6 +173,28 @@ final class RoomLiveController
                 : 15;
         }
 
+        // F44 (RF-51.2/51.4/51.6): ventanas configurables del poller de presencia.
+        // `entry_window_seconds`: muestreo tras la apertura hasta detectar presencia.
+        // `exit_check_seconds`: muestreo post-cierre para decidir la salida real.
+        $entryWindowSeconds = 90;
+        try {
+            $wStmt = $this->pdo->prepare(
+                'SELECT rt.presence_entry_window_seconds AS w
+                   FROM rooms r
+                   INNER JOIN room_types rt ON rt.id = r.room_type_id
+                  WHERE r.id = :rid
+                  LIMIT 1'
+            );
+            $wStmt->execute([':rid' => $roomId]);
+            $wRow = $wStmt->fetch(\PDO::FETCH_ASSOC);
+            if ($wRow !== false && $wRow['w'] !== null) {
+                $entryWindowSeconds = (int) $wRow['w'];
+            }
+        } catch (\Throwable $e) {
+            // Columna aún no migrada (0109): se usa el default sin romper /live.
+        }
+        $exitCheckSeconds = $gapSeconds + 10;
+
         if ($session !== null
             && $session->presenceState === \App\Domain\Presence\IotSession::PRESENCE_ABSENT
             && $session->doorState === \App\Domain\Presence\IotSession::DOOR_CLOSED
@@ -214,6 +236,9 @@ final class RoomLiveController
             'battery'          => $battery,
             'exit_deadline'    => $exitDeadline,
             'gap_seconds'      => $gapSeconds,
+            // F44 (RF-51.6): ventanas configurables del poller de presencia.
+            'entry_window_seconds' => $entryWindowSeconds,
+            'exit_check_seconds'   => $exitCheckSeconds,
             'qr_status'        => $qrStatus,
             'recent_events'    => $recentEvents,
             'recent_presence'  => $recentPresence,

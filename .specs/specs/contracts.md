@@ -1362,3 +1362,45 @@ Se adoptan las resoluciones del usuario. Las siguientes diferencias con lo redac
    aditivos de §3 viajan anidadados en `iot_session`/`active_stay`, sin romper consumidores.
 5. **`ENTRY_WINDOW_MS` y `DOOR_CYCLE_MAX_S`**: coherentes con `design.md` §4 y §3;
    respectivamente interno del poller (90 s) y constante de dominio (300 s).
+
+---
+
+## Anexo F44 — Tiempo real de sensores y presencia bajo demanda
+
+### 1. `/api/v1/rooms/{id}/live` — campos aditivos (RF-51.3)
+
+Se añaden dos campos, sin romper consumidores existentes:
+
+```json
+{
+  "entry_window_seconds": 90,
+  "exit_check_seconds": 25
+}
+```
+
+- `entry_window_seconds`: `room_types.presence_entry_window_seconds` (default 90). Ventana de
+  muestreo tras la apertura de puerta hasta detectar presencia.
+- `exit_check_seconds`: `gap_seconds + 10`. Ventana de muestreo tras el cierre para decidir
+  la salida real.
+
+### 2. Consumer Pulsar (RF-50)
+
+- **No contrato HTTP**: consume el WS de Tuya y hace `POST /api/v1/tuya/webhook`.
+- **Dueño único**: `cerraduras-pulsar-consumer.service`. `start-all.sh` solo reinicia el
+  servicio; `stop-all.sh` solo lo detiene vía `systemctl stop`.
+- **Lista de devices**: derivada de la BD (`kind IN ('PROXIMITY','PRESENCE')`), reconciliada
+  cada 60 s. No hay `SENSOR_DEVICE_IDS` hardcodeado.
+- **Resync**: en cada `open`, `GET /v1.0/iot-03/devices/{id}/status` por device rastreado,
+  rate-limited a 20 s, reenviado al webhook como `{devId, status:[{code,value,t}]}`.
+
+### 3. Presencia (RF-52)
+
+- Se elimina del pipeline de producción la semántica `far_detection ≤ 1 → ABSENT`.
+- `far_detection` es config (cm) del dispositivo; solo aparece en `/dashboard-api/presence-calibrate/*`
+  y en la calibración (`/simula` conserva su semántica propia de simulación).
+- Presencia efectiva = `presence_state ∈ {presence, move}` → `PRESENT`; `none` → `ABSENT`.
+
+### 4. `system-status` (RF-50.2.4)
+
+`pulsar-consumer` mantiene el esquema `{expected, instances, pids, healthy, degraded}` con
+`expected = 1`; `instances` debe ser 1 y `healthy = (instances === expected)`.

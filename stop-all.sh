@@ -40,7 +40,9 @@ WAIT_SECS="${STOP_WAIT_SECS:-6}"
 log() { echo "[stop-all] $*"; }
 
 # ── Workers gestionados (nombre = nombre del PID file en api/run) ─────────────
-WORKERS="exit-scan overstay-scan outbox-worker anomaly-scanner presence-poller-manager tuya-pulsar-consumer"
+# F44 (RF-50.2): `tuya-pulsar-consumer` ya NO se gestiona aquí con PID file; su
+# único dueño es el unit systemd `cerraduras-pulsar-consumer.service`.
+WORKERS="exit-scan overstay-scan outbox-worker anomaly-scanner presence-poller-manager"
 
 # ── Patrón 1: wrappers `bash -c ... bin/<worker>` (mueren PRIMERO) ────────────
 #    Comentario por patrón: cada uno acota al wrapper de UN worker concreto.
@@ -55,13 +57,15 @@ WRAPPER_PATTERNS=(
 
 # ── Patrón 2: hijos directos (mueren DESPUÉS de los wrappers) ────────────────
 #    Comentario por patrón: `php`/`node` + ruta relativa o absoluta bajo `bin/`.
+#    El `node .*bin/tuya-pulsar-consumer` solo limpia wrappers LEGADO (invocación
+#    con ruta relativa); el proceso systemd usa `index.js` y NO coincide aquí.
 CHILD_PATTERNS=(
   'php .*bin/exit-scan\.php'              # hijo php de exit-scan
   'php .*bin/overstay-scan\.php'          # hijo php de overstay-scan
   'php .*bin/outbox-worker\.php'          # hijo php de outbox-worker
   'php .*bin/anomaly-scanner\.php'        # hijo php de anomaly-scanner
   'node .*bin/tuya-presence-poller\.js'   # pollers de presencia (hijos del manager)
-  'node .*bin/tuya-pulsar-consumer'       # node del consumer Pulsar (cwd=api/)
+  'node .*bin/tuya-pulsar-consumer'       # consumer LEGADO con ruta relativa
 )
 
 pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
@@ -99,35 +103,25 @@ sweep_patterns() {
   done
 }
 
-# ── PIDs del consumer Pulsar: `node index.js` cuyo cwd es .../bin/tuya-pulsar-consumer ─
-pulsar_node_pids() {
-  local pid cwd
-  for pid in $(pgrep -x node 2>/dev/null || true); do
-    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
-    if [ "$cwd" = "$API_DIR/bin/tuya-pulsar-consumer" ]; then
-      printf '%s\n' "$pid"
-    fi
-  done
+# ── Consumer Pulsar (F44): vive bajo systemd, no se mata por patrón/cwd ───────
+#    Se detiene con `systemctl stop` (abajo) para no confundirlo con huérfanos.
+stop_pulsar_service() {
+  systemctl stop cerraduras-pulsar-consumer 2>/dev/null || true
 }
 
-sweep_pulsar_nodes() {
-  local sig="$1" pid
-  for pid in $(pulsar_node_pids); do
-    kill -"$sig" "$pid" 2>/dev/null || true
-  done
-}
-
-# ── PIDs que aún quedan (wrappers + hijos + pulsar node) ─────────────────────
+# ── PIDs que aún quedan (wrappers + hijos legacy) ────────────────────────────
 remaining_pids() {
   local pat
   for pat in "${WRAPPER_PATTERNS[@]}" "${CHILD_PATTERNS[@]}"; do
     pgrep -f "$pat" 2>/dev/null || true
   done
-  pulsar_node_pids
 }
 
 echo "=== Cerraduras Hotel — Stop All (workers) ==="
 log "API_DIR=$API_DIR  RUN_DIR=$RUN_DIR"
+
+# 0) Consumer Pulsar (systemd, dueño único F44) ───────────────────────────────
+stop_pulsar_service
 
 # 1) Wrappers/supervisores por PID file (grupo de proceso) ────────────────────
 for name in $WORKERS; do
@@ -138,7 +132,6 @@ sweep_patterns TERM "${WRAPPER_PATTERNS[@]}"
 
 # 2) Hijos ────────────────────────────────────────────────────────────────────
 sweep_patterns TERM "${CHILD_PATTERNS[@]}"
-sweep_pulsar_nodes TERM
 
 # 3) Espera acotada; si persisten, KILL ──────────────────────────────────────
 deadline=$((SECONDS + WAIT_SECS))
@@ -152,7 +145,6 @@ if [ -n "$left" ]; then
   log "quedan procesos tras ${WAIT_SECS}s — escalando a KILL"
   sweep_patterns KILL "${WRAPPER_PATTERNS[@]}"
   sweep_patterns KILL "${CHILD_PATTERNS[@]}"
-  sweep_pulsar_nodes KILL
   sleep 1
 fi
 
@@ -160,6 +152,8 @@ fi
 for name in $WORKERS; do
   rm -f "$RUN_DIR/$name.pid"
 done
+# F44: PID file legado del consumer Pulsar (ahora gestionado por systemd).
+rm -f "$RUN_DIR/tuya-pulsar-consumer.pid"
 
 left="$(remaining_pids)"
 if [ -n "$left" ]; then

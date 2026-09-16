@@ -2032,3 +2032,72 @@ activo tras consolidar + ABSENT.
    acotarse a `bin/` y no tocar el servidor PHP (`php -S`) ni los tests.
 8. **`FOR UPDATE` y `exit-scan`** — si TSK-F41-06 no elimina la escritura de sensores del worker,
    la concurrencia seguirá produciendo lost updates aunque F41-05 esté correcto.
+
+---
+
+# F44 — Tiempo real de sensores y presencia bajo demanda
+
+**Trazabilidad**: RF-50, RF-51, RF-52 · design.md §13 · contracts.md Anexo F44
+**Bloque runner**: BLOCK 35
+
+## F44a: Consumer Pulsar (RF-50)
+
+### TSK-F44-01: Instancia única (systemd dueño)
+- **Cambio**: `start-all.sh` reinicia `cerraduras-pulsar-consumer` en vez de lanzar wrapper;
+  `stop-all.sh` lo detiene con `systemctl stop` y no lo mata por patrón/cwd.
+- **Test propio**: `systemctl is-active` + `system-status.pulsar-consumer.instances == 1`.
+
+### TSK-F44-02: Devices dinámicos + resync
+- **Cambio**: `api/bin/tuya-pulsar-consumer/index.js` — `parseDeviceIds()`, `loadKnownDevices()`,
+  `isKnownDevice()`, `buildStatusPayload()`, `resyncKnownDevices()`; `require.main` guard y exports.
+- **Test propio**: `tests/Unit/tuya-pulsar-consumer.test.js`.
+
+## F44b: Poller de presencia (RF-51)
+
+### TSK-F44-03: Ventanas configurables y muestreo inmediato
+- **Cambio**: `api/bin/tuya-presence-poller.js` — `resolveEntryWindowMs()`, `resolveExitCheckMs()`,
+  throttle 2 s, `lastTuyaCallAt=0` al abrir ventana.
+- **Test propio**: `tests/Unit/presence-poller-gate.test.js` (casos F44).
+
+### TSK-F44-04: Migración y `/live`
+- **Cambio**: `migrations/0109_presence_entry_window.sql`; `RoomLiveController` expone
+  `entry_window_seconds` y `exit_check_seconds`.
+- **Test propio**: BLOCK 35 (`/live` campos nuevos).
+
+## F44c: Semántica de presencia (RF-52)
+
+### TSK-F44-05: Eliminar `far_detection ≤ 1 → ABSENT`
+- **Cambio**: `tuya-presence-poller.js` (efectivo por `presence_state`), comentario en
+  `TuyaSensorIngress.php`.
+- **Test propio**: `tests/Unit/TuyaPresenceMoveTest.php` (T6a/T6b).
+
+## F44d: Panel SSE (RF-50.4)
+
+### TSK-F44-06: Reconexión tras cierre
+- **Cambio**: `dashboard.html` — `scheduleSseReconnect()` con backoff; reset en `connected`.
+- **Test propio**: BLOCK 35 (SSE `connected` + `ping`).
+
+## F44e: Calibración (RF-52.3)
+
+### TSK-F44-07: Calibrar PROTO2 a rango corto
+- **Cambio**: `POST /dashboard-api/presence-calibrate/set {room_id:12, far_detection:75, sensitivity:10}`.
+- **Test propio**: BLOCK 35 (read-back `GET status`).
+
+## F44f: Cierre
+
+### TSK-F44-08: BLOCK 35 y regresión
+- **Cambio**: `bin/run-tests.sh` (BLOCK 35), `AGENTS.md` (tabla + sección F44).
+- **Test propio**: `bash bin/run-tests.sh` con 0 failures.
+
+## Tabla resumen
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F44-01 | Instancia única consumer | RF-50.2 | `start-all.sh`, `stop-all.sh` | system-status |
+| F44-02 | Consumer dinámico + resync | RF-50.1/50.3 | `bin/tuya-pulsar-consumer/index.js` | unit JS |
+| F44-03 | Ventanas + muestreo inmediato | RF-51.1/51.2 | `bin/tuya-presence-poller.js` | unit JS |
+| F44-04 | Migración 0109 + `/live` | RF-51.3 | `migrations/0109_*`, `RoomLiveController.php` | BLOCK 35 |
+| F44-05 | Semántica presencia | RF-52.1/52.2 | poller, ingress | unit PHP |
+| F44-06 | SSE reconnect | RF-50.4 | `public/dashboard.html` | BLOCK 35 |
+| F44-07 | Calibrar PROTO2 | RF-52.3 | datos/dispositivo | BLOCK 35 |
+| F44-08 | BLOCK 35 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |

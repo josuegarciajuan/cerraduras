@@ -87,8 +87,15 @@ systemctl restart cerraduras-api cerraduras-wsvb6 2>/dev/null || {
 
 cd "$API_DIR"
 
-echo "[3/8] Tuya Pulsar consumer..."
-launch "tuya-pulsar-consumer" "node bin/tuya-pulsar-consumer/index.js" 60 "$LOG_DIR/pulsar-consumer.log"
+echo "[3/8] Tuya Pulsar consumer (systemd — instancia única, F44)..."
+# F44 (RF-50.2): el consumer Pulsar tiene UN único dueño: el unit systemd
+# `cerraduras-pulsar-consumer.service`. NO se lanza un wrapper aquí para no
+# duplicar la conexión Reader ni reenviar cada evento dos veces al webhook.
+if systemctl restart cerraduras-pulsar-consumer 2>/dev/null; then
+  echo "       tuya-pulsar-consumer: systemd (pid $(systemctl show -p MainPID --value cerraduras-pulsar-consumer 2>/dev/null))"
+else
+  echo "       (unit cerraduras-pulsar-consumer ausente — NO se lanza wrapper: evita duplicado)"
+fi
 
 echo "[4/8] Tuya Presence Poller manager (multi-sensor, pack-aware)..."
 launch "presence-poller-manager" "bash bin/presence-poller-manager.sh" 60 "$LOG_DIR/presence-poller.log"
