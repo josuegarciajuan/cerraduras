@@ -45,10 +45,13 @@ DB_PASS="$(env_get DB_PASS)"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # ── Discover PRESENCE external_ids from the DB (canonical device → pack) ──
+# Devuelve los external_id PRESENCE, uno por línea. Sale con código != 0 si la
+# consulta a la BD falla (para NO confundir "error" con "lista vacía": un fallo
+# transitorio no debe provocar el reap de todos los pollers — F46).
 discover_sensors() {
   MYSQL_PWD="$DB_PASS" mysql \
     -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" "$DB_NAME" -N -s \
-    -e "SELECT external_id FROM devices WHERE kind='PRESENCE' ORDER BY id" 2>/dev/null || true
+    -e "SELECT external_id FROM devices WHERE kind='PRESENCE' ORDER BY id" 2>/dev/null
 }
 
 # ── Is a poller already running for this device id? (argv-carried id) ──
@@ -79,7 +82,13 @@ reap_removed() {
 log "═══ Presence poller manager started (reconcile ${RECONCILE_S}s) ═══"
 
 while true; do
-  ASSIGNED="$(discover_sensors)"
+  if ! ASSIGNED="$(discover_sensors)"; then
+    # Error de BD: no tocar los pollers vivos (evita matarlos por un fallo
+    # transitorio que devuelve lista vacía).
+    log "⚠ error consultando la BD — se omite el reap de este ciclo"
+    sleep "$RECONCILE_S"
+    continue
+  fi
   if [ -z "$ASSIGNED" ]; then
     log "⚠ no hay dispositivos PRESENCE en la BD"
   fi

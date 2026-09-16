@@ -123,6 +123,13 @@ log "API_DIR=$API_DIR  RUN_DIR=$RUN_DIR"
 # 0) Consumer Pulsar (systemd, dueño único F44) ───────────────────────────────
 stop_pulsar_service
 
+# 0b) Workers de fondo bajo systemd (F46) — parada por SERVICIO, no por patrón.
+#     Si se matan por patrón con Restart=always, systemd los relanzaría.
+systemctl stop cerraduras-presence-poller 2>/dev/null || true
+for _w in exit-scan overstay-scan outbox-worker anomaly-scanner; do
+  systemctl stop "cerraduras-worker@$_w" 2>/dev/null || true
+done
+
 # 1) Wrappers/supervisores por PID file (grupo de proceso) ────────────────────
 for name in $WORKERS; do
   stop_by_pidfile "$name"
