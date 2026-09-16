@@ -713,14 +713,26 @@ $router->get(
 
         $result = [];
         foreach ($processes as $key => $cfg) {
-            $raw = trim((string) @exec('pgrep -f "' . $cfg['pattern'] . '"'));
+            // exec() only returns the LAST output line, so it must be called with
+            // the $output array to collect every PID (F41-17 instance counting).
+            $pgrepOut = [];
+            @exec('pgrep -f -- ' . escapeshellarg($cfg['pattern']), $pgrepOut);
             $pids = [];
-            if ($raw !== '') {
-                foreach (preg_split('/\s+/', $raw) ?: [] as $candidate) {
-                    if (ctype_digit($candidate)) {
-                        $pids[] = (int) $candidate;
-                    }
+            foreach ($pgrepOut as $candidate) {
+                $candidate = trim((string) $candidate);
+                if ($candidate === '' || !ctype_digit($candidate)) {
+                    continue;
                 }
+                $pid = (int) $candidate;
+                // Drop the helper shell/pgrep whose own cmdline carries the pattern.
+                $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+                if ($cmdline === false
+                    || str_contains($cmdline, 'pgrep')
+                    || str_contains($cmdline, '-c')
+                ) {
+                    continue;
+                }
+                $pids[] = $pid;
             }
             $instances = count($pids);
             $expected  = 1;
