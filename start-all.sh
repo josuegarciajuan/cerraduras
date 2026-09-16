@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# start-all.sh — Arranca API + WS-VB6 + Tuya Pulsar consumer
+# start-all.sh — Arranca API + WS-VB6 + workers de fondo (instancia única)
 #
 # Uso:
 #   bash /root/cerraduras/start-all.sh
@@ -13,67 +13,97 @@
 #   API:            http://92.113.151.136:8080/api/v1/health
 #   WS-VB6:         http://92.113.151.136:8081/ws-vb6/v1/health
 #   Dashboard:      http://92.113.151.136:8080/dashboard?room=1
+#
+# Fase 41 / TSK-F41-16:
+#   - Llama primero a stop-all.sh (parada determinista) para garantizar que NO
+#     quedan wrappers huérfanos ni instancias duplicadas.
+#   - Cada worker corre en UN wrapper supervisado (`setsid`) que escribe su PID
+#     (= PGID) en api/run/<worker>.pid. Si el PID ya vive, no se relanza.
+#   - Incluye anomaly-scanner y overstay-scan.
+#   - La parada se documenta en stop-all.sh (nunca toca `php -S`).
 # =============================================================================
-set -e
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+API_DIR="$SCRIPT_DIR/api"
+WS_DIR="$SCRIPT_DIR/ws-vb6"
+LOG_DIR="$API_DIR/logs"
+RUN_DIR="$API_DIR/run"
+mkdir -p "$LOG_DIR" "$RUN_DIR"
 
 echo "=== Cerraduras Hotel — Start All ==="
 
-echo "[1/8] Stopping old..."
-pkill -f "node.*index.js" 2>/dev/null || true
-pkill -f "node.*tuya-presence-poller" 2>/dev/null || true
-pkill -f "presence-poller-manager" 2>/dev/null || true
-pkill -f "php.*bin/exit-scan.php" 2>/dev/null || true
-pkill -f "php.*bin/overstay-scan.php" 2>/dev/null || true
-pkill -f "php.*bin/anomaly-scanner.php" 2>/dev/null || true
-sleep 1
+# ── PID helpers (instancia única) ────────────────────────────────────────────
+pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+pid_running() {
+  local pf="$1" marker="$2" pid
+  [ -f "$pf" ] || return 1
+  pid="$(cat "$pf" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  pid_alive "$pid" || { rm -f "$pf"; return 1; }
+  # El PID debe ser realmente nuestro wrapper (evita reutilización de PID).
+  grep -qa -- "$marker" "/proc/$pid/cmdline" 2>/dev/null || return 1
+  return 0
+}
+
+worker_pid() { cat "$RUN_DIR/$1.pid" 2>/dev/null || true; }
+
+# ── Lanza un worker dentro de UN wrapper supervisado con PID file ────────────
+#   launch <nombre> <comando> <tick_seg> <logfile>
+#   El wrapper corre con cwd=API_DIR, así que las rutas pueden ser relativas.
+launch() {
+  local name="$1" cmd="$2" tick="$3" logfile="$4"
+  local pf="$RUN_DIR/$name.pid"
+  if pid_running "$pf" "$name"; then
+    echo "       $name: ya corriendo (pid $(worker_pid "$name")) — skip"
+    return 0
+  fi
+  # setsid → nueva sesión; $$ == PID == PGID. El trap permite parada limpia.
+  setsid bash -c "echo \$\$ > '$pf'; trap 'exit 0' TERM INT; while true; do $cmd >> '$logfile' 2>&1; sleep $tick; done" >/dev/null 2>&1 &
+  sleep 0.3
+  echo "       $name: pid $(worker_pid "$name")"
+}
+
+echo "[1/8] Parada determinista previa (stop-all.sh)..."
+if [ -f "$SCRIPT_DIR/stop-all.sh" ]; then
+  bash "$SCRIPT_DIR/stop-all.sh" || echo "       (stop-all.sh reportó residuales — revisar)"
+else
+  echo "       (stop-all.sh no encontrado — se omite la parada determinista)"
+fi
 
 echo "[2/8] API + WS-VB6 via systemd..."
 systemctl restart cerraduras-api cerraduras-wsvb6 2>/dev/null || {
   # Fallback: systemd units not installed — launch manually
   echo "       (systemd units missing — starting manually)"
-  cd /root/cerraduras/api
+  cd "$API_DIR"
   mkdir -p /tmp/opcache-cache
   PHP_CLI_SERVER_WORKERS=8 php -d opcache.file_cache=/tmp/opcache-cache -d opcache.file_cache_only=1 -S 0.0.0.0:8080 -t public public/index.php >> logs/php-server.log 2>&1 &
   echo "       API PID: $!"
-  cd /root/cerraduras/ws-vb6
+  cd "$WS_DIR"
   PHP_CLI_SERVER_WORKERS=8 php -S 0.0.0.0:8081 -t public public/index.php >> logs/php-server.log 2>&1 &
   echo "       WS-VB6 PID: $!"
 }
 
+cd "$API_DIR"
+
 echo "[3/8] Tuya Pulsar consumer..."
-cd /root/cerraduras/api/bin/tuya-pulsar-consumer
-nohup bash -c "while true; do
-  echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] Starting Tuya Pulsar consumer...\" >> /root/cerraduras/api/logs/pulsar-consumer.log
-  node index.js >> /root/cerraduras/api/logs/pulsar-consumer.log 2>&1
-  echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] Consumer exited — restarting in 60s...\" >> /root/cerraduras/api/logs/pulsar-consumer.log
-  sleep 60
-done" > /dev/null 2>&1 &
-echo "       PID: $!"
+launch "tuya-pulsar-consumer" "node bin/tuya-pulsar-consumer/index.js" 60 "$LOG_DIR/pulsar-consumer.log"
 
 echo "[4/8] Tuya Presence Poller manager (multi-sensor, pack-aware)..."
-cd /root/cerraduras/api
-nohup bash bin/presence-poller-manager.sh >> logs/presence-poller.log 2>&1 &
-echo "       PID: $!"
+launch "presence-poller-manager" "bash bin/presence-poller-manager.sh" 60 "$LOG_DIR/presence-poller.log"
 
 echo "[5/8] Exit rule scanner (F28)..."
-cd /root/cerraduras/api
-nohup bash -c "while true; do php bin/exit-scan.php >> logs/exit-scan.log 2>&1; sleep 2; done" > /dev/null 2>&1 &
-echo "       PID: $!"
+launch "exit-scan" "php bin/exit-scan.php" 2 "$LOG_DIR/exit-scan.log"
 
 echo "[6/8] Overstay scanner..."
-cd /root/cerraduras/api
-nohup bash -c "while true; do php bin/overstay-scan.php >> logs/overstay-scan.log 2>&1; sleep 60; done" > /dev/null 2>&1 &
-echo "       PID: $!"
+launch "overstay-scan" "php bin/overstay-scan.php" 60 "$LOG_DIR/overstay-scan.log"
 
 echo "[7/8] Outbox worker (F14)..."
-cd /root/cerraduras/api
-nohup bash -c "while true; do php bin/outbox-worker.php >> logs/outbox-worker.log 2>&1; sleep 30; done" > /dev/null 2>&1 &
-echo "       PID: $!"
+launch "outbox-worker" "php bin/outbox-worker.php" 30 "$LOG_DIR/outbox-worker.log"
 
 echo "[8/8] Anomaly scanner (F35)..."
-cd /root/cerraduras/api
-nohup bash -c "while true; do php bin/anomaly-scanner.php >> logs/anomaly-scanner.log 2>&1; sleep 5; done" > /dev/null 2>&1 &
-echo "       PID: $!"
+launch "anomaly-scanner" "php bin/anomaly-scanner.php" 5 "$LOG_DIR/anomaly-scanner.log"
 
 sleep 2
 
@@ -91,5 +121,5 @@ echo "  API:            http://92.113.151.136:8080/api/v1/health"
 echo "  Dashboard:      http://92.113.151.136:8080/dashboard?room=1"
 echo "  WS-VB6:         http://92.113.151.136:8081/ws-vb6/v1/health"
 echo ""
-echo "Para parar:"
-echo "  pkill -f 'php -S.*8080' && pkill -f 'php -S.*8081' && pkill -f 'tuya-pulsar-consumer' && pkill -f 'presence-poller-manager' && pkill -f 'tuya-presence-poller' && pkill -f 'php.*bin/exit-scan' && pkill -f 'php.*bin/overstay-scan' && pkill -f 'php.*bin/outbox-worker' && pkill -f 'php.*bin/anomaly-scanner'"
+echo "Para parar (determinista, garantiza 0 huérfanos):"
+echo "  bash $SCRIPT_DIR/stop-all.sh"

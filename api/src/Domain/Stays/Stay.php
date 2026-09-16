@@ -34,6 +34,8 @@ final class Stay
     // All timestamps are stored as DATETIME(3) UTC strings; null when unset.
     public string $reservedAt;
     public ?string $firstEntryAt;
+    /** F41: authoritative "guest confirmed inside" mark (door closed with presence). */
+    public ?string $entryConfirmedAt;
     public ?string $exitDetectedAt;
     public ?string $closedAt;
 
@@ -70,7 +72,8 @@ final class Stay
         ?int $vb6Empresa,
         ?int $vb6Departamento,
         string $createdAt,
-        string $updatedAt
+        string $updatedAt,
+        ?string $entryConfirmedAt = null
     ) {
         $this->id = $id;
         $this->roomId = $roomId;
@@ -78,6 +81,7 @@ final class Stay
         $this->duracionMinutos = $duracionMinutos;
         $this->reservedAt = $reservedAt;
         $this->firstEntryAt = $firstEntryAt;
+        $this->entryConfirmedAt = $entryConfirmedAt;
         $this->exitDetectedAt = $exitDetectedAt;
         $this->closedAt = $closedAt;
         $this->vb6Codalq = $vb6Codalq;
@@ -103,6 +107,7 @@ final class Stay
             'duracion_minutos' => $this->duracionMinutos,
             'reserved_at' => $this->reservedAt,
             'first_entry_at' => $this->firstEntryAt,
+            'entry_confirmed_at' => $this->entryConfirmedAt,
             'exit_detected_at' => $this->exitDetectedAt,
             'closed_at' => $this->closedAt,
             'vb6_refs' => [

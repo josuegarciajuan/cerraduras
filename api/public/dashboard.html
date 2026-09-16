@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cerraduras — Test Room</title>
 <script src="/assets/qrcode.min.js"></script>
+<script src="/assets/choreography.js"></script>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -666,7 +667,19 @@ function anyDeviceReachable() {
 }
 
 // ── NEW: Presence-driven features (F34 panel choreography) ──
-let _presenceDetectedDuringOpen = false; // track if presence was seen during door-open period
+// F41: la máquina de estados vive en /assets/choreography.js (función pura).
+// `_choreoEpisodes` es el modelo de EPISODIOS: sustituye a la bandera pegajosa
+// `_presenceDetectedDuringOpen` por `entryPresenceSeen` (se limpia al consolidar DENTRO).
+let _choreoEpisodes = (typeof Choreography !== 'undefined' && Choreography.emptyEpisodes)
+  ? Choreography.emptyEpisodes(null)
+  : null;
+// F41: trazabilidad de transiciones de coreografía (sin acceso a BD).
+const DEBUG_CHOREO = (function () {
+  try {
+    if (new URLSearchParams(location.search).has('choreo_debug')) return true;
+    return localStorage.getItem('choreo_debug') === '1';
+  } catch (e) { return false; }
+})();
 let _lastKnownPollingFreq = 0;          // 0=stopped, 3=fast, 4=vfast, 6=medium, 10=slow
 let _lastKnownPresence = 'UNKNOWN';    // track presence for ripple color updates
 let _radarRippleTimers = [];            // timer handles for radar ripple cleanup
@@ -686,6 +699,12 @@ let _sseConnected = false;      // true while SSE stream is active
 let _sseFallbackActive = false; // true when SSE failed and polling fallback is running
 let _sseReconnectTimeout = null; // delayed reconnect timer
 let _pollShouldStop = false;      // F33x: flag to stop leaked poll cycle when SSE reconnects
+// F41·TSK-F41-14: watchdog de silencio del stream. Se refresca en connected/state/ping.
+let _lastSseEventAt = 0;         // epoch ms del último evento SSE recibido
+let _sseWatchdogTimer = null;    // interval handle del watchdog
+let _lastCountdownResyncAt = 0;  // throttle de resyncLive() al agotarse el conteo
+const SSE_SILENCE_MS = 5000;         // >5 s sin señal → resync puntual de /live
+const SSE_FORCE_RECONNECT_MS = 15000; // >15 s sin señal → reconectar EventSource
 
 // Independent polling timers for device-status + mirame panels
 // These run regardless of SSE state (SSE only covers door/state events)
@@ -722,7 +741,7 @@ const STATES = {
   HUESPED_HA_SALIDO:   { icon:'👋', desc:'Huésped fuera. Habitación vacía.', bg:'rgba(255,215,64,0.05)',  moni:'OUTSIDE', door:'closed', bulb:false, phase:'Huésped ha salido' },
   ANTI_REENTRADA:      { icon:'⏳', desc:'Anti-reentrada activa. Espera...',  bg:'rgba(213,0,249,0.1)',    moni:'INSIDE',  door:'closed', bulb:true,  phase:'Anti-reentrada activa' },
   ANOMALIA_PA:         { icon:'⚠️', desc:'Puerta abierta sin presencia.',     bg:'rgba(255,145,0,0.15)',   moni:'INSIDE',  door:'open',   bulb:true,  phase:'Anomalía: puerta abierta sin presencia' },
-  SALIDA_DETECTADA:    { icon:'🚪', desc:'Salida detectada. Cerrando...',     bg:'rgba(255,215,64,0.08)',  moni:'EXITING',  door:'open',  bulb:false, phase:'Salida detectada' },
+  SALIDA_DETECTADA:    { icon:'🚪', desc:'Salida detectada. Cerrando...',     bg:'rgba(255,215,64,0.08)',  moni:'OUTSIDE',  door:'open',  bulb:false, phase:'Salida detectada' },
   VERIFICANDO_PRESENCIA:{ icon:'⏳', desc:'Puerta cerrada. Comprobando presencia...', bg:'rgba(255,215,64,0.10)', moni:'WAITING', door:'closed', bulb:true,  phase:'Verificando presencia — cuenta atrás' },
   PUERTA_ABIERTA:      { icon:'🚪', desc:'Puerta abierta. ¿Sale el huésped?', bg:'rgba(255,215,64,0.12)',  moni:'WAITING', door:'open',   bulb:true,  phase:'Puerta abierta — posible salida' },
   EXCESO_TIEMPO:       { icon:'⏰', desc:'Tiempo excedido. Posible deuda.',   bg:'rgba(255,82,82,0.18)',   moni:'INSIDE',  door:'closed', bulb:true,  phase:'Exceso de tiempo — deuda' },
@@ -941,7 +960,7 @@ function updatePhaseLabel(stateName) {
 function updatePollingFrequency(stateName, door, presence, stayStatus, exitDeadline) {
   let freq = 0;
   if ((stateName === 'QR_OK' || stateName === 'HUESPED_EN_PUERTA') && door === 'OPEN') {
-    freq = _presenceDetectedDuringOpen ? 10 : 6;
+    freq = (_choreoEpisodes && _choreoEpisodes.entryPresenceSeen) ? 10 : 6;
   }
   if (stateName === 'PUERTA_ABIERTA' && door === 'OPEN') freq = 10;
   if (stateName === 'VERIFICANDO_PRESENCIA' && exitDeadline && door === 'CLOSED' && presence === 'ABSENT') {
@@ -966,144 +985,84 @@ function updatePollingFrequency(stateName, door, presence, stayStatus, exitDeadl
 // ║              STATE DERIVATION LOGIC                     ║
 // ╚══════════════════════════════════════════════════════════╝
 
+/**
+ * F41 · Adaptador de la máquina de estados pura.
+ *
+ * Construye el snapshot desde el payload de `/live` y delega en
+ * `Choreography.deriveChoreography()` (assets/choreography.js). Toda la lógica
+ * de entrada/salida (episodios, tabla T1–T18) vive en la función pura y testeable;
+ * aquí solo se calculan ventanas de tiempo y se guardan los episodios.
+ */
 function deriveState(data) {
-  const status = data.status || 'FREE';
+  const C = (typeof Choreography !== 'undefined') ? Choreography : null;
+  if (!C || !C.deriveChoreography) {
+    console.error('[CHOREO] assets/choreography.js no cargado');
+    return 'LOADING';
+  }
+  if (!_choreoEpisodes) _choreoEpisodes = C.emptyEpisodes(null);
+
   const io = data.iot_session || {};
-  const door = io.door_state || 'UNKNOWN';
-  const presence = io.presence_state || 'UNKNOWN';
   const stay = data.active_stay;
-  const stayStatus = stay ? stay.status : null;
-  const cooldown = data.cooldown_until && new Date(data.cooldown_until + 'Z') > new Date();
-  const exitDeadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
+  const now = Date.now();
+  const toMs = C.parseTime;
+  const events = data.recent_events || [];
 
-  // Track presence detected during door-open (E6a vs E6b decision)
-  const doorWasOpen = (previousDoor === 'OPEN');
-  const doorIsOpen = (door === 'OPEN');
-  if (doorIsOpen && presence === 'PRESENT' && previousPresence !== 'PRESENT') _presenceDetectedDuringOpen = true;
-  if (!doorIsOpen && doorWasOpen && currentState === 'OCUPADA') _presenceDetectedDuringOpen = false;
+  // Ventanas de eventos (mismas semánticas que la versión anterior).
+  const recentQR = events.find(e => e.kind === 'QR_VALIDATE' && toMs(e.occurred_at) > now - 10000);
+  const recentDenied = events.find(e => e.kind === 'DENIED' && toMs(e.occurred_at) > now - 10000);
+  const recentQrBroad = events.find(e => e.kind === 'QR_VALIDATE' && e.result === 'OK' && toMs(e.occurred_at) > now - 120000);
 
-  // Recent events — extracted early so anomaly block below can use recentQrBroad
-  const recentQR = (data.recent_events || []).find(e => e.kind === 'QR_VALIDATE' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000);
-  const recentDenied = (data.recent_events || []).find(e => e.kind === 'DENIED' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 10000);
-  const recentQrBroad = (data.recent_events || []).find(e => e.kind === 'QR_VALIDATE' && e.result === 'OK' && new Date(e.occurred_at + 'Z').getTime() > Date.now() - 120000);
+  // Evento PRESENT posterior al último cierre: cancela el "hold" de verificación.
+  const lastCloseMs = toMs(io.last_close_at);
+  const freshPresenceAfterClose = lastCloseMs > 0 && (data.recent_presence || []).some(e =>
+    e.sensor === 'PRESENCE' && e.value === 'PRESENT' && toMs(e.occurred_at) > lastCloseMs
+  );
 
-  // F35: Check server-detected anomalies — only fire when sensor state matches the anomaly.
-  // Moved AFTER recentQrBroad so entry flow (recent QR) suppresses presence anomalies.
-  const anomalies = data.anomalies || [];
-  if (anomalies.length > 0) {
-    const hasA3 = anomalies.some(a => a.anomaly_type === 'A3');
-    const hasA7 = anomalies.some(a => a.anomaly_type === 'A7');
-    const hasPresenceAnomaly = anomalies.some(a => ['A1','A2','A6'].includes(a.anomaly_type));
-    // A3 (door_open_without_qr): only relevant if door is actually OPEN
-    if (hasA3 && door === 'OPEN') return 'ANOMALIA_RP';
-    // A7 (door_open_without_presence): door OPEN + no presence
-    if (hasA7 && door === 'OPEN' && presence === 'ABSENT') return 'ANOMALIA_RP';
-    // A1/A2/A6 (presence anomalies): only fire if presence PRESENT AND NOT during active
-    // entry flow (recent QR scan means guest is entering, presence is expected at the door).
-    if (hasPresenceAnomaly && presence === 'PRESENT' && !recentQrBroad) return 'ANOMALIA_PA';
+  const snapshot = {
+    roomStatus: data.status || 'FREE',
+    door: io.door_state || 'UNKNOWN',
+    presence: io.presence_state || 'UNKNOWN',
+    stayId: stay ? stay.id : null,
+    stayStatus: stay ? stay.status : null,
+    entryConfirmedAt: stay ? (stay.entry_confirmed_at || null) : null,
+    lastOpenAt: io.last_open_at || null,
+    lastCloseAt: io.last_close_at || null,
+    lastAbsentSince: io.last_absent_since || null,
+    exitDeadline: data.exit_deadline || null,
+    gapSeconds: data.gap_seconds || 15,
+    cooldown: !!(data.cooldown_until && toMs(data.cooldown_until) > now),
+    qrScannable: qrData.scannable,
+    qrConsumed: qrData.consumed,
+    qrRevoked: qrData.revoked,
+    qrExpired: qrData.expired,
+    qrRecentAt: recentQR ? toMs(recentQR.occurred_at) : 0,
+    qrRecentResult: recentQR ? recentQR.result : null,
+    qrBroadAt: recentQrBroad ? toMs(recentQrBroad.occurred_at) : 0,
+    qrDeniedAt: recentDenied ? toMs(recentDenied.occurred_at) : 0,
+    sensorsEverSeen: _sensorsEverSeen,
+    anomalies: data.anomalies || [],
+    anyDeviceReachable: anyDeviceReachable(),
+    prevDoor: previousDoor,
+    prevPresence: previousPresence,
+    prevStayStatus: previousStayStatus,
+    freshPresenceAfterClose
+  };
+
+  const result = C.deriveChoreography(snapshot, _choreoEpisodes, now);
+  _choreoEpisodes = result.episodeUpdates;
+
+  if (DEBUG_CHOREO && result.state !== currentState) {
+    console.log('[CHOREO] ' + currentState + ' → ' + result.state + ' (' + result.logical + ')', {
+      door: snapshot.door,
+      presence: snapshot.presence,
+      stay: snapshot.stayStatus,
+      lastOpen: snapshot.lastOpenAt,
+      lastClose: snapshot.lastCloseAt,
+      deadline: snapshot.exitDeadline,
+      consolidatedAt: result.episodeUpdates.entryConsolidatedAt
+    });
   }
-
-  // QR state overrides
-  if (recentDenied) return 'QR_RECHAZADO';
-
-  // F31: PUERTA_ABIERTA — door opened after guest has entered
-  if (stayStatus === 'OCCUPIED' && stay && stay.first_entry_at
-      && door === 'OPEN'
-      && !recentQrBroad) return 'PUERTA_ABIERTA';
-
-  // F31: VERIFICANDO_PRESENCIA — door closed, no presence. BUT if presence WAS seen (E6a), skip to OCUPADA.
-  if (exitDeadline && door === 'CLOSED' && presence === 'ABSENT' && stayStatus === 'OCCUPIED') {
-    if (!_presenceDetectedDuringOpen) return 'VERIFICANDO_PRESENCIA';
-  }
-
-  // F31: Hold window
-  const lastCloseAt = io.last_close_at ? new Date(io.last_close_at) : null;
-  const gapSecs = data.gap_seconds || 15;
-  if (stayStatus === 'OCCUPIED' && door === 'CLOSED' && presence === 'PRESENT'
-      && lastCloseAt && (new Date() - lastCloseAt) < (gapSecs + 10) * 1000) {
-    const freshPresent = (data.recent_presence || []).find(e =>
-      e.sensor === 'PRESENCE' && e.value === 'PRESENT'
-      && new Date(e.occurred_at + 'Z').getTime() > lastCloseAt.getTime()
-    );
-    if (!freshPresent && !_presenceDetectedDuringOpen) return 'VERIFICANDO_PRESENCIA';
-  }
-
-  // QR_OK — only while the door has NOT physically opened yet AND was never open before.
-  // Once PROXIMITY OPEN arrives, HUESPED_EN_PUERTA (line ~911) takes over
-  // and advances the monigote from AT_QR to CROSSING.
-  // The previousDoor guard prevents QR_OK from re-firing when the door closes
-  // after being opened — in that case the verification countdown should run instead.
-  if (recentQR && recentQR.result === 'OK' && (stayStatus === 'OCCUPIED' || status === 'RESERVED')) {
-    if (door !== 'OPEN' && previousDoor !== 'OPEN') return 'QR_OK';
-  }
-
-  // GROUP D: admin states
-  if (status === 'OVERSTAY') return 'EXCESO_TIEMPO';
-  if (status === 'CLEANING') return 'LIMPIEZA';
-  if (status === 'OUT_OF_SERVICE') return 'FUERA_SERVICIO';
-
-  if (stayStatus === 'EXITED' && previousStayStatus === 'OCCUPIED') return 'HUESPED_HA_SALIDO';
-  if (status === 'FREE' && previousStayStatus === 'OCCUPIED') return 'SALIDA_DETECTADA';
-
-  // UNKNOWN sensors
-  if (!_sensorsEverSeen && (door === 'UNKNOWN' || presence === 'UNKNOWN')) return 'LOADING';
-  if (door === 'UNKNOWN' && presence === 'UNKNOWN' && status === 'FREE') {
-    const anyDeviceOnline = anyDeviceReachable();
-    if (!anyDeviceOnline) return 'SIN_CONFIGURAR';
-  }
-  if (door === 'UNKNOWN' || presence === 'UNKNOWN') {
-    if (status === 'OCCUPIED' || status === 'RESERVED') {
-      // If door is CLOSED and was previously OPEN (entry exit-in-progress),
-      // or a recent QR scan is active, don't block on UNKNOWN sensors —
-      // let the OCCUPIED group handle the verification countdown.
-      const entryInProgress = (door === 'CLOSED' && (previousDoor === 'OPEN' || recentQrBroad));
-      if (!entryInProgress) {
-        const anyDeviceOnline = anyDeviceReachable();
-        if (!anyDeviceOnline) return 'SENSORES_DESCONECTADOS';
-      }
-    }
-  }
-
-  if (cooldown && (status === 'OCCUPIED' || status === 'RESERVED')) return 'ANTI_REENTRADA';
-
-  // GROUP A: FREE
-  if (!stay) {
-    if (status === 'FREE' && door === 'OPEN') return 'ANOMALIA_RP';
-    return 'ESPERANDO';
-  }
-
-  // GROUP B: RESERVED — NEW: QR_DISPONIBLE when QR is scannable
-  if (stayStatus === 'RESERVED') {
-    if (door === 'OPEN') return 'ANOMALIA_RP';
-    if (qrData.scannable && !qrData.consumed && !qrData.revoked && !qrData.expired) return 'QR_DISPONIBLE';
-    return 'ESPERANDO_HUESPED';
-  }
-
-  // GROUP C: OCCUPIED — E6a: presence seen during open → straight to OCUPADA (only after door closes)
-  if (stayStatus === 'OCCUPIED') {
-    // Door still open → monigote stays at door, never advances to INSIDE yet
-    if (door === 'OPEN') return 'HUESPED_EN_PUERTA';
-    // Door sensor not yet reporting (e.g. PROXIMITY event pending after QR validation).
-    // Show "esperando apertura" instead of defaulting to OCUPADA.
-    if (door === 'UNKNOWN' && recentQrBroad) return 'QR_ESPERANDO';
-    // Door closed + presence was detected during open (E6a shortcut)
-    if (_presenceDetectedDuringOpen && door === 'CLOSED') return 'OCUPADA';
-    // Door closed + presence confirmed → guest is inside
-    if (presence === 'PRESENT') return 'OCUPADA';
-    // Door closed + no presence → verification needed
-    // Also handles UNKNOWN (sensor not yet initialised) as equivalent to ABSENT
-    if (door === 'CLOSED' && (presence === 'ABSENT' || presence === 'UNKNOWN')) {
-      // Door was previously open → guest at door, verify presence (entry & exit)
-      // Also handles initial state (previousDoor === null) — first SSE/poll cycle
-      if (previousDoor === 'OPEN' || previousDoor === null) return 'VERIFICANDO_PRESENCIA';
-      // Door never opened after QR → still waiting for PROXIMITY OPEN to arrive
-      if (recentQrBroad) return 'QR_ESPERANDO';
-      return 'VERIFICANDO_PRESENCIA';
-    }
-    return 'OCUPADA';
-  }
-
-  return 'ESPERANDO';
+  return result.state;
 }
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -1667,7 +1626,8 @@ async function resetRoom() {
       updateQrTestPanelNew();
       showQrToast(true, 'Habitación reseteada');
       lastEventIds.clear();
-      _presenceDetectedDuringOpen = false;
+      _choreoEpisodes = (typeof Choreography !== 'undefined' && Choreography.emptyEpisodes)
+        ? Choreography.emptyEpisodes(null) : null;
     _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples(); updatePollingIndicator(); stopIdleAnimation();
       await Promise.all([fetchRooms(), poll()]);
       setTimeout(() => updatePackIndicator(), 200);
@@ -1803,7 +1763,9 @@ function onRoomSelect() {
   qrTestData = null;
   updateQrTestPanelNew();
   currentState = 'LOADING';
-  _presenceDetectedDuringOpen = false; _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples();
+  _choreoEpisodes = (typeof Choreography !== 'undefined' && Choreography.emptyEpisodes)
+    ? Choreography.emptyEpisodes(null) : null;
+  _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples();
   updatePollingIndicator(); stopIdleAnimation(); _displayedPhase = '';
   document.getElementById('timeline-inner').innerHTML = '<div style="color:var(--text-dim);text-align:center">Cambiando a habitación '+sel.options[sel.selectedIndex]?.text+'...</div>';
   updatePackIndicator();
@@ -1987,6 +1949,7 @@ function connectSSE() {
   _eventSource.addEventListener('connected', function(e) {
     _sseConnected = true;
     _sseFallbackActive = false;
+    _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
     _pollShouldStop = true; // F33x: kill any leaked poll cycle
     if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
     updateSseIndicator(true);
@@ -1994,6 +1957,7 @@ function connectSSE() {
   });
 
   _eventSource.addEventListener('state', function(e) {
+    _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
     try {
       const data = JSON.parse(e.data);
       if ((data.room_id || 0) !== currentRoomId) return; // stale event from previous room
@@ -2001,6 +1965,11 @@ function connectSSE() {
     } catch(err) {
       console.error('[SSE] Failed to parse state event:', err);
     }
+  });
+
+  // F41·TSK-F41-15: el evento `ping` solo alimenta el watchdog; no altera estado.
+  _eventSource.addEventListener('ping', function(e) {
+    _lastSseEventAt = Date.now();
   });
 
   _eventSource.addEventListener('close', function(e) {
@@ -2028,6 +1997,7 @@ function connectSSE() {
     // onopen fires when the connection is (re-)established.
     // The 'connected' event from the server gives us a more reliable signal.
     // Keep this as a secondary confirmation.
+    _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
     if (!_sseConnected) {
       _sseConnected = true;
       _sseFallbackActive = false;
@@ -2036,6 +2006,51 @@ function connectSSE() {
       updateSseIndicator(true);
     }
   };
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   F41 · WATCHDOG DE SILENCIO DEL STREAM (RF-49.1)       ║
+// ╚══════════════════════════════════════════════════════════╝
+
+/**
+ * Resincronización puntual de `/live` cuando el stream deja de emitir.
+ * Comparte `processLiveData()` con SSE/polling; el throttle evita tormentas.
+ */
+async function resyncLive() {
+  try {
+    const res = await fetch(`/api/v1/rooms/${currentRoomId}/live`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.room_id !== undefined && (data.room_id || 0) !== currentRoomId) return;
+    processLiveData(data);
+    console.log('[SSE] resync /live (stream en silencio)');
+  } catch (e) {
+    console.warn('[SSE] resync fallido:', e);
+  }
+}
+
+/**
+ * Vigila la llegada de eventos SSE (state/ping). Si el servidor sigue
+ * conectado pero deja de emitir >5 s (pestaña visible), resincroniza /live;
+ * si el silencio supera ~15 s, fuerza la reconexión del EventSource.
+ */
+function startSseWatchdog() {
+  if (_sseWatchdogTimer) clearInterval(_sseWatchdogTimer);
+  _sseWatchdogTimer = setInterval(() => {
+    if (!_sseConnected) return;
+    if (document.visibilityState !== 'visible') return;
+    const silence = Date.now() - _lastSseEventAt;
+    if (silence > SSE_FORCE_RECONNECT_MS) {
+      console.warn('[SSE] Silencio > ' + (SSE_FORCE_RECONNECT_MS / 1000) + 's → reconectando');
+      connectSSE();
+      _lastSseEventAt = Date.now();
+      return;
+    }
+    if (silence > SSE_SILENCE_MS) {
+      resyncLive();
+      _lastSseEventAt = Date.now(); // throttle: evita fetch por cada tick
+    }
+  }, 1000);
 }
 
 function disconnectSSE() {
@@ -2734,30 +2749,44 @@ function toggleEventDetail(row) {
 // ║         COUNTDOWN (presence verification window)       ║
 // ╚══════════════════════════════════════════════════════════╝
 
+/**
+ * F41·TSK-F41-14 (RF-49.2): conteo por temporizador LOCAL.
+ * No depende de que lleguen eventos: calcula el restante con el reloj del
+ * navegador mientras exista una verificación de salida real. A 0 pide resync
+ * (la confirmación la decide el backend, no el cliente).
+ */
 function updateCountdown() {
   const el = document.getElementById('countdown-text');
   const group = document.getElementById('countdown-group');
   const arc = document.getElementById('countdown-arc');
-  const deadline = lastLiveData.exit_deadline ? new Date(lastLiveData.exit_deadline) : null;
+  if (!group || !el) return;
+
+  const data = lastLiveData || {};
+  const io = data.iot_session || {};
+  const stay = data.active_stay;
+  const deadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
   const now = new Date();
 
-  if (!deadline || deadline <= now) {
+  // RF-49.2.2: solo visible con verificación activa (deadline + ausencia + cerrado + OCCUPIED).
+  const active = !!deadline
+    && io.presence_state === 'ABSENT'
+    && io.door_state === 'CLOSED'
+    && !!stay && stay.status === 'OCCUPIED';
+  if (!active) { group.style.display = 'none'; return; }
+
+  const remainMs = deadline - now;
+  if (remainMs <= 0) {
     group.style.display = 'none';
+    if (Date.now() - _lastCountdownResyncAt > 5000) {
+      _lastCountdownResyncAt = Date.now();
+      resyncLive(); // el vacío lo confirma el backend
+    }
     return;
   }
 
-  const sec = Math.max(0, Math.floor((deadline - now) / 1000));
-  const io = lastLiveData.iot_session || {};
-  const presence = io.presence_state || 'UNKNOWN';
-
-  // Only show countdown when presence is ABSENT (verification window)
-  if (presence !== 'ABSENT' || io.door_state !== 'CLOSED') {
-    group.style.display = 'none';
-    return;
-  }
-
-  const gapSeconds = lastLiveData.gap_seconds || 15;
-  const totalSec = gapSeconds;
+  const sec = Math.max(0, Math.floor(remainMs / 1000));
+  const gapSeconds = data.gap_seconds || 15;
+  const totalSec = Math.max(1, gapSeconds);
   const elapsed = totalSec - sec;
   const pct = Math.min(1.0, Math.max(0.0, elapsed / totalSec));
   const circumference = 169.65; // 2*pi*27
@@ -2769,7 +2798,7 @@ function updateCountdown() {
     arc.setAttribute('stroke-dasharray', circumference);
   }
   // Blinking effect + circular arc
-  el.style.opacity = (Math.floor(now.getTime() / 500) % 2 === 0) ? '1' : '0.3';
+  el.style.opacity = (Math.floor(Date.now() / 500) % 2 === 0) ? '1' : '0.3';
   el.textContent = sec;
 }
 
@@ -2794,6 +2823,8 @@ async function init() {
     }, 5000);
     // F33x: Connect SSE for real-time updates (replaces polling for door/state events)
     connectSSE();
+    // F41: watchdog de silencio del stream (resync /live + reconexión forzada)
+    startSseWatchdog();
     // Independent panel polling: device-status + mirame run regardless of SSE state
     startDevicePolling();
     startMiramePolling();
@@ -2815,8 +2846,8 @@ async function init() {
   document.addEventListener('visibilitychange', () => {
     _isHidden = document.hidden;
   });
-  // Countdown refresh (every 500ms for blinking) — light, keep as-is
-  setInterval(updateCountdown, 500);
+  // F41·TSK-F41-14: conteo local a 250 ms (no se congela si no llegan eventos).
+  setInterval(updateCountdown, 250);
   // Rooms refresh (less frequent, keep for room selector).
   // Skip while the selector is focused: rebuilding <option> closes the native
   // picker mid-interaction (Android/mobile). It will refresh on the next tick.

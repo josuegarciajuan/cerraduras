@@ -52,6 +52,7 @@ final class InMemoryStayRepo implements StayRepositoryInterface
         }
         return null;
     }
+    public function lockActiveForRoom(int $roomId): ?Stay { return $this->findActiveForRoom($roomId); }
     public function listFiltered(array $filters, int $limit = 50, int $offset = 0): array
     {
         return array_values($this->byId);

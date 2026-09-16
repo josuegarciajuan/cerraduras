@@ -396,3 +396,194 @@ estado autoritativo tras reflasheos, reinicios o borrados de NVS.
 - **RF-42.5**: `POST /dashboard-api/ping-all-devices` sondea Tuya solo cuando el cliente envía `verify_tuya:true` (carga/manual). Sin la flag, los Tuya cloud se devuelven como `unknown` **sin consumir cuota** y sin marcarlos online.
 - **RF-42.6**: Un comando Tuya "aceptado" por el cloud (que puede encolarlo aunque el dispositivo físico esté apagado) **no** debe marcar el dispositivo como online (`SwitchService` no refresca `last_seen` por ello).
 - **RF-42.7**: El auto-recheck periódico del panel (10 s) solo re-comprueba sub-dispositivos ESP32 (`SCANNER`/`LOCK`); nunca dispositivos Tuya cloud.
+
+---
+
+# Fase 41: Robustez del pipeline de sensores y coreografía del panel
+
+## Contexto
+
+Auditoría en producción realizada el 16-sep-2026 sobre la puerta real de la habitación 12
+(«PROTO2», pack 305). El flujo físico de entrada/salida y la representación del mismo en el
+panel dejan de ser fiables en varios escenarios encadenados.
+
+**Fallos observados por el usuario:**
+
+1. Tras escanear QR → acceso concedido → apertura de puerta → presencia, el monigote debería
+   avanzar hasta la altura de la puerta (umbral) y no lo hace de forma fiable.
+2. En el escenario anterior, al cerrar la puerta manteniendo presencia, el monigote debería
+   quedar dentro de la habitación.
+3. Con el monigote ya dentro, al abrir y cerrar la puerta el sensor de puerta no marca
+   apertura/cierre hasta resetear la habitación.
+4. El poller de presencia no se desactiva en los momentos oportunos: (a) cuando el monigote ya
+   está completamente dentro y (b) cuando la habitación queda 100 % vacía.
+5. Al abandonar la habitación: con el monigote dentro se abre la puerta → se cierra → empieza
+   un temporizador de verificación y el monigote se queda en el umbral; cuando el radar ya no
+   detecta presencia, el conteo debe terminar/detenerse, el monigote debe salir fuera y la luz
+   debe apagarse.
+
+**Causas raíz confirmadas (evidencia en BD y logs):**
+
+- **RC-1**: actualización no atómica del estado IoT por habitación. Con varios workers PHP
+  concurrentes (webhook Tuya de puerta + presencia) y varios procesos de escaneo de salida
+  duplicados, la última escritura gana: una escritura de presencia puede arrastrar un estado de
+  puerta obsoleto y pisar un cierre recién confirmado.
+- **RC-2**: no existe orden temporal ni idempotencia real por evento. Los eventos se aplican en
+  orden de llegada, no por su marca de ocurrencia; los reenvíos/duplicados del mensajero se
+  procesan como hechos nuevos y pueden llegar en desorden.
+- **RC-3 (frontend)**: el cruce por la puerta solo se representa si el estado de puerta está
+  abierto; si el evento de apertura se pierde, el avatar salta de «acceso concedido» a «dentro»
+  sin pasar por el umbral. Además, la ventana de reciente validación de QR y el instante de
+  primera entrada (fijado al validar el QR, antes de entrar) hacen que una apertura tardía se
+  confunda con una posible salida, y una bandera de presencia vista durante la apertura queda
+  adherida y hace que la verificación de salida se salte.
+- **RC-4 (infra)**: procesos de escaneo de salida huérfanos (el arranque no termina los
+  wrappers previos), y workers de escaneo de anomalías/overstay que no están corriendo.
+- **RC-5 (poller)**: la decisión de capturar depende del estado de puerta; con la puerta
+  atascada en abierto el poller captura indefinidamente. La parada «al estar dentro» depende de
+  una bandera frágil; no hay condición ligada al estado de dominio (estancia activa/presencia)
+  ni al vacío total.
+- **RC-6 (salida)**: la evaluación de la regla de salida exige puerta cerrada; con la puerta
+  mal el cierre de estancia no dispara y quedan estancia ocupada, luz encendida y monigote en el
+  umbral. El reset de habitación tampoco limpia la marca temporal de último cierre.
+
+**Decisiones aprobadas por el usuario:**
+
+- Alcance del cambio: backend + poller de presencia + panel/frontend + infraestructura de workers.
+- La habitación se confirma vacía cuando (precondición) hubo presencia y la puerta se abrió y se
+  cerró, y después el radar reporta ausencia; entonces se espera un intervalo prudencial
+  («unos segundos», configurable, por defecto el `exit_presence_gap_seconds` de la
+  habitación/tipo, 15 s) y solo entonces se cierra la estancia, se saca al monigote fuera y se
+  apaga la luz. Si la presencia reaparece antes, se cancela y la habitación vuelve a ocupada.
+- Coreografía de entrada: el monigote permanece en el umbral (a la altura de la puerta) mientras
+  la puerta está abierta, y avanza a dentro cuando la puerta se cierra (con presencia confirmada
+  o presencia vista durante la apertura).
+- Se autoriza reiniciar workers y limpiar procesos huérfanos.
+
+## RF-43: Consistencia atómica del estado IoT por habitación
+
+### RF-43.1: Serialización y atomicidad por habitación
+- **RF-43.1.1**: Todo evento de sensor (puerta o presencia) de una misma habitación debe aplicarse de forma serializada y atómica sobre el estado IoT de esa habitación; dos eventos concurrentes de la misma habitación no pueden intercalar su ciclo de lectura-modificación-escritura.
+- **RF-43.1.2**: Toda actualización debe afectar únicamente al estado derivado del evento recibido; no puede reescribir ni sobrescribir estados derivados de otros sensores con una copia obsoleta.
+- **RF-43.1.3**: Una escritura originada por un evento antiguo no puede revertir una transición más reciente ya aplicada (por ejemplo, una lectura de presencia no puede volver a marcar la puerta en un estado anterior al último cierre confirmado).
+- **RF-43.1.4**: La aplicación de un evento es todo-o-nada: si no puede aplicarse de forma consistente, no debe dejar el estado parcialmente modificado.
+- **RF-43.1.5**: El sistema debe garantizar estas propiedades con el número real de productores concurrentes en operación (webhook de puerta, webhook/poll de presencia y procesos de escaneo de salida).
+
+### RF-43.2: Fuente única de verdad y concurrencia entre productores
+- **RF-43.2.1**: El estado IoT por habitación debe tener un único punto de escritura autoritativo; ni los webhooks de sensores ni los workers de escaneo pueden escribirlo por caminos independientes que compitan entre sí.
+- **RF-43.2.2**: Todos los productores deben aplicar sus eventos a través de ese punto único.
+- **RF-43.2.3**: Toda decisión de dominio (regla de salida, coreografía, poller) debe basarse en el estado más reciente confirmado; no se admiten decisiones tomadas sobre copias desactualizadas.
+
+### RF-43.3: Verificación de no regresión
+- **RF-43.3.1**: Sometido a ráfagas de eventos de puerta y presencia concurrentes, el estado final debe corresponder a la secuencia temporal real de los hechos y no a la del último escritor.
+- **RF-43.3.2**: No debe observarse ningún caso en que un cierre de puerta confirmado quede sobrescrito por una escritura posterior que no aporte un hecho de puerta más nuevo.
+
+## RF-44: Orden temporal e idempotencia de eventos de sensor
+
+### RF-44.1: Orden por marca temporal de ocurrencia
+- **RF-44.1.1**: Los eventos de sensor deben aplicarse según su marca temporal de ocurrencia (`occurred_at`), no según el orden de llegada al backend.
+- **RF-44.1.2**: Un evento cuya marca temporal sea anterior a la última transición aplicada para ese mismo sensor debe considerarse atrasado y no puede modificar el estado actual.
+- **RF-44.1.3**: Cuando el orden relativo entre sensores distintos sea determinante para la coreografía de una misma habitación, la aplicación debe respetar dicho orden temporal.
+
+### RF-44.2: Idempotencia y descarte de duplicados
+- **RF-44.2.1**: Cada evento de sensor debe tener una identidad lógica que permita reconocer reenvíos o duplicados del mismo hecho físico, aunque cambie la marca temporal del mensajero.
+- **RF-44.2.2**: Procesar dos veces el mismo hecho físico no puede producir una segunda transición de estado ni duplicar efectos de dominio.
+- **RF-44.2.3**: Los duplicados y los eventos atrasados deben descartarse de la aplicación sin corromper el estado ni bloquear el resto del pipeline.
+
+### RF-44.3: Registro íntegro del evento bruto
+- **RF-44.3.1**: Todo evento de sensor recibido (incluidos duplicados, atrasados o descartados) debe registrarse de forma íntegra como evidencia bruta de auditoría.
+- **RF-44.3.2**: Para cada evento debe poder distinguirse si fue aplicado o descartado y el motivo (duplicado, atrasado, inconsistente).
+- **RF-44.3.3**: La recepción y el registro del evento bruto no deben depender de que su aplicación al estado tenga éxito.
+
+## RF-45: Desactivación del poller de presencia basada en estado de dominio
+
+### RF-45.1: Condiciones de parada
+- **RF-45.1.1**: El poller de presencia debe detener sus llamadas al sensor (y por tanto no consumir cuota) cuando la habitación tenga estancia activa ocupada, presencia confirmada y puerta cerrada (huésped dentro).
+- **RF-45.1.2**: El poller debe detenerse cuando no exista estancia activa, la presencia esté ausente y la habitación esté fuera de toda ventana de verificación (habitación 100 % vacía).
+- **RF-45.1.3**: El poller solo puede permanecer activo mientras exista una condición de dominio que lo justifique (por ejemplo, entrada en curso o verificación de salida pendiente).
+
+### RF-45.2: Independencia de banderas frágiles
+- **RF-45.2.1**: La decisión de capturar debe basarse en el estado de dominio (estancia, presencia, puerta) y no en banderas efímeras que puedan quedar adheridas entre ciclos.
+- **RF-45.2.2**: Un cambio de estado de dominio debe reevaluar la captura aunque no haya llegado un nuevo evento de sensor.
+
+### RF-45.3: Watchdog de captura máxima
+- **RF-45.3.1**: Debe existir un tiempo máximo de captura continua; al superarse, el poller debe detenerse aunque la condición de dominio aparente justificarlo.
+- **RF-45.3.2**: Protege contra puerta atascada o estado inconsistente, impidiendo bucles de captura infinitos.
+- **RF-45.3.3**: La superación del máximo debe quedar registrada como señal de diagnóstico.
+- **RF-45.3.4**: El watchdog no debe impedir una nueva ventana de captura legítima posterior.
+
+## RF-46: Coreografía de entrada del panel
+
+### RF-46.1: Avance al umbral
+- **RF-46.1.1**: Tras un QR validado y la concesión de acceso, el avatar debe avanzar hasta el umbral (altura de la puerta) y permanecer allí mientras la puerta esté abierta.
+- **RF-46.1.2**: El avance al umbral debe ocurrir de forma fiable aunque el evento de apertura llegue tarde, se pierda o llegue antes que la validación del QR.
+- **RF-46.1.3**: Mientras la puerta esté abierta y exista presencia confirmada o presencia vista durante la apertura, el avatar no debe entrar en la habitación; espera en el umbral.
+
+### RF-46.2: Paso al interior
+- **RF-46.2.1**: El paso al interior debe ocurrir cuando la puerta se cierre con presencia confirmada o con presencia vista durante la apertura.
+- **RF-46.2.2**: El tránsito por el umbral no debe interpretarse como salida ni disparar la verificación de salida.
+- **RF-46.2.3**: Si la puerta no se cierra, el avatar permanece en el umbral; la coreografía no puede saltar directamente de acceso concedido a interior sin transitar el umbral.
+- **RF-46.2.4**: Una apertura tardía tras la validación del QR no puede confundirse con una apertura de salida.
+
+### RF-46.3: Consistencia con el estado real
+- **RF-46.3.1**: La posición del avatar debe reconciliarse con el estado de dominio real (estancia, puerta, presencia), no solo con eventos sueltos.
+- **RF-46.3.2**: Al recargar o resincronizar el panel, la posición debe reflejar el estado real y no una secuencia parcial de eventos.
+
+## RF-47: Verificación y confirmación de salida
+
+### RF-47.1: Precondición de la verificación
+- **RF-47.1.1**: La verificación de salida solo puede iniciarse cuando se cumplan como precondición: hubo presencia, la puerta se abrió y después se cerró.
+- **RF-47.1.2**: Sin esa secuencia acreditada, la ausencia del radar no debe cerrar la estancia.
+
+### RF-47.2: Espera prudencial tras la ausencia
+- **RF-47.2.1**: Detectado el cierre de puerta, si el radar deja de detectar presencia, el sistema debe iniciar un conteo de espera de unos segundos antes de confirmar el vacío.
+- **RF-47.2.2**: La duración de la espera debe ser configurable por habitación/tipo, con valor por defecto de 15 segundos (`exit_presence_gap_seconds`).
+- **RF-47.2.3**: El conteo debe terminar o detenerse en cuanto el radar vuelva a detectar presencia.
+
+### RF-47.3: Cancelación por reaparición de presencia
+- **RF-47.3.1**: Si la presencia reaparece antes de agotarse la espera, la verificación debe cancelarse y la habitación debe volver a considerarse ocupada.
+- **RF-47.3.2**: La cancelación no debe dejar residuos de estado que impidan una nueva verificación futura.
+
+### RF-47.4: Efectos finales de la salida confirmada
+- **RF-47.4.1**: Confirmado el vacío tras la espera, deben ejecutarse los tres efectos: cierre de la estancia, salida del avatar fuera de la habitación y apagado de la luz.
+- **RF-47.4.2**: Los efectos deben ser consistentes a nivel de dominio: no puede quedar estancia cerrada con luz encendida ni avatar dentro.
+- **RF-47.4.3**: La confirmación de salida no debe depender de que la puerta permanezca en un estado concreto si la secuencia de apertura y cierre ya quedó acreditada.
+
+### RF-47.5: Reset de habitación
+- **RF-47.5.1**: La operación de reset de habitación debe limpiar todas las marcas temporales de actividad de puerta y presencia, dejando la habitación lista para una nueva secuencia.
+- **RF-47.5.2**: Tras un reset no deben quedar condiciones heredadas que bloqueen la detección de nuevas aperturas y cierres.
+
+## RF-48: Operación de workers
+
+### RF-48.1: Instancia única
+- **RF-48.1.1**: Cada worker (exit-scan, overstay-scan, outbox, anomaly-scanner) debe ejecutarse como máximo en una instancia a la vez.
+- **RF-48.1.2**: El arranque o reinicio debe terminar los procesos previos, incluidos sus wrappers, antes de lanzar la nueva instancia, sin dejar huérfanos.
+- **RF-48.1.3**: anomaly-scanner y overstay-scan deben quedar operativos como parte del arranque normal; su ausencia no puede pasar desapercibida.
+
+### RF-48.2: Visibilidad del estado de los workers
+- **RF-48.2.1**: El estado del sistema debe exponer qué workers están corriendo y cuántas instancias de cada uno, de forma consultable.
+- **RF-48.2.2**: Una instancia duplicada o ausente debe ser detectable como condición anómala de operación.
+
+### RF-48.3: Separación de responsabilidades de escritura
+- **RF-48.3.1**: exit-scan no debe competir en la escritura del estado IoT con el webhook de puerta; su función se limita a disparar o delegar la evaluación, nunca a reescribir el estado de sensores.
+
+### RF-48.4: Idempotencia del reinicio
+- **RF-48.4.1**: Reiniciar los workers repetidamente debe converger siempre al mismo estado (una instancia por worker) sin acumular procesos ni efectos duplicados.
+
+## RF-49: Observabilidad y auto-recuperación del panel
+
+### RF-49.1: Resincronización tras pérdida del stream
+- **RF-49.1.1**: Si el canal de tiempo real deja de emitir, el panel debe detectar la pérdida y resincronizar el estado real en un tiempo acotado.
+- **RF-49.1.2**: La resincronización no debe requerir intervención manual ni recargar la página.
+- **RF-49.1.3**: Tras resincronizar, la posición del avatar, la estancia y el estado de sensores mostrados deben corresponder al estado real del backend.
+
+### RF-49.2: Conteo de verificación de salida visible
+- **RF-49.2.1**: Mientras exista una verificación de salida activa, el panel debe mostrar de forma fiable el conteo restante.
+- **RF-49.2.2**: El conteo debe reflejar el estado real (inicio, cancelación por reaparición de presencia, confirmación) y no quedar congelado ni mostrarse cuando ya no hay verificación.
+
+### RF-49.3: Trazabilidad de la coreografía
+- **RF-49.3.1**: Las transiciones de coreografía (umbral, interior, verificación de salida, salida confirmada) deben ser observables y diagnosticables a partir de logs o estado consultable.
+
+### RF-49.4: Convivencia con anomalías informativas
+- **RF-49.4.1**: Las anomalías A1–A8 siguen siendo informativas y no pueden bloquear ni alterar la coreografía de entrada/salida, la desactivación del poller ni el cierre de estancia.
+- **RF-49.4.2**: Ninguna anomalía puede enmascarar la coreografía ni impedir la confirmación de salida cuando se cumplan las precondiciones de RF-47.1.

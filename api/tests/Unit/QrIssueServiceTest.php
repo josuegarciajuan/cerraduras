@@ -74,6 +74,7 @@ $stayRepo = new class implements StayRepositoryInterface {
         foreach ($this->byId as $s) if ($s->roomId === $roomId && $s->isActive()) return $s;
         return null;
     }
+    public function lockActiveForRoom(int $roomId): ?Stay { return $this->findActiveForRoom($roomId); }
     public function listFiltered(array $f, int $l = 50, int $o = 0): array { return array_values($this->byId); }
     public function update(int $id, array $f, ?string $expectedStatus = null): int { return 0; }
     public function findByPackId(int $packId): ?Room { return null; }

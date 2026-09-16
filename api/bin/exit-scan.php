@@ -50,10 +50,13 @@ $deviceRepo      = new DeviceRepository($pdo);
 
 // Services
 $stateMachine = new StayStateMachine($stayRepo);
-$exitEval     = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo);
+$exitEval     = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo, $stayRepo);
 $switchSvc    = new SwitchService($deviceRepo, $roomRepo);
+// F41: exit-scan only delegates the idempotent evaluation; it never writes
+// the sensor state itself (RF-48.3 / RF-43.2).
 $exitAction   = new ExitActionService(
-    $roomRepo, $iotSessionRepo, $stateMachine, $accessEventRepo, $switchSvc
+    $roomRepo, $iotSessionRepo, $stateMachine, $accessEventRepo, $switchSvc,
+    null, null, $stayRepo, $exitEval, $roomTypeRepo
 );
 
 $tickInterval = 5; // seconds between scans
@@ -86,26 +89,13 @@ while ($running) {
         foreach ($occupiedRows as $row) {
             $scanned++;
             $roomId = (int) $row['room_id'];
-            $stayId = (int) $row['id'];
 
             try {
-                if ($exitEval->shouldExit($roomId)) {
-                    // Load fresh objects for the side-effect execution
-                    $room    = $roomRepo->findById($roomId);
-                    $session = $iotSessionRepo->findByRoomId($roomId);
-                    $stay    = $stayRepo->findById($stayId);
-                    $rt      = $roomTypeRepo->findById($room->roomTypeId ?? 0);
-
-                    if ($room !== null && $session !== null && $stay !== null
-                        && $stay->status === 'OCCUPIED'
-                    ) {
-                        $exitAction->execute(
-                            $room, $session, $stay, $rt,
-                            'exit-scan-' . uniqid()
-                        );
-                        $exited++;
-                        echo "[exit-scan] [$ts] EXIT confirmed: room={$roomId} stay={$stayId}\n";
-                    }
+                // F41: re-locks and re-validates the precondition atomically;
+                // returns true only for the worker that claims the cycle.
+                if ($exitAction->executeIfPending($roomId, 'exit-scan-' . uniqid())) {
+                    $exited++;
+                    echo "[exit-scan] [$ts] EXIT confirmed: room={$roomId}\n";
                 }
             } catch (\Throwable $e) {
                 echo "[exit-scan] [$ts] ERROR room={$roomId}: " . $e->getMessage() . "\n";

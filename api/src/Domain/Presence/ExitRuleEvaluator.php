@@ -3,58 +3,63 @@ declare(strict_types=1);
 
 namespace App\Domain\Presence;
 
+use App\Domain\Rooms\Room;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomType;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
+use App\Domain\Stays\Stay;
+use App\Domain\Stays\StayRepositoryInterface;
 use App\Support\Clock;
 
 /**
  * ExitRuleEvaluator: decides whether the exit rule has fired for a room.
  *
- * Rule (design.md §8.2, F31):
- *   a) door_state transitioned to CLOSED within the last DOOR_CLOSE_WINDOW_S seconds.
- *      Anchored to last_close_at (F31). Fallback to last_open_at for legacy rows.
- *   b) door_state must be CLOSED at the time of evaluation.
- *   c) presence_state=ABSENT sustained >= room_type.exit_presence_gap_seconds.
+ * Fase 41 (RF-47, contracts.md §3.2): the rule no longer depends on the
+ * current door state. It requires a *credited door cycle* posterior to the
+ * entry confirmation:
+ *   a) stay.entry_confirmed_at is set (guest was confirmed inside);
+ *   b) last_open_at > entry_confirmed_at (a new opening happened from inside);
+ *   c) last_close_at >= last_open_at (the door was closed);
+ *   d) the close is not arbitrarily old (DOOR_CYCLE_MAX_S = 300 s);
+ *   e) presence_state = ABSENT sustained >= gap seconds.
  *
- * All three conditions must hold simultaneously.
+ * Cancellation: a new PRESENT clears last_absent_since (done in
+ * IotSessionService::mutate), so this evaluator returns false again.
  *
  * Two entry-points:
- *   evaluate(session, gapSeconds, nowTs)  — pure, no I/O, used by IotSessionService
- *                                           and directly by unit tests.
- *   shouldExit(roomId, nowTs)             — loads IotSession + RoomType from repos;
- *                                           used by exit-scan.php and processEvent.
+ *   evaluate(session, stay, gapSeconds, nowTs) — pure, no I/O.
+ *   shouldExit(roomId, nowTs)                  — loads session/stay/room from repos.
  *
- * See RF-7, TSK-F31-4.
+ * See RF-47, F31, Fase 41.
  */
 final class ExitRuleEvaluator
 {
     /**
-     * Seconds after a door-close event during which we still consider the door
-     * "recently closed" for exit-rule purposes (F31: anchored to close, not open).
-     * Tolerates long-open doors and presence radars with slow retention clearing.
+     * F41: maximum age (seconds) of the door cycle for it to still be a valid
+     * exit precondition. Replaces DOOR_CLOSE_WINDOW_S=60; tolerates slow radars.
      */
-    public const DOOR_CLOSE_WINDOW_S = 60;
+    public const DOOR_CYCLE_MAX_S = 300;
 
     private IotSessionRepositoryInterface $iotSessions;
     private RoomRepositoryInterface       $rooms;
     private RoomTypeRepositoryInterface   $roomTypes;
+    private StayRepositoryInterface       $stays;
 
     public function __construct(
         IotSessionRepositoryInterface $iotSessions,
         RoomRepositoryInterface       $rooms,
-        RoomTypeRepositoryInterface   $roomTypes
+        RoomTypeRepositoryInterface   $roomTypes,
+        StayRepositoryInterface       $stays
     ) {
         $this->iotSessions = $iotSessions;
         $this->rooms       = $rooms;
         $this->roomTypes   = $roomTypes;
+        $this->stays       = $stays;
     }
 
     /**
-     * High-level entry point: loads the session and room-type from repositories
-     * and delegates to evaluate().
-     *
-     * Returns false if the room or its session/config cannot be resolved.
+     * High-level entry point: loads the session, active stay and gap config and
+     * delegates to evaluate(). Returns false if anything cannot be resolved.
      */
     public function shouldExit(int $roomId, ?int $nowTs = null): bool
     {
@@ -70,57 +75,67 @@ final class ExitRuleEvaluator
             return false;
         }
 
-        // RF-30: room-level override takes precedence over room_type config
-        if ($room->presenceCheckSeconds !== null) {
-            $gapSeconds = $room->presenceCheckSeconds;
-        } else {
-            $roomType   = $this->roomTypes->findById($room->roomTypeId);
-            $gapSeconds = $roomType instanceof RoomType
-                ? $roomType->exitPresenceGapSeconds
-                : 15; // conservative default when room_type is missing
-        }
+        $stay = $this->stays->findActiveForRoom($roomId);
 
-        return $this->evaluate($session, $gapSeconds, $nowTs);
+        return $this->evaluate($session, $stay, $this->resolveGapSeconds($room), $nowTs);
+    }
+
+    /**
+     * Resolve the absence gap: room override > room_type > 15 s (contracts §3.3).
+     */
+    public function resolveGapSeconds(Room $room): int
+    {
+        if ($room->presenceCheckSeconds !== null) {
+            return (int) $room->presenceCheckSeconds;
+        }
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        return $roomType instanceof RoomType ? (int) $roomType->exitPresenceGapSeconds : 15;
     }
 
     /**
      * Pure evaluation: no repository calls.
-     * Accepts pre-loaded IotSession and the gap threshold in seconds.
      *
+     * @param Stay|null $stay Active stay (null when none; rule never fires).
      * @param int $exitPresenceGapSeconds room_type.exit_presence_gap_seconds
      * @param int $nowTs                  Unix timestamp for "now"
      */
     public function evaluate(
         IotSession $session,
+        ?Stay      $stay,
         int        $exitPresenceGapSeconds,
         int        $nowTs
     ): bool {
-        // Condition a (F31): a door-close event must have occurred recently.
-        // Anchored to last_close_at; fallback to last_open_at for legacy rows
-        // created before migration 0038.
-        $closeAt = $session->lastCloseAt ?? $session->lastOpenAt;
-        if ($closeAt === null) {
+        // (a) Entry must have been confirmed by the backend.
+        if ($stay === null || $stay->entryConfirmedAt === null) {
             return false;
         }
+        if ($session->lastOpenAt === null || $session->lastCloseAt === null) {
+            return false;
+        }
+
         // All DATETIME(3) values are stored as UTC strings; append ' UTC' so
-        // strtotime() does not apply the local (Europe/Madrid) offset.
-        $closeTs = strtotime($closeAt . ' UTC');
-        if ($closeTs === false) {
-            return false;
-        }
-        if (($nowTs - $closeTs) > self::DOOR_CLOSE_WINDOW_S) {
-            return false; // door-close event is too stale
-        }
-
-        // Condition b (F28): the door must currently be CLOSED.
-        // The rule fires when the door was opened, then closed, and the
-        // guest has been absent for the required gap. If the door is still
-        // open, the guest might still be entering/exiting.
-        if ($session->doorState !== IotSession::DOOR_CLOSED) {
+        // strtotime() does not apply the local offset.
+        $openTs  = strtotime($session->lastOpenAt . ' UTC');
+        $closeTs = strtotime($session->lastCloseAt . ' UTC');
+        $entryTs = strtotime($stay->entryConfirmedAt . ' UTC');
+        if ($openTs === false || $closeTs === false || $entryTs === false) {
             return false;
         }
 
-        // Condition c: presence must be ABSENT and sustained long enough.
+        // (b) Credited cycle: open after entry confirmation, then closed.
+        if (!($openTs > $entryTs)) {
+            return false;
+        }
+        if (!($closeTs >= $openTs)) {
+            return false;
+        }
+
+        // (c) Safety bound: the cycle is not arbitrarily old.
+        if (($nowTs - $closeTs) > self::DOOR_CYCLE_MAX_S) {
+            return false;
+        }
+
+        // (d) Sustained absence.
         if ($session->presenceState !== IotSession::PRESENCE_ABSENT) {
             return false;
         }

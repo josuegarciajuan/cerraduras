@@ -1,0 +1,145 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * Unit tests for SensorEventDecision (Fase 41, RF-44; contracts.md §2).
+ *
+ * Fixes the contract of the ordering/idempotency decision:
+ *   - fingerprint = sha1(room_id|sensor|value|second), so the same fact re-sent
+ *     with a different transport `t` in the same second collapses to one id,
+ *     while OPEN and CLOSED in the same second do not collide.
+ *   - decide() classifies an event as apply / duplicate / stale / noop.
+ *   - A discarded decision still carries a reason, so the caller can persist the
+ *     raw event with applied=0 + discard_reason (RF-44.3).
+ *
+ * Run:
+ *   php tests/Unit/SensorEventDecisionTest.php
+ */
+
+require __DIR__ . '/../../src/Support/Autoload.php';
+
+use App\Domain\Presence\IotSession;
+use App\Domain\Presence\PresenceEvent;
+use App\Domain\Presence\SensorEventDecision;
+
+$PASS = 0; $FAIL = 0;
+function pass(string $m): void { global $PASS; $PASS++; echo "  ✅ {$m}\n"; }
+function fail(string $m): void { global $FAIL; $FAIL++; echo "  ❌ {$m}\n"; }
+
+/**
+ * Build a session with F41 ordering marks for the door sensor.
+ */
+function sessionWithDoor(?string $lastDoorEventAt, ?string $lastDoorValue): IotSession
+{
+    return new IotSession(
+        1, 12, null,
+        IotSession::DOOR_UNKNOWN,
+        IotSession::PRESENCE_UNKNOWN,
+        null, null, null, null, '',
+        $lastDoorEventAt, null, $lastDoorValue, null
+    );
+}
+
+function doorEvent(string $occurredAt, string $value = PresenceEvent::VALUE_OPEN): array
+{
+    return [
+        'room_id'        => 12,
+        'sensor'         => PresenceEvent::SENSOR_PROXIMITY,
+        'value'          => $value,
+        'provider'       => 'TUYA',
+        'occurred_at'    => $occurredAt,
+        'source_event_id'=> null,
+        'meta'           => null,
+    ];
+}
+
+echo "SensorEventDecision (Fase 41)\n";
+echo str_repeat("=", 60) . "\n\n";
+
+// ── fingerprint ──────────────────────────────────────────────────────────
+$fp1 = SensorEventDecision::fingerprint(12, 'PROXIMITY', 'OPEN', '2026-04-28T10:00:00Z');
+$fp2 = SensorEventDecision::fingerprint(12, 'PROXIMITY', 'OPEN', '2026-04-28T10:00:00.750Z');
+if ($fp1 === $fp2) pass('fingerprint: same fact, different t (same second) → same id');
+else fail('fingerprint: same fact, different t (same second) should match');
+
+$fp3 = SensorEventDecision::fingerprint(12, 'PROXIMITY', 'CLOSED', '2026-04-28T10:00:00Z');
+if ($fp1 !== $fp3) pass('fingerprint: OPEN vs CLOSED in the same second → different id');
+else fail('fingerprint: OPEN and CLOSED must not collide');
+
+$fpOtherRoom = SensorEventDecision::fingerprint(13, 'PROXIMITY', 'OPEN', '2026-04-28T10:00:00Z');
+if ($fp1 !== $fpOtherRoom) pass('fingerprint: different room → different id');
+else fail('fingerprint: different room must not collide');
+
+if (strlen($fp1) === 40 && ctype_xdigit($fp1)) pass('fingerprint: 40 hex chars (SHA-1)');
+else fail('fingerprint: expected 40 hex chars, got ' . $fp1);
+
+// ── decide: duplicate (logical identity already known) ───────────────────
+$session = sessionWithDoor('2026-04-28 09:59:00.000', 'CLOSED');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:00Z', 'OPEN'), $session, true
+);
+if ($decision === SensorEventDecision::DUPLICATE) pass('decide: existing fingerprint → duplicate');
+else fail('decide: existing fingerprint should be duplicate, got ' . $decision);
+
+// ── decide: stale (fact older than last applied event of the sensor) ─────
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:05Z', 'CLOSED'), $session, false
+);
+if ($decision === SensorEventDecision::STALE) pass('decide: older than last applied → stale');
+else fail('decide: older event should be stale, got ' . $decision);
+
+// An old event cannot revert a newer CLOSED (regression guard).
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'CLOSED');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:09Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::STALE) pass('decide: stale OPEN cannot revert a newer CLOSED');
+else fail('decide: stale OPEN should be discarded, got ' . $decision);
+
+// ── decide: duplicate (same instant + same value) ────────────────────────
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:10.400Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::DUPLICATE) pass('decide: same instant + value → duplicate');
+else fail('decide: same instant + value should be duplicate, got ' . $decision);
+
+// ── decide: noop (same value, different instant) ─────────────────────────
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:12Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::NOOP) pass('decide: value already in force → noop');
+else fail('decide: same value should be noop, got ' . $decision);
+
+// ── decide: apply (new transition) ───────────────────────────────────────
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'CLOSED');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:11Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('decide: new transition → apply');
+else fail('decide: new transition should apply, got ' . $decision);
+
+// First-ever event (no marks) → apply.
+$session = sessionWithDoor(null, null);
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:00Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('decide: no prior marks → apply');
+else fail('decide: first event should apply, got ' . $decision);
+
+// ── discarded decisions still carry a reason (auditable) ─────────────────
+foreach ([
+    SensorEventDecision::DUPLICATE,
+    SensorEventDecision::STALE,
+    SensorEventDecision::NOOP,
+] as $reason) {
+    $valid = in_array($reason, ['duplicate', 'stale', 'noop'], true);
+    if ($valid) pass("audit: discard_reason '{$reason}' is a valid persisted value");
+    else fail("audit: invalid discard_reason '{$reason}'");
+}
+
+echo "\n" . str_repeat("=", 60) . "\n";
+echo "Results: {$PASS} passed, {$FAIL} failed\n";
+exit($FAIL > 0 ? 1 : 0);

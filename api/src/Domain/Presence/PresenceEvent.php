@@ -39,6 +39,11 @@ final class PresenceEvent
     /** @var array<string,mixed>|null */
     public ?array $meta;
 
+    // F41 audit/dedup columns (nullable; NULL on legacy rows).
+    public ?string $fingerprint;
+    public ?bool $applied;
+    public ?string $discardReason;
+
     /**
      * @param array<string,mixed>|null $meta
      */
@@ -51,7 +56,10 @@ final class PresenceEvent
         string  $occurredAt,
         string  $receivedAt,
         ?string $sourceEventId,
-        ?array  $meta
+        ?array  $meta,
+        ?string $fingerprint = null,
+        ?bool   $applied = null,
+        ?string $discardReason = null
     ) {
         $this->id            = $id;
         $this->roomId        = $roomId;
@@ -62,5 +70,8 @@ final class PresenceEvent
         $this->receivedAt    = $receivedAt;
         $this->sourceEventId = $sourceEventId;
         $this->meta          = $meta;
+        $this->fingerprint   = $fingerprint;
+        $this->applied       = $applied;
+        $this->discardReason = $discardReason;
     }
 }

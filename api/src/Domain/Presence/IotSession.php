@@ -13,8 +13,12 @@ namespace App\Domain\Presence;
  * last_close_at:        UTC DATETIME(3) of the most recent PROXIMITY=CLOSED event (F31).
  * last_absent_since:    UTC DATETIME(3) when presence first transitioned to ABSENT.
  * exit_evaluated_at:    UTC DATETIME(3) when the exit rule last fired.
+ * last_door_event_at:      F41: occurred_at of the last applied door event (ordering).
+ * last_presence_event_at:  F41: occurred_at of the last applied presence event.
+ * last_door_value:         F41: last applied door value (OPEN|CLOSED).
+ * last_presence_value:     F41: last applied presence value (PRESENT|ABSENT).
  *
- * See design.md §4.10 and §8.2.
+ * See design.md §4.10, §8.2 and Fase 41 §2.2.
  */
 final class IotSession
 {
@@ -37,6 +41,12 @@ final class IotSession
     public ?string $exitEvaluatedAt;
     public string $updatedAt;
 
+    // F41 ordering marks (nullable; NULL on legacy rows).
+    public ?string $lastDoorEventAt;
+    public ?string $lastPresenceEventAt;
+    public ?string $lastDoorValue;
+    public ?string $lastPresenceValue;
+
     public function __construct(
         int     $id,
         int     $roomId,
@@ -47,18 +57,26 @@ final class IotSession
         ?string $lastCloseAt,
         ?string $lastAbsentSince,
         ?string $exitEvaluatedAt,
-        string  $updatedAt
+        string  $updatedAt,
+        ?string $lastDoorEventAt = null,
+        ?string $lastPresenceEventAt = null,
+        ?string $lastDoorValue = null,
+        ?string $lastPresenceValue = null
     ) {
-        $this->id              = $id;
-        $this->roomId          = $roomId;
-        $this->stayId          = $stayId;
-        $this->doorState       = $doorState;
-        $this->presenceState   = $presenceState;
-        $this->lastOpenAt      = $lastOpenAt;
-        $this->lastCloseAt     = $lastCloseAt;
-        $this->lastAbsentSince = $lastAbsentSince;
-        $this->exitEvaluatedAt = $exitEvaluatedAt;
-        $this->updatedAt       = $updatedAt;
+        $this->id                  = $id;
+        $this->roomId              = $roomId;
+        $this->stayId              = $stayId;
+        $this->doorState           = $doorState;
+        $this->presenceState       = $presenceState;
+        $this->lastOpenAt          = $lastOpenAt;
+        $this->lastCloseAt         = $lastCloseAt;
+        $this->lastAbsentSince     = $lastAbsentSince;
+        $this->exitEvaluatedAt     = $exitEvaluatedAt;
+        $this->updatedAt           = $updatedAt;
+        $this->lastDoorEventAt     = $lastDoorEventAt;
+        $this->lastPresenceEventAt = $lastPresenceEventAt;
+        $this->lastDoorValue       = $lastDoorValue;
+        $this->lastPresenceValue   = $lastPresenceValue;
     }
 
     /** @return array<string,mixed> */
@@ -70,6 +88,10 @@ final class IotSession
             'last_open_at'     => $this->lastOpenAt,
             'last_close_at'    => $this->lastCloseAt,
             'last_absent_since'=> $this->lastAbsentSince,
+            'last_door_event_at'     => $this->lastDoorEventAt,
+            'last_presence_event_at' => $this->lastPresenceEventAt,
+            'last_door_value'        => $this->lastDoorValue,
+            'last_presence_value'    => $this->lastPresenceValue,
         ];
     }
 }

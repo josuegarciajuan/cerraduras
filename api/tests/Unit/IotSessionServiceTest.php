@@ -18,6 +18,7 @@ require __DIR__ . '/../../src/Support/Autoload.php';
 
 use App\Domain\Locks\AccessEvent;
 use App\Domain\Locks\AccessEventRepositoryInterface;
+use App\Domain\Presence\ExitActionService;
 use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSession;
 use App\Domain\Presence\IotSessionRepositoryInterface;
@@ -51,6 +52,23 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
         $this->events[] = compact('roomId','sensor','value','provider','occurredAt','sourceEventId');
         return $id;
     }
+
+    public function insertOrGet(int $roomId, string $sensor, string $value, string $provider,
+                                string $occurredAt, ?string $sourceEventId, ?array $meta): array
+    {
+        $isNew = true;
+        if ($this->nextDuplicate) { $this->nextDuplicate = false; $isNew = false; }
+        $id = count($this->events) + 1;
+        $this->events[] = compact('roomId','sensor','value','provider','occurredAt','sourceEventId');
+        return ['event' => new \App\Domain\Presence\PresenceEvent(
+            $id, $roomId, $sensor, $value, $provider, $occurredAt, $occurredAt,
+            $sourceEventId, $meta,
+            \App\Domain\Presence\SensorEventDecision::fingerprint($roomId, $sensor, $value, $occurredAt)
+        ), 'is_new' => $isNew];
+    }
+
+    public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
+
     public function listForRoom(int $roomId, int $limit = 20): array { return []; }
 }
 
@@ -68,6 +86,33 @@ final class FakeIotSessionRepo implements IotSessionRepositoryInterface
     {
         $this->upserts[] = clone $s;
         $this->sessions[$s->roomId] = $s;
+    }
+    // F41 interface additions
+    public function beginTransaction(): void {}
+    public function commit(): void {}
+    public function rollBack(): void {}
+    public function lockByRoomId(int $roomId): IotSession
+    {
+        if (!isset($this->sessions[$roomId])) {
+            $this->sessions[$roomId] = new IotSession(
+                0, $roomId, null,
+                IotSession::DOOR_UNKNOWN, IotSession::PRESENCE_UNKNOWN,
+                null, null, null, null, ''
+            );
+        }
+        return $this->sessions[$roomId];
+    }
+    public function updateState(IotSession $s): void
+    {
+        $this->upserts[] = clone $s;
+        $this->sessions[$s->roomId] = $s;
+    }
+    public function markExitEvaluated(int $roomId, string $closeAtUtc): bool
+    {
+        if (isset($this->sessions[$roomId])) {
+            $this->sessions[$roomId]->exitEvaluatedAt = $closeAtUtc;
+        }
+        return true;
     }
 }
 
@@ -107,7 +152,12 @@ final class FakeStayRepoF8 implements StayRepositoryInterface
 
     public function insertReserved(int $r, int $d, array $refs): int { return 0; }
     public function findById(int $id): ?Stay { return $this->byId[$id] ?? null; }
-    public function findActiveForRoom(int $r): ?Stay { return $this->activeByRoom[$r] ?? null; }
+    public function findActiveForRoom(int $r): ?Stay
+    {
+        $s = $this->activeByRoom[$r] ?? null;
+        return ($s !== null && $s->isActive()) ? $s : null;
+    }
+    public function lockActiveForRoom(int $r): ?Stay { return $this->findActiveForRoom($r); }
     public function listFiltered(array $f, int $l=50, int $o=0): array { return []; }
     public function update(int $id, array $fields, ?string $expectedStatus = null): int
     {
@@ -117,6 +167,7 @@ final class FakeStayRepoF8 implements StayRepositoryInterface
             foreach ($fields as $k => $v) {
                 if ($k === 'status') $s->status = (string)$v;
                 if ($k === 'exit_detected_at') $s->exitDetectedAt = $v;
+                if ($k === 'entry_confirmed_at') $s->entryConfirmedAt = $v;
             }
         }
         return 1;
@@ -152,10 +203,15 @@ $rtRepo->byId[1] = $rt;
 $roomRepo->byId[1] = new Room(1, '101', 1, null, Room::STATUS_OCCUPIED, true, null);
 
 $stayMachine   = new StayStateMachine($stayRepo);
-$exitEvaluator = new ExitRuleEvaluator($iotRepo, $roomRepo, $rtRepo);
+$exitEvaluator = new ExitRuleEvaluator($iotRepo, $roomRepo, $rtRepo, $stayRepo);
+$exitAction    = new ExitActionService(
+    $roomRepo, $iotRepo, $stayMachine, $evRepo, null, null, null,
+    $stayRepo, $exitEvaluator, $rtRepo
+);
 
 $svc = new IotSessionService(
-    $presRepo, $iotRepo, $roomRepo, $rtRepo, $stayRepo, $stayMachine, $evRepo, $exitEvaluator
+    $presRepo, $iotRepo, $roomRepo, $rtRepo, $stayRepo, $stayMachine, $evRepo, $exitEvaluator,
+    null, $exitAction
 );
 
 // ============================================================================
@@ -234,11 +290,13 @@ else bad('T5: state not mutated on duplicate');
 //     Setup: door open at T=0, close at T=1, absence starts at T=2, now at T=8
 // ============================================================================
 
-// Add an active OCCUPIED stay
+// Add an active OCCUPIED stay already confirmed inside (F41). The exit rule
+// needs a new opening AFTER entry_confirmed_at, so the OPEN below is the exit.
 $stay = new Stay(99, 1, Stay::STATUS_OCCUPIED, 60,
     '2026-04-28 09:00:00.000', '2026-04-28 09:01:00.000', null, null,
     null, null, null, null, null, null, null, null, null,
-    '2026-04-28 09:00:00.000', '2026-04-28 09:00:00.000'
+    '2026-04-28 09:00:00.000', '2026-04-28 09:00:00.000',
+    '2026-04-28 10:00:00.000'   // entry_confirmed_at (before the exit opening)
 );
 $stayRepo->byId[99]     = $stay;
 $stayRepo->activeByRoom[1] = $stay;
@@ -255,10 +313,11 @@ $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::
 Clock::freeze(new DateTimeImmutable('2026-04-28T10:01:02Z', new DateTimeZone('UTC')));
 $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-04-28T10:01:02Z', 'evt-exit-2'), 'corr-exit-2');
 
-// Advance clock to T=8 (> gap=5s from ABSENT) → exit rule should fire
+// Advance clock to T=8 (>= gap=5s from ABSENT). A repeated ABSENT is a NOOP
+// (same value), so the periodic exit-scan path is what fires here (F41).
 Clock::freeze(new DateTimeImmutable('2026-04-28T10:01:08Z', new DateTimeZone('UTC')));
 $evCountBefore = count($evRepo->events);
-$svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-04-28T10:01:08Z', 'evt-exit-3'), 'corr-exit-3');
+$exitAction->executeIfPending(1, 'corr-exit-3');
 
 if ($stay->status === Stay::STATUS_EXITED) ok('T6: exit rule: stay→EXITED');
 else bad('T6: exit rule: stay→EXITED', "got status={$stay->status}");
@@ -281,6 +340,8 @@ else bad('T6: exit rule: exit_evaluated_at set in session');
 $evCountAfter = count($evRepo->events);
 Clock::freeze(new DateTimeImmutable('2026-04-28T10:01:10Z', new DateTimeZone('UTC')));
 $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-04-28T10:01:10Z', 'evt-exit-4'), 'corr-exit-4');
+// Periodic worker runs again: the stay is already EXITED, so nothing fires.
+$exitAction->executeIfPending(1, 'corr-exit-4b');
 $newAutoLock = array_filter($evRepo->events, fn($e) => $e['k'] === AccessEvent::KIND_AUTO_LOCK);
 if (count($newAutoLock) === count($autoLockEvents)) ok('T7: exit rule idempotent (no re-fire when EXITED)');
 else bad('T7: exit rule idempotent', 'AUTO_LOCK fired again');

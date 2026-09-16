@@ -9,6 +9,14 @@ bash /root/cerraduras/start-all.sh
 Esto levanta:
 - **API** en `0.0.0.0:8080` → `https://<api-host>/api/v1/health`
 - **WS-VB6** en `0.0.0.0:8081` → `http://92.113.151.136:8081/ws-vb6/v1/health`
+- **Workers** de fondo (instancia única): `exit-scan`, `overstay-scan`,
+  `outbox-worker`, `anomaly-scanner`, `presence-poller-manager`,
+  `tuya-pulsar-consumer`.
+
+`start-all.sh` ejecuta primero una parada determinista, de modo que es
+**idempotente**: dos ejecuciones seguidas dejan exactamente una instancia por
+worker, sin wrappers huérfanos. Cada worker corre en un wrapper supervisado
+(`setsid`) con su PID en `api/run/<worker>.pid`.
 
 ## Requisitos previos (solo la primera vez)
 
@@ -20,9 +28,19 @@ sudo ufw allow 8081/tcp
 ## Parada
 
 ```bash
+# Parada determinista de los workers (TERM → espera → KILL, borra PID files).
+# NO toca los servidores `php -S` de API/WS-VB6.
+bash /root/cerraduras/stop-all.sh
+
+# Parada de los servidores web (cuando se quiera bajar todo):
 pkill -f "php -S.*8080"
 pkill -f "php -S.*8081"
 ```
+
+`stop-all.sh` mata primero los wrappers `while true; do php bin/...` (para que
+no relancen a sus hijos), luego los procesos hijo, y escala a `KILL` si no
+terminan en `STOP_WAIT_SECS` (por defecto 6 s). Los patrones están acotados a
+`bin/` y a los nombres de worker del proyecto.
 
 ## URLs de los servicios
 

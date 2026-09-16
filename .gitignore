@@ -17,6 +17,9 @@ node_modules/
 **/logs/*
 !**/logs/.gitkeep
 
+# Runtime PID files (workers)
+/api/run/
+
 # OS / editors
 .DS_Store
 Thumbs.db
