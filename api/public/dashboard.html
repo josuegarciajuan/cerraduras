@@ -1865,7 +1865,8 @@ function updateHealthBanner(data) {
   const q = (data && data.tuya_quota) || null;
   let msg = '';
   if (q && q.state === 'exhausted') {
-    msg = '⚠️ Sensor de presencia no disponible: cuota Tuya agotada.';
+    msg = '⚠️ Cuota Tuya agotada: la verificación de dispositivos Tuya no está disponible ' +
+          '(la puerta y la presencia siguen en tiempo real por push).';
   } else if (data && data.door_open_too_long) {
     msg = '⚠️ Puerta abierta demasiado tiempo.';
   }
