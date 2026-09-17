@@ -116,6 +116,28 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F44 Tiempo real sensores + presencia bajo demanda** | **BLOCK 35** | **Completado** |
 | **F44+ Salida fiable + prueba de paseo** | **BLOCK 33/35** | **Completado** |
 | **F46 Supervisión systemd de workers + latencia SSE** | **BLOCK 35** | **Completado** |
+| **F47 Latencia medible + robustez recepción Tuya + arranque consistente** | **BLOCK 36** | **Completado** |
+
+### F47 — Latencia medible, robustez de recepción y arranque consistente (RF-53/54/55/56)
+
+- **Sonda sin cuota**: `api/bin/presence-latency-probe.js` cruza SSE local + `presence_events`
+  y marcas físicas para separar `físico→dispositivo`, `dispositivo→BD` y `BD→SSE`. **No** llama
+  a la API de Tuya (cero cuota). El sensor de puerta es el grupo de control.
+- **Atribución**: si la puerta reporta en ~1 s y la presencia en 15–20 s, el retardo es del
+  sensor de presencia; si `received_at - tuya_t` fuese grande, sería Tuya; si la fila llega a
+  tiempo y el panel no, sería el panel.
+- **Consumer Pulsar robusto**: reconexión base 1 s (antes 5 s), resync por hueco real
+  (`REAL_GAP_MS`) sin el bloqueo ciego de 20 s, watchdog de silencio (`SILENCE_MS`) con devices
+  rastreados, log de latencia `recv - tuya_t` y estado en `api/run/pulsar-consumer-status.json`.
+  Todo por Message Service (sin cuota IoT Core).
+- **Arranque consistente (RF-55)**: `start-all.sh` usa `API_WORKERS=16` en el fallback (antes 8),
+  alineado con `cerraduras-api.service`, y verifica el pool tras el arranque. Evita reintroducir
+  la degradación SSE de F46.
+- **Puerta (RF-56)**: instrumentado `[QR] Encolado→POST` y prioridad del QR en el `loop()` del
+  firmware (no se inician health/heartbeat/announce con un QR pendiente). **No** se habilita
+  reuso de TLS (historial de cuelgues).
+- **Tests**: BLOCK 36 del runner + `tests/Unit/latency-probe.test.js` y ampliación de
+  `tests/Unit/tuya-pulsar-consumer.test.js` (invocados con `node`, sin cuota).
 
 ### F44 — Tiempo real de sensores y presencia bajo demanda (RF-50/51/52)
 

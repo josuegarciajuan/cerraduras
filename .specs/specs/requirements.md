@@ -654,3 +654,65 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-52.4.1**: El panel debe ofrecer un modo **prueba de paseo** guiado que muestre en vivo `presence_state` mientras el técnico se coloca en el límite deseado y luego se aleja, para elegir empíricamente `far_detection` (respetando `dp_caps`; mínimo efectivo 150 cm en 24G V3) y `sensitivity`.
 - **RF-52.4.2**: El modo prueba de paseo aplica los cambios en vivo (`persist:false`) y solo persiste el snapshot con la acción explícita de guardar; debe respetar el cooldown de cuota de la calibración.
 - **RF-52.4.3**: El 24G V3 declara `target_dis_closest` pero **no reporta distancia utilizable** (siempre 0). Ninguna decisión de presencia puede basarse en ese DP ni prometerse umbrales métricos por distancia con este modelo.
+
+# Fase 47: Diagnóstico de latencia end-to-end, robustez de recepción Tuya y arranque consistente
+
+## RF-53: Medición de latencia end-to-end sin consumo de cuota
+
+### RF-53.1: Sonda de latencia medible
+- **RF-53.1.1**: Debe existir una sonda que, para cada cambio observable de estado de sensor (`presence_events` y `access_events`), registre: el sello del dispositivo (`tuya_t`), `occurred_at`, `received_at`, el `server_ts` del evento SSE y el instante físico marcado por el operador.
+- **RF-53.1.2**: La sonda debe poder marcar eventos físicos (p. ej. `PUERTA_ABRE`, `DELANTE_SENSOR`, `ALEJO`) para comparar el instante real con el de llegada.
+- **RF-53.1.3**: La salida debe permitir calcular, por evento, los tramos `físico→dispositivo`, `dispositivo→BD`, `BD→SSE` y total.
+
+### RF-53.2: Sin consumo de cuota IoT Core
+- **RF-53.2.1**: La sonda no debe realizar ninguna llamada a la API de Tuya (IoT Core); solo lee SSE y base de datos.
+- **RF-53.2.2**: La atribución sensor vs. Tuya vs. panel no puede depender de sondeos REST a Tuya.
+
+### RF-53.3: Grupo de control con el sensor de puerta
+- **RF-53.3.1**: El sensor de puerta (`PROXIMITY`) actúa como grupo de control al compartir el mismo camino Tuya (Message Service → consumer → webhook → BD → SSE) y tener un instante físico observable.
+- **RF-53.3.2**: Si la puerta reporta en ~segundos y la presencia tarda un orden de magnitud más, el retardo se atribuye al sensor de presencia; si ambos tardan igual, la causa está en Tuya o en el panel.
+
+## RF-54: Salud y auto-recuperación del consumer Pulsar
+
+### RF-54.1: Reconexión rápida acotada
+- **RF-54.1.1**: La reconexión base del consumer debe ser ≤1 s, conservando el backoff exponencial hasta 60 s ante fallos persistentes.
+- **RF-54.1.2**: El `jitter` debe mantenerse para no sincronizar reintentos.
+
+### RF-54.2: Resync según hueco real
+- **RF-54.2.1**: El resync al (re)conectar debe ejecutarse cuando el hueco de conexión haya sido real (duración registrada), no cuando es un parpadeo, sin el bloqueo ciego de 20 s.
+- **RF-54.2.2**: El resync sigue reenviando por el pipeline de ingesta (deduplicación incluida).
+
+### RF-54.3: Watchdog de silencio del consumer
+- **RF-54.3.1**: Si existen devices rastreados y no se recibe ningún mensaje del WS durante un umbral configurable, el consumer debe forzar la reconexión.
+- **RF-54.3.2**: El watchdog no debe dispararse cuando no hay devices rastreados.
+
+### RF-54.4: Observabilidad
+- **RF-54.4.1**: El consumer debe registrar la latencia de recepción (`recv - tuya_t`) en milisegundos.
+- **RF-54.4.2**: El consumer debe exponer su salud (`connected`, `last_msg_at`) en un fichero de estado legible sin endpoint nuevo.
+
+### RF-54.5: Sin cuota
+- **RF-54.5.1**: Ninguna de estas mejoras puede consumir cuota de IoT Core (el Message Service es un canal distinto).
+
+## RF-55: Arranque consistente (sin divergencia de workers)
+
+### RF-55.1: Fuente única del número de workers
+- **RF-55.1.1**: El número de workers del API (16) no puede divergir entre `start-all.sh` y `cerraduras-api.service`.
+- **RF-55.1.2**: El fallback manual de `start-all.sh` debe usar exactamente los mismos valores que los units systemd.
+
+### RF-55.2: Verificación post-arranque
+- **RF-55.2.1**: `start-all.sh` debe comprobar tras el arranque que el pool del API coincide con el esperado y avisar (sin abortar) si no.
+- **RF-55.3.1**: El cambio no debe reintroducir la degradación del SSE de F46 (pool agotado por SSE zombie).
+
+## RF-56: Latencia del mecanismo de puerta (sin reuso de TLS)
+
+### RF-56.1: Medición en firmware
+- **RF-56.1.1**: El firmware debe registrar el tiempo desde el encolado del QR (callback USB) hasta el inicio del POST (`scan→post`) y el tiempo del POST (`postMs`), para separar espera de bucle de handshake.
+- **RF-56.1.2**: La medición debe ser observable por el monitor serie.
+
+### RF-56.2: Prioridad del QR
+- **RF-56.2.1**: Con un QR pendiente, el bucle no debe iniciar tareas TLS de mantenimiento (health/heartbeat/announce) que retrasen la validación.
+- **RF-56.2.2**: El fix debe ser lógica de bucle, sin cambios en la configuración TLS.
+
+### RF-56.3: No reintroducir reuso de TLS
+- **RF-56.3.1**: No se debe habilitar `setReuse(true)` sobre el cliente TLS compartido si puede reintroducir cuelgues.
+- **RF-56.3.2**: Si tras medir el handshake sigue siendo dominante, cualquier alternativa se decide con el operador y sin reuso de TLS.

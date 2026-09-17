@@ -2119,3 +2119,74 @@ activo tras consolidar + ABSENT.
 | F44-08 | BLOCK 35 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
 | F44-09 | Ciclo de salida no detiene muestreo | RF-51.1.6 | `bin/tuya-presence-poller.js` | unit JS (BLOCK 33) |
 | F44-10 | Modo prueba de paseo | RF-52.4 | `public/dashboard.html` | unit JS + BLOCK 35 |
+
+---
+
+# Fase 47 — Diagnóstico de latencia, robustez de recepción Tuya y arranque consistente
+
+## F47a: Arranque consistente (RF-55)
+
+### TSK-F47-01: Alinear pool de workers y verificar
+- **Cambio**: `start-all.sh` — fallback manual del API a `PHP_CLI_SERVER_WORKERS=16` (mismo
+  valor que `cerraduras-api.service`), comentario de acoplamiento con F46 y comprobación
+  post-arranque del número de procesos `php -S 0.0.0.0:8080` (avisa, no aborta).
+- **Test propio**: arranque manual + `pgrep -fc "php -S 0.0.0.0:8080"` == 16.
+
+## F47b: Sonda de latencia sin cuota (RF-53)
+
+### TSK-F47-02: `bin/presence-latency-probe.js`
+- **Cambio**: nuevo script Node (sin deps nuevas) que cruza SSE, `presence_events`/
+  `access_events` y marcas físicas; exporta funciones puras (`parseMarker`, `formatDelta`)
+  para tests. No realiza llamadas a Tuya.
+- **Test propio**: `tests/Unit/latency-probe.test.js` (parseo de marcas y deltas).
+
+### TSK-F47-03: Runbook de prueba presencial
+- **Cambio**: `docs/ops.md` — protocolo de marcas (`PUERTA_ABRE`, `DELANTE_SENSOR`,
+  `QUIETO`, `ALEJO`), uso de la sonda y del sensor de puerta como control.
+- **Test propio**: ejecución real durante la prueba (evidencia en informe).
+
+## F47c: Robustez del consumer (RF-54)
+
+### TSK-F47-04: Reconexión, resync por hueco y watchdog
+- **Cambio**: `bin/tuya-pulsar-consumer/index.js` — base de reconexión 1 s; `disconnectedAt`
+  y resync por hueco real; watchdog de silencio con devices rastreados; log de latencia
+  `recv - tuya_t`; fichero `run/pulsar-consumer-status.json`. Funciones puras exportadas
+  (`shouldResync`, `silenceExceeded`).
+- **Test propio**: ampliar `tests/Unit/tuya-pulsar-consumer.test.js`.
+
+### TSK-F47-05: Estado del consumer en `system-status`
+- **Cambio**: `public/index.php` — `pulsar-consumer` pasa a `degraded` si el fichero de estado
+  indica desconexión o silencio; opcional entrada `api-server` (`expected=16`).
+- **Test propio**: BLOCK 36 del runner (`system-status` con `healthy`).
+
+## F47d: Latencia de puerta (RF-56)
+
+### TSK-F47-06: Instrumentar `scan→post` en firmware
+- **Cambio**: `docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino` — registrar
+  el instante de encolado del QR y log `[QR] Encolado→POST: %lu ms`; conservar el log de
+  validación. Sin cambios de TLS.
+- **Test propio**: medición manual con monitor serie (antes/después).
+
+### TSK-F47-07: Prioridad de QR en el bucle
+- **Cambio**: mismo sketch — si `hasPending`, procesar el QR antes de iniciar
+  health/heartbeat/announce (reordenación del `loop()`), sin reuso de TLS.
+- **Test propio**: medición manual de `scan→post` y `postMs` con QR durante heartbeat.
+
+## F47e: Cierre
+
+### TSK-F47-08: Runner y regresión
+- **Cambio**: `bin/run-tests.sh` (BLOCK 36), `AGENTS.md` (tabla + sección F47).
+- **Test propio**: `bash bin/run-tests.sh` con 0 failures.
+
+## Tabla resumen F47
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F47-01 | Alinear pool de workers + verificación | RF-55 | `start-all.sh` | arranque + pgrep |
+| F47-02 | Sonda de latencia sin cuota | RF-53 | `bin/presence-latency-probe.js` | unit JS |
+| F47-03 | Runbook prueba presencial | RF-53 | `docs/ops.md` | prueba real |
+| F47-04 | Reconexión/resync/watchdog consumer | RF-54 | `bin/tuya-pulsar-consumer/index.js` | unit JS |
+| F47-05 | Estado consumer en `system-status` | RF-54.4 | `public/index.php` | BLOCK 36 |
+| F47-06 | Instrumentar `scan→post` firmware | RF-56.1 | sketch ESP32 | serie (manual) |
+| F47-07 | Prioridad de QR en bucle | RF-56.2 | sketch ESP32 | serie (manual) |
+| F47-08 | BLOCK 36 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
