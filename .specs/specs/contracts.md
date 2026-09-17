@@ -1096,6 +1096,10 @@ es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
 }
 ```
 
+> **F48/RF-57.2.2**: `recent_presence` (tanto en `/live` como en el evento SSE `state`)
+> expone **solo hechos aplicados** (`presence_events.applied = 1`). Los descartados
+> (`duplicate`/`stale`/`noop`/`no_context`) no deben alimentar la coreografía del panel.
+
 `exit_deadline` con conteo activo (fragmento):
 
 ```json

@@ -817,7 +817,26 @@ function renderSensorSvg() {
     _lastDoorOpenEventMs = latestOpenMs;
     _doorPulseUntil = Math.max(_doorPulseUntil, latestOpenMs + DOOR_PULSE_HOLD_MS);
   }
-  const doorOpen = (realDoor === 'OPEN') || (Date.now() < _doorPulseUntil);
+
+  // F48: apertura optimista desde el COMANDO de apertura (access_events OPEN OK).
+  // El evento del magneto Tuya puede tardar segundos; el comando es instantáneo.
+  // Mostramos la puerta abierta desde el comando hasta que el magneto confirme un
+  // CLOSED posterior (o 12 s de timeout si nunca llega).
+  let latestAccessOpenMs = 0;
+  (lastLiveData.recent_events || []).forEach(function (e) {
+    if (e.kind !== 'OPEN' || e.result !== 'OK') return;
+    latestAccessOpenMs = Math.max(latestAccessOpenMs, toMsDoor(e.occurred_at));
+  });
+  let latestDoorClosedMs = 0;
+  (lastLiveData.recent_presence || []).forEach(function (e) {
+    if (e.sensor !== 'PROXIMITY' || e.value !== 'CLOSED') return;
+    latestDoorClosedMs = Math.max(latestDoorClosedMs, toMsDoor(e.occurred_at));
+  });
+  const optimisticOpen = latestAccessOpenMs > 0
+    && latestAccessOpenMs > latestDoorClosedMs
+    && (Date.now() - latestAccessOpenMs) < 12000;
+
+  const doorOpen = (realDoor === 'OPEN') || (Date.now() < _doorPulseUntil) || optimisticOpen;
 
   // ── Door animation ──
   const doorG = document.getElementById('door-group');

@@ -64,7 +64,7 @@ final class SensorEventDecision
         IotSession $session,
         bool $duplicateFingerprint = false,
         bool $entryWindowActive = true,
-        bool $stayActive = true
+        bool $insideNoExitCycle = true
     ): string {
         if ($duplicateFingerprint) {
             return self::DUPLICATE;
@@ -106,7 +106,7 @@ final class SensorEventDecision
             && $value === PresenceEvent::VALUE_PRESENT
         ) {
             $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
-            if (!self::presenceCredible($raw, $entryWindowActive, $stayActive)) {
+            if (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
                 return self::NO_CONTEXT;
             }
         }
@@ -115,24 +115,26 @@ final class SensorEventDecision
     }
 
     /**
-     * Pure (F48/RF-57): ¿es creíble un PRESENT de presencia dado el contexto?
+     * Pure (F48/RF-57 v2): ¿es creíble un PRESENT de presencia dado el contexto?
      *
-     * - `move` (movimiento) NO respeta `far_detection` en estos 24G: dispara desde
-     *   el pasillo/exterior. Solo se acepta dentro de la ventana de entrada.
-     * - Cualquier PRESENT exige contexto (ventana de entrada o estancia activa):
-     *   evita presencia fantasma en una habitación FREE.
+     * Un PRESENT (`presence` o `move`) solo es creíble si:
+     *  - `$entryWindowActive`: hay una apertura acreditada reciente y la entrada
+     *    **aún no está confirmada** (el huésped está entrando), o
+     *  - `$insideNoExitCycle`: hay estancia confirmada y **ninguna apertura
+     *    posterior** a la confirmación (`last_open_at < entry_confirmed_at`).
+     *
+     * Con esto, tras un ciclo de salida (apertura posterior a la confirmación) la
+     * presencia del pasillo (que en estos 24G no respeta `far_detection`) **no**
+     * puede re-afirmar `PRESENT`. En habitación FREE sin apertura tampoco.
      *
      * `$rawValue` es `tuya_raw_val` ('presence'|'move'|'none') o '' si no aplica.
      */
     public static function presenceCredible(
         string $rawValue,
         bool $entryWindowActive,
-        bool $stayActive
+        bool $insideNoExitCycle
     ): bool {
-        if ($rawValue === 'move' && !$entryWindowActive) {
-            return false;
-        }
-        return $entryWindowActive || $stayActive;
+        return $entryWindowActive || $insideNoExitCycle;
     }
 
     /**

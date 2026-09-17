@@ -128,7 +128,7 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
 
     public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
 
-    public function listForRoom(int $roomId, int $limit = 20): array { return []; }
+    public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array { return []; }
     /** @param array<string,mixed> $filters */
     public function listFiltered(array $filters, int $limit = 50): array { return []; }
 }

@@ -2236,6 +2236,17 @@ activo tras consolidar + ABSENT.
   `resolveEntryWindowSeconds()`, `hasActiveStay()`; se pasan a `decide()`.
 - **Test propio**: unit JS/PHP puros + regresión BLOCK 1.
 
+### TSK-F48-04: `recent_presence` solo aplicados (bug)
+- **Cambio**: `PresenceEventRepositoryInterface::listForRoom(..., bool $appliedOnly=false)`,
+  `PresenceEventRepository` (`AND applied = 1`), `RoomLiveController` (true) y
+  `EventStreamController::fetchRecentPresence` (`AND applied = 1`).
+- **Test propio**: unit `IotSessionServiceTest`/`AbsenceTimerTest` (fakes compatibles) + regresión.
+
+### TSK-F48-05: Apertura optimista en el panel (latencia percibida)
+- **Cambio**: `public/dashboard.html` — `renderSensorSvg()` mantiene la puerta abierta
+  desde el `OPEN` de acceso (`recent_events`) hasta el `CLOSED` del magneto o 12 s.
+- **Test propio**: verificación manual + regresión.
+
 ### TSK-F48-03: Contrato y docs
 - **Cambio**: `contracts.md` (`no_context` en `applied`/`discard_reason`),
   `requirements.md` (RF-57), `design.md` (§14.6), `docs/ops.md`.
@@ -2248,3 +2259,5 @@ activo tras consolidar + ABSENT.
 | F48-01 | Decisión pura de credibilidad | RF-57.1/57.2 | `SensorEventDecision.php` | unit PHP |
 | F48-02 | Contexto en `IotSessionService` | RF-57.2/57.3 | `IotSessionService.php` | unit + regresión |
 | F48-03 | Contrato y documentación | RF-57.3 | `contracts.md`, `design.md`, `ops.md` | regresión |
+| F48-04 | `recent_presence` solo aplicados | RF-57.2.2 | `PresenceEventRepository.php`, `RoomLiveController.php`, `EventStreamController.php` | unit + regresión |
+| F48-05 | Apertura optimista del panel | RF-57.5 | `public/dashboard.html` | manual + regresión |

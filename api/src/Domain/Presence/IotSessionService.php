@@ -132,17 +132,17 @@ final class IotSessionService
                 // F48 (RF-57): contexto para la credibilidad de presencia. Solo se
                 // calcula para PRESENT de presencia (evita consultas en el resto).
                 $entryWindowActive = true;
-                $stayActive        = true;
+                $insideNoExitCycle = true;
                 if ($provider === PresenceEvent::PROVIDER_TUYA
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                     && $value === PresenceEvent::VALUE_PRESENT
                 ) {
-                    $entryWindowActive = $this->isEntryWindowActive($room, $session, $now);
-                    $stayActive        = $this->hasActiveStay($roomId);
+                    [$entryWindowActive, $insideNoExitCycle] =
+                        $this->presenceContext($room, $session, $now);
                 }
 
                 $decision = SensorEventDecision::decide(
-                    $event, $session, !$isNewFact, $entryWindowActive, $stayActive
+                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle
                 );
 
                 if ($decision !== SensorEventDecision::APPLY) {
@@ -426,19 +426,34 @@ final class IotSessionService
     }
 
     /**
-     * F48 (RF-57): ¿hay un ciclo de apertura acreditado reciente? Se usa la
-     * ventana de entrada del tipo de habitación (RF-51.3 / F44).
+     * F48 (RF-57): contexto de credibilidad de presencia para la habitación.
+     *
+     * @return array{0:bool,1:bool} [entryWindowActive, insideNoExitCycle]
      */
-    private function isEntryWindowActive(Room $room, IotSession $session, \DateTimeImmutable $now): bool
+    private function presenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
     {
-        if ($session->lastOpenAt === null) {
-            return false;
+        $activeStay       = $this->stays->findActiveForRoom($room->id);
+        $entryConfirmedAt = $activeStay !== null ? $activeStay->entryConfirmedAt : null;
+        $lastOpenTs       = $session->lastOpenAt !== null
+            ? strtotime($session->lastOpenAt . ' UTC')
+            : null;
+        $nowTs            = $now->getTimestamp();
+
+        // Entrada en curso: hay apertura reciente y la entrada AÚN no está confirmada.
+        $entryWindowActive = ($activeStay === null || $entryConfirmedAt === null)
+            && $lastOpenTs !== null
+            && ($nowTs - $lastOpenTs) <= $this->resolveEntryWindowSeconds($room);
+
+        // Huésped dentro: estancia confirmada y sin apertura posterior a la confirmación.
+        $insideNoExitCycle = false;
+        if ($entryConfirmedAt !== null) {
+            $confTs = strtotime($entryConfirmedAt . ' UTC');
+            if ($confTs !== false) {
+                $insideNoExitCycle = ($lastOpenTs === null || $lastOpenTs < $confTs);
+            }
         }
-        $openTs = strtotime($session->lastOpenAt . ' UTC');
-        if ($openTs === false) {
-            return false;
-        }
-        return ($now->getTimestamp() - $openTs) <= $this->resolveEntryWindowSeconds($room);
+
+        return [$entryWindowActive, $insideNoExitCycle];
     }
 
     private function resolveEntryWindowSeconds(Room $room): int
@@ -448,12 +463,6 @@ final class IotSessionService
             return (int) $roomType->presenceEntryWindowSeconds;
         }
         return 90;
-    }
-
-    /** F48 (RF-57): ¿hay una estancia activa en la habitación? (lectura sin lock) */
-    private function hasActiveStay(int $roomId): bool
-    {
-        return $this->stays->findActiveForRoom($roomId) !== null;
     }
 
     private function safeRollback(): void

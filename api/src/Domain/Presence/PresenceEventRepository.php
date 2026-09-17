@@ -142,12 +142,14 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
     }
 
     /** @return list<PresenceEvent> */
-    public function listForRoom(int $roomId, int $limit = 20): array
+    public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array
     {
+        // F48: `appliedOnly` excluye hechos descartados (ver interfaz).
         $stmt = $this->pdo->prepare(
             'SELECT ' . self::EVENT_COLUMNS . '
              FROM presence_events
-             WHERE room_id = :rid
+             WHERE room_id = :rid'
+             . ($appliedOnly ? ' AND applied = 1' : '') . '
              ORDER BY occurred_at DESC, id DESC
              LIMIT :lim'
         );

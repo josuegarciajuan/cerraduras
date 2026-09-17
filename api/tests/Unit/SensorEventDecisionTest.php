@@ -181,13 +181,30 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::NO_CONTEXT) pass('F48: presence sin estancia ni ventana → no_context (contención)');
 else fail('F48: presence sin contexto debería ser no_context, got ' . $decision);
 
-// presence con estancia activa (sin ventana) → se aplica.
+// presence con entrada en curso (ventana) → se aplica.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, true, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F48: presence dentro de la ventana de entrada → apply');
+else fail('F48: presence con ventana debería aplicar, got ' . $decision);
+
+// presence con huésped dentro confirmado y SIN ciclo de salida → se aplica.
 $session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
 $decision = SensorEventDecision::decide(
     presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, true
 );
-if ($decision === SensorEventDecision::APPLY) pass('F48: presence con estancia activa → apply');
-else fail('F48: presence con estancia debería aplicar, got ' . $decision);
+if ($decision === SensorEventDecision::APPLY) pass('F48 v2: presence con estancia confirmada y sin ciclo de salida → apply');
+else fail('F48 v2: presence dentro (sin ciclo) debería aplicar, got ' . $decision);
+
+// F48 v2: tras un ciclo de salida (sin ventana ni contexto dentro) → no_context.
+// Es el caso real del pasillo: la puerta abrió/cerró (salida) y el radar sigue viendo.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F48 v2: move tras ciclo de salida → no_context');
+else fail('F48 v2: move tras salida debería ser no_context, got ' . $decision);
 
 // ABSENT (`none`) sin contexto → siempre se aplica (poder limpiar estado).
 $session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');
