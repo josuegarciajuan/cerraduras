@@ -2178,6 +2178,19 @@ activo tras consolidar + ABSENT.
 - **Cambio**: `bin/run-tests.sh` (BLOCK 36), `AGENTS.md` (tabla + sección F47).
 - **Test propio**: `bash bin/run-tests.sh` con 0 failures.
 
+### TSK-F47-10: Keep-alive TLS en el firmware (RF-56.4)
+- **Motivo**: el handshake TLS por petición costaba ~1,8 s (medido 2026-09-17,
+  `Validación HTTP 2133 ms`; Apache `KeepAliveTimeout 5` forzaba conexión nueva).
+- **Cambio**: `docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino` —
+  `http.setReuse(httpReuseEnabled)` (ON) con salvaguardas: timeout de socket 4 s,
+  reset de socket si hueco > 60 s, reintento único en el QR con conexión nueva,
+  log `reuse=0/1`, y `noteHttpResult()` que desactiva el reuse tras 3 fallos.
+- **Servidor**: `KeepAliveTimeout 75` + `MaxKeepAliveRequests 1000` en el vhost
+  `cerraduras.josue.ink-le-ssl.conf` (Apache, fuera del repo).
+- **Test propio**: BLOCK 36.3 (grep de `noteHttpResult` y `setReuse(httpReuseEnabled)`)
+  + medición en serie del `Validación HTTP (ms)` (objetivo ~100-250 ms).
+- **Rollback**: reflashear el binario previo; revertir la línea de Apache.
+
 ### TSK-F47-09 (TEMP): Botonera de marcas en el panel
 - **Motivo**: facilitar la prueba física sin SSH. **Herramienta temporal**.
 - **Cambio**: `public/dashboard.html` — barra `#latency-marker-bar` bajo el croquis,
@@ -2202,3 +2215,4 @@ activo tras consolidar + ABSENT.
 | F47-07 | Prioridad de QR en bucle | RF-56.2 | sketch ESP32 | serie (manual) |
 | F47-08 | BLOCK 36 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
 | F47-09 (TEMP) | Botonera de marcas en el panel | RF-53.1.2 | `public/dashboard.html`, `public/index.php` | BLOCK 36.4 |
+| F47-10 | Keep-alive TLS en firmware + Apache | RF-56.4 | sketch ESP32, vhost Apache | BLOCK 36.3 + serie |

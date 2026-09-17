@@ -45,7 +45,11 @@
  *   B) TWDT arreglado: en core 3.x esp_task_wdt_init() falla por "already
  *      initialized"; se llama esp_task_wdt_reconfigure() para fijar 60 s de verdad.
  *   C) TLS: WiFiClientSecure.setHandshakeTimeout(10) (el default ~120 s supera el
- *      TWDT y reiniciaba) + HTTPClient.setReuse(false).
+ *      TWDT y reiniciaba).
+ *   C2) F47 (2026-09-17): HTTPClient keep-alive ON con salvaguardas (timeout 4 s,
+ *       reset de socket si hueco > 60 s, reintento en QR, reuse OFF automático
+ *       tras 3 fallos). El servidor Apache usa KeepAliveTimeout 75 s. Evita el
+ *       handshake (~1,8 s) en cada petición.
  *   D) v2.1: isJsonResponse() detecta respuestas 200 con HTML (un gate/proxy como
  *      panel-gate delante de la API). Un 200 con HTML NO se da por bueno: se
  *      avisa por serial y, en el announce, se reintenta.
@@ -315,6 +319,19 @@ void ledBlinkDiagnostic(int times) {
   }
 }
 
+// ── F47: keep-alive TLS con salvaguardas ──────────────────────────────────
+// El handshake completo cuesta ~1,8 s en cada petición (medido 2026-09-17). Con
+// reutilización de conexión baja a ~0,1-0,2 s. Salvaguardas anti-cuelgue:
+//   - timeout corto (4 s) → nunca espera indefinida.
+//   - hueco > HTTP_IDLE_RESET_MS → conexión nueva (evita reutilizar socket muerto).
+//   - tras HTTP_REUSE_FAIL_LIMIT fallos → reuse OFF automático (modo seguro).
+// El cliente SOLO se usa desde loop() (nunca desde callbacks USB).
+bool          httpReuseEnabled  = true;
+int           httpReuseFailures = 0;
+unsigned long lastHttpAt        = 0;
+const unsigned long HTTP_IDLE_RESET_MS   = 60000;  // > keep-alive del servidor
+const int           HTTP_REUSE_FAIL_LIMIT = 3;
+
 WiFiClientSecure &apiTlsClient() {
   static WiFiClientSecure client;
   static bool configured = false;
@@ -323,16 +340,38 @@ WiFiClientSecure &apiTlsClient() {
     // v2: el handshake por defecto puede bloquear hasta ~120 s (>> TWDT) y
     // provocar el reinicio por watchdog. Se acota a 10 s para fallar/retentar.
     client.setHandshakeTimeout(10);
+    client.setTimeout(4);   // F47: timeout de socket corto (anti-bloqueo)
     configured = true;
   }
   return client;
 }
 
 void beginApiRequest(HTTPClient &http, const String &url) {
-  // v2: no reutilizar socket/estado entre peticiones (evita cuelgues por
-  // keep-alive con el cliente TLS estático compartido).
-  http.setReuse(false);
-  http.begin(apiTlsClient(), url);
+  WiFiClientSecure &cli = apiTlsClient();
+  // F47: si el hueco es grande, el socket puede estar cerrado por el servidor o
+  // por NAT; cerrar evita reutilizar una conexión muerta.
+  if (lastHttpAt != 0 && (millis() - lastHttpAt) > HTTP_IDLE_RESET_MS) {
+    cli.stop();
+  }
+  http.setReuse(httpReuseEnabled);
+  http.begin(cli, url);
+}
+
+// F47: registra el resultado de una petición. Ante fallos repetidos con
+// keep-alive, lo desactiva en caliente (vuelve al modo seguro anterior).
+void noteHttpResult(bool ok) {
+  lastHttpAt = millis();
+  if (ok) {
+    httpReuseFailures = 0;
+    return;
+  }
+  if (!httpReuseEnabled) return;
+  httpReuseFailures++;
+  if (httpReuseFailures >= HTTP_REUSE_FAIL_LIMIT) {
+    httpReuseEnabled = false;
+    Serial.println("[HTTP] ⚠ fallos con keep-alive → reuse DESACTIVADO (modo seguro)");
+    apiTlsClient().stop();
+  }
 }
 
 // v2.1: detecta respuestas que NO son JSON. Un 200 con HTML significa que hay
@@ -1093,22 +1132,36 @@ void loop() {
 
     Serial.printf("[QR-POST] Body JSON (%d bytes): %s\n", body.length(), body.c_str());
     Serial.printf("══════════════════════════════════════════\n");
-    esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
-    HTTPClient http;
-    beginApiRequest(http, String(API_BASE_URL) + "/api/v1/qr/validate");
-    http.addHeader("Content-Type", "application/json");
-    addDeviceAuth(http);
-    http.setTimeout(4000);
 
-    unsigned long qrStart = millis();
-    int code = http.POST(body);
-    unsigned long qrElapsed = millis() - qrStart;
-    String resp = http.getString();
-    http.end();
-    esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
-    yield();
+    // F47: una sola pasada + reintento con conexión nueva si la reutilizada falló.
+    int code = -1;
+    unsigned long qrElapsed = 0;
+    String resp;
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      bool reused = apiTlsClient().connected();
+      esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
+      HTTPClient http;
+      beginApiRequest(http, String(API_BASE_URL) + "/api/v1/qr/validate");
+      http.addHeader("Content-Type", "application/json");
+      addDeviceAuth(http);
+      http.setTimeout(4000);
 
-    Serial.printf("[QR] Validación HTTP %d (%lu ms) → %s\n", code, qrElapsed, resp.c_str());
+      unsigned long qrStart = millis();
+      code = http.POST(body);
+      qrElapsed = millis() - qrStart;
+      resp = http.getString();
+      http.end();
+      esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
+      yield();
+
+      Serial.printf("[QR] Validación HTTP %d (%lu ms, reuse=%d) → %s\n",
+                    code, qrElapsed, reused ? 1 : 0, resp.c_str());
+      noteHttpResult(code > 0);
+
+      if (code > 0 || attempt == 2) break;
+      Serial.println("[QR] fallo de conexión → reintento con conexión nueva");
+      apiTlsClient().stop();
+    }
 
     if (code == 200) {
       Serial.println(">> ACCESO PERMITIDO — Abriendo relé...");
@@ -1182,6 +1235,7 @@ void loop() {
       int hc = h.GET();
       String hr = h.getString();
       h.end();
+      noteHttpResult(hc > 0);   // F47: alimenta la autoprotección del keep-alive
       esp_task_wdt_reset();  // defensa: feed entre HTTP
       yield();
       Serial.printf("[HB] Health check: HTTP %d — %s\n", hc, hr.c_str());
@@ -1205,6 +1259,7 @@ void loop() {
       int hbCode = hb.POST(hbBody);
       String hbResp = hb.getString();
       hb.end();
+      noteHttpResult(hbCode > 0);   // F47: alimenta la autoprotección del keep-alive
       esp_task_wdt_reset();  // defensa: feed entre HTTP
       yield();
       Serial.printf("[HB] Heartbeat [HTTP %d] %s\n", hbCode, hbResp.c_str());

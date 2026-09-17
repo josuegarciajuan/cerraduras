@@ -2474,19 +2474,29 @@ Archivo: `api/bin/tuya-pulsar-consumer/index.js`.
 **Causa medida**: el backend responde en ~1 ms (`access_events` QR_VALIDATE y OPEN en el
 mismo milisegundo); el retardo percibido está en el firmware ESP32.
 
-- En modo LOCAL el chip acciona el relé tras el 200 de `/api/v1/qr/validate`. Cada petición
-  hace `http.setReuse(false)` sobre un `WiFiClientSecure` estático → handshake TLS completo a
-  `https://cerraduras.josue.ink`, y el `loop()` es secuencial, de modo que un QR escaneado
-  durante la cadena de health/heartbeat/announce espera a que termine (TLS bloqueante +
-  `delay(HTTP_GAP_MS)`).
+- En modo LOCAL el chip acciona el relé tras el 200 de `/api/v1/qr/validate`. El `loop()` es
+  secuencial, de modo que un QR escaneado durante la cadena de health/heartbeat/announce
+  espera a que termine (TLS bloqueante + `delay(HTTP_GAP_MS)`).
 - **Medición primero** (RF-56.1): instrumentar `scan→postMs` (del callback USB al inicio del
   POST) y conservar el `[QR] Validación HTTP %d (%lu ms)`.
 - **Fix seguro** (RF-56.2): prioridad de QR. Si `hasPending`, el bucle procesa el QR antes de
   iniciar cualquier tarea TLS de mantenimiento. Cambio puro de orden del `loop()`, sin tocar
   la configuración TLS.
-- **Prohibido** (RF-56.3): habilitar reuso de TLS sobre el cliente compartido (historial de
-  cuelgues). Si `postMs` (handshake) domina, se decide con el operador una alternativa sin
-  reuso de TLS.
+- **Causa medida (2026-09-17)**: con `http.setReuse(false)` y Apache `KeepAliveTimeout 5`, cada
+  petición hace **handshake TLS completo (~1,8 s)** medido en el ESP32
+  (`[QR] Validación HTTP 200 (2133 ms)`; el backend responde en ~1 ms). El log de Apache
+  confirma peticiones consecutivas separadas ~2 s.
+- **Fix keep-alive** (RF-56.4): `http.setReuse(httpReuseEnabled)` (ON) sobre el
+  `WiFiClientSecure` dedicado al `loop()`, con salvaguardas obligatorias:
+  `setTimeout(4)`, cierre de socket si hueco > `HTTP_IDLE_RESET_MS` (60 s), reintento único con
+  conexión nueva en el path QR, log `reuse=0/1`, y `noteHttpResult()` que desactiva el reuse
+  tras `HTTP_REUSE_FAIL_LIMIT` (3) fallos consecutivos. Servidor: `KeepAliveTimeout 75` y
+  `MaxKeepAliveRequests 1000` en el vhost (Apache), de modo que el heartbeat cada 30 s
+  mantiene la conexión viva.
+- **Historial**: el reuso de TLS provocó cuelgues en el pasado. Por eso RF-56.3 sigue vigente
+  como principio (no habilitar reuso *sin* salvaguardas) y RF-56.4 define las condiciones bajo
+  las cuales sí se permite. El cliente SOLO se usa desde `loop()` (nunca desde callbacks USB),
+  que era la causa raíz de la concurrencia que provocaba los panics.
 - **No regresión**: el flujo LOCAL (chip acciona el relé tras el 200) se conserva intacto.
 
 ### 14.5 Estrategia de pruebas

@@ -716,3 +716,9 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-56.3: No reintroducir reuso de TLS
 - **RF-56.3.1**: No se debe habilitar `setReuse(true)` sobre el cliente TLS compartido si puede reintroducir cuelgues.
 - **RF-56.3.2**: Si tras medir el handshake sigue siendo dominante, cualquier alternativa se decide con el operador y sin reuso de TLS.
+
+### RF-56.4: Keep-alive TLS con salvaguardas
+- **RF-56.4.1**: El firmware puede reutilizar la conexión TLS (keep-alive) para evitar el handshake por petición, **con estas salvaguardas obligatorias**: timeout de socket corto (≤4 s), cierre de la conexión si el hueco entre peticiones supera el umbral (≤60 s), y reintento único con conexión nueva en el path de QR.
+- **RF-56.4.2**: Si se acumulan fallos consecutivos con la conexión reutilizada (≥3), el firmware debe desactivar el keep-alive en caliente y volver al modo de conexión nueva.
+- **RF-56.4.3**: El servidor debe mantener la conexión el tiempo suficiente para cubrir el intervalo de heartbeat del dispositivo (Apache `KeepAliveTimeout` > intervalo de heartbeat).
+- **RF-56.4.4**: El cambio no debe exponer el tráfico en claro: se mantiene HTTPS.
