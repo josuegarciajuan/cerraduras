@@ -2508,3 +2508,41 @@ mismo milisegundo); el retardo percibido está en el firmware ESP32.
 - **Firmware**: medición manual con monitor serie (antes/después); no automatizable.
 - **Regresión**: `bash bin/run-tests.sh` con 0 failures.
 - **Prueba presencial**: protocolo de marcas físicas con el sensor de puerta como control.
+
+### 14.6 F48 — Credibilidad de presencia por contexto (RF-57)
+
+**Síntoma**: el sensor 24G V3 (PROTO2) marcaba `PRESENT` a 2–3 m e incluso desde el
+pasillo, pese a tener `far_detection=150` aplicado (el propio device lo reporta por
+push). La calibración **no** era el problema.
+
+**Causa**: el push entrega `presence_state` como `none`/`presence`/`move`, y el
+pipeline contaba `presence` **y** `move` por igual como `PRESENT`. En estos 24G la
+detección de movimiento (`move`) tiene alcance propio, mayor que el rango gobernado
+por `far_detection`, por lo que el tráfico del pasillo generaba `move` → `PRESENT`.
+
+**Alcance**: la regla aplica a eventos **reales** (`provider = TUYA`). Las inyecciones
+de desarrollo/tests (`/sim/*`, `provider = SIMULATED`) se respetan tal cual, para no
+falsear la herramienta de simulación ni los tests.
+
+**Decisión (única, pura)**: `SensorEventDecision::decide()` acepta ahora el contexto
+(`entryWindowActive`, `stayActive`) y aplica `presenceCredible()`:
+- `move` → PRESENT **solo** dentro de la ventana de entrada (`presence_entry_window_seconds`).
+- cualquier PRESENT exige `entryWindowActive || stayActive` (contención: evita
+  presencia fantasma en habitación FREE).
+- `ABSENT` (`none`) siempre se aplica.
+
+**Dónde**: `IotSessionService::processEvent()` calcula el contexto dentro de la
+transacción (`isEntryWindowActive()` desde `iot_sessions.last_open_at` + el tipo de
+habitación; `hasActiveStay()` lectura sin lock) y lo pasa a `decide()`. Se conserva
+el lock de la fila y el orden de bloqueo; la consulta del tipo y de la estancia son
+lecturas.
+
+**Trazabilidad**: cada descarte queda en `presence_events.discard_reason='no_context'`
+(varchar(16)); sirve para auditar sin cuota Tuya.
+
+**Trade-off asumido**: un `move` fuera de la ventana no re-afirma presencia. La
+entrada sigue siendo ágil porque la ventana se abre al abrir la puerta; la salida no
+se ve afectada porque `none` siempre aplica. La pareja `sensitivity`/orientación
+física queda como ajuste fino opcional (requiere cuota), no como base del fix.
+
+**Tests**: `tests/Unit/SensorEventDecisionTest.php` (casos F48, puros).

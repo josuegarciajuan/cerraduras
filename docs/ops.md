@@ -145,6 +145,20 @@ se queda antiguo, revisar `cerraduras-pulsar-consumer.service`.
 **Arranque consistente**: el pool del API debe ser 16 (ver `start-all.sh` y
 `cerraduras-api.service`). `start-all.sh` avisa si el pool real no coincide.
 
+### Presencia: credibilidad por contexto (F48/RF-57)
+
+En los sensores 24G el valor crudo `move` (movimiento) **no respeta** `far_detection`
+y dispara desde el pasillo. Por eso el pipeline:
+- `presence` → `PRESENT` (señal del sensor).
+- `move` → `PRESENT` **solo** dentro de la ventana de entrada (tras abrir con QR).
+- Cualquier `PRESENT` exige estancia activa o ventana de entrada; en habitación FREE
+  se descarta (auditado como `discard_reason='no_context'`).
+- `none` → `ABSENT` siempre.
+
+Diagnóstico sin cuota: consultar `presence_events.discard_reason` para ver si una
+presencia se descartó por contexto. Ajuste fino pendiente (cuando haya cuota):
+bajar `sensitivity` y/o reorientar el radar para que no mire a la puerta/pasillo.
+
 ## Hardware
 
 ### Firmware ESP32 — sketch definitivo

@@ -53,6 +53,33 @@ function doorEvent(string $occurredAt, string $value = PresenceEvent::VALUE_OPEN
     ];
 }
 
+/**
+ * F48: session carrying the last applied presence mark (for presence events).
+ */
+function sessionWithPresence(?string $lastPresenceEventAt, ?string $lastPresenceValue): IotSession
+{
+    return new IotSession(
+        1, 12, null,
+        IotSession::DOOR_UNKNOWN,
+        IotSession::PRESENCE_ABSENT,
+        null, null, null, null, '',
+        null, $lastPresenceEventAt, null, $lastPresenceValue
+    );
+}
+
+function presenceEvent(string $occurredAt, string $value, string $raw): array
+{
+    return [
+        'room_id'        => 12,
+        'sensor'         => PresenceEvent::SENSOR_PRESENCE,
+        'value'          => $value,
+        'provider'       => 'TUYA',
+        'occurred_at'    => $occurredAt,
+        'source_event_id'=> null,
+        'meta'           => ['tuya_raw_val' => $raw],
+    ];
+}
+
 echo "SensorEventDecision (Fase 41)\n";
 echo str_repeat("=", 60) . "\n\n";
 
@@ -129,13 +156,80 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::APPLY) pass('decide: no prior marks → apply');
 else fail('decide: first event should apply, got ' . $decision);
 
+// ── F48 (RF-57): credibilidad de presencia por contexto ─────────────────
+// move sin ventana de entrada → no creíble (dispara desde el pasillo).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F48: move sin ventana ni estancia → no_context');
+else fail('F48: move sin contexto debería ser no_context, got ' . $decision);
+
+// move DENTRO de la ventana de entrada → se aplica (entrada ágil).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, true, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F48: move dentro de la ventana de entrada → apply');
+else fail('F48: move con ventana debería aplicar, got ' . $decision);
+
+// presence en habitación FREE (sin estancia ni ventana) → no_context (contención).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F48: presence sin estancia ni ventana → no_context (contención)');
+else fail('F48: presence sin contexto debería ser no_context, got ' . $decision);
+
+// presence con estancia activa (sin ventana) → se aplica.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F48: presence con estancia activa → apply');
+else fail('F48: presence con estancia debería aplicar, got ' . $decision);
+
+// ABSENT (`none`) sin contexto → siempre se aplica (poder limpiar estado).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'ABSENT', 'none'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F48: none (ABSENT) sin contexto → apply (limpia estado)');
+else fail('F48: ABSENT debería aplicar sin contexto, got ' . $decision);
+
+// Regresión: el camino clásico (defaults true) no cambia.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F48: defaults preservan el comportamiento previo (apply)');
+else fail('F48: con defaults debería aplicar, got ' . $decision);
+
+// Inyección SIMULADA sin contexto → se respeta (herramienta dev/tests).
+$simEvent = presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence');
+$simEvent['provider'] = 'SIMULATED';
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide($simEvent, $session, false, false, false);
+if ($decision === SensorEventDecision::APPLY) pass('F48: provider SIMULATED sin contexto → apply (bypass dev/tests)');
+else fail('F48: SIMULATED debería aplicar, got ' . $decision);
+
+// Helper puro.
+if (SensorEventDecision::presenceCredible('move', false, false) === false
+    && SensorEventDecision::presenceCredible('move', true, false) === true
+    && SensorEventDecision::presenceCredible('presence', false, true) === true) {
+    pass('F48: presenceCredible() respeta move/ventana/estancia');
+} else {
+    fail('F48: presenceCredible() incorrecto');
+}
+
 // ── discarded decisions still carry a reason (auditable) ─────────────────
 foreach ([
     SensorEventDecision::DUPLICATE,
     SensorEventDecision::STALE,
     SensorEventDecision::NOOP,
+    SensorEventDecision::NO_CONTEXT,
 ] as $reason) {
-    $valid = in_array($reason, ['duplicate', 'stale', 'noop'], true);
+    $valid = in_array($reason, ['duplicate', 'stale', 'noop', 'no_context'], true);
     if ($valid) pass("audit: discard_reason '{$reason}' is a valid persisted value");
     else fail("audit: invalid discard_reason '{$reason}'");
 }

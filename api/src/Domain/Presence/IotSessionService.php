@@ -8,6 +8,7 @@ use App\Domain\Locks\AccessEvent;
 use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\Room;
 use App\Domain\Rooms\RoomRepositoryInterface;
+use App\Domain\Rooms\RoomType;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
@@ -128,7 +129,21 @@ final class IotSessionService
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
 
-                $decision = SensorEventDecision::decide($event, $session, !$isNewFact);
+                // F48 (RF-57): contexto para la credibilidad de presencia. Solo se
+                // calcula para PRESENT de presencia (evita consultas en el resto).
+                $entryWindowActive = true;
+                $stayActive        = true;
+                if ($provider === PresenceEvent::PROVIDER_TUYA
+                    && $sensor === PresenceEvent::SENSOR_PRESENCE
+                    && $value === PresenceEvent::VALUE_PRESENT
+                ) {
+                    $entryWindowActive = $this->isEntryWindowActive($room, $session, $now);
+                    $stayActive        = $this->hasActiveStay($roomId);
+                }
+
+                $decision = SensorEventDecision::decide(
+                    $event, $session, !$isNewFact, $entryWindowActive, $stayActive
+                );
 
                 if ($decision !== SensorEventDecision::APPLY) {
                     $this->presenceEvents->markAudit($rawEvent->id, false, $decision);
@@ -408,6 +423,37 @@ final class IotSessionService
         } catch (\Throwable $e) {
             error_log('[IotSessionService] Failed to write WORKER_EXIT (door event): ' . $e->getMessage());
         }
+    }
+
+    /**
+     * F48 (RF-57): ¿hay un ciclo de apertura acreditado reciente? Se usa la
+     * ventana de entrada del tipo de habitación (RF-51.3 / F44).
+     */
+    private function isEntryWindowActive(Room $room, IotSession $session, \DateTimeImmutable $now): bool
+    {
+        if ($session->lastOpenAt === null) {
+            return false;
+        }
+        $openTs = strtotime($session->lastOpenAt . ' UTC');
+        if ($openTs === false) {
+            return false;
+        }
+        return ($now->getTimestamp() - $openTs) <= $this->resolveEntryWindowSeconds($room);
+    }
+
+    private function resolveEntryWindowSeconds(Room $room): int
+    {
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        if ($roomType instanceof RoomType && $roomType->presenceEntryWindowSeconds > 0) {
+            return (int) $roomType->presenceEntryWindowSeconds;
+        }
+        return 90;
+    }
+
+    /** F48 (RF-57): ¿hay una estancia activa en la habitación? (lectura sin lock) */
+    private function hasActiveStay(int $roomId): bool
+    {
+        return $this->stays->findActiveForRoom($roomId) !== null;
     }
 
     private function safeRollback(): void

@@ -117,6 +117,19 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F44+ Salida fiable + prueba de paseo** | **BLOCK 33/35** | **Completado** |
 | **F46 Supervisión systemd de workers + latencia SSE** | **BLOCK 35** | **Completado** |
 | **F47 Latencia medible + robustez recepción Tuya + arranque consistente** | **BLOCK 36** | **Completado** |
+| **F48 Presencia contextual (credibilidad por contexto)** | **BLOCK 1 (unit)** | **Completado** |
+
+### F48 — Credibilidad de presencia por contexto (RF-57)
+
+- **Problema**: el sensor 24G V3 marcaba `PRESENT` a 2–3 m y desde el pasillo aunque
+  `far_detection=150` estaba aplicado. El valor crudo `move` (movimiento) no respeta
+  `far_detection` y disparaba `PRESENT`.
+- **Decisión**: `SensorEventDecision::presenceCredible()` — `move` solo cuenta como
+  `PRESENT` dentro de la ventana de entrada; cualquier `PRESENT` exige estancia activa
+  o ventana (contención en FREE); `none` → ABSENT siempre. `IotSessionService` calcula
+  el contexto y descarta con `discard_reason='no_context'`.
+- **Sin cuota**: todo sobre el push; no hay llamadas a Tuya.
+- **Tests**: `tests/Unit/SensorEventDecisionTest.php` (BLOCK 1, autodescubierto).
 
 ### F47 — Latencia medible, robustez de recepción y arranque consistente (RF-53/54/55/56)
 

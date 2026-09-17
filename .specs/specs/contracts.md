@@ -945,7 +945,7 @@ ALTER TABLE stays
 |---------|------|------|-----------|
 | `event_fingerprint` | `CHAR(40)` | sí | Identidad lógica del hecho (SHA-1 hexadecimal de 40 chars). `UNIQUE`. |
 | `applied` | `TINYINT(1)` | sí | `1` = aplicado al estado; `0` = descartado; `NULL` = fila legacy. |
-| `discard_reason` | `VARCHAR(16)` | sí | `duplicate` \| `stale` \| `noop` (solo si `applied = 0`). |
+| `discard_reason` | `VARCHAR(16)` | sí | `duplicate` \| `stale` \| `noop` \| `no_context` (solo si `applied = 0`). |
 
 **`stays`**:
 
@@ -993,6 +993,7 @@ event_fingerprint = SHA1( room_id | sensor | value | floor(occurred_at, segundo)
 | `0` | `duplicate` | Ya existía un evento con el mismo `event_fingerprint` (o `source_event_id`). No altera el estado. |
 | `0` | `stale` | `occurred_at` es anterior al último evento aplicado del mismo sensor. No revierte transiciones más nuevas. |
 | `0` | `noop` | El valor ya estaba vigente; no representa una transición. |
+| `0` | `no_context` | F48/RF-57: PRESENT de presencia no creíble por contexto (p. ej. `move` fuera de la ventana de entrada, o presencia en habitación FREE sin estancia). No altera el estado; evita presencia fantasma del pasillo. |
 | `NULL` | `NULL` | Fila previa a la migración `0108` (legacy); no participa en la decisión. |
 
 - Todo evento recibido se persiste íntegro (auditoría bruta), **aunque no se aplique**
@@ -1008,7 +1009,12 @@ event_fingerprint = SHA1( room_id | sensor | value | floor(occurred_at, segundo)
 | `occurred_at < last_<sensor>_event_at` | `stale` |
 | `occurred_at == last_<sensor>_event_at` y `value == last_<sensor>_value` | `duplicate` |
 | `value == last_<sensor>_value` (sin cambio) | `noop` |
+| F48: `sensor=PRESENCE`, `value=PRESENT` y `tuya_raw_val=move` fuera de la ventana de entrada | `no_context` |
+| F48: `sensor=PRESENCE`, `value=PRESENT` sin estancia activa ni ventana de entrada (habitación FREE) | `no_context` |
 | En cualquier otro caso | se **aplica** (`applied = 1`) |
+
+> F48 (RF-57): `no_context` **solo** aplica a transiciones a `PRESENT`. `ABSENT` (`none`)
+> siempre se aplica para poder limpiar el estado.
 
 ---
 
