@@ -208,6 +208,27 @@ final class RoomLiveController
             $anomalies = array_map(fn ($a) => $a->toArray(), $openAnomalies);
         }
 
+        // F46+: visibilidad de cuota Tuya (presupuesto/backoff compartido con el
+        // poller) y de puerta abierta demasiado tiempo (anti-drenaje).
+        $quotaFile = dirname(__DIR__, 3) . '/run/tuya-quota.json';
+        $quota = ['callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
+        if (is_file($quotaFile)) {
+            $qd = json_decode((string) @file_get_contents($quotaFile), true);
+            if (is_array($qd)) {
+                $quota = array_merge($quota, $qd);
+            }
+        }
+        $quotaState = (($quota['backoffUntil'] ?? 0) > time()) ? 'exhausted' : 'ok';
+
+        $doorOpenTooLong = false;
+        if (($iotData['door_state'] ?? '') === \App\Domain\Presence\IotSession::DOOR_OPEN) {
+            $ref   = $iotData['last_door_event_at'] ?? ($iotData['last_open_at'] ?? null);
+            $refTs = $ref ? strtotime((string) $ref . ' UTC') : false;
+            if ($refTs !== false && (time() - $refTs) > 300) {
+                $doorOpenTooLong = true;
+            }
+        }
+
         return Response::json(200, [
             'room_id'          => $roomId,
             'code'             => $room->code,
@@ -227,6 +248,14 @@ final class RoomLiveController
             'recent_events'    => $recentEvents,
             'recent_presence'  => $recentPresence,
             'anomalies'        => $anomalies,
+            // F46+: cuota Tuya (ok|exhausted) + puerta abierta demasiado tiempo.
+            'tuya_quota'         => [
+                'state'         => $quotaState,
+                'calls_today'   => (int) ($quota['callsDay'] ?? 0),
+                'calls_hour'    => (int) ($quota['callsHour'] ?? 0),
+                'backoff_until' => (int) ($quota['backoffUntil'] ?? 0),
+            ],
+            'door_open_too_long' => $doorOpenTooLong,
         ])
             ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->withHeader('Pragma', 'no-cache')

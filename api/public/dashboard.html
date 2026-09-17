@@ -1859,6 +1859,31 @@ async function poll() {
 // ║   SHARED DATA PROCESSOR (SSE + polling fallback)       ║
 // ╚══════════════════════════════════════════════════════════╝
 
+// F46+: banner de salud (cuota Tuya agotada / puerta abierta demasiado tiempo).
+function updateHealthBanner(data) {
+  let el = document.getElementById('health-banner');
+  const q = (data && data.tuya_quota) || null;
+  let msg = '';
+  if (q && q.state === 'exhausted') {
+    msg = '⚠️ Sensor de presencia no disponible: cuota Tuya agotada.';
+  } else if (data && data.door_open_too_long) {
+    msg = '⚠️ Puerta abierta demasiado tiempo.';
+  }
+  if (!msg) {
+    if (el) el.style.display = 'none';
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'health-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99998;background:rgba(200,60,0,0.92);color:#fff;' +
+      'font:12px/1.4 system-ui,sans-serif;padding:5px 10px;text-align:center';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
 /**
  * Process live data payload — shared between SSE events and polling fallback.
  * Extracted from poll() to avoid code duplication.
@@ -1962,6 +1987,7 @@ function processLiveData(data) {
   updateStayPanel(data);
   updateSensorPanel(data);
   updateTimeline(data);
+  updateHealthBanner(data); // F46+: cuota Tuya / puerta atascada
 
   // Track seen event IDs
   (data.recent_events || []).forEach(e => lastEventIds.add(e.id));

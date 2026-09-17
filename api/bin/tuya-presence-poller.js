@@ -55,7 +55,7 @@ const ROOM_ID       = require.main === module
   ? resolveRoomId()
   : (parseInt(process.env.ROOM_ID || '', 10) || 1);
 const POLL_MS              = 1000;       // local /live check interval (faster door-change detection)
-const TUYA_MIN_INTERVAL_MS = 2000;        // min time between Tuya calls INSIDE a capture window (RF-51.5)
+const TUYA_MIN_INTERVAL_MS = 4000;        // F46+: 4s entre llamadas Tuya dentro de ventana (ahorra cuota; antes 2s)
 const TUYA_FAST_INTERVAL_MS = 2000;        // kept for compatibility (windows are always fast now)
 const WEBHOOK_URL   = 'http://127.0.0.1:8080/api/v1/tuya/webhook';
 const LIVE_URL      = `http://127.0.0.1:8080/api/v1/rooms/${ROOM_ID}/live`;
@@ -99,6 +99,7 @@ let tokenExpiry      = 0;
 let lastEffective    = null;
 let lastFarDet       = null;
 let wasCapturing     = false;
+let wasStuckDoor     = false;   // F46+: log de transición de puerta atascada
 // Watchdog state for the capture gate (RF-45.3). Pure reducer `nextCaptureState()`
 // owns it; "inside/empty" is derived from each /live snapshot, never cached here.
 let captureState     = { captureStartedAt: 0, captureBlockedUntil: 0, lastDoorState: null };
@@ -201,12 +202,76 @@ async function forwardToWebhook(payload) {
 // ─── Timestamps ────────────────────────────────────────────────────────
 function ts() { return new Date().toISOString().replace('T',' ').substring(0,19); }
 
+// ─── Tuya quota budget (F46+) ─────────────────────────────────────────────
+// Contador compartido con la APP PHP en `api/run/tuya-quota.json`. Presupuesto
+// por hora y por día: al superarlo, el poller deja de llamar (una sola fuente
+// de verdad para poller + calibración). Evita repetir el agotamiento de cuota
+// del 2026-09-17 (puerta atascada OPEN → ~1.400 llamadas/hora toda la noche).
+const QUOTA_FILE = path.join(__dirname, '..', 'run', 'tuya-quota.json');
+const TUYA_HOURLY_BUDGET = parseInt(process.env.TUYA_HOURLY_BUDGET || '150', 10);
+const TUYA_DAILY_BUDGET  = parseInt(process.env.TUYA_DAILY_BUDGET  || '1000', 10);
+
+function _quotaSlots(now) {
+  const d = new Date(now || Date.now());
+  return { day: d.toISOString().slice(0, 10), hour: d.toISOString().slice(0, 13) };
+}
+
+function quotaRead() {
+  try {
+    const q = JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf8'));
+    if (q && typeof q === 'object') return q;
+  } catch (e) { /* missing/corrupt → defaults */ }
+  return { day: null, hour: null, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+}
+
+function quotaWrite(q) {
+  try {
+    fs.mkdirSync(path.dirname(QUOTA_FILE), { recursive: true });
+    const tmp = QUOTA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(q));
+    fs.renameSync(tmp, QUOTA_FILE);
+  } catch (e) { /* best-effort */ }
+}
+
+function quotaCheck(now) {
+  const { day, hour } = _quotaSlots(now);
+  let q = quotaRead();
+  if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+  if (q.hour !== hour) { q.hour = hour; q.callsHour = 0; }
+  if ((q.backoffUntil || 0) > (now || Date.now())) return { ok: false, reason: 'backoff', q };
+  if ((q.callsDay || 0) >= TUYA_DAILY_BUDGET) return { ok: false, reason: 'daily_budget', q };
+  if ((q.callsHour || 0) >= TUYA_HOURLY_BUDGET) return { ok: false, reason: 'hourly_budget', q };
+  return { ok: true, q };
+}
+
+function quotaBump(now) {
+  const { day, hour } = _quotaSlots(now);
+  let q = quotaRead();
+  if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+  if (q.hour !== hour) { q.hour = hour; q.callsHour = 0; }
+  q.callsDay = (q.callsDay || 0) + 1;
+  q.callsHour = (q.callsHour || 0) + 1;
+  quotaWrite(q);
+  return q;
+}
+
+function quotaBackoff(ms, now) {
+  const { day, hour } = _quotaSlots(now);
+  let q = quotaRead();
+  if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+  q.backoffUntil = (now || Date.now()) + ms;
+  quotaWrite(q);
+  return q;
+}
+
 // ─── Capture gate (RF-45: domain state only, no sticky flags) ──────────
 // Internal state of the Node process — never exposed via /live or the API (contracts.md §7).
 const ENTRY_WINDOW_MS       = 90000;   // default: keep capturing while a QR entry is not yet consolidated
 const EXIT_CHECK_MARGIN_MS  = 10000;   // default margin added to gap_seconds for the post-close check
 const CAPTURE_MAX_MS        = 120000;  // watchdog: max continuous capture before forcing a stop
-const CAPTURE_COOLDOWN_MS   = 30000;   // watchdog: cooldown before a new capture window
+const CAPTURE_COOLDOWN_MS   = 30000;   // watchdog: cooldown base before a new capture window
+const CAPTURE_COOLDOWN_MAX_MS = 600000; // F46+: techo del cooldown escalado (10 min)
+const STUCK_DOOR_MS         = 300000;  // F46+: puerta OPEN sin cambio > 5 min → no capturar hasta evento nuevo
 
 function epochMs(value) {
   if (!value) return null;
@@ -338,12 +403,27 @@ function nextCaptureState(liveData, now, state) {
 
   let captureStartedAt = prev.captureStartedAt || 0;
   let captureBlockedUntil = prev.captureBlockedUntil || 0;
+  let consecutiveWatchdogs = prev.consecutiveWatchdogs || 0;
+  let doorChangedAt = prev.doorChangedAt || 0;
   const lastDoorState = prev.lastDoorState != null ? prev.lastDoorState : null;
 
-  // A door change rearms immediately — a new legitimate window (RF-45.3.4).
-  if (door !== lastDoorState) captureBlockedUntil = 0;
+  // A door change is a NEW legitimate event: rearm cooldown and reset the
+  // stuck-door / escalating-cooldown counters (RF-45.3.4).
+  if (door !== lastDoorState) {
+    captureBlockedUntil = 0;
+    consecutiveWatchdogs = 0;
+    doorChangedAt = now;
+  }
+  if (!doorChangedAt) doorChangedAt = now;
+
+  // F46+ (anti-drenaje): una puerta OPEN que no cambia durante > STUCK_DOOR_MS
+  // se considera atascada (p. ej. se perdió el CLOSED). Dejamos de capturar
+  // hasta un evento de puerta nuevo; así no se repite el bucle watchdog +
+  // re-captura que agotó la cuota de Tuya.
+  const stuckDoor = (door === 'OPEN') && ((now - doorChangedAt) > STUCK_DOOR_MS);
 
   let want = shouldCapture(liveData, now);
+  if (stuckDoor) want = false;
 
   if (!want) {
     // No domain-justified window: clear the watchdog entirely.
@@ -354,10 +434,17 @@ function nextCaptureState(liveData, now, state) {
   }
 
   // Watchdog: max continuous capture (stuck OPEN door / inconsistent state).
+  // El cooldown ESCALA con los watchdog consecutivos (30s→1→2→5→10 min) para
+  // que un OPEN persistente no consuma cuota sin límite.
   let watchdogFired = false;
   if (want && captureStartedAt > 0 && (now - captureStartedAt) > CAPTURE_MAX_MS) {
     watchdogFired = true;
-    captureBlockedUntil = now + CAPTURE_COOLDOWN_MS;
+    consecutiveWatchdogs++;
+    const cooldown = Math.min(
+      CAPTURE_COOLDOWN_MS * Math.pow(2, consecutiveWatchdogs - 1),
+      CAPTURE_COOLDOWN_MAX_MS
+    );
+    captureBlockedUntil = now + cooldown;
     captureStartedAt = 0;
     want = false;
   }
@@ -368,7 +455,8 @@ function nextCaptureState(liveData, now, state) {
   return {
     capturing: want,
     watchdogFired,
-    state: { captureStartedAt, captureBlockedUntil, lastDoorState: door },
+    stuckDoor,
+    state: { captureStartedAt, captureBlockedUntil, lastDoorState: door, consecutiveWatchdogs, doorChangedAt },
   };
 }
 
@@ -413,8 +501,14 @@ async function main() {
     if (gate.watchdogFired) {
       const io = (liveData && liveData.iot_session) || {};
       const stay = (liveData && liveData.active_stay) || null;
-      console.error(`[${ts()}] ⚠ watchdog de captura: forzando parada (door=${io.door_state || 'UNKNOWN'}, stay=${stay ? stay.status : 'none'}, deadline=${(liveData && liveData.exit_deadline) || 'none'}) — cooldown ${CAPTURE_COOLDOWN_MS/1000}s`);
+      const n = captureState.consecutiveWatchdogs || 0;
+      const cd = Math.min(CAPTURE_COOLDOWN_MS * Math.pow(2, Math.max(0, n - 1)), CAPTURE_COOLDOWN_MAX_MS) / 1000;
+      console.error(`[${ts()}] ⚠ watchdog de captura #${n}: forzando parada (door=${io.door_state || 'UNKNOWN'}, stay=${stay ? stay.status : 'none'}, deadline=${(liveData && liveData.exit_deadline) || 'none'}) — cooldown ${cd}s`);
     }
+    if (gate.stuckDoor && !wasStuckDoor) {
+      console.error(`[${ts()}] 🧱 puerta OPEN sin cambios > ${STUCK_DOOR_MS / 1000}s — muestreo detenido hasta nuevo evento de puerta (anti-cuota)`);
+    }
+    wasStuckDoor = !!gate.stuckDoor;
 
     // Log capture-window transitions
     if (capturing && !wasCapturing) {
@@ -445,24 +539,34 @@ async function main() {
       continue;
     }
 
-    // Throttle (F44, RF-51.5): dentro de una ventana activa siempre 2 s; en
-    // reposo no se llega aquí porque `capturing` es false (0 llamadas).
+    // Throttle (F44, RF-51.5; F46+ 4 s).
     const minInterval = TUYA_MIN_INTERVAL_MS;
     const sinceLastTuya = Date.now() - lastTuyaCallAt;
     if (sinceLastTuya < minInterval) {
       continue;  // still in capture window; will retry next tick
     }
 
+    // F46+ (anti-cuota): presupuesto por hora/día ANTES de gastar la llamada.
+    const budget = quotaCheck();
+    if (!budget.ok) {
+      if (seq % 20 === 0) {
+        console.log(`[${ts()}] ⏸ presupuesto Tuya (${budget.reason}) día=${budget.q.callsDay} hora=${budget.q.callsHour} — sin llamadas`);
+      }
+      continue;
+    }
+
     // ─── Capturing: call Tuya API ─────────────────────────────────
     try {
       lastTuyaCallAt = Date.now();  // mark before call to prevent parallel calls
       const { httpCode, body } = await getDeviceStatus();
+      quotaBump();                  // F46+: contar la llamada (presupuesto compartido)
       errorStreak = 0;
 
       // Detect quota exhaustion (exact message from Tuya)
       const msg = (body && body.msg) || '';
       if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('exhausted')) {
         quotaBackoffUntil = Date.now() + 600000;  // 10 minutes
+        quotaBackoff(600000);                      // F46+: backoff también compartido con la app
         console.error(`[${ts()}] 🚫 Tuya quota exhausted — backing off 10 min`);
         continue;
       }
@@ -561,5 +665,7 @@ module.exports = {
   EXIT_CHECK_MARGIN_MS,
   CAPTURE_MAX_MS,
   CAPTURE_COOLDOWN_MS,
+  CAPTURE_COOLDOWN_MAX_MS,
+  STUCK_DOOR_MS,
   TUYA_MIN_INTERVAL_MS,
 };
