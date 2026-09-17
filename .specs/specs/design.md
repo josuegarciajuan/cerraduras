@@ -2337,3 +2337,48 @@ El 24G V3 (producto `5lld8pgsoynvctqa`, `hps`) declara el DP `target_dis_closest
 reporta distancia. Por tanto no se implementa corte por distancia; el único control de alcance es
 `far_detection` + `sensitivity` (paso de 75 cm, mínimo efectivo 150 cm) y el apantallado/
 reorientación física documentados como recomendación operativa.
+
+### 13.9 Push de sensores Tuya (Message Service / Pulsar) — configuración y alta de devices
+
+**Cómo llega el tiempo real.** Tuya publica los mensajes de los dispositivos en el topic Pulsar
+`<clientId>/out/event`. El consumer `bin/tuya-pulsar-consumer/index.js` se conecta como *Reader*
+a `wss://mqe.tuyaeu.com:8285/ws/v2/reader/persistent/<accessId>/out/event?messageId=latest`,
+descifra (AES-GCM/ECB) y reenvía al webhook `POST /api/v1/tuya/webhook`, que normaliza
+(`TuyaSensorIngress`) y actualiza el dominio (`IotSessionService`). **No consume cuota de API
+IoT Core** (es Message Service, no llamadas HTTP).
+
+**Regla de mensajes (filtro) en la consola Tuya.** Sin regla, los mensajes se filtran y NO llegan
+al topic. Estado correcto (2026-09-17, PROTO2):
+
+```
+Messaging rules — Production Environment (ENABLED)
+  BizCode (Message type) IN statusReport
+  Device id in bf4c7e7d2cef28cea2nkwk,bf9a278e76e2c3f01ay0cs
+```
+- `bf4c7e7d2cef28cea2nkwk` = MC400D puerta (PROXIMITY).
+- `bf9a278e76e2c3f01ay0cs` = 24G V3 presencia (PRESENCE, PROTO2).
+
+**Procedimiento al añadir un sensor Tuya nuevo (otra habitación):**
+1. Registrar el device en `devices` (kind `PROXIMITY`/`PRESENCE`; ver migración `0104`).
+2. Consola Tuya → **Cloud → proyecto `cerraduras` → Message Service → Messaging rules
+   (Production Environment)**: añadir el **device id** del nuevo sensor a
+   `Device id in …` (lista separada por comas). **No** borrar los existentes.
+   - Si la UI no admite varios ids en una regla, crear una **regla adicional** con
+     `BizCode IN statusReport` + `Device id in <nuevo_id>`.
+   - Si el dispositivo es **IoT Core** (protocolo 1000) y no llegan sus mensajes, añadir su
+     tipo a `BizCode IN …` (p. ej. `devicePropertyMessage`); el consumer ya soporta
+     `bizData`/`properties`.
+3. (Opcional) Si el sensor debe **reportar por push**, marcar
+   `devices.meta_json.presence_source='push'` (migración `0111`) para que
+   `presence-poller-manager.sh` **no** lance su poller de nube: tiempo real por push, sin cuota
+   IoT Core. La puerta no se ve afectada.
+4. Verificar en `api/logs/pulsar-consumer.log` que aparece el `devId` del nuevo sensor y en
+   `/live` que el estado (puerta/presencia) se actualiza al mover el sensor.
+
+**Diagnóstico rápido:** si un sensor Tuya no llega en tiempo real pero sí aparece en *Device
+Debug* de la consola, la causa es casi siempre la **regla de mensajes** (device id o BizCode no
+incluidos). El consumer solo reenvía devices presentes en `devices` (kind PROXIMITY/PRESENCE).
+
+**Cuota:** el Message Service tiene su propia cuota (distinta de IoT Core API). Ampliar la regla
+a más devices NO consume cuota de API. El 24G reporta además `illuminance_value`/`man_state`,
+que el ingress ignora en silencio (`INFO_DPS`).

@@ -183,6 +183,12 @@ hasta el momento (regresión completa). Debe ejecutarse:
   (por hora/día, env `TUYA_HOURLY_BUDGET`/`TUYA_DAILY_BUDGET`) respetado por el poller y por
   `tuyaPresenceApi`; (d) `/live` expone `tuya_quota` y `door_open_too_long`, y el panel muestra un
   banner. Tests: casos anti-drain en `tests/Unit/presence-poller-gate.test.js` (BLOCK 33).
+- **Presencia por push de Tuya (F46+)**: la presencia del 24G llega en **tiempo real por el
+  consumer Pulsar** (no por poller). Requiere que la **regla de mensajes** de Tuya incluya su
+  device id (`Messaging rules → Device id in <puerta>,<presencia>`). Marcado
+  `devices.meta_json.presence_source='push'` (migración `0111`) el manager **no lanza poller de
+  nube** para ese sensor → sin cuota IoT Core. **Procedimiento completo para añadir sensores de
+  otras habitaciones en `design.md §13.9`.**
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 

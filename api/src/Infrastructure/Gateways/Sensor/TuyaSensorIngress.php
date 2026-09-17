@@ -42,8 +42,16 @@ final class TuyaSensorIngress implements SensorIngressInterface
         ],
     ];
 
-    /** DPs that are purely informational (battery, RSSI, …) – don't emit events. */
-    private const INFO_DPS = ['battery_percentage', 'battery_state', 'battery_value', 'rssi'];
+    /**
+     * DPs purely informational – no emiten evento de presencia.
+     * `illuminance_value` y `man_state` son los que el 24G V3 reporta además de
+     * `presence_state`; se ignoran en silencio para no llenar el log de
+     * "Unknown DP" (el 24G ahora llega por push de Tuya, ver design.md §13.9).
+     */
+    private const INFO_DPS = [
+        'battery_percentage', 'battery_state', 'battery_value', 'rssi',
+        'illuminance_value', 'man_state',
+    ];
 
     private DeviceRepositoryInterface $deviceRepo;
 
