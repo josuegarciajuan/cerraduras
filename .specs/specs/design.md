@@ -2454,7 +2454,9 @@ Archivo: `api/bin/tuya-pulsar-consumer/index.js`.
 - **Latencia** (RF-54.4.1): cada mensaje relevante registra `Date.now() - tuya_t` en ms.
 - **Salud** (RF-54.4.2): escribe `api/run/pulsar-consumer-status.json`
   (`{connected, last_msg_at, known_devices, updated_at}`) tras cada mensaje/cambio de estado.
-  Lo consume `system-status` sin endpoint nuevo.
+  Lo consume `system-status` sin endpoint nuevo y lo expone como campos **aditivos**
+  (`ws_connected`, `ws_silent`, `status_reason`), **sin** alterar
+  `healthy`/`degraded` (contrato F41 §5: `healthy === (instances === expected)`).
 - **Sin cuota** (RF-54.5): el resync REST de `/status` es la única llamada IoT Core y ya
   existía (rate-limited); el watchdog y la reconexión no añaden llamadas.
 
