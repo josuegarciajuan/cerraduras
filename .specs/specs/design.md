@@ -2402,3 +2402,99 @@ calibración responde "sin sensor"). **Cero cuota y cero procesos.** Ejemplo:
 Los valores legados en milisegundos (> 1e12) se normalizan al leer. Un desajuste ms/s hacía
 que `/live` reportara `tuya_quota.state='exhausted'` de forma permanente y que se bloquearan
 las sondas de verificación y la calibración (aunque la cuota real estuviera disponible).
+
+---
+
+## 14. F47 — Diagnóstico de latencia, robustez de recepción Tuya y arranque consistente
+
+### 14.1 Sonda de latencia sin cuota (RF-53)
+
+**Herramienta**: `api/bin/presence-latency-probe.js` (Node, sin dependencias nuevas).
+
+- Suscribe a `GET /dashboard-api/event-stream?room_id=<id>` y, en paralelo, sondea
+  `presence_events`/`access_events` por la CLI de `mysql` (mismo patrón que
+  `bin/tuya-pulsar-consumer/index.js`).
+- Por cada cambio imprime una línea con: `physical_marker`, `device_t` (`meta_json.tuya_t`),
+  `occurred_at`, `received_at`, `server_ts` (SSE) y `now`, más los deltas.
+- Las marcas físicas se leen por `stdin` (Enter con etiqueta) o por el fichero
+  `api/run/latency-marker`. Etiquetas libres; recomendadas `PUERTA_ABRE`, `DELANTE_SENSOR`,
+  `QUIETO`, `ALEJO`.
+- **Cero llamadas a Tuya**: es solo lectura de SSE + BD. No usa `tuya-presence-listen.js`.
+
+**Atribución (RF-53.3)**:
+
+| Tramo | Cómo se mide | Lectura |
+|-------|--------------|---------|
+| físico → dispositivo | `device_t - physical_marker` | retardo del sensor/firmware |
+| dispositivo → BD | `received_at - device_t` | latencia Message Service + consumer + webhook |
+| BD → panel | `server_ts` SSE − `received_at` (aprox. `server_ts`) | latencia SSE/event loop |
+
+El sensor de puerta es el grupo de control: mismo camino Tuya y evento físico observable. Si
+la puerta cae en ~1 s y la presencia en 15–20 s, la variable es el sensor de presencia.
+
+**Nota sobre reloj del dispositivo**: `device_t` es el sello del dispositivo. La validez del
+reloj se comprueba con los `device_t` de iluminancia (~cada 10 s) y de la puerta: si el tramo
+`dispositivo → BD` es estable y pequeño, el reloj está alineado y `device_t - physical` es
+atribuible al sensor.
+
+### 14.2 Robustez del consumer Pulsar (RF-54)
+
+Archivo: `api/bin/tuya-pulsar-consumer/index.js`.
+
+- **Reconexión** (RF-54.1): base `1000 ms` + jitter, backoff exponencial ×2 hasta `60000 ms`.
+  El hueco del Reader `latest` se acorta; el resync cubre lo perdido.
+- **Resync por hueco real** (RF-54.2): se registra `disconnectedAt` en `ws.on('close')`; en
+  `ws.on('open')` se permite el resync si `now - disconnectedAt >= REAL_GAP_MS` (p. ej. 10 s)
+  o si no hubo resync previo en `RESYNC_MIN_INTERVAL_MS`. Se mantiene el rate-limit para
+  parpadeos, pero no bloquea la recuperación de un corte real.
+- **Watchdog de silencio** (RF-54.3): si `knownDeviceIds.length > 0` y
+  `now - lastMessageAt > SILENCE_MS` (por defecto 180 s, env `CONSUMER_SILENCE_MS`),
+  `ws.terminate()` para forzar reconexión. Con 0 devices rastreados no actúa. Es una red de
+  seguridad secundaria: la fuente primaria de reconexión es el `close` del WS.
+- **Latencia** (RF-54.4.1): cada mensaje relevante registra `Date.now() - tuya_t` en ms.
+- **Salud** (RF-54.4.2): escribe `api/run/pulsar-consumer-status.json`
+  (`{connected, last_msg_at, known_devices, updated_at}`) tras cada mensaje/cambio de estado.
+  Lo consume `system-status` sin endpoint nuevo.
+- **Sin cuota** (RF-54.5): el resync REST de `/status` es la única llamada IoT Core y ya
+  existía (rate-limited); el watchdog y la reconexión no añaden llamadas.
+
+### 14.3 Arranque consistente (RF-55)
+
+- **Fuente única**: el valor canónico del API es `PHP_CLI_SERVER_WORKERS=16`
+  (`cerraduras-api.service:11`). El fallback manual de `start-all.sh` debe usar 16.
+- **Verificación**: tras `systemctl restart`, `start-all.sh` cuenta los procesos
+  `php -S 0.0.0.0:8080` y avisa si el total de hijos ≠ 16. No aborta (el arranque ya ocurrió).
+- **Motivo**: el fallback a 8 reintroducía la degradación de SSE de F46 (pool agotado por SSE
+  zombie → panel a polling lento). Se documenta el acoplamiento.
+- Opcional (mismo alcance): añadir `api-server` a `system-status` con `expected=16` para
+  detectar la regresión como `degraded`.
+
+### 14.4 Latencia del mecanismo de puerta (RF-56)
+
+**Causa medida**: el backend responde en ~1 ms (`access_events` QR_VALIDATE y OPEN en el
+mismo milisegundo); el retardo percibido está en el firmware ESP32.
+
+- En modo LOCAL el chip acciona el relé tras el 200 de `/api/v1/qr/validate`. Cada petición
+  hace `http.setReuse(false)` sobre un `WiFiClientSecure` estático → handshake TLS completo a
+  `https://cerraduras.josue.ink`, y el `loop()` es secuencial, de modo que un QR escaneado
+  durante la cadena de health/heartbeat/announce espera a que termine (TLS bloqueante +
+  `delay(HTTP_GAP_MS)`).
+- **Medición primero** (RF-56.1): instrumentar `scan→postMs` (del callback USB al inicio del
+  POST) y conservar el `[QR] Validación HTTP %d (%lu ms)`.
+- **Fix seguro** (RF-56.2): prioridad de QR. Si `hasPending`, el bucle procesa el QR antes de
+  iniciar cualquier tarea TLS de mantenimiento. Cambio puro de orden del `loop()`, sin tocar
+  la configuración TLS.
+- **Prohibido** (RF-56.3): habilitar reuso de TLS sobre el cliente compartido (historial de
+  cuelgues). Si `postMs` (handshake) domina, se decide con el operador una alternativa sin
+  reuso de TLS.
+- **No regresión**: el flujo LOCAL (chip acciona el relé tras el 200) se conserva intacto.
+
+### 14.5 Estrategia de pruebas
+
+- **Unidad (sin hardware, sin cuota)**: funciones puras nuevas del consumer
+  (`shouldResync`, `silenceExceeded`) y del probe (`formatDelta`, parseo de marcas), ampliando
+  `tests/Unit/tuya-pulsar-consumer.test.js` y añadiendo `tests/Unit/latency-probe.test.js`.
+- **Arranque**: `bash start-all.sh` + comprobación de pool; `system-status` en verde.
+- **Firmware**: medición manual con monitor serie (antes/después); no automatizable.
+- **Regresión**: `bash bin/run-tests.sh` con 0 failures.
+- **Prueba presencial**: protocolo de marcas físicas con el sensor de puerta como control.

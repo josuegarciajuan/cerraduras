@@ -113,6 +113,38 @@ bash bin/run-tests.sh
 /root/cerraduras/ws-vb6/logs/ws-vb6.log
 ```
 
+## Diagnóstico de latencia de sensores (F47)
+
+Objetivo: atribuir el retardo percibido a **sensor**, **Tuya** o **panel** sin
+consumir cuota de Tuya (solo SSE local + MySQL en lectura).
+
+```bash
+cd /root/cerraduras/api
+node bin/presence-latency-probe.js --room 12
+```
+
+- El **sensor de puerta es el grupo de control** (mismo camino Tuya). Si la puerta
+  cae en ~1 s y la presencia tarda 15–20 s, el retardo es del sensor de presencia.
+- **Marcas físicas**: escribe `DELANTE_SENSOR`, `PUERTA_ABRE`, `QUIETO`, `ALEJO`
+  en stdin (Enter) o en `api/run/latency-marker` (una por línea, con ISO-8601 opcional).
+- **Salida**: por cada evento, `físico→dispositivo`, `dispositivo→BD` y `BD→SSE`.
+- **Panel**: abrir con `?debug=1` muestra `state age` y `skew` en un badge.
+
+Protocolo de prueba presencial (3–5 repeticiones):
+
+1. Arrancar la sonda y abrir el panel con `?debug=1`.
+2. `PUERTA_ABRE` → abrir con QR y marcar justo al abrir.
+3. `DELANTE_SENSOR` → colocarse a 1 m del radar y marcar.
+4. `QUIETO` 30 s → `ALEJO` → salir.
+5. Comparar puerta vs presencia y repetir para descartar ruido.
+
+**Estado del consumer**: `api/run/pulsar-consumer-status.json` (`connected`,
+`last_msg_at`, `known_devices`, `resyncs`). Si `connected=false` o `last_msg_at`
+se queda antiguo, revisar `cerraduras-pulsar-consumer.service`.
+
+**Arranque consistente**: el pool del API debe ser 16 (ver `start-all.sh` y
+`cerraduras-api.service`). `start-all.sh` avisa si el pool real no coincide.
+
 ## Hardware
 
 ### Identificación de fábrica integrada

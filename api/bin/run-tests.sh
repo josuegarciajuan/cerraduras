@@ -3172,6 +3172,73 @@ else
 fi
 
 # =============================================================================
+# BLOCK 36 — F47: latencia medible, robustez de recepción y arranque consistente
+# Trazabilidad: RF-53, RF-54, RF-55, RF-56 · contracts.md Anexo F47 · TSK-F47-08
+# =============================================================================
+block "BLOCK 36 — F47: latencia, robustez de recepción y arranque consistente"
+
+# ── 36.0 Unit JS: helpers de la sonda de latencia (sin red/BD/cuota) ───────
+F47_PROBE_JS="tests/Unit/latency-probe.test.js"
+if [ -f "$F47_PROBE_JS" ]; then
+    F47_P_OUT=$(node "$F47_PROBE_JS" 2>&1)
+    F47_P_RC=$?
+    F47_P_SUM=$(echo "$F47_P_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F47_P_SUM" ] && F47_P_SUM="exit=$F47_P_RC"
+    if [ "$F47_P_RC" -eq 0 ]; then
+        pass "JS: latency-probe.test.js ($F47_P_SUM)"
+    else
+        fail "JS: latency-probe.test.js" \
+            "$F47_P_SUM — $(echo "$F47_P_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: latency-probe.test.js" "fichero no encontrado"
+fi
+
+# ── 36.1 Arranque consistente: pool del API sin divergencia (RF-55) ────────
+if [ -f ../start-all.sh ]; then
+    if grep -q '^API_WORKERS=16' ../start-all.sh && \
+       ! grep -q 'PHP_CLI_SERVER_WORKERS=8 php .*8080' ../start-all.sh; then
+        pass "F47: start-all.sh alinea el pool del API a 16 (sin fallback divergente)"
+    else
+        fail "F47: start-all.sh debe usar API_WORKERS=16 en el fallback" \
+            "divergencia con cerraduras-api.service (degrada el SSE de F46)"
+    fi
+else
+    skip "F47 pool de workers" "../start-all.sh no accesible"
+fi
+
+# ── 36.2 Estado del consumer Pulsar (RF-54.4.2) ────────────────────────────
+F47_STATUS="run/pulsar-consumer-status.json"
+if [ ! -f "$F47_STATUS" ]; then
+    skip "F47 estado del consumer" "aún no generado por el consumer"
+else
+    F47_ST=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('$F47_STATUS'))
+except Exception as e:
+    print('ERR '+str(e)); sys.exit(0)
+ok = isinstance(d, dict) and ('connected' in d and 'last_msg_at' in d and 'known_devices' in d)
+print('OK' if ok else 'FAIL keys=%s' % ','.join(sorted(d.keys())))
+" 2>/dev/null)
+    if [ "$F47_ST" = "OK" ]; then
+        pass "F47: status del consumer con esquema válido"
+    else
+        fail "F47: status del consumer inválido" "$F47_ST"
+    fi
+fi
+
+# ── 36.3 Firmware: instrumentación encolado→POST (RF-56.1) ─────────────────
+F47_FW="../docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino"
+if [ ! -f "$F47_FW" ]; then
+    skip "F47 firmware scan→post" "sketch no encontrado"
+elif grep -q 'Encolado→POST' "$F47_FW" && grep -q 'qrEnqueuedAt' "$F47_FW"; then
+    pass "F47: firmware instrumentado (encolado→POST) y QR priorizado"
+else
+    fail "F47: firmware sin instrumentación scan→post" "revisa $F47_FW"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

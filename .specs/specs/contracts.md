@@ -1412,3 +1412,75 @@ Se añaden dos campos, sin romper consumidores existentes:
 
 `pulsar-consumer` mantiene el esquema `{expected, instances, pids, healthy, degraded}` con
 `expected = 1`; `instances` debe ser 1 y `healthy = (instances === expected)`.
+
+---
+
+## Anexo F47 — Latencia, robustez de recepción y arranque consistente
+
+### 1. Sonda CLI `bin/presence-latency-probe.js` (RF-53)
+
+CLI de diagnóstico, sin contrato HTTP. Salida por stdout, una línea por observación:
+
+```
+[2026-09-17T11:17:12.917Z] PRESENCE PRESENT
+  physical ≈ 2026-09-17T11:16:53.000Z (DELANTE_SENSOR)
+  device_t = 2026-09-17T11:17:12.000Z   received_at = 2026-09-17T11:17:12.917Z
+  deltas: physical→device=19.0s  device→db=0.9s  db→now=0.0s
+```
+
+Ejemplo de marcas por stdin / fichero `api/run/latency-marker`:
+
+```
+DELANTE_SENSOR 2026-09-17T11:16:53.000Z
+```
+
+Formato de marca: `<ETIQUETA> [ISO-8601]`; sin ISO se usa el instante de lectura.
+
+**Garantía**: la sonda NO realiza peticiones a Tuya. Solo `EventSource`/HTTP local al SSE y
+`mysql` en lectura.
+
+### 2. Estado del consumer — `api/run/pulsar-consumer-status.json` (RF-54.4.2)
+
+Fichero de runtime (no versionado). Esquema:
+
+```json
+{
+  "connected": true,
+  "last_msg_at": "2026-09-17T11:21:45.123Z",
+  "known_devices": 2,
+  "resyncs": 1,
+  "updated_at": "2026-09-17T11:21:45.123Z"
+}
+```
+
+- `connected`: estado del WS (`ws.readyState === OPEN`).
+- `last_msg_at`: instante UTC del último mensaje recibido (cualquier DP).
+- `known_devices`: tamaño de la lista reconciliada.
+- `resyncs`: contador de resyncs ejecutados desde el arranque.
+- `updated_at`: instante de la última escritura del fichero.
+
+Consumo: `system-status` puede mostrar `pulsar-consumer` como `degraded` si
+`connected=false` o si `now - last_msg_at` supera el umbral de silencio (RF-54.3).
+
+### 3. `system-status` (RF-55, opcional)
+
+Si se añade el pool del API, la entrada mantiene el esquema F41:
+
+```json
+{
+  "api-server": {
+    "label": "API server (pool)",
+    "online": true,
+    "expected": 16,
+    "instances": 16,
+    "healthy": true,
+    "degraded": false
+  }
+}
+```
+
+### 4. Firmware ESP32 (RF-56)
+
+- Nuevo log serie: `[QR] Encolado→POST: %lu ms` (tiempo desde el callback USB al inicio del
+  POST) además del existente `[QR] Validación HTTP %d (%lu ms)`.
+- Sin cambios de contrato HTTP ni de TLS. Prioridad del QR = reordenación del `loop()`.
