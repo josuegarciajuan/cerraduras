@@ -2178,6 +2178,17 @@ activo tras consolidar + ABSENT.
 - **Cambio**: `bin/run-tests.sh` (BLOCK 36), `AGENTS.md` (tabla + sección F47).
 - **Test propio**: `bash bin/run-tests.sh` con 0 failures.
 
+### TSK-F47-09 (TEMP): Botonera de marcas en el panel
+- **Motivo**: facilitar la prueba física sin SSH. **Herramienta temporal**.
+- **Cambio**: `public/dashboard.html` — barra `#latency-marker-bar` bajo el croquis,
+  visible solo con `?debug=1`, con botones `PUERTA_ABRE`, `DELANTE_SENSOR`, `QUIETO`,
+  `ALEJO` y función `latencyMark()`; `public/index.php` — ruta temporal
+  `POST /dashboard-api/latency-mark` (whitelist, append a `api/run/latency-marker`);
+  el reset de habitación (`/dashboard-api/rooms/reset`) vacía el fichero.
+- **Test propio**: BLOCK 36.4 (presencia + whitelist 200/400).
+- **Reversión**: al terminar las pruebas, quitar la barra + JS + ruta temporal y el
+  vaciado en `rooms/reset`. BLOCK 36.4 pasa a SKIP.
+
 ## Tabla resumen F47
 
 | Tarea | Descripción | RF | Archivos | Test |
@@ -2190,3 +2201,4 @@ activo tras consolidar + ABSENT.
 | F47-06 | Instrumentar `scan→post` firmware | RF-56.1 | sketch ESP32 | serie (manual) |
 | F47-07 | Prioridad de QR en bucle | RF-56.2 | sketch ESP32 | serie (manual) |
 | F47-08 | BLOCK 36 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+| F47-09 (TEMP) | Botonera de marcas en el panel | RF-53.1.2 | `public/dashboard.html`, `public/index.php` | BLOCK 36.4 |

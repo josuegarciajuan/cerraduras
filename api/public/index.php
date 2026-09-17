@@ -2393,7 +2393,39 @@ $router->post(
 $router->post(
     '/dashboard-api/rooms/reset',
     function (\App\Http\Request $request) use ($qrTestCtrl): \App\Http\Response {
-        return $qrTestCtrl->roomsReset($request);
+        $resp = $qrTestCtrl->roomsReset($request);
+        // F47 TEMP (pruebas físicas): el reset de habitación vacía las marcas de
+        // latencia para empezar una prueba limpia. RETIRAR al acabar las pruebas.
+        @file_put_contents(dirname(__DIR__) . '/run/latency-marker', '');
+        return $resp;
+    }
+);
+
+// ── F47 TEMP: botonera de marcas de latencia (dev tool, sin auth) ─────────────
+// Añade una marca física a api/run/latency-marker para que la sonda
+// `bin/presence-latency-probe.js` cruce el instante real con el pipeline.
+// Whitelist estricta (no hay escritura arbitraria). RETIRAR al acabar.
+$router->post(
+    '/dashboard-api/latency-mark',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $allowed = ['PUERTA_ABRE', 'DELANTE_SENSOR', 'QUIETO', 'ALEJO'];
+        $body    = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $label   = (string) ($body['label'] ?? '');
+        $file    = dirname(__DIR__) . '/run/latency-marker';
+
+        if ($label === 'CLEAR') {
+            @file_put_contents($file, '');
+            return \App\Http\Response::json(200, ['ok' => true, 'cleared' => true]);
+        }
+        if (!in_array($label, $allowed, true)) {
+            return \App\Http\Response::json(400, ['error' => 'invalid_label']);
+        }
+        @file_put_contents($file, $label . "\n", FILE_APPEND | LOCK_EX);
+        return \App\Http\Response::json(200, [
+            'ok'        => true,
+            'label'     => $label,
+            'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
+        ]);
     }
 );
 
