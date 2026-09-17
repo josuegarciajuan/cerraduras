@@ -21,6 +21,7 @@ const {
   computeDeltas,
   formatDelta,
   pickMarkForEvent,
+  newMarkerLines,
 } = require(path.join(__dirname, '..', '..', 'bin', 'presence-latency-probe.js'));
 
 let passed = 0;
@@ -132,6 +133,34 @@ check('pickMarkForEvent ignores marks outside the window',
 
 check('pickMarkForEvent ignores marks in the future',
   pickMarkForEvent(marks, 500, 180000) === null);
+
+// ─── 7. newMarkerLines (append-only, sin duplicados) ───────────────────
+check('newMarkerLines devuelve todas las líneas la primera vez',
+  (() => {
+    const r = newMarkerLines('A\nB\n', 0);
+    return JSON.stringify(r.lines) === JSON.stringify(['A', 'B']) && r.seen === 2;
+  })());
+
+check('newMarkerLines NO re-procesa líneas ya consumidas',
+  (() => {
+    const r = newMarkerLines('A\nB\n', 2);
+    return r.lines.length === 0 && r.seen === 2;
+  })());
+
+check('newMarkerLines devuelve solo las líneas nuevas al hacer append',
+  (() => {
+    const r = newMarkerLines('A\nB\nC\n', 2);
+    return JSON.stringify(r.lines) === JSON.stringify(['C']) && r.seen === 3;
+  })());
+
+check('newMarkerLines reinicia el cursor si el fichero se truncó',
+  (() => {
+    const r = newMarkerLines('A\n', 5);
+    return JSON.stringify(r.lines) === JSON.stringify(['A']) && r.seen === 1;
+  })());
+
+check('newMarkerLines tolera vacío/null',
+  newMarkerLines('', 0).seen === 0 && newMarkerLines(null, 3).lines.length === 0);
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' latency-probe: ' + passed + ' passed, ' + failed + ' failed\n');
