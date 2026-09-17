@@ -2220,3 +2220,30 @@ activo tras consolidar + ABSENT.
 | F47-08 | BLOCK 36 + regresión | — | `bin/run-tests.sh`, `AGENTS.md` | regresión |
 | F47-09 (TEMP) | Botonera de marcas en el panel | RF-53.1.2 | `public/dashboard.html`, `public/index.php` | BLOCK 36.4 |
 | F47-10 | Keep-alive TLS en firmware + Apache | RF-56.4 | sketch ESP32, vhost Apache | BLOCK 36.3 + serie |
+
+---
+
+# Fase 48 — Credibilidad de presencia por contexto (RF-57)
+
+### TSK-F48-01: Decisión pura con contexto
+- **Cambio**: `src/Domain/Presence/SensorEventDecision.php` — nuevo `NO_CONTEXT`,
+  `presenceCredible()`, y `decide(..., $entryWindowActive, $stayActive)`.
+- **Test propio**: `tests/Unit/SensorEventDecisionTest.php` (casos F48).
+
+### TSK-F48-02: Contexto en el servicio (único escritor)
+- **Cambio**: `src/Domain/Presence/IotSessionService.php` — `isEntryWindowActive()`,
+  `resolveEntryWindowSeconds()`, `hasActiveStay()`; se pasan a `decide()`.
+- **Test propio**: unit JS/PHP puros + regresión BLOCK 1.
+
+### TSK-F48-03: Contrato y docs
+- **Cambio**: `contracts.md` (`no_context` en `applied`/`discard_reason`),
+  `requirements.md` (RF-57), `design.md` (§14.6), `docs/ops.md`.
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+## Tabla resumen F48
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F48-01 | Decisión pura de credibilidad | RF-57.1/57.2 | `SensorEventDecision.php` | unit PHP |
+| F48-02 | Contexto en `IotSessionService` | RF-57.2/57.3 | `IotSessionService.php` | unit + regresión |
+| F48-03 | Contrato y documentación | RF-57.3 | `contracts.md`, `design.md`, `ops.md` | regresión |

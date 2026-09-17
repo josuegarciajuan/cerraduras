@@ -31,6 +31,13 @@ final class SensorEventDecision
     public const NOOP = 'noop';
 
     /**
+     * F48 (RF-57): PRESENT de presencia no creíble por contexto (p. ej. `move`
+     * fuera de la ventana de entrada, o presencia en habitación FREE sin estancia).
+     * Se audita pero no altera el estado (evita presencia fantasma del pasillo).
+     */
+    public const NO_CONTEXT = 'no_context';
+
+    /**
      * Logical identity of a physical fact (contracts.md §2.1):
      *   sha1( room_id | sensor | value | floor(occurred_at, second) )
      */
@@ -52,8 +59,13 @@ final class SensorEventDecision
      * @param array<string,mixed> $event Normalised sensor event (room_id, sensor, value, occurred_at).
      * @param bool $duplicateFingerprint True when insertOrGet() found an existing fingerprint/source id.
      */
-    public static function decide(array $event, IotSession $session, bool $duplicateFingerprint = false): string
-    {
+    public static function decide(
+        array $event,
+        IotSession $session,
+        bool $duplicateFingerprint = false,
+        bool $entryWindowActive = true,
+        bool $stayActive = true
+    ): string {
         if ($duplicateFingerprint) {
             return self::DUPLICATE;
         }
@@ -84,7 +96,43 @@ final class SensorEventDecision
             return self::NOOP;
         }
 
+        // 4) F48 (RF-57): credibilidad por contexto. Solo aplica a eventos REALES
+        // del sensor (provider TUYA); las inyecciones simuladas (/sim/*) se
+        // respetan tal cual (herramienta de desarrollo/tests). Solo afecta a
+        // PRESENT de presencia; ABSENT (`none`) siempre se aplica para limpiar.
+        $provider = (string) ($event['provider'] ?? '');
+        if ($provider === PresenceEvent::PROVIDER_TUYA
+            && $sensor === PresenceEvent::SENSOR_PRESENCE
+            && $value === PresenceEvent::VALUE_PRESENT
+        ) {
+            $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
+            if (!self::presenceCredible($raw, $entryWindowActive, $stayActive)) {
+                return self::NO_CONTEXT;
+            }
+        }
+
         return self::APPLY;
+    }
+
+    /**
+     * Pure (F48/RF-57): ¿es creíble un PRESENT de presencia dado el contexto?
+     *
+     * - `move` (movimiento) NO respeta `far_detection` en estos 24G: dispara desde
+     *   el pasillo/exterior. Solo se acepta dentro de la ventana de entrada.
+     * - Cualquier PRESENT exige contexto (ventana de entrada o estancia activa):
+     *   evita presencia fantasma en una habitación FREE.
+     *
+     * `$rawValue` es `tuya_raw_val` ('presence'|'move'|'none') o '' si no aplica.
+     */
+    public static function presenceCredible(
+        string $rawValue,
+        bool $entryWindowActive,
+        bool $stayActive
+    ): bool {
+        if ($rawValue === 'move' && !$entryWindowActive) {
+            return false;
+        }
+        return $entryWindowActive || $stayActive;
     }
 
     /**
