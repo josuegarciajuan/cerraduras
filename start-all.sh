@@ -31,6 +31,15 @@ LOG_DIR="$API_DIR/logs"
 RUN_DIR="$API_DIR/run"
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 
+# F47 (RF-55): fuente única del pool de workers. DEBE coincidir con los units
+# systemd; si diverge, el fallback manual reintroduce la degradación SSE de F46
+# (pool agotado por SSE zombie → panel a polling lento).
+#   cerraduras-api.service  → PHP_CLI_SERVER_WORKERS=16
+#   cerraduras-wsvb6.service → PHP_CLI_SERVER_WORKERS=8
+API_WORKERS=16
+WSVB6_WORKERS=8
+API_FALLBACK_PID=""
+
 echo "=== Cerraduras Hotel — Start All ==="
 
 # ── PID helpers (instancia única) ────────────────────────────────────────────
@@ -74,14 +83,16 @@ fi
 
 echo "[2/8] API + WS-VB6 via systemd..."
 systemctl restart cerraduras-api cerraduras-wsvb6 2>/dev/null || {
-  # Fallback: systemd units not installed — launch manually
-  echo "       (systemd units missing — starting manually)"
+  # Fallback: systemd units not installed — launch manually.
+  # F47 (RF-55.1.2): mismos valores que los units (API=$API_WORKERS, WS-VB6=$WSVB6_WORKERS).
+  echo "       (systemd units missing — starting manually; pool API=$API_WORKERS, WS-VB6=$WSVB6_WORKERS)"
   cd "$API_DIR"
   mkdir -p /tmp/opcache-cache
-  PHP_CLI_SERVER_WORKERS=8 php -d opcache.file_cache=/tmp/opcache-cache -d opcache.file_cache_only=1 -S 0.0.0.0:8080 -t public public/index.php >> logs/php-server.log 2>&1 &
-  echo "       API PID: $!"
+  PHP_CLI_SERVER_WORKERS=$API_WORKERS php -d opcache.file_cache=/tmp/opcache-cache -d opcache.file_cache_only=1 -S 0.0.0.0:8080 -t public public/index.php >> logs/php-server.log 2>&1 &
+  API_FALLBACK_PID="$!"
+  echo "       API PID: $API_FALLBACK_PID"
   cd "$WS_DIR"
-  PHP_CLI_SERVER_WORKERS=8 php -S 0.0.0.0:8081 -t public public/index.php >> logs/php-server.log 2>&1 &
+  PHP_CLI_SERVER_WORKERS=$WSVB6_WORKERS php -d opcache.file_cache=/tmp/opcache-cache -d opcache.file_cache_only=1 -S 0.0.0.0:8081 -t public public/index.php >> logs/php-server.log 2>&1 &
   echo "       WS-VB6 PID: $!"
 }
 
@@ -129,6 +140,25 @@ echo -n "  WS-VB6:  "
 curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8081/ws-vb6/v1/health && echo " OK" || echo " FAIL"
 echo -n "  Dashboard: "
 curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/dashboard?room=1 && echo " OK" || echo " FAIL"
+
+# F47 (RF-55.2.1): verificación del pool real del API. Cuenta los hijos del
+# proceso maestro (systemd MainPID, o el PID del fallback manual). El maestro
+# PHP_CLI_SERVER_WORKERS=16 forka exactamente 16 workers.
+echo -n "  Pool API: "
+api_main="$(systemctl show -p MainPID --value cerraduras-api 2>/dev/null || true)"
+if [ -z "$api_main" ] || [ "$api_main" = "0" ]; then
+  api_main="$API_FALLBACK_PID"
+fi
+if [ -n "$api_main" ] && [ "$api_main" != "0" ]; then
+  api_pool="$(pgrep -P "$api_main" 2>/dev/null | wc -l | tr -d ' ')"
+else
+  api_pool="?"
+fi
+if [ "$api_pool" = "$API_WORKERS" ]; then
+  echo "$api_pool/$API_WORKERS OK"
+else
+  echo "AVISO: pool API=$api_pool (esperado $API_WORKERS) — revisa cerraduras-api.service (F46/F47)"
+fi
 
 echo ""
 echo "=== Done ==="
