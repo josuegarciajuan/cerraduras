@@ -588,6 +588,17 @@
   </div>
 </div>
 
+<!-- F47 TEMP: botonera de marcas de latencia (visible solo con ?debug=1).
+     RETIRAR al acabar las pruebas físicas. Escribe en api/run/latency-marker. -->
+<div id="latency-marker-bar" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 20px 0;font-size:0.72rem">
+  <span style="color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-size:0.62rem">Marcas latencia</span>
+  <button class="btn" onclick="latencyMark('PUERTA_ABRE')">🚪 PUERTA_ABRE</button>
+  <button class="btn" onclick="latencyMark('DELANTE_SENSOR')">🧑 DELANTE_SENSOR</button>
+  <button class="btn" onclick="latencyMark('QUIETO')">🧘 QUIETO</button>
+  <button class="btn" onclick="latencyMark('ALEJO')">🚶 ALEJO</button>
+  <span id="latency-marker-status" style="font-family:'JetBrains Mono',monospace;color:var(--text-dim)"></span>
+</div>
+
 <!-- Phase label (between croquis and timeline) -->
 <div id="phase-label">—</div>
 
@@ -2045,6 +2056,39 @@ function initSseDebugBadge() {
   console.log('[SSE] debug badge ON (Fase A)');
 }
 
+// ── F47 TEMP: botonera de marcas de latencia (retirar tras las pruebas) ──
+// Muestra la barra solo con ?debug=1 y escribe la marca en el servidor para que
+// la sonda la cruce con el pipeline. Sin efectos de negocio.
+function initLatencyMarkerBar() {
+  if (!sseDebugEnabled()) return;
+  const bar = document.getElementById('latency-marker-bar');
+  if (bar) bar.style.display = 'flex';
+  console.log('[F47] botonera de marcas ON (?debug=1)');
+}
+
+function latencyMark(label) {
+  const el = document.getElementById('latency-marker-status');
+  fetch('/dashboard-api/latency-mark', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label })
+  }).then(function (r) {
+    return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+  }).then(function (res) {
+    if (!el) return;
+    if (res.ok) {
+      const ts = String(res.d.server_ts || '').substring(11, 19);
+      el.textContent = '✓ ' + label + ' @ ' + ts + ' UTC';
+      el.style.color = 'var(--green)';
+    } else {
+      el.textContent = '✗ ' + (res.d.error || 'error');
+      el.style.color = 'var(--red)';
+    }
+  }).catch(function () {
+    if (el) { el.textContent = '✗ sin conexión'; el.style.color = 'var(--red)'; }
+  });
+}
+
 /**
  * Connect to the SSE event stream for the current room.
  * Auto-reconnects on failure (EventSource built-in behavior).
@@ -3010,6 +3054,7 @@ async function init() {
     startSseWatchdog();
     // Fase A: badge de diagnóstico (solo con ?debug=1)
     initSseDebugBadge();
+    initLatencyMarkerBar();  // F47 TEMP: botonera de marcas (solo ?debug=1)
     // Independent panel polling: device-status + mirame run regardless of SSE state
     startDevicePolling();
     startMiramePolling();

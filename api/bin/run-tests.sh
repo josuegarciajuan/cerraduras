@@ -3238,6 +3238,36 @@ else
     fail "F47: firmware sin instrumentación scan→post" "revisa $F47_FW"
 fi
 
+# ── 36.4 Botonera temporal de marcas (F47, TEMP) ──────────────────────────
+# Es una herramienta temporal: si ya se retiró, SKIP (no FAIL).
+if grep -q 'latency-marker-bar' public/dashboard.html 2>/dev/null && \
+   grep -q '/dashboard-api/latency-mark' public/index.php 2>/dev/null; then
+    pass "F47: botonera de marcas + endpoint presentes (TEMP)"
+else
+    skip "F47 botonera de marcas" "no presente (quizá ya retirada)"
+fi
+
+if [ "$SERVER_UP" != true ]; then
+    skip "F47 latency-mark" "servidor HTTP no disponible"
+elif ! grep -q '/dashboard-api/latency-mark' public/index.php 2>/dev/null; then
+    skip "F47 latency-mark" "endpoint retirado"
+else
+    F47_LM_OK=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST \
+        "${API_BASE}/dashboard-api/latency-mark" -H 'Content-Type: application/json' \
+        -d '{"label":"QUIETO"}' 2>/dev/null)
+    F47_LM_BAD=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST \
+        "${API_BASE}/dashboard-api/latency-mark" -H 'Content-Type: application/json' \
+        -d '{"label":"HACK"}' 2>/dev/null)
+    # Limpieza: no dejar marcas de test en el fichero.
+    curl -s -o /dev/null --max-time 5 -X POST "${API_BASE}/dashboard-api/latency-mark" \
+        -H 'Content-Type: application/json' -d '{"label":"CLEAR"}' 2>/dev/null
+    if [ "$F47_LM_OK" = "200" ] && [ "$F47_LM_BAD" = "400" ]; then
+        pass "F47: latency-mark acepta la whitelist (200) y rechaza otras etiquetas (400)"
+    else
+        fail "F47: latency-mark" "whitelist ok=$F47_LM_OK inválida=$F47_LM_BAD (esperado 200/400)"
+    fi
+fi
+
 # =============================================================================
 # RESUMEN
 # =============================================================================
