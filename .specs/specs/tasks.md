@@ -2155,8 +2155,9 @@ activo tras consolidar + ABSENT.
 - **Test propio**: ampliar `tests/Unit/tuya-pulsar-consumer.test.js`.
 
 ### TSK-F47-05: Estado del consumer en `system-status`
-- **Cambio**: `public/index.php` — `pulsar-consumer` pasa a `degraded` si el fichero de estado
-  indica desconexión o silencio; opcional entrada `api-server` (`expected=16`).
+- **Cambio**: `public/index.php` — campos **aditivos** en `pulsar-consumer`
+  (`ws_connected`, `ws_silent`, `status_reason`) a partir del fichero de estado.
+  **No** se alteran `healthy`/`degraded` (contrato F41 §5: `healthy === (instances === expected)`).
 - **Test propio**: BLOCK 36 del runner (`system-status` con `healthy`).
 
 ## F47d: Latencia de puerta (RF-56)

@@ -1465,8 +1465,11 @@ Fichero de runtime (no versionado). Esquema:
 - `resyncs`: contador de resyncs ejecutados desde el arranque.
 - `updated_at`: instante de la última escritura del fichero.
 
-Consumo: `system-status` puede mostrar `pulsar-consumer` como `degraded` si
-`connected=false` o si `now - last_msg_at` supera el umbral de silencio (RF-54.3).
+Consumo: `system-status` expone estos datos en la entrada `pulsar-consumer` como
+campos **ADITIVOS**, sin alterar el contrato F41:
+`ws_connected` (bool), `ws_silent` (bool) y `status_reason`
+(`ws_disconnected` | `ws_silent` | `null`). `healthy`/`degraded` siguen siendo
+`(instances === expected)` / `(instances > expected)` (contracts.md §5).
 
 ### 3. `system-status` (RF-55, opcional)
 
