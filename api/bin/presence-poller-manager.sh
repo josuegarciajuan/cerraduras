@@ -46,8 +46,10 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # ── Discover PRESENCE external_ids from the DB (canonical device → pack) ──
 # Devuelve los external_id PRESENCE que requieren POLLER DE NUBE, uno por línea.
-# Se EXCLUYEN los que ya reportan por push de Tuya (meta_json.presence_source=
-# 'push'): esos llegan por el consumer Pulsar y no deben gastar cuota IoT Core.
+# Se EXCLUYEN:
+#   - `presence_source='push'`     → llegan por el consumer Pulsar (sin cuota).
+#   - `presence_source='disabled'` → apagado fuerte (sin poller, sin cuota, sin recursos).
+# Solo se lanza poller para los que NO tienen flag (modo poll de nube).
 # Sale con código != 0 si la consulta falla (para NO confundir "error" con "lista
 # vacía": un fallo transitorio no debe provocar el reap de todos los pollers — F46).
 discover_sensors() {
@@ -55,7 +57,7 @@ discover_sensors() {
     -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" "$DB_NAME" -N -s \
     -e "SELECT external_id FROM devices
         WHERE kind='PRESENCE'
-          AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.presence_source')),'') <> 'push'
+          AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.presence_source')),'') NOT IN ('push','disabled')
         ORDER BY id" 2>/dev/null
 }
 

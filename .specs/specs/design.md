@@ -2382,3 +2382,17 @@ incluidos). El consumer solo reenvía devices presentes en `devices` (kind PROXI
 **Cuota:** el Message Service tiene su propia cuota (distinta de IoT Core API). Ampliar la regla
 a más devices NO consume cuota de API. El 24G reporta además `illuminance_value`/`man_state`,
 que el ingress ignora en silencio (`INFO_DPS`).
+
+**Valores de `devices.meta_json.presence_source` (fuente de verdad del modo de presencia):**
+
+| Valor | Significado | Poller de nube | Consumer Pulsar | Sondas Tuya | Calibración |
+|-------|-------------|:---:|---|:---:|:---:|
+| ausente / `NULL` | Modo **poll** (histórico) | ✅ (sí) | ✅ | ✅ | ✅ |
+| `push` | Llega en tiempo real por el consumer (regla de mensajes de Tuya ampliada) | ❌ | ✅ | ✅ | ✅ |
+| `disabled` | **Apagado fuerte** (no se usa; se conserva para el futuro) | ❌ | ❌ | ❌ | ❌ |
+
+`disabled` hace que `presence-poller-manager.sh` no lance poller, que el consumer no lo rastree,
+que `probeTuyaOnlineOnce()` no lo sondee y que `resolvePresenceDeviceForRoom()` lo ignore (la
+calibración responde "sin sensor"). **Cero cuota y cero procesos.** Ejemplo:
+`ZY-M100 bf98d27d…` (banco de pruebas, migración `0112`). Para reactivarlo: quitar el flag
+(`presence_source=NULL`) y reiniciar `cerraduras-presence-poller`.

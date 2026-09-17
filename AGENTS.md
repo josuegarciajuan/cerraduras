@@ -189,6 +189,10 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `devices.meta_json.presence_source='push'` (migración `0111`) el manager **no lanza poller de
   nube** para ese sensor → sin cuota IoT Core. **Procedimiento completo para añadir sensores de
   otras habitaciones en `design.md §13.9`.**
+- **ZY-M100 desactivado (F46+, migración `0112`)**: el sensor del banco de pruebas
+  (`bf98d27d…`) está `presence_source='disabled'` → **no** se lanza poller, **no** lo rastrea el
+  consumer, **no** se sondea y la calibración responde “sin sensor”. Cero cuota y cero procesos.
+  Se conserva el código; para reactivarlo, `presence_source=NULL` + reiniciar el manager.
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 

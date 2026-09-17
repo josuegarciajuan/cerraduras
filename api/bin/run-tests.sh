@@ -3155,6 +3155,22 @@ else
     fail "F44: calibración PROTO2 esperada 75|10 o 150|10" "got '$F44_CAL'"
 fi
 
+# ── 35.6 ZY-M100 desactivado de forma fuerte (F46+) ────────────────────────
+F46_ZY=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.presence_source'))
+    FROM devices WHERE external_id='bf98d27d79685e38a2wbda' LIMIT 1" 2>/dev/null || echo "")
+if [ "$F46_ZY" = "disabled" ]; then
+    pass "F46: ZY-M100 con presence_source='disabled' (apagado fuerte)"
+else
+    fail "F46: ZY-M100 debe estar 'disabled'" "got '$F46_ZY'"
+fi
+# Sin poller de nube para el ZY-M100 (truco [t] para no auto-emparejar el propio shell).
+F46_POLLERS=$(pgrep -f "[t]uya-presence-poller\.js bf98d27d79685e38a2wbda" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F46_POLLERS" = "0" ]; then
+    pass "F46: sin poller de nube para el ZY-M100 (0 procesos)"
+else
+    fail "F46: no debe haber poller para el ZY-M100" "procesos=$F46_POLLERS"
+fi
+
 # =============================================================================
 # RESUMEN
 # =============================================================================

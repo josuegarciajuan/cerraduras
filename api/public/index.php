@@ -566,6 +566,20 @@ function probeTuyaOnlineOnce(\PDO $pdo, int $deviceId, string $externalId): ?boo
     if ($externalId === '') {
         return null;
     }
+    // F46+: los devices con `presence_source='disabled'` NO se sondean (0 cuota).
+    try {
+        $m = $pdo->prepare('SELECT meta_json FROM devices WHERE id = :id');
+        $m->execute([':id' => $deviceId]);
+        $mj = $m->fetchColumn();
+        if (is_string($mj) && $mj !== '') {
+            $meta = json_decode($mj, true);
+            if (is_array($meta) && (($meta['presence_source'] ?? null) === 'disabled')) {
+                return null;
+            }
+        }
+    } catch (\Throwable $e) {
+        /* best-effort: ante la duda, no bloquear */
+    }
     $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId), null);
     if (($res['error'] ?? null) !== null || (int) ($res['http'] ?? 0) >= 500) {
         return null; // Tuya no disponible: no concluir online/offline
@@ -633,6 +647,7 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
            FROM devices d
            JOIN rooms r ON r.pack_id = d.pack_id
           WHERE r.id = :rid AND d.kind = 'PRESENCE'
+            AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(d.meta_json,'\$.presence_source')),'') <> 'disabled'
           LIMIT 1"
     );
     $stmt->execute([':rid' => $roomId]);
