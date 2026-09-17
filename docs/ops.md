@@ -147,11 +147,27 @@ se queda antiguo, revisar `cerraduras-pulsar-consumer.service`.
 
 ## Hardware
 
+### Firmware ESP32 — sketch definitivo
+
+El **sketch productivo (definitivo)** es:
+
+```
+docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino
+```
+
+Es la variante LOW-POWER / ANTI-BROWNOUT (relé ACTIVE-LOW tri-state SRD-12VDC,
+heartbeat 30 s, F33 command-queue, F40 announce, watchdog, prioridad del QR de
+F47 e instrumentación `[QR] Encolado→POST`). Los demás `scanner-*.ino` del
+directorio son **legado / pruebas** y no deben flashearse en producción.
+
+> ⚠️ **Reflasheo**: `clearNvsIfNewFirmware()` borra las claves WiFi del namespace
+> `cerraduras` en cada build nuevo y reinicia. Tras flashear hay que **volver a
+> provisionar el WiFi** por el portal `Cerraduras-Setup-<chipId>`. La credencial
+> individual (`device-cred`) se conserva.
+
 ### Identificación de fábrica integrada
 
-El único firmware productivo es
-`docs/esp32-qr-reader/scanner-relay-prod.ino`. Tras completar el provisioning
-WiFi existente, anuncia en segundo plano su `chip_id` eFuse al endpoint de
+El firmware productivo anuncia en segundo plano su `chip_id` eFuse al endpoint de
 inventario usando la credencial individual generada por la placa. Un estado
 `PENDING` se reintenta con backoff temporizado; `CLAIMED` pausa únicamente los
 anuncios de ese arranque. El estado no se guarda en NVS, porque un reflasheo lo
@@ -220,7 +236,7 @@ vez de reintentar cada 30 s; tras re-enrolar hay que reiniciar la placa.
 
 ### Callbacks USB y red (crash al conectar el lector)
 
-En `scanner-relay-prod-12v-robusto.ino`, los callbacks `usb.onDeviceConnected`
+En `scanner-relay-prod-12v-robusto-lowpower.ino`, los callbacks `usb.onDeviceConnected`
 y `usb.onKeyboard` corren en la **tarea del host USB**. Nunca deben usar el
 `WiFiClientSecure`/`HTTPClient` compartidos (variable estática `apiTlsClient()`):
 `loop()` los usa a la vez y el uso concurrente provoca un panic
@@ -235,7 +251,7 @@ resto de I/O de red, de forma secuencial.
 El relé recuperado `SONGLE SRD-12VDC-SL-C` va sobre un módulo **ACTIVE-LOW**:
 conduce con nivel **LOW** y su reposo limpio es **FLOAT** (`INPUT`). Poner la
 entrada a HIGH la deja en zona indeterminada y el relé **zumba**; por eso el
-reposo nunca es HIGH. En `scanner-relay-prod-12v-robusto.ino`:
+reposo nunca es HIGH. En `scanner-relay-prod-12v-robusto-lowpower.ino`:
 
 - `#define RELAY_ACTIVE_LOW 1` → `relayOn() = OUTPUT + LOW`, `relayOff() = INPUT`.
 - `#define RELAY_ACTIVE_LOW 0` → módulo ACTIVE-HIGH original (idle LOW), por compatibilidad.
@@ -246,17 +262,21 @@ diodo flyback en paralelo con el solenoide.
 
 ### ESP32 + GM65 (lector QR)
 
-- Puerto UART: GPIO16 (RX2), GPIO17 (TX2)
+> El sketch productivo lee el GM65 por **USB-Host** (`EspUsbHost`), **no por UART**.
+> ⚠️ **GPIO16 es el relé**, no un pin del lector: no cablear el GM65 a GPIO16/17
+> (la sección UART de abajo es legado).
+
+- Interfaz: USB-Host (el GM65 se conecta al puerto USB-OTG como teclado HID)
 - Device ID: chip ID del ESP32 (hex sin `:`, ej. `92f57630`)
 - Registro en BD: tabla `devices`, `kind=RPI`, `external_id=chip_id`
-- Firmware: `docs/esp32-qr-reader/esp32-qr-reader.ino`
+- Firmware: `docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino`
 
-### Conexión GM65 ↔ ESP32
+### Conexión GM65 ↔ ESP32 (legado UART — NO usar con el sketch productivo)
 
 ```
 GM65 VCC (rojo)  → ESP32 VIN
 GM65 GND (verde) → ESP32 GND
-GM65 TX           → Level shifter → ESP32 GPIO16
+GM65 TX           → Level shifter → ESP32 GPIO16   ← reservado para el relé
 GM65 RX           → Level shifter → ESP32 GPIO17
 ```
 

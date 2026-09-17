@@ -1,10 +1,22 @@
 /**
- * scanner-relay-prod-12v-robusto-lowpower.ino — Producción QR + Relé 12V
- * (variante LOW-POWER / ANTI-BROWNOUT). Copia de scanner-relay-prod-12v-robusto.ino
- * con mitigaciones SOLO-SOFTWARE para el brownout cuando la ESP32 comparte fuente
- * con el lector USB y el módulo relé/solenoide (arranca por USB del PC, no por la
- * fuente). No sustituye a scanner-relay-prod-12v-robusto.ino: es una variante para
- * probar en paralelo.
+ * scanner-relay-prod-12v-robusto-lowpower.ino — SKETCH PRODUCTIVO (DEFINITIVO)
+ * Producción QR + Relé 12V (LOW-POWER / ANTI-BROWNOUT).
+ *
+ * Este es el único sketch que debe flashearse en producción. Nace de
+ * scanner-relay-prod-12v-robusto.ino con mitigaciones SOLO-SOFTWARE para el
+ * brownout cuando la ESP32 comparte fuente con el lector USB y el módulo
+ * relé/solenoide. El resto de `scanner-*.ino` del directorio es legado/pruebas.
+ *
+ * F47 (2026-09-17):
+ *   - Instrumentación `[QR] Encolado→POST: <ms>` (del callback USB al POST) junto
+ *     al ya existente `[QR] Validación HTTP <code> (<ms>)`.
+ *   - Prioridad del QR: con un QR pendiente (hasPending) no se inician
+ *     health/heartbeat/announce ni se encadenan peticiones TLS de mantenimiento.
+ *   - NO se habilita reuso de TLS (historial de cuelgues).
+ *
+ * ⚠️ Reflasheo: clearNvsIfNewFirmware() borra las claves WiFi del namespace
+ * `cerraduras` en cada build nuevo y reinicia → hay que reprovisionar el WiFi por
+ * el portal `Cerraduras-Setup-<chipId>`. La credencial `device-cred` se conserva.
  *
  * Objetivo: evitar que los picos de corriente se solapen y bajarlos, porque el
  * pico dominante (WiFi TX a máxima potencia + handshake TLS) sigue existiendo
