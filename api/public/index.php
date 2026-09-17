@@ -192,7 +192,7 @@ $router->get(
  *   - Only checks PRESENCE (the others use Pulsar push or are command-only)
  *   - Stale threshold: 30 min (was 5 min)
  *   - Cache TTL: 5 min + FILE-BASED (shared across PHP built-in server workers)
- *   - Detects quota exhaustion (code 28841004) and backs off for 6 hours
+ *   - Detects quota exhaustion (code 28841004) and backs off for 30 min (F46+)
  *
  * @param \PDO $pdo Database connection
  * @return array [external_id => bool] or [] if no stale devices / quota exhausted
@@ -268,7 +268,7 @@ function checkTuyaOnline(\PDO $pdo): array {
     if (!($tokenResp['success'] ?? false)) {
         $code = $tokenResp['code'] ?? 0;
         if ($code === 28841004 || stripos($tokenResp['msg'] ?? '', 'quota') !== false) {
-            file_put_contents($backoffFile, time() + 21600); // 6 hours
+            file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes)
         }
         return [];
     }
@@ -317,7 +317,7 @@ function checkTuyaOnline(\PDO $pdo): array {
     }
 
     if ($quotaExhausted) {
-        file_put_contents($backoffFile, time() + 21600); // 6 hours backoff
+        file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes) backoff
     }
 
     // Cache result (5 min), unless all calls failed
@@ -520,8 +520,8 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
         // Detect quota exhaustion and set backoff
         $code = $data['code'] ?? 0;
         if ($code === 28841004 || stripos($data['msg'] ?? '', 'quota') !== false) {
-            file_put_contents($backoffFile, time() + 21600); // 6 hours
-            tuyaQuotaBackoff(21600);                         // F46+: backoff compartido
+            file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes)
+            tuyaQuotaBackoff(1800);                          // F46+: backoff compartido (30 min)
         }
     }
     return ['http' => $httpCode, 'data' => is_array($data) ? $data : [], 'error' => null, 'elapsed_ms' => $elapsed];
