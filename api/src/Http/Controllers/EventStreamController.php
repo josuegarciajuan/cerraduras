@@ -467,10 +467,12 @@ final class EventStreamController
      */
     private function fetchRecentPresence(int $roomId, int $limit): array
     {
+        // F48: solo hechos aplicados; los descartados no deben disparar la
+        // coreografía del panel (misma regla que RoomLiveController).
         $stmt = $this->pdo->prepare(
             'SELECT sensor, value, provider, occurred_at
              FROM presence_events
-             WHERE room_id = :rid
+             WHERE room_id = :rid AND applied = 1
              ORDER BY occurred_at DESC
              LIMIT :lim'
         );

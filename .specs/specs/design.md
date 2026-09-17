@@ -2526,25 +2526,39 @@ por `far_detection`, por lo que el tráfico del pasillo generaba `move` → `PRE
 de desarrollo/tests (`/sim/*`, `provider = SIMULATED`) se respetan tal cual, para no
 falsear la herramienta de simulación ni los tests.
 
-**Decisión (única, pura)**: `SensorEventDecision::decide()` acepta ahora el contexto
-(`entryWindowActive`, `stayActive`) y aplica `presenceCredible()`:
-- `move` → PRESENT **solo** dentro de la ventana de entrada (`presence_entry_window_seconds`).
-- cualquier PRESENT exige `entryWindowActive || stayActive` (contención: evita
-  presencia fantasma en habitación FREE).
+**Decisión (única, pura, v2)**: `SensorEventDecision::decide()` acepta el contexto
+(`entryWindowActive`, `insideNoExitCycle`) y aplica `presenceCredible()`:
+- `entryWindowActive` = hay **apertura reciente** (`last_open_at` dentro de
+  `presence_entry_window_seconds`) **y** la entrada **aún no está confirmada**
+  (sin estancia activa o `entry_confirmed_at IS NULL`).
+- `insideNoExitCycle` = estancia activa con `entry_confirmed_at` **y** sin apertura
+  posterior (`last_open_at < entry_confirmed_at`).
+- Una transición a `PRESENT` (`presence` o `move`) es creíble si
+  `entryWindowActive || insideNoExitCycle`. Toda apertura posterior a la
+  confirmación (ciclo de salida) **desactiva** el contexto: la presencia de pasillo
+  (que en estos 24G no respeta `far_detection`) no puede re-afirmar el estado.
 - `ABSENT` (`none`) siempre se aplica.
 
-**Dónde**: `IotSessionService::processEvent()` calcula el contexto dentro de la
-transacción (`isEntryWindowActive()` desde `iot_sessions.last_open_at` + el tipo de
-habitación; `hasActiveStay()` lectura sin lock) y lo pasa a `decide()`. Se conserva
-el lock de la fila y el orden de bloqueo; la consulta del tipo y de la estancia son
-lecturas.
+**Bug corregido (panel)**: `/live` (`RoomLiveController`) y el SSE
+(`EventStreamController::fetchRecentPresence`) entregaban `recent_presence` **sin
+filtrar `applied`**; los eventos descartados llegaban a la coreografía y
+`freshPresenceAfterClose` cancelaba salidas. Ahora solo se exponen `applied = 1`
+(`listForRoom(..., appliedOnly: true)`).
+
+**Latencia percibida de la puerta (panel)**: `renderSensorSvg()` muestra la puerta
+abierta desde el evento de **apertura del relé** (`access_events` `OPEN` OK) hasta el
+primer `CLOSED` del magneto posterior, con timeout de 12 s. Así el usuario ve la
+apertura al instante aunque el magneto Tuya tarde segundos en reportar.
+
+**Dónde**: `IotSessionService::presenceContext()` (dentro de la transacción; lecturas
+sin lock de estancia y tipo) → `decide()`.
 
 **Trazabilidad**: cada descarte queda en `presence_events.discard_reason='no_context'`
 (varchar(16)); sirve para auditar sin cuota Tuya.
 
-**Trade-off asumido**: un `move` fuera de la ventana no re-afirma presencia. La
-entrada sigue siendo ágil porque la ventana se abre al abrir la puerta; la salida no
-se ve afectada porque `none` siempre aplica. La pareja `sensitivity`/orientación
-física queda como ajuste fino opcional (requiere cuota), no como base del fix.
+**Trade-off asumido**: una apertura posterior a la confirmación invalida el contexto
+de presencia hasta una nueva entrada acreditada. Es el precio de no poder distinguir
+con distancia (el 24G no reporta `target_dis_closest`). El ajuste fino
+(`sensitivity`/orientación) queda como opción cuando haya cuota.
 
-**Tests**: `tests/Unit/SensorEventDecisionTest.php` (casos F48, puros).
+**Tests**: `tests/Unit/SensorEventDecisionTest.php` (casos F48 v2, puros).

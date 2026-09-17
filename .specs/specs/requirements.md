@@ -725,14 +725,15 @@ panel dejan de ser fiables en varios escenarios encadenados.
 
 ## RF-57: Credibilidad de presencia por contexto
 
-### RF-57.1: `move` es movimiento, no presencia confirmada
+### RF-57.1: Presencia con contexto (v2)
 - **RF-57.1.1**: El valor crudo `move` de `presence_state` **no** debe contar como `PRESENT` por sí solo: en los sensores 24G su alcance no respeta `far_detection` y dispara desde el pasillo/exterior.
-- **RF-57.1.2**: `move` solo puede afirmar `PRESENT` dentro de la **ventana de entrada** (ciclo de apertura acreditado reciente, `presence_entry_window_seconds`), donde la presencia es atribuible al huésped que entra.
-- **RF-57.1.3**: `presence` (señal de presencia del sensor) sigue afirmando `PRESENT`.
+- **RF-57.1.2 (entrada en curso)**: una transición a `PRESENT` (`presence` o `move`) es creíble si hay una **apertura reciente** y la entrada **aún no está confirmada** (`entry_confirmed_at IS NULL`), dentro de `presence_entry_window_seconds`.
+- **RF-57.1.3 (huésped dentro)**: también es creíble si hay **estancia confirmada** y **ninguna apertura posterior** a la confirmación (`last_open_at < entry_confirmed_at`). Una apertura posterior (ciclo de salida) **invalida** el contexto: la presencia de pasillo no re-afirma el estado.
+- **RF-57.1.4**: `presence` y `move` comparten la misma regla de credibilidad; `ABSENT` (`none`) siempre se aplica.
 
 ### RF-57.2: Contención por contexto
 - **RF-57.2.1**: En una habitación sin estancia activa y sin ventana de entrada (FREE), ninguna transición a `PRESENT` debe alterar el estado IoT ni el panel; se audita como `no_context`.
-- **RF-57.2.2**: `ABSENT` (`none`) siempre se aplica, con o sin contexto, para poder limpiar el estado.
+- **RF-57.2.2**: Ningún evento de presencia **descartado** (`applied = 0`) debe llegar a la coreografía del panel: `/live` y el stream SSE solo exponen eventos aplicados en `recent_presence`.
 
 ### RF-57.3: Trazabilidad
 - **RF-57.3.1**: Los descartes por contexto deben quedar auditados en `presence_events.discard_reason = 'no_context'` (misma transacción, sin pérdida de evidencia).
@@ -742,3 +743,7 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-57.4.1**: La entrada (QR + apertura + presencia) debe seguir consolidándose de forma ágil dentro de la ventana.
 - **RF-57.4.2**: La salida (`none` + ciclo acreditado + CLOSED) no debe verse afectada por `move` de pasillo.
 - **RF-57.4.3**: El cambio no debe consumir cuota Tuya (opera sobre el push).
+
+### RF-57.5: Latencia percibida de la puerta (panel)
+- **RF-57.5.1**: El panel debe mostrar la puerta como abierta desde el **evento de apertura del relé** (`access_events` `OPEN` OK, ~instantáneo) hasta que el magneto Tuya confirme un `CLOSED` posterior, con timeout de seguridad (12 s).
+- **RF-57.5.2**: La animación no debe contradecir el estado real: si llega el `CLOSED` del magneto, la puerta vuelve a cerrada.

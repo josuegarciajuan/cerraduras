@@ -102,7 +102,9 @@ final class RoomLiveController
         // Recent access events (last 20, newest first)
         $recentEvents = $this->fetchRecentAccessEvents($roomId, 20);
 
-        // Recent presence events (last 10)
+        // Recent presence events (last 10, SOLO aplicados — F48)
+        // Los descartados (duplicate/stale/noop/no_context) no deben alimentar la
+        // coreografía del panel (p. ej. `freshPresenceAfterClose` cancelaba salidas).
         $recentPresence = array_map(static function ($e): array {
             return [
                 'sensor'      => $e->sensor,
@@ -110,7 +112,7 @@ final class RoomLiveController
                 'provider'    => $e->provider,
                 'occurred_at' => $e->occurredAt,
             ];
-        }, $this->presenceEvents->listForRoom($roomId, 10));
+        }, $this->presenceEvents->listForRoom($roomId, 10, true));
 
         // Smart Switch (EAWCBT-J) — RF-16: show if room has a SWITCH device
         $switchState = null;

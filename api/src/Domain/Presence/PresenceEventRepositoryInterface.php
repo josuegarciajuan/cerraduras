@@ -55,7 +55,11 @@ interface PresenceEventRepositoryInterface
     /**
      * Return the latest N events for a room, newest first.
      *
+     * F48: `$appliedOnly = true` devuelve solo hechos aplicados (`applied = 1`).
+     * Lo usa el panel (`/live`/SSE): los eventos descartados (duplicate/stale/
+     * noop/no_context) no deben disparar la coreografía.
+     *
      * @return list<PresenceEvent>
      */
-    public function listForRoom(int $roomId, int $limit = 20): array;
+    public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array;
 }
