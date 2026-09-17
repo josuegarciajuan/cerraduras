@@ -45,13 +45,18 @@ DB_PASS="$(env_get DB_PASS)"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # ── Discover PRESENCE external_ids from the DB (canonical device → pack) ──
-# Devuelve los external_id PRESENCE, uno por línea. Sale con código != 0 si la
-# consulta a la BD falla (para NO confundir "error" con "lista vacía": un fallo
-# transitorio no debe provocar el reap de todos los pollers — F46).
+# Devuelve los external_id PRESENCE que requieren POLLER DE NUBE, uno por línea.
+# Se EXCLUYEN los que ya reportan por push de Tuya (meta_json.presence_source=
+# 'push'): esos llegan por el consumer Pulsar y no deben gastar cuota IoT Core.
+# Sale con código != 0 si la consulta falla (para NO confundir "error" con "lista
+# vacía": un fallo transitorio no debe provocar el reap de todos los pollers — F46).
 discover_sensors() {
   MYSQL_PWD="$DB_PASS" mysql \
     -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" "$DB_NAME" -N -s \
-    -e "SELECT external_id FROM devices WHERE kind='PRESENCE' ORDER BY id" 2>/dev/null
+    -e "SELECT external_id FROM devices
+        WHERE kind='PRESENCE'
+          AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.presence_source')),'') <> 'push'
+        ORDER BY id" 2>/dev/null
 }
 
 # ── Is a poller already running for this device id? (argv-carried id) ──
