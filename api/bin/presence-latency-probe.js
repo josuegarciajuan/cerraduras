@@ -211,6 +211,7 @@ function main() {
   const marks = [];
   const seenIds = new Set();
   const pendingDbToSse = new Map(); // clave "sensor|occurredAt" → {receivedAtMs}
+  const sseSeen = new Map();        // clave "sensor|occurredAt" → serverTs (SSE llegado antes)
   let lastId = 0;
   let sseConnected = false;
 
@@ -227,11 +228,14 @@ function main() {
     const occurredMs = toMs(row.occurredAt);
     const refMs = tuyaT !== null ? tuyaT : occurredMs;
     const mark = pickMarkForEvent(marks, refMs, MARK_MATCH_WINDOW_MS);
+    const key = row.sensor + '|' + Math.floor((occurredMs !== null ? occurredMs : 0) / 1000);
+    // Si el SSE llegó antes que la fila de auditoría, ya tenemos su server_ts.
+    const sseTs = sseSeen.get(key) || null;
     const deltas = computeDeltas({
       tuyaT: tuyaT,
       receivedAtMs: receivedAtMs,
       markMs: mark ? mark.tsMs : null,
-      sseServerTs: null,
+      sseServerTs: sseTs,
     });
 
     console.log('');
@@ -245,8 +249,11 @@ function main() {
       '  dispositivo→BD=' + formatDelta(deltas.deviceToDb) +
       '  BD→SSE=' + formatDelta(deltas.dbToSse));
 
-    const key = row.sensor + '|' + Math.floor((occurredMs !== null ? occurredMs : 0) / 1000);
-    pendingDbToSse.set(key, { receivedAtMs: receivedAtMs, sensor: row.sensor });
+    if (sseTs !== null) {
+      pendingDbToSse.delete(key);
+    } else {
+      pendingDbToSse.set(key, { receivedAtMs: receivedAtMs, sensor: row.sensor });
+    }
   }
 
   function mysqlRows(sql) {
@@ -353,6 +360,9 @@ function main() {
       const atMs = toMs(cand.at);
       if (atMs === null) continue;
       const key = cand.sensor + '|' + Math.floor(atMs / 1000);
+      // Guarda el server_ts por si la fila de auditoría aún no se ha leído.
+      sseSeen.set(key, cand.serverTs);
+      if (sseSeen.size > 200) sseSeen.clear();
       const pending = pendingDbToSse.get(key);
       if (pending) {
         const delta = cand.serverTs - pending.receivedAtMs;
