@@ -346,6 +346,14 @@ WiFiClientSecure &apiTlsClient() {
   return client;
 }
 
+// F47: el destructor de un HTTPClient LOCAL llama _client->stop() y cierra
+// nuestro WiFiClientSecure compartido, rompiendo el keep-alive. Una sesión
+// persistente (static, nunca destruida en runtime) evita ese stop.
+HTTPClient &apiHttpSession() {
+  static HTTPClient s_httpSession;
+  return s_httpSession;
+}
+
 void beginApiRequest(HTTPClient &http, const String &url) {
   WiFiClientSecure &cli = apiTlsClient();
   // F47: si el hueco es grande, el socket puede estar cerrado por el servidor o
@@ -454,7 +462,7 @@ void announceFactoryDevice(unsigned long now) {
   body.reserve(140);
   body = "{\"chip_id\":\"" + chipId() + "\",\"factory_key\":\"" + deviceFactoryKey + "\"}";
 
-  HTTPClient http;
+  HTTPClient &http = apiHttpSession();
   beginApiRequest(http, String(API_BASE_URL) + "/api/v1/factory-devices/announce");
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(FACTORY_ANNOUNCE_TIMEOUT_MS);
@@ -730,7 +738,7 @@ void sendIdentify(bool state) {
   String body;
   body.reserve(200);  // Fase 1: pre-allocate to prevent heap fragmentation
   body = "{\"external_id\":\"" + id + "\",\"state\":" + (state ? "true" : "false") + "}";
-  HTTPClient http;
+  HTTPClient &http = apiHttpSession();
   beginApiRequest(http, String(API_BASE_URL) + "/api/v1/devices/identify");
   http.addHeader("Content-Type", "application/json");
   addDeviceAuth(http);
@@ -741,7 +749,7 @@ void sendIdentify(bool state) {
   Serial.printf("[IDENTIFY] state=%s → HTTP %d %s\n", state ? "true" : "false", code, resp.c_str());
 
   if (code == 200) {
-    HTTPClient hb;
+    HTTPClient &hb = apiHttpSession();
     beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
     hb.addHeader("Content-Type", "application/json");
     addDeviceAuth(hb);
@@ -782,7 +790,7 @@ void reportQrRejected(int qrLen, int qrDots, const String &text) {
          ",\"dots\":" + String(qrDots) +
          ",\"hex_head\":\"" + hexHead + "\",\"hex_tail\":\"" + hexTail + "\"}";
 
-  HTTPClient http;
+  HTTPClient &http = apiHttpSession();
   beginApiRequest(http, String(API_BASE_URL) + "/api/v1/devices/qr-rejected");
   http.addHeader("Content-Type", "application/json");
   addDeviceAuth(http);
@@ -1023,7 +1031,7 @@ void setup() {
 
   // ── Health check + blink (solo en WiFi NUEVA) ──────────────────────
   if (ensureWiFi()) {
-    HTTPClient h;
+    HTTPClient &h = apiHttpSession();
     beginApiRequest(h, String(API_BASE_URL) + "/api/v1/health");
     h.setTimeout(4000);
     int c = h.GET();
@@ -1052,7 +1060,7 @@ void setup() {
       String blinkBody;
       blinkBody.reserve(120);  // Fase 1: pre-allocate
       blinkBody = "{\"external_id\":\"" + chipId() + "\"}";
-      HTTPClient h2;
+      HTTPClient &h2 = apiHttpSession();
       beginApiRequest(h2, String(API_BASE_URL) + "/dashboard-api/blink-light");
       h2.addHeader("Content-Type", "application/json");
       addDeviceAuth(h2);
@@ -1140,7 +1148,7 @@ void loop() {
     for (int attempt = 1; attempt <= 2; attempt++) {
       bool reused = apiTlsClient().connected();
       esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
-      HTTPClient http;
+      HTTPClient &http = apiHttpSession();
       beginApiRequest(http, String(API_BASE_URL) + "/api/v1/qr/validate");
       http.addHeader("Content-Type", "application/json");
       addDeviceAuth(http);
@@ -1194,7 +1202,7 @@ void loop() {
     if (ensureWiFi()) {
       scannerBeatPending = false;
       esp_task_wdt_reset();  // feed antes de HTTP bloqueante
-      HTTPClient hScan;
+      HTTPClient &hScan = apiHttpSession();
       beginApiRequest(hScan, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hScan.addHeader("Content-Type", "application/json");
       addDeviceAuth(hScan);
@@ -1229,7 +1237,7 @@ void loop() {
 
     if (ensureWiFi()) {
       esp_task_wdt_reset();  // defensa: feed antes de cadena HTTP bloqueante
-      HTTPClient h;
+      HTTPClient &h = apiHttpSession();
       beginApiRequest(h, String(API_BASE_URL) + "/api/v1/health");
       h.setTimeout(4000);
       int hc = h.GET();
@@ -1251,7 +1259,7 @@ void loop() {
       String hbBody;
       hbBody.reserve(250);  // Fase 1: pre-allocate
       hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"]}";
-      HTTPClient hb;
+      HTTPClient &hb = apiHttpSession();
       beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hb.addHeader("Content-Type", "application/json");
       addDeviceAuth(hb);
@@ -1274,7 +1282,7 @@ void loop() {
         if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
         esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
         delay(HTTP_GAP_MS);    // LOW-POWER: respiro de rail antes del poll
-        HTTPClient cmdPoll;
+        HTTPClient &cmdPoll = apiHttpSession();
         beginApiRequest(cmdPoll, String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
         cmdPoll.setTimeout(3000);
         addDeviceAuth(cmdPoll);
@@ -1333,7 +1341,7 @@ void loop() {
                                    "\"LOCK\":" + String(lockOk ? "true" : "false") +
                                    "}}";
 
-              HTTPClient cmdResult;
+              HTTPClient &cmdResult = apiHttpSession();
               beginApiRequest(cmdResult, String(API_BASE_URL) + "/dashboard-api/command-result");
               cmdResult.addHeader("Content-Type", "application/json");
               addDeviceAuth(cmdResult);
@@ -1395,7 +1403,7 @@ void loop() {
       if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
       esp_task_wdt_reset();
       delay(HTTP_GAP_MS);  // respiro de rail antes de la petición TLS
-      HTTPClient hLock;
+      HTTPClient &hLock = apiHttpSession();
       beginApiRequest(hLock, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hLock.addHeader("Content-Type", "application/json");
       addDeviceAuth(hLock);

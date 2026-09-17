@@ -2185,6 +2185,10 @@ activo tras consolidar + ABSENT.
   `http.setReuse(httpReuseEnabled)` (ON) con salvaguardas: timeout de socket 4 s,
   reset de socket si hueco > 60 s, reintento único en el QR con conexión nueva,
   log `reuse=0/1`, y `noteHttpResult()` que desactiva el reuse tras 3 fallos.
+- **Corrección clave**: `~HTTPClient()` llama `_client->stop()`; con objetos locales
+  destruía el socket compartido tras cada petición (por eso `reuse=0`). Se usa una
+  **sesión persistente** `apiHttpSession()` (static) referenciada por todos los
+  call sites, de modo que el destructor no corre en runtime.
 - **Servidor**: `KeepAliveTimeout 75` + `MaxKeepAliveRequests 1000` en el vhost
   `cerraduras.josue.ink-le-ssl.conf` (Apache, fuera del repo).
 - **Test propio**: BLOCK 36.3 (grep de `noteHttpResult` y `setReuse(httpReuseEnabled)`)
