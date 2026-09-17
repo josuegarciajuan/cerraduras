@@ -207,6 +207,9 @@ EspUsbHost usb;
 String     scanned;
 String     pendingQr;
 bool       hasPending = false;
+// F47 (RF-56.1): instante (millis) en que el callback USB encoló el QR, para
+// medir el tramo encolado→POST e identificar espera de bucle vs. handshake TLS.
+unsigned long qrEnqueuedAt = 0;
 unsigned long lastBeat = 0;
 bool       scannerConnected = false;  // F33: set true on USB connect, false on disconnect
 // F33: el callback USB corre en la tarea del host USB. NUNCA debe usar el
@@ -388,7 +391,8 @@ void addDeviceAuth(HTTPClient &http) {
 // ── Fase 39: anunciar identidad eFuse sin afectar la operación productiva ──
 void announceFactoryDevice(unsigned long now) {
   if (!factoryAnnouncementEnabled || factoryAnnouncementInFlight ||
-      WiFi.status() != WL_CONNECTED || now < factoryNextAttemptAt) {
+      WiFi.status() != WL_CONNECTED || now < factoryNextAttemptAt ||
+      hasPending) {   // F47 (RF-56.2): no iniciar TLS de anuncio con un QR pendiente
     return;
   }
 
@@ -947,6 +951,7 @@ void setup() {
         Serial.println("[QR] Formato OK → encolando para validación API");
         pendingQr  = scanned;
         hasPending = true;
+        qrEnqueuedAt = millis();   // F47: marca el inicio del tramo encolado→POST
         scanned    = "";
       }
       return;
@@ -1054,6 +1059,10 @@ void loop() {
     String qr = pendingQr;
     String id = chipId();
 
+    // F47 (RF-56.1): separa espera de bucle (maintenance TLS en curso) del POST.
+    Serial.printf("[QR] Encolado→POST: %lu ms\n",
+                  qrEnqueuedAt ? (millis() - qrEnqueuedAt) : 0);
+
     Serial.printf("\n══════════════════════════════════════════\n");
     Serial.printf("[QR-POST] device_id=%s\n", id.c_str());
     Serial.printf("[QR-POST] QR len=%d\n", qr.length());
@@ -1116,7 +1125,7 @@ void loop() {
   // El callback onDeviceConnected solo marca el flag; aquí, en la tarea
   // principal, se envía con el cliente TLS compartido (secuencial).
   // LOW-POWER: saltar si el relé está activo (no solapar TLS con la bobina).
-  if (scannerBeatPending && !relayPulsing) {
+  if (scannerBeatPending && !relayPulsing && !hasPending) {   // F47: no competir con el QR
     if (ensureWiFi()) {
       scannerBeatPending = false;
       esp_task_wdt_reset();  // feed antes de HTTP bloqueante
@@ -1143,7 +1152,7 @@ void loop() {
   // LOW-POWER: si el relé está activo, NO se envía nada por red en esta vuelta;
   // se pospone (lastBeat no se actualiza) hasta que la bobina vuelva a reposo.
   unsigned long now = millis();
-  if (now - lastBeat > 30000 && !relayPulsing) {
+  if (now - lastBeat > 30000 && !relayPulsing && !hasPending) {   // F47: prioriza el QR
     lastBeat = now;
 
     // ── Fase 1: Heap monitor ──
@@ -1169,6 +1178,7 @@ void loop() {
         Serial.println("[HB] ⚠ health 200 NO-JSON → hay un gate/proxy delante de la API");
       }
 
+      if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
       delay(HTTP_GAP_MS);  // LOW-POWER: respiro de rail entre peticiones TLS
 
       // F33: send heartbeat with batch sub_kinds for all ESP32 sub-devices
@@ -1194,6 +1204,7 @@ void loop() {
       // F33: If API reports pending commands, poll and execute them
       if (hbCode == 200 && hbResp.indexOf("\"has_pending_commands\":true") > 0) {
         Serial.println("[F33] Polling pending commands...");
+        if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
         esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
         delay(HTTP_GAP_MS);    // LOW-POWER: respiro de rail antes del poll
         HTTPClient cmdPoll;
@@ -1311,9 +1322,10 @@ void loop() {
   // ── LOW-POWER: LOCK heartbeat diferido ──
   // Se envía SOLO con el relé ya en reposo, para que el pico de WiFi TX no
   // coincida con la bobina/solenoide energizada.
-  if (lockHeartbeatPending && !relayPulsing) {
+  if (lockHeartbeatPending && !relayPulsing && !hasPending) {   // F47: prioriza el QR
     lockHeartbeatPending = false;
     if (ensureWiFi()) {
+      if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
       esp_task_wdt_reset();
       delay(HTTP_GAP_MS);  // respiro de rail antes de la petición TLS
       HTTPClient hLock;

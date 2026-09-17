@@ -964,6 +964,27 @@ $router->get(
             ];
         }
 
+        // F47 (RF-54.4.2): salud real del consumer Pulsar desde su fichero de
+        // estado (proceso vivo pero WS caído o mudo → degraded). El fichero lo
+        // escribe `bin/tuya-pulsar-consumer/index.js`; si aún no existe, no se
+        // altera la detección por instancias (compatibilidad).
+        $pcStatusFile = $runDir . '/pulsar-consumer-status.json';
+        if (isset($result['pulsar-consumer']) && is_file($pcStatusFile)) {
+            $pcRaw = @file_get_contents($pcStatusFile);
+            $pcSt  = $pcRaw !== false ? json_decode($pcRaw, true) : null;
+            if (is_array($pcSt) && array_key_exists('connected', $pcSt)) {
+                $pcLast  = isset($pcSt['last_msg_at']) ? strtotime((string) $pcSt['last_msg_at']) : false;
+                $pcSilent = $pcLast !== false && (time() - $pcLast) > 90;
+                if ($pcSt['connected'] !== true || $pcSilent) {
+                    $result['pulsar-consumer']['healthy']         = false;
+                    $result['pulsar-consumer']['degraded']        = true;
+                    $result['pulsar-consumer']['status_reason']   = $pcSt['connected'] !== true
+                        ? 'ws_disconnected'
+                        : 'ws_silent';
+                }
+            }
+        }
+
         return \App\Http\Response::json(200, $result);
     }
 );

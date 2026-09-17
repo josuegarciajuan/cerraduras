@@ -58,16 +58,78 @@ const DB_PASS = process.env.DB_PASS || '';
 // son guiados por comando y no necesitan push para el panel de coreografía.
 const TRACKED_KINDS = ['PROXIMITY', 'PRESENCE'];
 const RECONCILE_MS = 60000;              // re-resolver devices cada 60 s
-const RESYNC_MIN_INTERVAL_MS = 20000;    // rate-limit del resync REST
+const RESYNC_MIN_INTERVAL_MS = 20000;    // rate-limit del resync REST (parpadeos)
+const REAL_GAP_MS = 10000;               // F47: hueco que justifica resync inmediato
+const RECONNECT_BASE_MS = 1000;          // F47: base de reconexión (antes 5000)
+// F47 (RF-54.3): watchdog de silencio (configurable). Por defecto 180 s: los
+// sensores de presencia emiten iluminancia cada ~10 s; un silencio mayor indica
+// WS zombie. En packs solo-puerta (sin emisión periódica) es una red de
+// seguridad secundaria, no la fuente primaria de reconexión.
+const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '180000', 10);
 
 /** @type {string[]} */
 let knownDeviceIds = [];
 let lastResyncAt = 0;
 
+// ─── F47: estado de salud del consumer (RF-54) ────────────────────────
+let currentWs = null;        // WS activo (para el watchdog)
+let lastMessageAt = 0;       // epoch ms del último mensaje recibido (cualquier DP)
+let disconnectedAt = 0;      // epoch ms del último cierre (0 = conectado)
+let resyncCount = 0;         // resyncs ejecutados desde el arranque
+
 // ─── Dependencies ─────────────────────────────────────────────────────
 const crypto = require('crypto');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
+
+const STATUS_FILE = path.join(__dirname, '..', '..', 'run', 'pulsar-consumer-status.json');
+
+// ─── F47: helpers puros (exportados para tests, RF-54) ────────────────
+
+/**
+ * Pure: ¿procede resincronizar al (re)conectar?
+ * - Primera vez → siempre.
+ * - Hueco real (>= realGapMs) desde el cierre → sí.
+ * - Parpadeo → respeta el rate-limit.
+ */
+function shouldResync(now, disconnectedAtMs, lastResyncAtMs, minIntervalMs, realGapMs) {
+  if (!lastResyncAtMs) return true;
+  const gap = disconnectedAtMs > 0 ? now - disconnectedAtMs : 0;
+  if (gap >= realGapMs) return true;
+  return (now - lastResyncAtMs) >= minIntervalMs;
+}
+
+/** Pure: ¿el WS lleva demasiado tiempo mudo con devices rastreados? */
+function silenceExceeded(now, lastMsgAt, knownCount, silenceMs) {
+  if (!knownCount || knownCount <= 0) return false;
+  if (!lastMsgAt) return false;
+  return (now - lastMsgAt) > silenceMs;
+}
+
+/** Pure: latencia de recepción (ms) respecto al sello del dispositivo. */
+function receiveLatencyMs(now, tuyaT) {
+  const t = Number(tuyaT);
+  if (!isFinite(t) || t <= 0) return null;
+  return now - t;
+}
+
+/** Escribe el fichero de estado (best-effort, nunca rompe el consumer). */
+function writeStatus(connected) {
+  try {
+    const dir = path.dirname(STATUS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    fs.writeFileSync(STATUS_FILE, JSON.stringify({
+      connected: !!connected,
+      last_msg_at: lastMessageAt ? new Date(lastMessageAt).toISOString() : null,
+      known_devices: knownDeviceIds.length,
+      resyncs: resyncCount,
+      updated_at: new Date(now).toISOString(),
+    }) + '\n');
+  } catch (e) { /* best-effort */ }
+}
 
 // `ws` / `crypto-js` se cargan de forma perezosa: requerir este módulo desde los
 // tests (sin node_modules) no debe fallar ni abrir el WS (F44).
@@ -190,8 +252,13 @@ function buildStatusPayload(devId, result) {
  */
 async function resyncKnownDevices(reason) {
   if (knownDeviceIds.length === 0) return;
-  if (Date.now() - lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
-  lastResyncAt = Date.now();
+  const now = Date.now();
+  if (!shouldResync(now, disconnectedAt, lastResyncAt, RESYNC_MIN_INTERVAL_MS, REAL_GAP_MS)) {
+    console.log('[RESYNC] omitido (hueco reciente + rate-limit activo)');
+    return;
+  }
+  lastResyncAt = now;
+  resyncCount++;
   console.log(`[RESYNC] (${reason}) sondeando ${knownDeviceIds.length} device(s)...`);
   let token;
   try { token = await getTuyaToken(); } catch (e) {
@@ -320,9 +387,9 @@ function mapToPresenceEvent(data, ids) {
 }
 
 // ─── Connect and listen ───────────────────────────────────────────────
-// F44 (RF-50.3): reconexión más rápida (2 s base) para acortar el hueco en el
-// que el Reader/latest pierde eventos; el resync REST cubre lo perdido.
-let reconnectDelay = 2000;   // Exponential backoff on persistent failures
+// F44/F47 (RF-50.3, RF-54.1): reconexión con base 1 s para acortar el hueco en
+// el que el Reader/latest pierde eventos; el resync REST cubre lo perdido.
+let reconnectDelay = RECONNECT_BASE_MS;   // F47: base 1 s (RF-54.1)
 let consecutiveFails = 0;
 const MAX_BACKOFF = 60000;   // 1 minute max
 
@@ -341,6 +408,7 @@ function connect() {
       password: password,
     },
   });
+  currentWs = ws;   // F47: referencia para el watchdog de silencio
 
   let keepAliveTimer = null;   // timer del heartbeat proactivo
 
@@ -364,11 +432,16 @@ function connect() {
   ws.on('open', () => {
     console.log('[WS] ✅ Connected to Tuya Message Service');
     consecutiveFails = 0;
-    reconnectDelay = 5000;
+    reconnectDelay = RECONNECT_BASE_MS;   // F47: reset a base rápida
+    lastMessageAt = Date.now();           // F47: evita falso silencio al conectar
+    writeStatus(true);
     startHeartbeat();
     // RF-50.3: recuperar transiciones perdidas durante el hueco del WS.
+    // F47: debe evaluarse ANTES de resetear `disconnectedAt`, para que un hueco
+    // real (>= REAL_GAP_MS) permita el resync aunque el rate-limit esté activo.
     resyncKnownDevices('ws-open').catch((e) =>
       console.error(`[RESYNC] error: ${e.message}`));
+    disconnectedAt = 0;
   });
 
   ws.on('ping', () => { ws.pong(ACCESS_ID); });
@@ -407,6 +480,14 @@ function connect() {
         dataToCheck = payloadData.bizData;
       }
 
+      // F47 (RF-54.4.1): latencia de recepción respecto al sello del dispositivo.
+      lastMessageAt = Date.now();
+      const dpList = Array.isArray(dataToCheck.status) ? dataToCheck.status : [];
+      const dpT = (dpList[0] && dpList[0].t) || dataToCheck.t || null;
+      const latMs = receiveLatencyMs(lastMessageAt, dpT);
+      if (latMs !== null) console.log(`[LAT] recv-tuya_t = ${latMs} ms`);
+      writeStatus(true);
+
       if (!isKnownDevice(devId) && !isKnownDevice(dataToCheck.devId || dataToCheck.dev_id || '')) {
         console.log(`[MSG] Not a tracked device (${devId}), skipping`);
         return;
@@ -434,9 +515,14 @@ function connect() {
   ws.on('close', (code, reason) => {
     stopHeartbeat();
     consecutiveFails++;
+    disconnectedAt = Date.now();   // F47: para decidir el resync por hueco real
+    currentWs = null;
+    writeStatus(false);
     // Exponential backoff for persistent failures (409 = subscription conflict, etc.)
     if (code === 1006 || code === 4000 || code === 4001) {
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_BACKOFF);
+    } else {
+      reconnectDelay = RECONNECT_BASE_MS;   // F47: cierre normal → base rápida (1 s)
     }
     const jitter = Math.floor(Math.random() * 500);
     console.log(`[WS] ❌ Closed (code=${code}). Consecutive fails: ${consecutiveFails}. Reconnecting in ${Math.round((reconnectDelay + jitter)/1000)}s...`);
@@ -472,6 +558,19 @@ function start() {
     }
   }, RECONCILE_MS).unref();
 
+  // F47 (RF-54.3): watchdog de silencio. Con devices rastreados, si el WS lleva
+  // más de SILENCE_MS sin ningún mensaje, se fuerza la reconexión. Antes podía
+  // quedarse mudo sin que nadie lo detectara (el heartbeat solo mantenía el TCP).
+  lastMessageAt = Date.now();
+  writeStatus(false);
+  setInterval(() => {
+    if (!currentWs || !WebSocket || currentWs.readyState !== WebSocket.OPEN) return;
+    if (silenceExceeded(Date.now(), lastMessageAt, knownDeviceIds.length, SILENCE_MS)) {
+      console.error(`[WS] ⚠ silencio > ${Math.round(SILENCE_MS / 1000)}s con devices rastreados — reconectando`);
+      try { currentWs.terminate(); } catch (e) { /* close programa la reconexión */ }
+    }
+  }, 15000).unref();
+
   connect();
 }
 
@@ -487,4 +586,8 @@ module.exports = {
   buildStatusPayload,
   mapToPresenceEvent,
   TRACKED_KINDS,
+  // F47 (RF-54): helpers puros para tests
+  shouldResync,
+  silenceExceeded,
+  receiveLatencyMs,
 };

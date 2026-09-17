@@ -21,6 +21,9 @@ const {
   isKnownDevice,
   buildStatusPayload,
   mapToPresenceEvent,
+  shouldResync,
+  silenceExceeded,
+  receiveLatencyMs,
 } = require(path.join(__dirname, '..', '..', 'bin', 'tuya-pulsar-consumer', 'index.js'));
 
 let passed = 0;
@@ -98,6 +101,36 @@ check('mapToPresenceEvent ignores devices outside the DB-derived list',
 // ─── 5. Module is require-safe ─────────────────────────────────────────
 check('module exports the pure helpers (require did not start the consumer)',
   typeof parseDeviceIds === 'function' && typeof buildStatusPayload === 'function');
+
+// ─── 6. F47 (RF-54): reconexión / resync / watchdog ────────────────────
+const NOW = 1_800_000_000_000;
+
+check('shouldResync always syncs the first time',
+  shouldResync(NOW, 0, 0, 20000, 10000) === true);
+
+check('shouldResync syncs after a real gap even if rate-limited recently',
+  shouldResync(NOW, NOW - 15000, NOW - 5000, 20000, 10000) === true);
+
+check('shouldResync throttles a blip inside the min interval',
+  shouldResync(NOW, NOW - 2000, NOW - 5000, 20000, 10000) === false);
+
+check('shouldResync allows a blip once the min interval elapsed',
+  shouldResync(NOW, NOW - 2000, NOW - 25000, 20000, 10000) === true);
+
+check('silenceExceeded is false without tracked devices',
+  silenceExceeded(NOW, NOW - 200000, 0, 90000) === false);
+
+check('silenceExceeded is false before any message/silence budget',
+  silenceExceeded(NOW, 0, 2, 90000) === false && silenceExceeded(NOW, NOW - 5000, 2, 90000) === false);
+
+check('silenceExceeded is true when tracked devices go mute',
+  silenceExceeded(NOW, NOW - 95000, 2, 90000) === true);
+
+check('receiveLatencyMs computes recv - tuya_t and tolerates junk',
+  receiveLatencyMs(NOW, NOW - 1200) === 1200 &&
+  receiveLatencyMs(NOW, null) === null &&
+  receiveLatencyMs(NOW, 'nope') === null &&
+  receiveLatencyMs(NOW, 0) === null);
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' tuya-pulsar-consumer: ' + passed + ' passed, ' + failed + ' failed\n');
