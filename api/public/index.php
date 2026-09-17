@@ -623,6 +623,18 @@ function resolveDeviceOnlineState(array $dev, int $probeTtlSeconds): array {
         return ['state' => $online ? 'online' : 'offline', 'online' => $online];
     }
 
+    // F46++: dispositivos con PUSH de Tuya (PROXIMITY siempre; PRESENCE con
+    // presence_source='push'): un `last_seen_at` fresco es señal REAL de
+    // conectividad (el dispositivo acaba de enviar un mensaje por Pulsar).
+    // Evita el "desconocido" permanente cuando la sonda Tuya no está disponible
+    // (p. ej. cuota IoT Core agotada) sin falsear verde: si deja de reportar,
+    // last_seen envejece y vuelve a 'unknown'.
+    $meta   = is_array($dev['meta'] ?? null) ? $dev['meta'] : [];
+    $isPush = ($kind === 'PROXIMITY') || (($meta['presence_source'] ?? null) === 'push');
+    if ($isPush && !empty($dev['online'])) {
+        return ['state' => 'online', 'online' => true];
+    }
+
     // Tuya cloud: estado desde la última SONDA real, si no está caducada.
     $probedAt = $dev['online_probed_at'] ?? null;
     $stateRaw = $dev['online_state'] ?? null;
