@@ -3233,8 +3233,9 @@ F47_FW="../docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino"
 if [ ! -f "$F47_FW" ]; then
     skip "F47 firmware scan→post" "sketch no encontrado"
 elif grep -q 'Encolado→POST' "$F47_FW" && grep -q 'qrEnqueuedAt' "$F47_FW" \
-   && grep -q 'noteHttpResult' "$F47_FW" && grep -q 'setReuse(httpReuseEnabled)' "$F47_FW"; then
-    pass "F47: firmware con encolado→POST, prioridad QR y keep-alive con salvaguardas"
+   && grep -q 'noteHttpResult' "$F47_FW" && grep -q 'setReuse(httpReuseEnabled)' "$F47_FW" \
+   && grep -q 'apiHttpSession' "$F47_FW"; then
+    pass "F47: firmware con encolado→POST, prioridad QR y keep-alive (sesión persistente)"
 else
     fail "F47: firmware incompleto (scan→post/prioridad/keep-alive)" "revisa $F47_FW"
 fi
