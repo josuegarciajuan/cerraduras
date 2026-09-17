@@ -96,7 +96,11 @@ function parseDeviceIds(stdout) {
 function loadKnownDevices() {
   try {
     const kinds = TRACKED_KINDS.map((k) => `'${k}'`).join(',');
-    const sql = `SELECT external_id FROM devices WHERE kind IN (${kinds})`;
+    // F46+: los devices `presence_source='disabled'` NO se rastrean (apagado
+    // fuerte). Los `push` SÍ (su tiempo real llega por este consumer).
+    const sql = `SELECT external_id FROM devices
+                 WHERE kind IN (${kinds})
+                   AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json,'$.presence_source')),'') <> 'disabled'`;
     const out = execFileSync('mysql', [
       '-h', DB_HOST, '-P', String(DB_PORT), '-u', DB_USER, DB_NAME, '-N', '-e', sql,
     ], { env: { ...process.env, MYSQL_PWD: DB_PASS }, encoding: 'utf8', timeout: 5000 });
