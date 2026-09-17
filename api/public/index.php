@@ -330,6 +330,91 @@ function checkTuyaOnline(\PDO $pdo): array {
     return $result;
 }
 
+// ── F46+: presupuesto de cuota Tuya COMPARTIDO con el poller (Node) ──────────
+// Mismo fichero `api/run/tuya-quota.json` que escribe `tuya-presence-poller.js`.
+// Una sola fuente de verdad: ni la app ni el poller agotan la cuota (el
+// 2026-09-17 una puerta atascada agotó la cuota con ~1.400 llamadas/hora).
+function tuyaQuotaFile(): string
+{
+    return dirname(__DIR__) . '/run/tuya-quota.json';
+}
+
+/** @return array{day:?string,hour:?string,callsDay:int,callsHour:int,backoffUntil:int} */
+function tuyaQuotaRead(): array
+{
+    $default = ['day' => null, 'hour' => null, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
+    $f = tuyaQuotaFile();
+    if (!is_file($f)) {
+        return $default;
+    }
+    $d = json_decode((string) @file_get_contents($f), true);
+    return is_array($d) ? array_merge($default, $d) : $default;
+}
+
+function tuyaQuotaWrite(array $q): void
+{
+    $f = tuyaQuotaFile();
+    if (!is_dir(dirname($f))) {
+        @mkdir(dirname($f), 0775, true);
+    }
+    @file_put_contents($f . '.tmp', json_encode($q), LOCK_EX);
+    @rename($f . '.tmp', $f);
+}
+
+/** @return array{ok:bool,reason:string,q:array<string,mixed>} */
+function tuyaQuotaCheck(): array
+{
+    $now  = time();
+    $day  = gmdate('Y-m-d', $now);
+    $hour = gmdate('Y-m-d\TH', $now);
+    $q = tuyaQuotaRead();
+    if (($q['day'] ?? null) !== $day) {
+        $q = ['day' => $day, 'hour' => $hour, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
+    }
+    if (($q['hour'] ?? null) !== $hour) {
+        $q['hour'] = $hour;
+        $q['callsHour'] = 0;
+    }
+    $hourly = (int) ($_ENV['TUYA_HOURLY_BUDGET'] ?? (getenv('TUYA_HOURLY_BUDGET') ?: 150));
+    $daily  = (int) ($_ENV['TUYA_DAILY_BUDGET']  ?? (getenv('TUYA_DAILY_BUDGET')  ?: 1000));
+    if (($q['backoffUntil'] ?? 0) > $now) {
+        return ['ok' => false, 'reason' => 'backoff', 'q' => $q];
+    }
+    if (($q['callsDay'] ?? 0) >= $daily) {
+        return ['ok' => false, 'reason' => 'daily_budget', 'q' => $q];
+    }
+    if (($q['callsHour'] ?? 0) >= $hourly) {
+        return ['ok' => false, 'reason' => 'hourly_budget', 'q' => $q];
+    }
+    return ['ok' => true, 'reason' => 'ok', 'q' => $q];
+}
+
+function tuyaQuotaBump(): array
+{
+    $now  = time();
+    $day  = gmdate('Y-m-d', $now);
+    $hour = gmdate('Y-m-d\TH', $now);
+    $q = tuyaQuotaRead();
+    if (($q['day'] ?? null) !== $day) {
+        $q = ['day' => $day, 'hour' => $hour, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
+    }
+    if (($q['hour'] ?? null) !== $hour) {
+        $q['hour'] = $hour;
+        $q['callsHour'] = 0;
+    }
+    $q['callsDay']  = (int) ($q['callsDay'] ?? 0) + 1;
+    $q['callsHour'] = (int) ($q['callsHour'] ?? 0) + 1;
+    tuyaQuotaWrite($q);
+    return $q;
+}
+
+function tuyaQuotaBackoff(int $seconds): void
+{
+    $q = tuyaQuotaRead();
+    $q['backoffUntil'] = time() + $seconds;
+    tuyaQuotaWrite($q);
+}
+
 /**
  * Tuya Cloud API helper for presence sensor DP read/write.
  * Shared credentials with TuyaSwitchGateway / TuyaLockGateway.
@@ -349,6 +434,12 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
             return ['http' => 429, 'data' => [], 'error' => 'Tuya quota exhausted — backoff active', 'elapsed_ms' => 0];
         }
         @unlink($backoffFile);
+    }
+
+    // F46+: presupuesto compartido (mismo fichero que el poller Node).
+    $qchk = tuyaQuotaCheck();
+    if (!$qchk['ok']) {
+        return ['http' => 429, 'data' => [], 'error' => 'Tuya quota budget (' . $qchk['reason'] . ')', 'elapsed_ms' => 0];
     }
 
     $accessId  = $_ENV['TUYA_ACCESS_ID'] ?? getenv('TUYA_ACCESS_ID') ?: '';
@@ -399,6 +490,8 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
         $headers[] = "Content-SHA256: $contentSha";
     }
 
+    tuyaQuotaBump(); // F46+: contar la llamada en el presupuesto compartido
+
     $ch = curl_init($baseUrl . $path);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -428,6 +521,7 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
         $code = $data['code'] ?? 0;
         if ($code === 28841004 || stripos($data['msg'] ?? '', 'quota') !== false) {
             file_put_contents($backoffFile, time() + 21600); // 6 hours
+            tuyaQuotaBackoff(21600);                         // F46+: backoff compartido
         }
     }
     return ['http' => $httpCode, 'data' => is_array($data) ? $data : [], 'error' => null, 'elapsed_ms' => $elapsed];

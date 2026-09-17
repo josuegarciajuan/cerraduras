@@ -175,6 +175,14 @@ hasta el momento (regresión completa). Debe ejecutarse:
   pollers ante un fallo transitorio.
 - **Runner**: `api/bin/worker-loop.sh` (mapa worker→comando+tick) usado por el template systemd.
 - **Tests**: `run-tests.sh` (regresión) y `system-status` con los 6 workers `healthy=true`.
+- **Guardia de cuota Tuya (F46+)**: una puerta `OPEN` atascada (sin `CLOSED`) hacía que el poller
+  re-capturara en bucle (watchdog 120 s + cooldown 30 s) → ~1.400 llamadas/hora y cuota agotada
+  (2026-09-17 03:53). Fixes: (a) cooldown **escalado** por watchdog consecutivo (30 s→1→2→5→10 min)
+  y **stop** si la puerta lleva > `STUCK_DOOR_MS` (5 min) sin cambiar (hasta evento nuevo);
+  (b) intervalo intra-ventana 2 s→4 s; (c) **presupuesto compartido** `api/run/tuya-quota.json`
+  (por hora/día, env `TUYA_HOURLY_BUDGET`/`TUYA_DAILY_BUDGET`) respetado por el poller y por
+  `tuyaPresenceApi`; (d) `/live` expone `tuya_quota` y `door_open_too_long`, y el panel muestra un
+  banner. Tests: casos anti-drain en `tests/Unit/presence-poller-gate.test.js` (BLOCK 33).
 
 ### F42 — Ventana de verificación de entrada (RF-46.4)
 

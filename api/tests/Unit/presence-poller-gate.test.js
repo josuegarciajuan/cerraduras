@@ -28,6 +28,8 @@ const {
   EXIT_CHECK_MARGIN_MS,
   CAPTURE_MAX_MS,
   CAPTURE_COOLDOWN_MS,
+  CAPTURE_COOLDOWN_MAX_MS,
+  STUCK_DOOR_MS,
 } = require(path.join(__dirname, '..', '..', 'bin', 'tuya-presence-poller.js'));
 
 let passed = 0;
@@ -333,6 +335,46 @@ check('pendingExitVerification: sin ciclo acreditado (solo cierre) → false',
     stay: { status: 'OCCUPIED', entry_confirmed_at: iso(NOW - 60000) },
     exitCheck: 40,
   }), NOW) === false);
+
+// ─── 6c. F46+: anti-drenaje (puerta atascada + cooldown escalado) ──────
+// Estancia OCCUPIED sin consolidar + presencia: la puerta OPEN justifica captura.
+const openStuck = live({
+  iot: { door_state: 'OPEN', presence_state: 'PRESENT' },
+  stay: { status: 'OCCUPIED', entry_confirmed_at: null, first_entry_at: iso(NOW - 1000) },
+});
+let ws = { captureStartedAt: 0, captureBlockedUntil: 0, lastDoorState: null, consecutiveWatchdogs: 0, doorChangedAt: 0 };
+
+let wsRes = nextCaptureState(openStuck, NOW, ws);
+check('anti-drain: captura con puerta OPEN (evento reciente), no stuck',
+  wsRes.capturing === true && wsRes.stuckDoor === false);
+ws = wsRes.state;
+
+const fire1At = NOW + CAPTURE_MAX_MS + 1;
+wsRes = nextCaptureState(openStuck, fire1At, ws);
+check('anti-drain: 1er watchdog → cooldown base y captura cortada',
+  wsRes.watchdogFired === true && wsRes.capturing === false
+  && wsRes.state.captureBlockedUntil === fire1At + CAPTURE_COOLDOWN_MS);
+ws = wsRes.state;
+
+const t2 = ws.captureBlockedUntil + 1;
+wsRes = nextCaptureState(openStuck, t2, ws);
+ws = wsRes.state;
+const fire2At = t2 + CAPTURE_MAX_MS + 1;
+wsRes = nextCaptureState(openStuck, fire2At, ws);
+check('anti-drain: 2º watchdog → cooldown escalado (doble)',
+  wsRes.watchdogFired === true
+  && wsRes.state.captureBlockedUntil === fire2At + CAPTURE_COOLDOWN_MS * 2);
+ws = wsRes.state;
+
+const tStuck = ws.doorChangedAt + STUCK_DOOR_MS + 1000;
+wsRes = nextCaptureState(openStuck, tStuck, ws);
+check('anti-drain: puerta OPEN atascada (> STUCK_DOOR_MS) → no captura (stuckDoor)',
+  wsRes.stuckDoor === true && wsRes.capturing === false);
+ws = wsRes.state;
+
+wsRes = nextCaptureState(live({ iot: { door_state: 'CLOSED', presence_state: 'ABSENT' } }), tStuck + 1, ws);
+check('anti-drain: cambio de puerta rearma (stuckDoor=false, contador a 0)',
+  wsRes.stuckDoor === false && wsRes.state.consecutiveWatchdogs === 0);
 
 // ─── 7. Module is require-safe ─────────────────────────────────────────
 check('module exports the pure gate (require did not start the poller)',
