@@ -218,6 +218,10 @@ final class RoomLiveController
                 $quota = array_merge($quota, $qd);
             }
         }
+        // F46++: `backoffUntil` en SEGUNDOS (normalizar legados en ms > 1e12).
+        if (($quota['backoffUntil'] ?? 0) > 1e12) {
+            $quota['backoffUntil'] = (int) round($quota['backoffUntil'] / 1000);
+        }
         $quotaState = (($quota['backoffUntil'] ?? 0) > time()) ? 'exhausted' : 'ok';
 
         $doorOpenTooLong = false;

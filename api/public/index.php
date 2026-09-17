@@ -348,7 +348,15 @@ function tuyaQuotaRead(): array
         return $default;
     }
     $d = json_decode((string) @file_get_contents($f), true);
-    return is_array($d) ? array_merge($default, $d) : $default;
+    if (!is_array($d)) {
+        return $default;
+    }
+    $q = array_merge($default, $d);
+    // F46++: normalizar `backoffUntil` a SEGUNDOS (valores legados en ms → /1000).
+    if (($q['backoffUntil'] ?? 0) > 1e12) {
+        $q['backoffUntil'] = (int) round($q['backoffUntil'] / 1000);
+    }
+    return $q;
 }
 
 function tuyaQuotaWrite(array $q): void

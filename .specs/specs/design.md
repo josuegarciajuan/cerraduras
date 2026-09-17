@@ -2396,3 +2396,9 @@ que `probeTuyaOnlineOnce()` no lo sondee y que `resolvePresenceDeviceForRoom()` 
 calibración responde "sin sensor"). **Cero cuota y cero procesos.** Ejemplo:
 `ZY-M100 bf98d27d…` (banco de pruebas, migración `0112`). Para reactivarlo: quitar el flag
 (`presence_source=NULL`) y reiniciar `cerraduras-presence-poller`.
+
+**Unidad de `backoffUntil` (guardia de cuota, F46++):** en `api/run/tuya-quota.json`,
+`backoffUntil` se guarda **en segundos epoch** (misma unidad en el poller Node y en PHP).
+Los valores legados en milisegundos (> 1e12) se normalizan al leer. Un desajuste ms/s hacía
+que `/live` reportara `tuya_quota.state='exhausted'` de forma permanente y que se bloquearan
+las sondas de verificación y la calibración (aunque la cuota real estuviera disponible).

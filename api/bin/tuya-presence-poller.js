@@ -216,10 +216,23 @@ function _quotaSlots(now) {
   return { day: d.toISOString().slice(0, 10), hour: d.toISOString().slice(0, 13) };
 }
 
+/**
+ * Normaliza `backoffUntil` a SEGUNDOS epoch. La app PHP escribe segundos
+ * (`time()`), así que el poller debe usar la misma unidad; los valores legados
+ * en milisegundos (> 1e12) se convierten aquí.
+ */
+function _normBackoff(v) {
+  v = Number(v) || 0;
+  return v > 1e12 ? Math.round(v / 1000) : v;
+}
+
 function quotaRead() {
   try {
     const q = JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf8'));
-    if (q && typeof q === 'object') return q;
+    if (q && typeof q === 'object') {
+      q.backoffUntil = _normBackoff(q.backoffUntil); // F46++: SIEMPRE segundos
+      return q;
+    }
   } catch (e) { /* missing/corrupt → defaults */ }
   return { day: null, hour: null, callsDay: 0, callsHour: 0, backoffUntil: 0 };
 }
@@ -234,11 +247,12 @@ function quotaWrite(q) {
 }
 
 function quotaCheck(now) {
+  const nowSec = Math.floor((now || Date.now()) / 1000); // F46++: backoff en segundos
   const { day, hour } = _quotaSlots(now);
   let q = quotaRead();
   if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
   if (q.hour !== hour) { q.hour = hour; q.callsHour = 0; }
-  if ((q.backoffUntil || 0) > (now || Date.now())) return { ok: false, reason: 'backoff', q };
+  if ((q.backoffUntil || 0) > nowSec) return { ok: false, reason: 'backoff', q };
   if ((q.callsDay || 0) >= TUYA_DAILY_BUDGET) return { ok: false, reason: 'daily_budget', q };
   if ((q.callsHour || 0) >= TUYA_HOURLY_BUDGET) return { ok: false, reason: 'hourly_budget', q };
   return { ok: true, q };
@@ -259,7 +273,8 @@ function quotaBackoff(ms, now) {
   const { day, hour } = _quotaSlots(now);
   let q = quotaRead();
   if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
-  q.backoffUntil = (now || Date.now()) + ms;
+  // F46++: guardar en SEGUNDOS (coherente con PHP). `ms` es la duración.
+  q.backoffUntil = Math.floor((now || Date.now()) / 1000) + Math.ceil(ms / 1000);
   quotaWrite(q);
   return q;
 }
