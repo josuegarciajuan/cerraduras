@@ -175,6 +175,22 @@ function pickMarkForEvent(marks, eventMs, windowMs) {
   return best;
 }
 
+/**
+ * Pure: líneas nuevas de un fichero de marcas append-only.
+ * Evita re-procesar la misma línea en cada lectura (bug que generaba marcas
+ * duplicadas) y detecta truncados (cursor por delante del fichero).
+ * @param {string} text contenido completo del fichero
+ * @param {number} alreadySeen nº de líneas ya consumidas
+ * @returns {{lines:string[], seen:number}}
+ */
+function newMarkerLines(text, alreadySeen) {
+  const lines = String(text || '').split('\n').filter(function (l) { return l.trim() !== ''; });
+  const seen = (typeof alreadySeen === 'number' && alreadySeen > 0 && alreadySeen <= lines.length)
+    ? alreadySeen
+    : 0;
+  return { lines: lines.slice(seen), seen: lines.length };
+}
+
 // ─── Runtime (solo si se ejecuta directamente) ────────────────────────
 
 function main() {
@@ -373,16 +389,14 @@ function main() {
     }
   }
 
+  let markerLinesSeen = 0;   // cursor de líneas ya consumidas (append-only)
   function loadMarkerFile() {
     if (!fs.existsSync(MARKER_FILE)) return;
     let text = '';
     try { text = fs.readFileSync(MARKER_FILE, 'utf8'); } catch (e) { return; }
-    const lines = text.split('\n').filter(function (l) { return l.trim() !== ''; });
-    const already = marks.map(function (m) { return m.label + '|' + m.tsMs; });
-    for (const l of lines) {
-      const m = parseMarker(l, Date.now());
-      if (m && already.indexOf(m.label + '|' + m.tsMs) === -1) addMark(m);
-    }
+    const res = newMarkerLines(text, markerLinesSeen);
+    markerLinesSeen = res.seen;
+    for (const l of res.lines) addMark(parseMarker(l, Date.now()));
   }
 
   // ── stdin: marcas físicas ──
@@ -419,4 +433,5 @@ module.exports = {
   computeDeltas: computeDeltas,
   formatDelta: formatDelta,
   pickMarkForEvent: pickMarkForEvent,
+  newMarkerLines: newMarkerLines,
 };
