@@ -52,6 +52,13 @@ final class SwitchService
             $result = $gateway->turnOn($roomId);
             if ($result['ok']) {
                 $this->persistLastCommand($roomId, 'ON');
+            } else {
+                error_log(sprintf(
+                    '[SwitchService][WARNING] turnOn failed room=%d provider=%s error=%s',
+                    $roomId,
+                    (string) ($result['provider'] ?? 'UNKNOWN'),
+                    (string) ($result['error'] ?? 'unknown')
+                ));
             }
             return $result;
         } catch (\Throwable $e) {
@@ -75,6 +82,13 @@ final class SwitchService
             $result = $gateway->turnOff($roomId);
             if ($result['ok']) {
                 $this->persistLastCommand($roomId, 'OFF');
+            } else {
+                error_log(sprintf(
+                    '[SwitchService][WARNING] turnOff failed room=%d provider=%s error=%s',
+                    $roomId,
+                    (string) ($result['provider'] ?? 'UNKNOWN'),
+                    (string) ($result['error'] ?? 'unknown')
+                ));
             }
             return $result;
         } catch (\Throwable $e) {
@@ -205,6 +219,14 @@ final class SwitchService
             $result = $turnOn ? $gateway->turnOnForDevice($device) : $gateway->turnOffForDevice($device);
             if ($result['ok']) {
                 $this->persistLastCommandForDevice($device, $action);
+            } else {
+                error_log(sprintf(
+                    '[SwitchService][WARNING] %s failed pack=%d provider=%s error=%s',
+                    $turnOn ? 'turnOnByPack' : 'turnOffByPack',
+                    $packId,
+                    (string) ($result['provider'] ?? 'UNKNOWN'),
+                    (string) ($result['error'] ?? 'unknown')
+                ));
             }
             return $result;
         } catch (\Throwable $e) {
