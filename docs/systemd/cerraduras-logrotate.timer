@@ -1,0 +1,10 @@
+[Unit]
+Description=Cerraduras Hotel — Timer diario de rotación de logs (03:30)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=cerraduras-logrotate.service
+
+[Install]
+WantedBy=timers.target

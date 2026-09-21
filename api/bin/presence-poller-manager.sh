@@ -88,6 +88,11 @@ reap_removed() {
 
 log "═══ Presence poller manager started (reconcile ${RECONCILE_S}s) ═══"
 
+# Estado de asignación para no repetir el aviso en cada ciclo (30 s).
+#   unknown → arranque; empty → ningún sensor requiere poller de nube;
+#   active  → hay al menos un sensor con poller de nube.
+ASSIGNED_STATE="unknown"
+
 while true; do
   if ! ASSIGNED="$(discover_sensors)"; then
     # Error de BD: no tocar los pollers vivos (evita matarlos por un fallo
@@ -97,7 +102,15 @@ while true; do
     continue
   fi
   if [ -z "$ASSIGNED" ]; then
-    log "⚠ no hay dispositivos PRESENCE en la BD"
+    # Todos los sensores PRESENCE son push/disabled: no necesitan poller de
+    # nube. Se loguea solo al ENTRAR en este estado (no cada 30 s).
+    if [ "$ASSIGNED_STATE" != "empty" ]; then
+      log "ℹ ningún sensor requiere poller de nube (push/disabled)"
+      ASSIGNED_STATE="empty"
+    fi
+  elif [ "$ASSIGNED_STATE" != "active" ]; then
+    log "ℹ sensores con poller de nube detectados — activando pollers"
+    ASSIGNED_STATE="active"
   fi
 
   # Start missing pollers

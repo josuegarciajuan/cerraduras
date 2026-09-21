@@ -176,14 +176,19 @@ final class QrTestController
                      last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"
         )->execute([':rid' => $roomId]);
 
-        // ── Step 5: Clean debts ──
+        // ── Step 5: Clean debts (and their outbox_vb6 items) ──
+        try {
+            $debtIds = $this->pdo->prepare("SELECT id FROM debts WHERE room_id = :rid");
+            $debtIds->execute([':rid' => $roomId]);
+            $ids = array_map('intval', $debtIds->fetchAll(\PDO::FETCH_COLUMN) ?: []);
+            if (!empty($ids)) {
+                $in = implode(',', $ids);
+                $this->pdo->exec("DELETE FROM outbox_vb6 WHERE topic = 'debt.created' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.debt_id')) IN ($in)");
+            }
+        } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox_vb6: ' . $e->getMessage()); }
         try { $this->pdo->prepare("DELETE FROM debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup debts: ' . $e->getMessage()); }
-        try { $this->pdo->prepare("DELETE FROM overstay_debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup overstay_debts: ' . $e->getMessage()); }
 
-        // ── Step 6: Clean outbox ──
-        try { $this->pdo->prepare("DELETE FROM outbox WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox: ' . $e->getMessage()); }
-
-        // ── Step 6b: Turn off the physical switch (RF-16.3: light off on stay close) ──
+        // ── Step 6: Turn off the physical switch (RF-16.3: light off on stay close) ──
         if ($this->switchService !== null) {
             try {
                 $this->switchService->turnOff($roomId);
@@ -245,12 +250,17 @@ final class QrTestController
                      last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"
         )->execute([':rid' => $roomId]);
 
-        // ── Clean debts ──
+        // ── Clean debts (and their outbox_vb6 items) ──
+        try {
+            $debtIds = $this->pdo->prepare("SELECT id FROM debts WHERE room_id = :rid");
+            $debtIds->execute([':rid' => $roomId]);
+            $ids = array_map('intval', $debtIds->fetchAll(\PDO::FETCH_COLUMN) ?: []);
+            if (!empty($ids)) {
+                $in = implode(',', $ids);
+                $this->pdo->exec("DELETE FROM outbox_vb6 WHERE topic = 'debt.created' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.debt_id')) IN ($in)");
+            }
+        } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox_vb6: ' . $e->getMessage()); }
         try { $this->pdo->prepare("DELETE FROM debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup debts: ' . $e->getMessage()); }
-        try { $this->pdo->prepare("DELETE FROM overstay_debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup overstay_debts: ' . $e->getMessage()); }
-
-        // ── Clean outbox ──
-        try { $this->pdo->prepare("DELETE FROM outbox WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox: ' . $e->getMessage()); }
 
         // ── Turn off the physical switch (RF-16.3: light off on stay close) ──
         if ($this->switchService !== null) {

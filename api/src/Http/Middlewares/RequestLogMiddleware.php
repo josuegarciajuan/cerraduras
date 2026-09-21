@@ -55,7 +55,7 @@ final class RequestLogMiddleware implements Middleware
             $this->logger->info('http.request', [
                 'correlation_id' => $correlationId,
                 'method' => $request->method,
-                'route' => $request->path,
+                'route' => mb_substr((string) $request->path, 0, 512),
                 'status' => $status,
                 'duration_ms' => $durationMs,
                 'remote_ip' => $request->remoteIp,
