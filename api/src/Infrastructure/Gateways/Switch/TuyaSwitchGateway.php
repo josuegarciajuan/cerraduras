@@ -76,6 +76,76 @@ final class TuyaSwitchGateway implements SwitchGatewayInterface
         return self::PROVIDER;
     }
 
+    /**
+     * Interpret a raw Tuya Cloud response into an observable, classified result.
+     *
+     * Pure and side-effect free so the failure taxonomy can be unit-tested
+     * without network access. When `success` is truthy the command was accepted;
+     * otherwise the failure is classified so the caller can tell CUOTA
+     * (429 / exhaust / 28841105 / 28841107), device OFFLINE (2008) or an invalid
+     * DP (`dp`/`not exist`/`invalid`/`code not` / 1106) apart.
+     *
+     * @param array<string,mixed> $data respuesta JSON de Tuya
+     * @return array{ok:bool, code:int|string|null, msg:string|null, category:string}
+     *   category ∈ ok|quota|offline|dp_invalid|unknown
+     */
+    public static function classifyResponse(int $httpCode, array $data): array
+    {
+        $success = (bool) ($data['success'] ?? false);
+
+        $rawCode = $data['code'] ?? null;
+        $code    = (is_int($rawCode) || is_string($rawCode)) ? $rawCode : null;
+        $codeNum = (is_int($rawCode) || (is_string($rawCode) && is_numeric($rawCode)))
+            ? (int) $rawCode
+            : null;
+
+        $rawMsg = $data['msg'] ?? null;
+        $msg    = is_string($rawMsg) ? $rawMsg : (is_scalar($rawMsg) ? (string) $rawMsg : null);
+
+        if ($success) {
+            return ['ok' => true, 'code' => $code, 'msg' => $msg, 'category' => 'ok'];
+        }
+
+        $needle = $msg !== null ? strtolower($msg) : '';
+
+        // Cuota: HTTP 429, mensaje de agotamiento o códigos de cuota IoT Core.
+        if ($httpCode === 429
+            || $codeNum === 28841105
+            || $codeNum === 28841107
+            || ($needle !== '' && (
+                str_contains($needle, 'quota')
+                || str_contains($needle, 'exhaust')
+                || str_contains($needle, 'limit')
+            ))
+        ) {
+            return ['ok' => false, 'code' => $code, 'msg' => $msg, 'category' => 'quota'];
+        }
+
+        // Dispositivo offline.
+        if ($codeNum === 2008
+            || ($needle !== '' && (
+                str_contains($needle, 'offline')
+                || str_contains($needle, 'device is offline')
+            ))
+        ) {
+            return ['ok' => false, 'code' => $code, 'msg' => $msg, 'category' => 'offline'];
+        }
+
+        // DP inválido / inexistente.
+        if ($codeNum === 1106
+            || ($needle !== '' && (
+                preg_match('/\bdp\b/', $needle) === 1
+                || str_contains($needle, 'not exist')
+                || str_contains($needle, 'invalid')
+                || str_contains($needle, 'code not')
+            ))
+        ) {
+            return ['ok' => false, 'code' => $code, 'msg' => $msg, 'category' => 'dp_invalid'];
+        }
+
+        return ['ok' => false, 'code' => $code, 'msg' => $msg, 'category' => 'unknown'];
+    }
+
     // -----------------------------------------------------------------
     // Internal
     // -----------------------------------------------------------------
@@ -143,36 +213,28 @@ final class TuyaSwitchGateway implements SwitchGatewayInterface
             ];
         }
 
-        $success = $data['success'] ?? false;
-        $error   = null;
+        $classification = self::classifyResponse($httpCode, $data);
+        $success        = $classification['ok'];
+        $error          = null;
         if (!$success) {
-            $error = 'Tuya API returned HTTP ' . $httpCode . ': ' . ($data['msg'] ?? 'unknown');
+            $error = self::describeError($httpCode, $classification);
             self::$breaker->reportFailure();
         } else {
             self::$breaker->reportSuccess();
         }
 
-        $action = $turnOn ? 'on' : 'off';
+        $action  = $turnOn ? 'on' : 'off';
+        $codeStr = $classification['code'] === null ? '-' : (string) $classification['code'];
+        $msgStr  = $classification['msg'] === null ? '-' : $classification['msg'];
         error_log(sprintf(
-            '[TuyaSwitchGateway] %s room=%d device=%s → HTTP %d %s (%dms)',
-            $action, $roomId, $deviceId, $httpCode,
-            $success ? 'OK' : 'FAIL', $elapsed
+            '[TuyaSwitchGateway] %s room=%d device=%s dp=%s → HTTP %d %s code=%s msg=%s category=%s (%dms)',
+            $action, $roomId, $deviceId, $dpCode, $httpCode,
+            $success ? 'OK' : 'FAIL', $codeStr, $msgStr, $classification['category'], $elapsed
         ));
 
-        // Persist last_command in devices.meta_json so the dashboard reflects real state
-        if ($success) {
-            try {
-                $mergedMeta = $existingMeta;
-                $mergedMeta['last_command'] = $turnOn ? 'ON' : 'OFF';
-                $mergedMeta['commanded_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
-                $this->deviceRepo->patch($internalId, [
-                    'meta_json' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
-                ]);
-            } catch (\Throwable $e) {
-                // Swallow: persistence failure must never fail the command
-                error_log('[TuyaSwitchGateway] Failed to persist last_command for device ' . $internalId . ': ' . $e->getMessage());
-            }
-        }
+        // Persist last_command (success) or the classified error (failure) so the
+        // dashboard can tell CUOTA / OFFLINE / DP inválido apart.
+        $this->persistMeta($internalId, $existingMeta, $turnOn, $classification, $error);
 
         return ['ok' => $success, 'provider' => self::PROVIDER, 'error' => $error];
     }
@@ -214,36 +276,77 @@ final class TuyaSwitchGateway implements SwitchGatewayInterface
             ];
         }
 
-        $success = $data['success'] ?? false;
-        $error   = null;
+        $classification = self::classifyResponse($httpCode, $data);
+        $success        = $classification['ok'];
+        $error          = null;
         if (!$success) {
-            $error = 'Tuya API returned HTTP ' . $httpCode . ': ' . ($data['msg'] ?? 'unknown');
+            $error = self::describeError($httpCode, $classification);
             self::$breaker->reportFailure();
         } else {
             self::$breaker->reportSuccess();
         }
 
-        $action = $turnOn ? 'on' : 'off';
+        $action  = $turnOn ? 'on' : 'off';
+        $codeStr = $classification['code'] === null ? '-' : (string) $classification['code'];
+        $msgStr  = $classification['msg'] === null ? '-' : $classification['msg'];
         error_log(sprintf(
-            '[TuyaSwitchGateway] %s (pack-based) device=%s → HTTP %d %s (%dms)',
-            $action, $deviceId, $httpCode,
-            $success ? 'OK' : 'FAIL', $elapsed
+            '[TuyaSwitchGateway] %s (pack-based) device=%s dp=%s → HTTP %d %s code=%s msg=%s category=%s (%dms)',
+            $action, $deviceId, $dpCode, $httpCode,
+            $success ? 'OK' : 'FAIL', $codeStr, $msgStr, $classification['category'], $elapsed
         ));
 
-        if ($success) {
-            try {
-                $mergedMeta = $existingMeta;
-                $mergedMeta['last_command'] = $turnOn ? 'ON' : 'OFF';
-                $mergedMeta['commanded_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
-                $this->deviceRepo->patch($internalId, [
-                    'meta_json' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
-                ]);
-            } catch (\Throwable $e) {
-                error_log('[TuyaSwitchGateway] Failed to persist last_command for device ' . $internalId . ': ' . $e->getMessage());
-            }
-        }
+        // Persist last_command (success) or the classified error (failure).
+        $this->persistMeta($internalId, $existingMeta, $turnOn, $classification, $error);
 
         return ['ok' => $success, 'provider' => self::PROVIDER, 'error' => $error];
+    }
+
+    /**
+     * Build the human-readable error returned to callers (includes code + msg).
+     *
+     * @param array{ok:bool, code:int|string|null, msg:string|null, category:string} $c
+     */
+    private static function describeError(int $httpCode, array $c): string
+    {
+        $code = $c['code'] === null ? '-' : (string) $c['code'];
+        $msg  = $c['msg'] === null ? 'unknown' : $c['msg'];
+        return sprintf('Tuya API returned HTTP %d [%s] code=%s msg=%s', $httpCode, $c['category'], $code, $msg);
+    }
+
+    /**
+     * Best-effort persistence of the last command result in devices.meta_json.
+     *
+     * Success keeps last_command/commanded_at and clears the error block;
+     * failure records last_error/last_error_at/last_error_category.
+     *
+     * @param array<string,mixed> $existingMeta
+     * @param array{ok:bool, code:int|string|null, msg:string|null, category:string} $classification
+     */
+    private function persistMeta(
+        int $internalId,
+        array $existingMeta,
+        bool $turnOn,
+        array $classification,
+        ?string $error
+    ): void {
+        try {
+            $merged = $existingMeta;
+            if ($classification['ok']) {
+                $merged['last_command'] = $turnOn ? 'ON' : 'OFF';
+                $merged['commanded_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
+                unset($merged['last_error'], $merged['last_error_at'], $merged['last_error_category']);
+            } else {
+                $merged['last_error']          = $error ?? 'Tuya command failed';
+                $merged['last_error_at']       = gmdate('Y-m-d\TH:i:s.v\Z');
+                $merged['last_error_category'] = $classification['category'];
+            }
+            $this->deviceRepo->patch($internalId, [
+                'meta_json' => json_encode($merged, JSON_UNESCAPED_UNICODE),
+            ]);
+        } catch (\Throwable $e) {
+            // Swallow: persistence failure must never fail the command
+            error_log('[TuyaSwitchGateway] Failed to persist switch meta for device ' . $internalId . ': ' . $e->getMessage());
+        }
     }
 
     // -----------------------------------------------------------------

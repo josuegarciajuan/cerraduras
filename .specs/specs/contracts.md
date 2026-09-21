@@ -1117,6 +1117,21 @@ es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
 }
 ```
 
+### 3.5 Campos nuevos en `switch_state` (aditivo)
+
+Campos **opcionales** que solo aparecen cuando la habitación tiene un dispositivo
+`SWITCH` registrado (si no hay `switch_state`, no aplican). Son aditivos y nullable: un
+consumidor que los ignore sigue funcionando. Reflejan el último fallo clasificado de Tuya.
+
+| Campo | Tipo | Null | Descripción |
+|-------|------|------|-------------|
+| `last_error` | string | sí | Mensaje del último fallo de Tuya (incluye `code` y `msg`). `null` si el último comando fue aceptado. |
+| `last_error_at` | string ISO-8601 UTC (`Y-m-d\TH:i:s.v\Z`) | sí | Marca UTC del último fallo. `null` si no hay error. |
+| `last_error_category` | string | sí | Taxonomía del fallo: `quota` \| `offline` \| `dp_invalid` \| `unknown`. `null` si no hay error. |
+
+> En caso de comando exitoso se limpian `last_error` y `last_error_category`; `last_command`
+> y `commanded_at` conservan su contrato. El evento SSE `state` transporta el mismo payload.
+
 ---
 
 ## 4. `GET /dashboard-api/event-stream?room_id=N`

@@ -518,6 +518,10 @@ final class EventStreamController
             'external_id'  => $row['external_id'],
             'last_command' => $meta['last_command'] ?? 'UNKNOWN',
             'commanded_at' => $meta['commanded_at'] ?? null,
+            // Observabilidad del último fallo Tuya (aditivo, nullable).
+            'last_error'          => $meta['last_error'] ?? null,
+            'last_error_at'       => $meta['last_error_at'] ?? null,
+            'last_error_category' => $meta['last_error_category'] ?? null,
         ];
     }
 
