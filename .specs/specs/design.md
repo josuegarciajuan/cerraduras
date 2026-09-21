@@ -1677,10 +1677,48 @@ ALTER TABLE stays
    (`stays.entry_confirmed_at IS NOT NULL`) **y** debe existir una **nueva apertura posterior**
    a esa confirmación (`last_open_at > entry_confirmed_at`). Esto evita que un falso `ABSENT`
    del radar cierre la estancia sin que nadie haya abierto la puerta desde dentro.
-3. **Conteo anclado a `last_absent_since`** (sin cambios): el gap es
-   `room.presence_check_seconds ?? room_type.exit_presence_gap_seconds ?? 15`.
+3. **Conteo anclado a `last_absent_since`** (sin cambios): la guarda de salida es
+   `room.presence_check_seconds ?? EXIT_ABSENCE_GUARD_SECONDS ?? 3` (Bug 1). `gap_seconds`
+   deja de gobernar la salida y queda como campo legacy de compatibilidad.
 4. **Cancelación**: si llega `PRESENT`, `last_absent_since` se limpia y `exit_deadline`
    desaparece; la habitación vuelve a `OCCUPIED`.
+
+### 3.4 Desacoplamiento entrada/salida (Bug 1)
+
+Hasta F48, un único valor (`gap_seconds` = override de sala `presence_check_seconds` ??
+`room_type.exit_presence_gap_seconds` ?? 15) se usaba a la vez para:
+
+- consolidar la **ENTRADA** cuando el radar confirma presencia tras el cierre
+  (`IotSessionService::consolidateEntry(..., requireRecentClose: true)`), y
+- gobernar la **guarda de ausencia de la SALIDA** (`ExitRuleEvaluator`).
+
+Con un override de sala de ~15 s, la salida tardaba ~30 s en confirmarse. Se **desacoplan**:
+
+| Uso | Configuración | Default | Resolución |
+|---|---|---|---|
+| Ventana de ENTRADA | `room_types.presence_entry_window_seconds` (`entry_window_seconds` en `/live`) | 90 s | tipo de habitación → 90 |
+| Guarda de SALIDA | `EXIT_ABSENCE_GUARD_SECONDS` (global) + `rooms.presence_check_seconds` (override) | 3 s | `resolveGuardSeconds()`: sala (>0) → global (>0) → 3 |
+| `gap_seconds` (legacy) | `rooms.presence_check_seconds` ?? `room_types.exit_presence_gap_seconds` | 15 s | solo contrato/UI retrospectiva; **no** gobierna la regla |
+
+```php
+// ExitRuleEvaluator (estático, puro)
+public const DEFAULT_GUARD_SECONDS = 3;
+
+public static function resolveGuardSeconds(?int $roomOverride, ?int $globalOverride): int
+{
+    if ($roomOverride !== null && $roomOverride > 0) return $roomOverride;
+    if ($globalOverride !== null && $globalOverride > 0) return $globalOverride;
+    return self::DEFAULT_GUARD_SECONDS;
+}
+
+// resolveGapSeconds(Room) se conserva por compatibilidad de wiring, pero ahora
+// devuelve resolveGuardSeconds($room->presenceCheckSeconds, env).
+```
+
+`IotSessionService::consolidateEntry(..., requireRecentClose: true)` usa
+`resolveEntryWindowSeconds($room)` (90 s), de modo que bajar la guarda a 3 s **no** reintroduce
+la regresión de F42 ("PRESENT fuera de ventana NO consolida"). `exit_deadline` en `/live` y en
+el SSE `state` usa `exit_guard_seconds`; `exit_guard_seconds` es aditivo en el payload.
 
 ### 3.2 `ExitRuleEvaluator::evaluate()` revisado
 
@@ -1937,9 +1975,11 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 > salta a interior sin pasar por umbral: mientras `door == OPEN` el estado es `EN_UMBRAL`, y
 > si el OPEN nunca llega, se muestra `ESPERANDO_APERTURA` (T5) en vez de `DENTRO`.
 
-> **RF-46.4 (F42)**: la ventana de entrada reutiliza `gap_seconds` (config por habitación/tipo).
-> El backend consolida `entry_confirmed_at` cuando llega PRESENT **con la puerta cerrada** y
-> dentro del gap (`IotSessionService::consolidateEntry(..., requireRecentClose: true)`); con la
+> **RF-46.4 (F42)**: la ventana de entrada usa `entry_window_seconds`
+> (`room_types.presence_entry_window_seconds`, default 90 s), **no** `gap_seconds`. Bug 1:
+> se desacopla de la guarda de salida (`exit_guard_seconds`, default 3 s). El backend
+> consolida `entry_confirmed_at` cuando llega PRESENT **con la puerta cerrada** y dentro de la
+> ventana (`IotSessionService::consolidateEntry(..., requireRecentClose: true)`); con la
 > puerta abierta no consolida, para que el avatar espere en el umbral (RF-46.1.3).
 > `exit_deadline` solo se emite si `entry_confirmed_at` está fijado (RoomLiveController y
 > EventStreamController, alineados con `ExitRuleEvaluator`), de modo que una entrada sin
@@ -2165,8 +2205,9 @@ Cambios de semántica (documentar explícitamente):
 
 | Campo | Antes | Ahora |
 |---|---|---|
-| `exit_deadline` | requería `door_state == CLOSED` | se calcula con ciclo de puerta acreditado, sin exigir estado actual CLOSED. |
-| `gap_seconds` | sin cambios | sin cambios (override de room > room_type > 15). |
+| `exit_deadline` | requería `door_state == CLOSED` | se calcula con ciclo de puerta acreditado, sin exigir estado actual CLOSED; `last_absent_since + exit_guard_seconds`. |
+| `gap_seconds` | sin cambios | **legacy**: override de sala > room_type > 15. Ya no gobierna la regla de salida; se expone por compatibilidad. |
+| `exit_guard_seconds` | — | **nuevo (Bug 1)**: guarda de ausencia de SALIDA; sala (`rooms.presence_check_seconds`) > `EXIT_ABSENCE_GUARD_SECONDS` > 3 s. |
 | `first_entry_at` | se usaba como "dentro" | se mantiene informativo; `entry_confirmed_at` es la autoridad de coreografía. |
 
 Evento SSE nuevo:

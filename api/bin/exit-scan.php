@@ -59,7 +59,7 @@ $exitAction   = new ExitActionService(
     null, null, $stayRepo, $exitEval, $roomTypeRepo
 );
 
-$tickInterval = 5; // seconds between scans
+$tickInterval = 1; // Bug 1: 1 s para que la salida no sume hasta 5 s al guard de 3 s
 $running = true;
 
 // Graceful shutdown (Fase 2 — T2.8): finish current tick before exiting

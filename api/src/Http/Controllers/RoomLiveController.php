@@ -7,6 +7,7 @@ use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Anomalies\AnomalyRepositoryInterface;
 use App\Domain\Locks\AccessEvent;
+use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSessionRepositoryInterface;
 use App\Domain\Presence\PresenceEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
@@ -178,6 +179,14 @@ final class RoomLiveController
             $gapSeconds = $rt !== null ? $rt->exitPresenceGapSeconds : 15;
         }
 
+        // Bug 1 (RF-47.2.4): la guarda de SALIDA se desacopla de `gap_seconds`.
+        // Resolución: override de sala (presence_check_seconds) > global
+        // EXIT_ABSENCE_GUARD_SECONDS > 3 s. `gap_seconds` sigue siendo legacy.
+        $exitGuardSeconds = ExitRuleEvaluator::resolveGuardSeconds(
+            $room->presenceCheckSeconds,
+            Config::getInt('EXIT_ABSENCE_GUARD_SECONDS', null)
+        );
+
         // F44 (RF-51.2/51.4/51.6): ventanas configurables del poller de presencia.
         // `entry_window_seconds`: muestreo tras la apertura hasta detectar presencia.
         // `exit_check_seconds`: muestreo post-cierre para decidir la salida real.
@@ -202,7 +211,7 @@ final class RoomLiveController
             if ($openTs !== false && $closeTs !== false && $absentTs !== false
                 && $closeTs >= $openTs
             ) {
-                $deadlineTs   = $absentTs + $gapSeconds;
+                $deadlineTs   = $absentTs + $exitGuardSeconds;
                 $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
             }
         }
@@ -251,6 +260,9 @@ final class RoomLiveController
             'battery'          => $battery,
             'exit_deadline'    => $exitDeadline,
             'gap_seconds'      => $gapSeconds,
+            // Bug 1 (RF-47.2.4): guarda de ausencia sostenida de la SALIDA.
+            // `exit_deadline = last_absent_since + exit_guard_seconds`.
+            'exit_guard_seconds' => $exitGuardSeconds,
             // F44 (RF-51.6): ventanas configurables del poller de presencia.
             'entry_window_seconds' => $entryWindowSeconds,
             'exit_check_seconds'   => $exitCheckSeconds,

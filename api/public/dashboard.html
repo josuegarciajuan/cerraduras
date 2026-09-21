@@ -1108,6 +1108,8 @@ function deriveState(data) {
     lastAbsentSince: io.last_absent_since || null,
     exitDeadline: data.exit_deadline || null,
     gapSeconds: data.gap_seconds || 15,
+    entryWindowSeconds: data.entry_window_seconds || 90,
+    exitGuardSeconds: data.exit_guard_seconds || 3,
     cooldown: !!(data.cooldown_until && toMs(data.cooldown_until) > now),
     qrScannable: qrData.scannable,
     qrConsumed: qrData.consumed,
@@ -2542,7 +2544,8 @@ function updateSensorPanel(data) {
   const gapSecs = data.gap_seconds || 15;
   // F44 fix: usar las ventanas REALES del backend, no el gap.
   const entryWindowSecs = data.entry_window_seconds || 90;
-  const exitCheckSecs = data.exit_check_seconds || (gapSecs + 10);
+  // Bug 1: el hold de salida es `exit_guard_seconds` (corto); si no viene, gap.
+  const exitGuardSecs = data.exit_guard_seconds || gapSecs;
 
   if (currentState === 'VERIFICANDO_ENTRADA' && io.last_close_at) {
     // RF-46.4: ventana de entrada — puerta cerrada sin presencia confirmada.
@@ -2559,9 +2562,9 @@ function updateSensorPanel(data) {
     cdEl.className = 'value val-yellow';
   } else if (stay && stay.status === 'OCCUPIED' && door === 'CLOSED'
              && presence === 'PRESENT' && lastCloseAt
-             && (new Date() - lastCloseAt) < exitCheckSecs * 1000) {
+             && (new Date() - lastCloseAt) < exitGuardSecs * 1000) {
     // F31: Verification hold — waiting for presence sensor to clear after door close
-    const holdLeft = Math.max(0, Math.floor(((lastCloseAt.getTime() + exitCheckSecs * 1000) - Date.now()) / 1000));
+    const holdLeft = Math.max(0, Math.floor(((lastCloseAt.getTime() + exitGuardSecs * 1000) - Date.now()) / 1000));
     cdEl.textContent = '⏳ verificando (' + holdLeft + 's)';
     cdEl.className = 'value val-yellow';
   } else if (cooldown) {

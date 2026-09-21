@@ -317,8 +317,9 @@ final class IotSessionService
 
                 // F42 (RF-46.4): el radar puede confirmar presencia DESPUÉS del
                 // cierre. Con la puerta cerrada y dentro de la ventana de entrada
-                // (gap), consolidamos la entrada. Nunca con la puerta abierta:
-                // así el avatar espera en el umbral hasta que cierre (RF-46.1.3).
+                // (`entry_window_seconds`), consolidamos la entrada. Nunca con la
+                // puerta abierta: así el avatar espera en el umbral hasta que
+                // cierre (RF-46.1.3).
                 if ($session->doorState === IotSession::DOOR_CLOSED) {
                     $this->consolidateEntry($session, $activeStay, $evtUtc, $room, true);
                 }
@@ -337,8 +338,9 @@ final class IotSessionService
      *
      * @param bool $requireRecentClose F42 (RF-46.4): cuando la consolidación la
      *        dispara una presencia TARDÍA (puerta ya cerrada), exige que el cierre
-     *        sea reciente (<= gap de la habitación). Fuera de la ventana, la entrada
-     *        no se consolida: se requiere una nueva apertura acreditada.
+     *        sea reciente (<= `entry_window_seconds` de la habitación). Fuera de la
+     *        ventana, la entrada no se consolida: se requiere una nueva apertura
+     *        acreditada.
      */
     private function consolidateEntry(
         IotSession $session,
@@ -372,10 +374,11 @@ final class IotSessionService
             }
             $closeTs = strtotime($session->lastCloseAt . ' UTC');
             $evtTs   = strtotime($evtUtc . ' UTC');
-            $gap     = $room !== null && $this->exitEvaluator !== null
-                ? $this->exitEvaluator->resolveGapSeconds($room)
-                : 15;
-            if ($closeTs === false || $evtTs === false || ($evtTs - $closeTs) > $gap) {
+            // Bug 1: la ventana de ENTRADA es `entry_window_seconds`
+            // (room_types.presence_entry_window_seconds, default 90 s), NO la
+            // guarda de salida. Así bajar la guarda a 3 s no regresa F42.
+            $entryWindow = $room !== null ? $this->resolveEntryWindowSeconds($room) : 90;
+            if ($closeTs === false || $evtTs === false || ($evtTs - $closeTs) > $entryWindow) {
                 return;
             }
         }

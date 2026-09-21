@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Support\Clock;
 use App\Support\Config;
+use App\Domain\Presence\ExitRuleEvaluator;
 use App\Support\Qr\QrTokenizer;
 
 /**
@@ -345,6 +346,17 @@ final class EventStreamController
             $exitDeadline = null;
             $gapSeconds   = $this->resolveGapSeconds($roomId, (int) ($roomRow['presence_check_seconds'] ?? 0));
 
+            // Bug 1 (RF-47.2.4): guarda de SALIDA desacoplada de `gap_seconds`.
+            // Resolución: override de sala > global EXIT_ABSENCE_GUARD_SECONDS > 3.
+            $roomGuardOverride = isset($roomRow['presence_check_seconds'])
+                && $roomRow['presence_check_seconds'] !== null
+                    ? (int) $roomRow['presence_check_seconds']
+                    : null;
+            $exitGuardSeconds = ExitRuleEvaluator::resolveGuardSeconds(
+                $roomGuardOverride,
+                Config::getInt('EXIT_ABSENCE_GUARD_SECONDS', null)
+            );
+
             // F41/F42 (contracts.md §3.3): presence ABSENT + credited door cycle
             // (open then close) + door CLOSED + entry confirmed. F42 (RF-46.4):
             // sin `entry_confirmed_at` no hay salida posible; evita un conteo de
@@ -365,7 +377,7 @@ final class EventStreamController
                 if ($openTs !== false && $closeTs !== false && $absentTs !== false
                     && $closeTs >= $openTs
                 ) {
-                    $deadlineTs   = $absentTs + $gapSeconds;
+                    $deadlineTs   = $absentTs + $exitGuardSeconds;
                     $exitDeadline = gmdate('Y-m-d\TH:i:s\Z', $deadlineTs);
                 }
             }
@@ -409,6 +421,8 @@ final class EventStreamController
                 'switch_state'     => $switchState,
                 'exit_deadline'    => $exitDeadline,
                 'gap_seconds'      => $gapSeconds,
+                // Bug 1 (RF-47.2.4): guarda de ausencia sostenida de la SALIDA.
+                'exit_guard_seconds' => $exitGuardSeconds,
                 'qr_status'        => $qrStatus,
                 'recent_events'    => $recentEvents,
                 'recent_presence'  => $recentPresence,
