@@ -3271,6 +3271,75 @@ else
 fi
 
 # =============================================================================
+# BLOCK 37 — Saneamiento de logs: rotación programada + aviso único del manager
+# Trazabilidad: TAREA 1/2/3 (log-rotate parametrizable, timer systemd, manager
+# de pollers sin aviso en bucle).
+# =============================================================================
+block "BLOCK 37 — Saneamiento de logs y avisos"
+
+# ── 37.0 Unit JS: log-rotate parametrizable (sin red/BD, tmpdir aislado) ───
+LOGS_LROT_JS="tests/Unit/log-rotate.test.js"
+if [ -f "$LOGS_LROT_JS" ]; then
+    LOGS_L_OUT=$(node "$LOGS_LROT_JS" 2>&1)
+    LOGS_L_RC=$?
+    LOGS_L_SUM=$(echo "$LOGS_L_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$LOGS_L_SUM" ] && LOGS_L_SUM="exit=$LOGS_L_RC"
+    if [ "$LOGS_L_RC" -eq 0 ]; then
+        pass "JS: log-rotate.test.js ($LOGS_L_SUM)"
+    else
+        fail "JS: log-rotate.test.js" \
+            "$LOGS_L_SUM — $(echo "$LOGS_L_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: log-rotate.test.js" "fichero no encontrado"
+fi
+
+# ── 37.1 Unit JS: guardia del aviso del presence-poller-manager (TAREA 3) ──
+LOGS_PPM_JS="tests/Unit/presence-poller-manager.test.js"
+if [ -f "$LOGS_PPM_JS" ]; then
+    LOGS_P_OUT=$(node "$LOGS_PPM_JS" 2>&1)
+    LOGS_P_RC=$?
+    LOGS_P_SUM=$(echo "$LOGS_P_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$LOGS_P_SUM" ] && LOGS_P_SUM="exit=$LOGS_P_RC"
+    if [ "$LOGS_P_RC" -eq 0 ]; then
+        pass "JS: presence-poller-manager.test.js ($LOGS_P_SUM)"
+    else
+        fail "JS: presence-poller-manager.test.js" \
+            "$LOGS_P_SUM — $(echo "$LOGS_P_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: presence-poller-manager.test.js" "fichero no encontrado"
+fi
+
+# ── 37.2 Units systemd versionadas (no instaladas por el runner) ───────────
+for LOGS_UNIT in docs/systemd/cerraduras-logrotate.service \
+                 docs/systemd/cerraduras-logrotate.timer \
+                 docs/systemd/journald-cerraduras.conf; do
+    if [ -f "../$LOGS_UNIT" ]; then
+        pass "Logs: $LOGS_UNIT presente"
+    else
+        fail "Logs: falta $LOGS_UNIT" "revisa docs/systemd/"
+    fi
+done
+
+# El service NO debe escribir su salida en api/logs (recursión).
+if grep -qE '^Standard(Output|Error)=append:/root/cerraduras/api/logs' \
+        ../docs/systemd/cerraduras-logrotate.service 2>/dev/null; then
+    fail "Logs: logrotate no debe escribir en api/logs" "usa journal o /var/log/"
+else
+    pass "Logs: logrotate sin recursión hacia api/logs"
+fi
+
+# El timer debe ser diario a las 03:30 y persistente.
+if grep -q '^OnCalendar=\*-\*-\* 03:30:00' ../docs/systemd/cerraduras-logrotate.timer 2>/dev/null \
+   && grep -q '^Persistent=true' ../docs/systemd/cerraduras-logrotate.timer 2>/dev/null \
+   && grep -q '^WantedBy=timers.target' ../docs/systemd/cerraduras-logrotate.timer 2>/dev/null; then
+    pass "Logs: timer diario 03:30 con Persistent=true"
+else
+    fail "Logs: timer incompleto" "revisa cerraduras-logrotate.timer"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

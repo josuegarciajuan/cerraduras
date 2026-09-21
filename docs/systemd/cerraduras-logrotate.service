@@ -1,0 +1,22 @@
+[Unit]
+Description=Cerraduras Hotel — Rotación de logs de la API
+Documentation=file:/root/cerraduras/docs/systemd/cerraduras-logrotate.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/bin/bash /root/cerraduras/api/bin/log-rotate.sh
+
+# La salida va a journald (NO a api/logs, que es el directorio que se rota:
+# escribir allí generaría recursión). Consultar con:
+#   journalctl -u cerraduras-logrotate.service
+StandardOutput=journal
+StandardError=journal
+
+# Rotación de bajo impacto: no compite con el servicio API.
+Nice=10
+IOSchedulingClass=idle
+
+# Sin [Install]: se activa mediante cerraduras-logrotate.timer.
