@@ -2261,3 +2261,51 @@ activo tras consolidar + ABSENT.
 | F48-03 | Contrato y documentación | RF-57.3 | `contracts.md`, `design.md`, `ops.md` | regresión |
 | F48-04 | `recent_presence` solo aplicados | RF-57.2.2 | `PresenceEventRepository.php`, `RoomLiveController.php`, `EventStreamController.php` | unit + regresión |
 | F48-05 | Apertura optimista del panel | RF-57.5 | `public/dashboard.html` | manual + regresión |
+
+---
+
+# Fase 49 — Guarda de salida corta y desacople entrada/salida (Bug 1, RF-47.2.4/47.2.5)
+
+**Motivo**: `gap_seconds` (override de sala) gobernaba a la vez la ventana de consolidación de
+ENTRADA y la guarda de SALIDA; un override legacy de ~15 s retrasaba ~30 s la confirmación de
+salida. Se desacoplan: ENTRADA = `entry_window_seconds` (90 s), SALIDA =
+`exit_guard_seconds` (default 3 s).
+
+### TSK-F49-01: Resolución pura de la guarda de salida
+- **Cambio**: `src/Domain/Presence/ExitRuleEvaluator.php` — `DEFAULT_GUARD_SECONDS=3`,
+  `resolveGuardSeconds(?int $roomOverride, ?int $globalOverride): int` (estática y pura);
+  `resolveGapSeconds(Room)` se conserva por wiring pero devuelve la guarda de salida.
+- **Test propio**: casos T16–T19 en `tests/Unit/ExitRuleEvaluatorTest.php`.
+
+### TSK-F49-02: Ventana de entrada desacoplada
+- **Cambio**: `src/Domain/Presence/IotSessionService.php` — `consolidateEntry(requireRecentClose)`
+  usa `resolveEntryWindowSeconds($room)` (default 90 s), no la guarda de salida (evita la
+  regresión de F42).
+- **Test propio**: sección F42 en `tests/Unit/IotSessionServiceTest.php` (caso "fuera de ventana"
+  avanzado a > 90 s).
+
+### TSK-F49-03: Exponer `exit_guard_seconds` y usarlo en `exit_deadline`
+- **Cambio**: `RoomLiveController.php` y `EventStreamController.php` — `exit_deadline` usa la
+  guarda; campo aditivo `exit_guard_seconds`; `gap_seconds` y `entry_window_seconds` intactos.
+- **Test propio**: regresión HTTP BLOCK (pendiente de bloque de fase).
+
+### TSK-F49-04: Migración de overrides legacy
+- **Cambio**: `migrations/0113_exit_absence_guard.sql` — limpia
+  `rooms.presence_check_seconds >= 10` para no conservar la tolerancia antigua.
+- **Test propio**: `bash bin/run-tests.sh` (pendiente de bloque de fase).
+
+### TSK-F49-05: Configuración, contrato y documentación
+- **Cambio**: `.env.example` (`EXIT_ABSENCE_GUARD_SECONDS=3`); `requirements.md` (RF-47.2.4/47.2.5,
+  RF-46.4.1, RF-49.2.3); `design.md` (§3.1/§3.4/§4/§8.1); `contracts.md` (§3.3, anexo F44);
+  `tasks.md`.
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+## Tabla resumen F49
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F49-01 | Resolución pura de la guarda | RF-47.2.4 | `ExitRuleEvaluator.php` | unit PHP |
+| F49-02 | Ventana de entrada desacoplada | RF-47.2.5 | `IotSessionService.php` | unit PHP |
+| F49-03 | Exponer `exit_guard_seconds` | RF-47.2.4 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
+| F49-04 | Migración de overrides legacy | RF-47.2.4 | `migrations/0113_exit_absence_guard.sql` | regresión |
+| F49-05 | Config + contrato/docs | RF-47.2.4/47.2.5 | `.env.example`, specs | regresión |

@@ -284,6 +284,79 @@ eq('T-w7 presencia dentro de ventana → OCUPADA', r.state, 'OCUPADA');
 eq('T-w7 lógico DENTRO', r.logical, 'DENTRO');
 
 // ============================================================================
+// Bug 1 · `entryWindowSeconds` manda en la ventana de ENTRADA (no gap)
+// ============================================================================
+console.log('\nBug 1 · Ventana de entrada con entryWindowSeconds\n');
+
+// Setup: QR + apertura acreditada; el cierre se evalúa con ventana=90 y gap=15.
+function entryEpAtClose(over) {
+  let e = emptyEpisodes(305);
+  let rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'UNKNOWN', qrRecentAt: T0, qrRecentResult: 'OK'
+  }, over || {})), e, T0);
+  e = rr.episodeUpdates;
+  rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'OPEN', lastOpenAt: openAt, prevDoor: 'UNKNOWN'
+  }, over || {})), e, T0 + 5000);
+  return rr.episodeUpdates;
+}
+
+// E1: a 60 s del cierre (muy por encima de gap=15, pero < ventana=90) sigue esperando.
+ep = entryEpAtClose({ entryWindowSeconds: 90 });
+r = deriveChoreography(entryClosedSnap({ entryWindowSeconds: 90 }), ep, T0 + 8000 + 60 * 1000);
+eq('E1 a 60s (<90) → VERIFICANDO_ENTRADA (no gap)', r.state, 'VERIFICANDO_ENTRADA');
+check('E1 no ha expirado', r.episodeUpdates.entryTimedOut === false);
+
+// E2: a 91 s (> ventana=90) expira y vuelve fuera.
+ep = entryEpAtClose({ entryWindowSeconds: 90 });
+r = deriveChoreography(entryClosedSnap({ entryWindowSeconds: 90 }), ep, T0 + 8000 + 91 * 1000);
+eq('E2 a 91s (>90) → QR_ESPERANDO', r.state, 'QR_ESPERANDO');
+check('E2 marca entryTimedOut', r.episodeUpdates.entryTimedOut === true);
+
+// ============================================================================
+// Bug 1 · `exitGuardSeconds` manda en el hold de SALIDA (no gap)
+// ============================================================================
+console.log('\nBug 1 · Hold de salida con exitGuardSeconds\n');
+
+function exitEpBeforeClose(over) {
+  let e = emptyEpisodes(305);
+  let rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'CLOSED', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0), lastCloseAt: iso(T0), prevDoor: 'CLOSED'
+  }, over || {})), e, T0 + 1000);
+  e = rr.episodeUpdates;
+  rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'OPEN', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0), lastOpenAt: iso(T0 + 60000), prevDoor: 'CLOSED'
+  }, over || {})), e, T0 + 60000);
+  return rr.episodeUpdates;
+}
+
+function exitCloseSnap(over) {
+  return baseSnap(Object.assign({
+    door: 'CLOSED', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0),
+    lastOpenAt: iso(T0 + 60000), lastCloseAt: iso(T0 + 63000),
+    prevDoor: 'OPEN'
+  }, over || {}));
+}
+
+// E3: exitGuardSeconds=3 → hold de 6 s; a los 5 s del cierre aún sostiene.
+ep = exitEpBeforeClose({ exitGuardSeconds: 3 });
+r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 3 }), ep, T0 + 63000 + 5 * 1000);
+eq('E3 hold 3s a los 5s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+
+// E4: exitGuardSeconds=3 → a los 8 s (>6 s) el hold termina y cancela la salida.
+ep = exitEpBeforeClose({ exitGuardSeconds: 3 });
+r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 3 }), ep, T0 + 63000 + 8 * 1000);
+eq('E4 hold 3s a los 8s → OCUPADA (cancela salida)', r.state, 'OCUPADA');
+
+// E5: sin exitGuardSeconds se conserva el fallback legacy a gap (hold=18 s).
+ep = exitEpBeforeClose();
+r = deriveChoreography(exitCloseSnap(), ep, T0 + 63000 + 8 * 1000);
+eq('E5 fallback gap a los 8s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+
+// ============================================================================
 // Resultado
 // ============================================================================
 console.log('\nTotal: ' + PASS + ' passed, ' + FAIL + ' failed\n');

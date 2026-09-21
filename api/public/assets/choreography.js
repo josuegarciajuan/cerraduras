@@ -105,7 +105,7 @@
    * snapshot: {
    *   roomStatus, door, presence, stayId, stayStatus,
    *   entryConfirmedAt, lastOpenAt, lastCloseAt, lastAbsentSince,
-   *   exitDeadline, gapSeconds, cooldown,
+   *   exitDeadline, gapSeconds, entryWindowSeconds, exitGuardSeconds, cooldown,
    *   qrScannable, qrConsumed, qrRevoked, qrExpired,
    *   qrRecentAt, qrRecentResult,  // QR_VALIDATE en ventana de 10 s
    *   qrBroadAt,                   // QR_VALIDATE OK en ventana de 120 s
@@ -135,7 +135,12 @@
     var lastAbsentMs = parseTime(s.lastAbsentSince);
     var deadlineMs = parseTime(s.exitDeadline);
     var gapSecs = (typeof s.gapSeconds === 'number' && s.gapSeconds > 0) ? s.gapSeconds : 15;
-    var holdMs = (gapSecs + 10) * 1000;
+    // Bug 1: `gap_seconds` es legacy. La ventana de verificación de ENTRADA usa
+    // `entry_window_seconds`; el hold de SALIDA usa `exit_guard_seconds`. Sin los
+    // campos nuevos se conserva el comportamiento previo (fallback a gap).
+    var entryWindowSecs = (typeof s.entryWindowSeconds === 'number' && s.entryWindowSeconds > 0) ? s.entryWindowSeconds : gapSecs;
+    var exitGuardSecs = (typeof s.exitGuardSeconds === 'number' && s.exitGuardSeconds > 0) ? s.exitGuardSeconds : gapSecs;
+    var holdMs = (exitGuardSecs + 3) * 1000;
 
     var qrRecentMs = s.qrRecentAt || 0;
     var qrRecentResult = s.qrRecentResult || null;
@@ -293,13 +298,13 @@
 
         // ── RF-46.4: ventana de verificación de entrada ──
         // Ciclo acreditado (abrió y cerró) sin presencia aún: el monigote espera
-        // en el umbral con `?` y conteo durante gap_seconds. Si la presencia llega
-        // dentro de la ventana, el bloque T8 anterior ya consolidó DENTRO; si
-        // expira, se asume que no entró nadie y se exige una nueva apertura.
+        // en el umbral con `?` y conteo durante entry_window_seconds. Si la
+        // presencia llega dentro de la ventana, el bloque T8 anterior ya consolidó
+        // DENTRO; si expira, se asume que no entró nadie y se exige una nueva apertura.
         var entryOpenMs  = ep.entryDoorOpenedAt || lastOpenMs;
         var creditedClose = lastCloseMs > 0 && entryOpenMs > 0 && lastCloseMs >= entryOpenMs;
         if (creditedClose && !ep.entryTimedOut && presence !== 'PRESENT') {
-          if ((nowMs - lastCloseMs) < gapSecs * 1000) {
+          if ((nowMs - lastCloseMs) < entryWindowSecs * 1000) {
             return out('VERIFICANDO_ENTRADA');
           }
           ep.entryTimedOut = true; // no llegó a entrar nadie

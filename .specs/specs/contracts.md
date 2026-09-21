@@ -1044,8 +1044,9 @@ Cuando no hay estancia activa, `active_stay` sigue siendo `null` y el campo no a
 
 | Campo | Contrato anterior | Contrato Fase 41 / 42 |
 |-------|-------------------|------------------|
-| `exit_deadline` | Se emitía con `presence_state=ABSENT` + `door_state=CLOSED` + ancla en `last_close_at`/`last_open_at` dentro de la ventana. | Se mantiene el campo y su tipo (ISO-8601 UTC o `null`). Se emite **solo** cuando `presence_state=ABSENT`, existe un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes, `last_close_at >= last_open_at`), la puerta está `CLOSED` **y `active_stay.entry_confirmed_at` no es nulo** (F42 / RF-46.4). Se limpia (`null`) si la puerta se reabre, reaparece presencia o la entrada aún no se ha consolidado. El poller lo usa como señal de ventana de verificación. |
-| `gap_seconds` | Override de habitación > tipo de habitación > 15 s. | Sin cambios. |
+| `exit_deadline` | Se emitía con `presence_state=ABSENT` + `door_state=CLOSED` + ancla en `last_close_at`/`last_open_at` dentro de la ventana. | Se mantiene el campo y su tipo (ISO-8601 UTC o `null`). Se emite **solo** cuando `presence_state=ABSENT`, existe un **ciclo de puerta acreditado** (`last_open_at` y `last_close_at` presentes, `last_close_at >= last_open_at`), la puerta está `CLOSED` **y `active_stay.entry_confirmed_at` no es nulo** (F42 / RF-46.4). Se calcula como `last_absent_since + exit_guard_seconds` (Bug 1). Se limpia (`null`) si la puerta se reabre, reaparece presencia o la entrada aún no se ha consolidado. El poller lo usa como señal de ventana de verificación. |
+| `gap_seconds` | Override de habitación > tipo de habitación > 15 s. | **Legacy (Bug 1)**: se mantiene el campo y su resolución (override de sala ?? `room_type.exit_presence_gap_seconds` ?? 15) por compatibilidad, pero **ya no** gobierna la regla de salida ni la ventana de entrada. |
+| `exit_guard_seconds` | — | **Nuevo, aditivo (Bug 1)**: guarda de ausencia sostenida de la SALIDA, en segundos. Resolución `room.presence_check_seconds` (>0) > `EXIT_ABSENCE_GUARD_SECONDS` (>0) > 3. `exit_deadline = last_absent_since + exit_guard_seconds`. |
 | `first_entry_at` | Se usaba como indicador de "dentro". | Se mantiene informativo. La autoridad de "dentro" pasa a `active_stay.entry_confirmed_at`. |
 | `iot_session.last_open_at` / `last_close_at` | Anclas de la regla de salida. | Sin cambios de formato; siguen siendo las anclas del ciclo de puerta. No se expone ningún campo compuesto `door_cycle`: los consumidores lo derivan de estos dos. |
 
@@ -1053,11 +1054,12 @@ Cuando no hay estancia activa, `active_stay` sigue siendo `null` y el campo no a
 de nombre ni de tipo. Un consumidor que ignore `entry_confirmed_at` y
 `last_*_event_at`/`last_*_value` sigue funcionando con la semántica anterior.
 
-**Nota F42 (RF-46.4)**: la ventana de verificación de entrada es **client-side**. El panel la
-deriva de `iot_session.last_close_at` + `gap_seconds` mientras `active_stay.entry_confirmed_at`
-es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
+**Nota F42 (RF-46.4) / Bug 1**: la ventana de verificación de entrada es **client-side** y se
+deriva de `iot_session.last_close_at` + `entry_window_seconds` (`room_types.presence_entry_window_seconds`,
+default 90 s) mientras `active_stay.entry_confirmed_at` es nulo. El backend consolida
 `entry_confirmed_at` al recibir `PRESENCE=PRESENT` con `door_state=CLOSED` dentro de
-`gap_seconds` del cierre; con la puerta abierta no consolida.
+`entry_window_seconds` del cierre; con la puerta abierta no consolida. La guarda de SALIDA es
+independiente (`exit_guard_seconds`, default 3 s) y `gap_seconds` queda como campo legacy.
 
 ### 3.4 Ejemplo de respuesta (fragmento)
 
@@ -1089,6 +1091,7 @@ es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
   },
   "exit_deadline": null,
   "gap_seconds": 15,
+  "exit_guard_seconds": 3,
   "qr_status": { "...": "sin cambios" },
   "recent_events": [],
   "recent_presence": [],
@@ -1112,8 +1115,9 @@ es nulo; no se añade ningún campo nuevo al contrato. El backend consolida
     "last_absent_since": "2026-09-16T11:00:04.000Z"
   },
   "active_stay": { "status": "OCCUPIED", "entry_confirmed_at": "2026-09-16T10:20:05.000Z" },
-  "exit_deadline": "2026-09-16T11:00:19.000Z",
-  "gap_seconds": 15
+  "exit_deadline": "2026-09-16T11:00:07.000Z",
+  "gap_seconds": 15,
+  "exit_guard_seconds": 3
 }
 ```
 
@@ -1403,7 +1407,8 @@ Se añaden dos campos, sin romper consumidores existentes:
 ```json
 {
   "entry_window_seconds": 90,
-  "exit_check_seconds": 25
+  "exit_check_seconds": 25,
+  "exit_guard_seconds": 3
 }
 ```
 
@@ -1411,6 +1416,9 @@ Se añaden dos campos, sin romper consumidores existentes:
   muestreo tras la apertura de puerta hasta detectar presencia.
 - `exit_check_seconds`: `gap_seconds + 10`. Ventana de muestreo tras el cierre para decidir
   la salida real.
+- `exit_guard_seconds` (Bug 1, aditivo): guarda de ausencia sostenida de la SALIDA
+  (`rooms.presence_check_seconds` > `EXIT_ABSENCE_GUARD_SECONDS` > 3). `exit_deadline =
+  last_absent_since + exit_guard_seconds`. `gap_seconds` queda como campo legacy.
 
 ### 2. Consumer Pulsar (RF-50)
 

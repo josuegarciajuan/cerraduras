@@ -373,12 +373,14 @@ function makeOccupiedStay(int $id, int $roomId, ?string $entryConfirmedAt = null
     );
 }
 
-// Habitaciones 2, 3 y 4 (room_type 1 → gap=5s), aisladas del estado de la sala 1.
+// Habitaciones 2, 3 y 4 (room_type 1 → entry_window_seconds=90 por defecto),
+// aisladas del estado de la sala 1. Bug 1: la consolidación de entrada usa la
+// ventana de ENTRADA (90 s), no el gap/guarda de salida (3 s).
 $roomRepo->byId[2] = new Room(2, '102', 1, null, Room::STATUS_OCCUPIED, true, null);
 $roomRepo->byId[3] = new Room(3, '103', 1, null, Room::STATUS_OCCUPIED, true, null);
 $roomRepo->byId[4] = new Room(4, '104', 1, null, Room::STATUS_OCCUPIED, true, null);
 
-// ── Caso 1: PRESENT dentro de la ventana (gap=5s) → consolida la entrada ──
+// ── Caso 1: PRESENT dentro de la ventana de entrada (90 s) → consolida ──
 $stayLate = makeOccupiedStay(77, 2);
 $stayRepo->byId[77] = $stayLate;
 $stayRepo->activeByRoom[2] = $stayLate;
@@ -391,10 +393,10 @@ else bad('F42: cierre sin presencia NO consolida', "got {$stayLate->entryConfirm
 
 Clock::freeze(new DateTimeImmutable('2026-04-28T11:00:03Z', new DateTimeZone('UTC')));
 $svc->processEvent(makeEvent(2, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T11:00:03Z', 'f42-a-present'), 'corr-f42-a');
-if ($stayLate->entryConfirmedAt !== null) ok('F42: PRESENT dentro de gap consolida entrada');
-else bad('F42: PRESENT dentro de gap consolida entrada', 'entryConfirmedAt sigue null');
+if ($stayLate->entryConfirmedAt !== null) ok('F42: PRESENT dentro de la ventana de entrada consolida');
+else bad('F42: PRESENT dentro de la ventana de entrada consolida', 'entryConfirmedAt sigue null');
 
-// ── Caso 2: PRESENT fuera de la ventana (> gap) → NO consolida ──
+// ── Caso 2: PRESENT fuera de la ventana de entrada (> 90 s) → NO consolida ──
 $stayLate2 = makeOccupiedStay(78, 3);
 $stayRepo->byId[78] = $stayLate2;
 $stayRepo->activeByRoom[3] = $stayLate2;
@@ -402,10 +404,12 @@ $stayRepo->activeByRoom[3] = $stayLate2;
 Clock::freeze(new DateTimeImmutable('2026-04-28T12:00:00Z', new DateTimeZone('UTC')));
 $svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN,   '2026-04-28T12:00:00Z', 'f42-b-open'), 'corr-f42-b');
 $svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T12:00:01Z', 'f42-b-close'), 'corr-f42-b');
-Clock::freeze(new DateTimeImmutable('2026-04-28T12:00:09Z', new DateTimeZone('UTC')));
-$svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T12:00:09Z', 'f42-b-present'), 'corr-f42-b');
-if ($stayLate2->entryConfirmedAt === null) ok('F42: PRESENT fuera de gap NO consolida (exige nueva apertura)');
-else bad('F42: PRESENT fuera de gap NO consolida', "got {$stayLate2->entryConfirmedAt}");
+// Bug 1: la ventana de entrada es 90 s; el gap/guarda de salida bajó a 3 s, así
+// que el caso "fuera de ventana" debe superar 90 s (antes 8 s > gap=5 s).
+Clock::freeze(new DateTimeImmutable('2026-04-28T12:02:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeEvent(3, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T12:02:00Z', 'f42-b-present'), 'corr-f42-b');
+if ($stayLate2->entryConfirmedAt === null) ok('F42: PRESENT fuera de la ventana de entrada NO consolida (exige nueva apertura)');
+else bad('F42: PRESENT fuera de la ventana de entrada NO consolida', "got {$stayLate2->entryConfirmedAt}");
 
 // ── Caso 3: PRESENT con la puerta ABIERTA → NO consolida aún (espera al cierre) ──
 $stayOpen = makeOccupiedStay(79, 4);

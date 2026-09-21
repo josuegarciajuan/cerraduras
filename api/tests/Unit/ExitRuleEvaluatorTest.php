@@ -240,5 +240,34 @@ $stayRepo->stay = makeStay(null);
 if ($eval->shouldExit(1, $t0) === false) ok('T15: shouldExit unconfirmed stay → false');
 else bad('T15: shouldExit unconfirmed stay → false');
 
+// ============================================================================
+// Bug 1: resolveGuardSeconds() — guarda de SALIDA desacoplada de gap_seconds
+// ============================================================================
+
+// T16: per-room override wins over the global override.
+if (ExitRuleEvaluator::resolveGuardSeconds(7, 5) === 7) {
+    ok('T16: resolveGuardSeconds sala override gana (7 > 5)');
+} else { bad('T16: resolveGuardSeconds sala override gana', (string) ExitRuleEvaluator::resolveGuardSeconds(7, 5)); }
+
+// T17: global override applies when there is no room override.
+if (ExitRuleEvaluator::resolveGuardSeconds(null, 5) === 5) {
+    ok('T17: resolveGuardSeconds global sin override de sala (5)');
+} else { bad('T17: resolveGuardSeconds global sin override', (string) ExitRuleEvaluator::resolveGuardSeconds(null, 5)); }
+
+// T18: default is 3 s when neither override is present.
+if (ExitRuleEvaluator::resolveGuardSeconds(null, null) === 3
+    && ExitRuleEvaluator::DEFAULT_GUARD_SECONDS === 3
+) {
+    ok('T18: resolveGuardSeconds default 3 s');
+} else { bad('T18: resolveGuardSeconds default 3 s', (string) ExitRuleEvaluator::resolveGuardSeconds(null, null)); }
+
+// T19: non-positive overrides are treated as "not set" (legacy rows / empty env).
+if (ExitRuleEvaluator::resolveGuardSeconds(0, null) === 3) {
+    ok('T19a: resolveGuardSeconds sala 0 se ignora → 3');
+} else { bad('T19a: resolveGuardSeconds sala 0 se ignora'); }
+if (ExitRuleEvaluator::resolveGuardSeconds(-1, 5) === 5) {
+    ok('T19b: resolveGuardSeconds sala negativa se ignora → global 5');
+} else { bad('T19b: resolveGuardSeconds sala negativa se ignora'); }
+
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";
 exit($FAIL === 0 ? 0 : 1);
