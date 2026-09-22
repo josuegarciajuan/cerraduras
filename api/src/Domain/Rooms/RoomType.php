@@ -14,7 +14,11 @@ namespace App\Domain\Rooms;
  *                               confirm an exit (regla salida §8.2).
  *  - reentry_cooldown_seconds   how long the door stays "hot-locked" after
  *                               an auto exit to mitigate reentries.
- *  - qr_usage_window_minutes    exp - iat for QR tokens issued for this type.
+ *  - qr_usage_window_minutes    DEPRECATED for guest QR issuance (Fase 51 /
+ *                               Bug 4). The guest QR lifetime is now driven by
+ *                               the global QR_ARRIVAL_WINDOW_MINUTES + the stay
+ *                               duration; this column is no longer used to seal
+ *                               guest tokens (kept for compatibility).
  *  - presence_entry_window_seconds  F44/RF-51.2: seconds the presence poller
  *                               keeps sampling after a door OPEN until presence
  *                               is detected (>= 40 by policy).

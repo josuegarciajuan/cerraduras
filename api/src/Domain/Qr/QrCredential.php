@@ -22,6 +22,13 @@ final class QrCredential
     public string $expiresAt;
     public ?string $consumedAt;
     public ?string $revokedAt;
+    /**
+     * Fase 51 / Bug 4: first scan timestamp. Kept in sync with consumed_at
+     * (consumed_at is retained as the "first use" marker for compatibility).
+     */
+    public ?string $firstUsedAt;
+    /** Fase 51: first_used_at + stay.duracion_minutos; null until first use. */
+    public ?string $validUntil;
 
     public function __construct(
         int $id,
@@ -32,7 +39,9 @@ final class QrCredential
         string $issuedAt,
         string $expiresAt,
         ?string $consumedAt,
-        ?string $revokedAt
+        ?string $revokedAt,
+        ?string $firstUsedAt = null,
+        ?string $validUntil = null
     ) {
         $this->id = $id;
         $this->stayId = $stayId;
@@ -43,6 +52,8 @@ final class QrCredential
         $this->expiresAt = $expiresAt;
         $this->consumedAt = $consumedAt;
         $this->revokedAt = $revokedAt;
+        $this->firstUsedAt = $firstUsedAt;
+        $this->validUntil = $validUntil;
     }
 
     public function isRevoked(): bool

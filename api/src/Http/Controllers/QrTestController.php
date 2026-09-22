@@ -80,10 +80,12 @@ final class QrTestController
         $this->pdo->prepare("UPDATE rooms SET status = 'RESERVED' WHERE id = :rid")
             ->execute([':rid' => $roomId]);
 
-        // Generate QR token
+        // Generate QR token. exp must cover the arrival window + the stay
+        // duration because the signed token cannot be re-signed (Fase 51).
         $jti = bin2hex(random_bytes(16));
         $iat = time();
-        $exp = $iat + ($duracionMinutos * 60);
+        $arrivalMinutes = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
+        $exp = $iat + (($arrivalMinutes + $duracionMinutos) * 60);
 
         try {
             $qrText = $this->qrTokenizer->issue($roomId, $stayId, $jti, $iat, $exp);
@@ -297,10 +299,12 @@ final class QrTestController
         $this->pdo->prepare("UPDATE rooms SET status = 'RESERVED' WHERE id = :rid")
             ->execute([':rid' => $roomId]);
 
-        // Generate QR token
+        // Generate QR token. exp must cover the arrival window + the stay
+        // duration because the signed token cannot be re-signed (Fase 51).
         $jti = bin2hex(random_bytes(16));
         $iat = time();
-        $exp = $iat + ($duracionMinutos * 60);
+        $arrivalMinutes = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
+        $exp = $iat + (($arrivalMinutes + $duracionMinutos) * 60);
 
         try {
             $qrText = $this->qrTokenizer->issue($roomId, $stayId, $jti, $iat, $exp);

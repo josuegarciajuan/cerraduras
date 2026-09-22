@@ -2665,3 +2665,93 @@ conviven (comando = intención; estado = realidad).
   `switch_state_at`; `switch_1=false` (case-insensitive)→OFF; sala nula → `_noop`
   `room_not_found`; no regresión de `PRESENCE`.
 - **Regresión**: `bash bin/run-tests.sh` con 0 failures (BLOCK correspondiente de la fase).
+
+---
+
+# Fase 51: Ciclo de vida del QR de huésped (Bug 4)
+
+## 16.1 Modelo de datos (migración 0114)
+
+`qr_credentials` añade dos columnas idempotentes (`ADD COLUMN IF NOT EXISTS`):
+
+| Columna | Tipo | Significado |
+|---------|------|-------------|
+| `first_used_at` | `DATETIME(3) NULL` | Instante del primer escaneo. `NULL` = nunca usado. |
+| `valid_until` | `DATETIME(3) NULL` | `first_used_at + stays.duracion_minutos`. `NULL` = aún sin usar. |
+
+Backfill (idempotente, solo filas con `first_used_at IS NULL`):
+
+```sql
+UPDATE qr_credentials qc JOIN stays s ON s.id = qc.stay_id
+   SET qc.first_used_at = qc.consumed_at,
+       qc.valid_until   = DATE_ADD(qc.consumed_at, INTERVAL s.duracion_minutos MINUTE)
+ WHERE qc.consumed_at IS NOT NULL AND qc.first_used_at IS NULL;
+```
+
+`consumed_at` se conserva y queda sincronizada con `first_used_at` como marca del primer uso
+(auditoría / compatibilidad con consultas y tests previos).
+
+## 16.2 Lógica pura: `QrWindows`
+
+`api/src/Domain/Qr/QrWindows.php` encapsula la decisión de ventana sin BD ni reloj:
+
+```php
+QrWindows::evaluate($issuedAt, $firstUsedAt, $validUntil, $duracionMin, $arrivalMin, $now)
+// → STATE_OK_UNUSED | STATE_EXPIRED_ARRIVAL | STATE_OK_IN_USE | STATE_EXPIRED_USAGE
+```
+
+- Sin uso (`firstUsedAt === null`): expira si `now > issuedAt + arrivalMin*60`.
+- Con uso: deadline = `validUntil ?? firstUsedAt + duracionMin*60`; expira si `now > deadline`.
+- Comparación estricta `>`: justo en el deadline aún es válido (caso límite cubierto en tests).
+
+El panel reutiliza el mismo helper (`RoomLiveController::fetchQrStatus`,
+`EventStreamController::fetchQrStatus`) para que el `expired` mostrado coincida con el backend.
+
+## 16.3 Emisión (sello del token)
+
+El token HMAC **no** se puede re-firmar, así que `exp` cubre ambas ventanas:
+
+```
+exp = iat + (QR_ARRIVAL_WINDOW_MINUTES + duracion_minutos) * 60
+```
+
+Unificado en `QrIssueService`, `QrTestController::create/doCreate` (y, por delegación,
+`QrController`; `api/bin/make-reservation-qr` emite vía `POST /api/v1/qr`, sin cálculo local).
+`room_type.qr_usage_window_minutes` queda deprecado para el QR de huésped.
+
+## 16.4 Validación
+
+`QrValidateService::validate()` carga el `Stay` en el **paso 4** (necesita `duracion_minutos` y
+reutiliza la instancia en el paso 8). Nota: un stay ausente/desajustado ahora devuelve el 404
+`not_found` antes de los checks de room/device/cooldown (antes iba al final). El antiguo paso
+"consumed / S11" se sustituye por:
+
+1. No usado + fuera de llegada → 403 `qr_expired` `{window:'arrival'}`.
+2. No usado + dentro → se permite; el primer uso se reclama **al final** del flujo, tras pasar
+   todos los checks (device, cooldown, estado del stay), para no quemar el QR en un intento
+   rechazado.
+3. Usado + `valid_until` (o `consumed_at + duracion` si es `NULL`) `< now` → 403 `qr_expired`
+   `{window:'usage'}`.
+4. Usado + dentro → reentrada permitida; el stay sigue validándose `RESERVED | OCCUPIED`.
+
+El reclamo atómico es `QrCredentialRepository::markFirstUse($jti, $validUntilUtc)`
+(`UPDATE ... SET first_used_at=UTC_TIMESTAMP(3), consumed_at=UTC_TIMESTAMP(3), valid_until=:v
+WHERE jti=:j AND consumed_at IS NULL AND revoked_at IS NULL`). Solo el ganador transiciona
+`RESERVED → OCCUPIED`.
+
+El chequeo del `exp` sellado (`QR_EXP_FROM_DB=false`) se mantiene; con el nuevo sello no bloquea
+dentro de ninguna de las dos ventanas. El modo `QR_EXP_FROM_DB=true` sigue usando `expires_at`.
+
+## 16.5 Panel
+
+`qr_status` (en `/live` y en el SSE) recalcula `expired` con `QrWindows` y expone de forma aditiva
+`first_used_at`, `valid_until`, `arrival_deadline` e `in_use`. `consumed` y `scannable` conservan su
+semántica previa. El `qr_text` reconstruido sigue usando `issued_at`/`expires_at`.
+
+## 16.6 Pruebas
+
+- `tests/Unit/QrArrivalWindowTest.php`: lógica pura `QrWindows` (4 casos + límites + fallback
+  legacy + `valid_until` autoritativo).
+- `tests/Unit/QrValidateServiceTest.php`: primer uso fija `first_used_at`/`valid_until`; reentrada;
+  uso fuera de ventana → `qr_expired`.
+- `tests/Unit/QrIssueServiceTest.php`: `exp - iat == (arrival + duración)`.

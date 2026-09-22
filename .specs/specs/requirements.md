@@ -768,3 +768,53 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-58.3: No pérdida de push sin sala (N10)
 - **RF-58.3.1**: Si un device Tuya no resuelve a sala, el ingress debe devolver un no-op con `discard_reason='room_not_found'` (logueando `dev`/`kind`) en vez de dejar fluir `room_id = null`; el webhook debe responder **202** y no 500.
 - **RF-58.3.2**: Una `NotFoundException` en `processEvent` (p. ej. sala inexistente) debe responder 202 `{accepted:false, discard_reason:'room_not_found'}`. El 500 se reserva para errores inesperados.
+
+---
+
+# Fase 51: Ciclo de vida del QR de huésped — llegada + estancia (Bug 4)
+
+**Motivo**: el QR de huésped se sellaba con `room_type.qr_usage_window_minutes` (p. ej. 30 min)
+contado desde la emisión. Un huésped que tardaba en llegar más de esa ventana no podía entrar, y
+como el token HMAC no se puede re-firmar, no había forma de alargarlo sin reimprimir. Se define un
+ciclo de vida en DOS ventanas consecutivas.
+
+## RF-59: Doble ventana de validez del QR de huésped
+
+### RF-59.1: Ventana de LLEGADA
+- **RF-59.1.1**: El QR de huésped es válido desde su emisión hasta el **primer escaneo**, durante
+  una ventana global `QR_ARRIVAL_WINDOW_MINUTES` (default **15** min), común a todas las
+  habitaciones (no depende del `room_type`).
+- **RF-59.1.2**: Si el primer escaneo llega con la ventana de llegada agotada, la validación
+  responde **403 `qr_expired`** con detalle `{"window":"arrival"}`.
+
+### RF-59.2: Ventana de USO (estancia, multi-uso)
+- **RF-59.2.1**: En el primer escaneo válido el QR pasa a estado **EN USO** (`first_used_at` queda
+  fijado) y es válido hasta `first_used_at + stays.duracion_minutos`.
+- **RF-59.2.2**: Durante esa ventana el QR permite **reentradas** (mismo stay), sin exigir que el
+  stay siga `OCCUPIED` por la marca de uso; el estado del stay sigue validándose
+  (`RESERVED | OCCUPIED`).
+- **RF-59.2.3**: Agotada la ventana de uso, la validación responde **403 `qr_expired`** con
+  detalle `{"window":"usage"}`.
+- **RF-59.2.4**: El primer uso se reclama de forma **atómica** (`UPDATE ... WHERE consumed_at IS
+  NULL`): solo un llamador concurrente gana y fija `valid_until`.
+
+### RF-59.3: Sello del token HMAC
+- **RF-59.3.1**: Como el token no se puede re-firmar, al emitir se sella
+  `exp = emisión + (QR_ARRIVAL_WINDOW_MINUTES + duracion_minutos)`, cubriendo ambas ventanas.
+- **RF-59.3.2**: `room_type.qr_usage_window_minutes` queda **deprecado** para el QR de huésped:
+  no interviene en el sello ni en la validación.
+
+### RF-59.4: Compatibilidad y auditoría
+- **RF-59.4.1**: `consumed_at` se conserva como marca del **primer uso** (compatibilidad y
+  auditoría), sincronizada con `first_used_at`.
+- **RF-59.4.2**: `qr_credentials` incorpora `first_used_at DATETIME(3) NULL` y
+  `valid_until DATETIME(3) NULL` (migración `0114_qr_arrival_window.sql`, con backfill idempotente
+  desde `consumed_at` y `stays.duracion_minutos`).
+- **RF-59.4.3**: El código de error `qr_expired` se mantiene estable; `qr_already_used` deja de
+  emitirse en el flujo de huésped.
+
+### RF-59.5: Panel (`qr_status`)
+- **RF-59.5.1**: `expired` se recalcula según la ventana vigente (llegada si no hay uso; uso si
+  ya se usó).
+- **RF-59.5.2**: `qr_status` expone de forma **aditiva** `first_used_at`, `valid_until`,
+  `arrival_deadline` e `in_use`, manteniendo `consumed` por compatibilidad.

@@ -108,6 +108,15 @@ $creds = new class implements QrCredentialRepositoryInterface {
         $this->byJti[$j]->consumedAt = '2026-04-24 10:01:00.000';
         return true;
     }
+    public function markFirstUse(string $j, string $v): bool
+    {
+        if (!isset($this->byJti[$j]) || $this->byJti[$j]->consumedAt !== null
+            || $this->byJti[$j]->revokedAt !== null) return false;
+        $this->byJti[$j]->firstUsedAt = '2026-04-24 10:01:00.000';
+        $this->byJti[$j]->consumedAt  = '2026-04-24 10:01:00.000';
+        $this->byJti[$j]->validUntil  = $v;
+        return true;
+    }
     public function markRevoked(string $j): bool
     {
         if (!isset($this->byJti[$j]) || $this->byJti[$j]->revokedAt !== null) return false;
@@ -126,6 +135,7 @@ $timeSlotService->save(1, [new TimeSlot(0, 1440, TimeSlot::KIND_RENTABLE)]);
 
 Clock::freeze(new DateTimeImmutable('2026-04-24T10:00:00Z', new DateTimeZone('UTC')));
 putenv('APP_TZ=UTC');
+putenv('QR_ARRIVAL_WINDOW_MINUTES=15');
 
 $service = new QrIssueService($rooms, $roomTypes, $stayRepo, $timeSlotService, $creds, $tokenizer);
 
@@ -150,8 +160,10 @@ if (substr_count($res['qr_text'], '.') === 2) ok('token has three segments');
 else bad('token has three segments');
 
 $payload = $tokenizer->parse($res['qr_text']);
-if ($payload['exp'] - $payload['iat'] === 30 * 60) ok('exp - iat == 1800 seconds (30 minutes)');
-else bad('exp - iat == 1800', "got " . ($payload['exp'] - $payload['iat']));
+// Fase 51 / Bug 4: exp = iat + (arrival 15 + duracion 60) min = 4500 s.
+// The room type's qr_usage_window_minutes (30) is deprecated for guest QR.
+if ($payload['exp'] - $payload['iat'] === 4500) ok('exp - iat == 4500 s (arrival 15 + duracion 60)');
+else bad('exp - iat == 4500', "got " . ($payload['exp'] - $payload['iat']));
 if ($payload['room_id'] === 1 && $payload['stay_id'] === $res['stay_id']) ok('payload room_id and stay_id match');
 else bad('payload room_id and stay_id match');
 
