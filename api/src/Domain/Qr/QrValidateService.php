@@ -30,16 +30,21 @@ use App\Support\Qr\QrTokenizer;
  *   1. Parse + verify HMAC signature → qr_invalid_signature / qr_expired
  *   2. Load QrCredential by jti from DB.
  *   3. Check revoked_at                → qr_revoked (403)
- *   4. Check consumed_at              → qr_already_used (403) UNLESS stay
- *      is already OCCUPIED (re-entry rule S11: same stay, jti re-presented).
+ *   4. Load Stay (needed for duracion_minutos) and evaluate the two-phase
+ *      QR lifetime (Fase 51 / Bug 4):
+ *        - never used + past arrival deadline  → qr_expired {window:'arrival'}
+ *        - never used + inside arrival window  → allowed (first use will be claimed)
+ *        - already used + past usage deadline  → qr_expired {window:'usage'}
+ *        - already used + inside usage window  → re-entry allowed
  *   5. Load Room.
  *   6. Verify device_id maps to the room in the token → device_mismatch (403).
  *      In SIMULATED_MODE with no registered device, skip (dev-friendly).
  *   7. Check room cooldown            → room_cooldown (403)
- *   8. Load active Stay; verify status RESERVED | OCCUPIED.
+ *   8. Verify Stay status RESERVED | OCCUPIED.
  *
  * On success:
- *   - Mark jti consumed (first time only).
+ *   - Atomically claim the first use (markFirstUse: first_used_at=consumed_at=now,
+ *     valid_until = now + stay.duracion_minutos) on the first scan only.
  *   - Transition stay RESERVED → OCCUPIED via StayStateMachine.
  *   - Call LockGateway::open().
  *   - Write access_event(OPEN, OK, provider).
@@ -213,29 +218,74 @@ final class QrValidateService
         }
 
         // ----------------------------------------------------------------
-        // Step 4: consumed check (with re-entry rule S11)
+        // Step 4: QR lifetime — arrival window (pre-first-use) or usage
+        // window (first_used_at + stay.duracion_minutos). Fase 51 / Bug 4.
+        //
+        // The Stay is loaded here (earlier than before) because its
+        // duracion_minutos defines the usage window. The instance is reused in
+        // step 8. NOTE: for a missing/mismatched stay the 404 not_found now
+        // surfaces before the room/device/cooldown checks instead of after.
         // ----------------------------------------------------------------
-        if ($cred->isConsumed()) {
-            // Re-entry allowed if the stay is already OCCUPIED (S11).
-            $activeStay = $this->stays->findActiveForRoom($tokenRoomId);
-            $reEntry = $activeStay !== null
-                && $activeStay->id === $tokenStayId
-                && $activeStay->status === Stay::STATUS_OCCUPIED;
-
-            if (!$reEntry) {
-                $this->writeAccessEvent(
-                    $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
-                    AccessEvent::RESULT_FAIL, 'qr_already_used', $correlationId
-                );
-                throw new ForbiddenException(
-                    'qr_already_used',
-                    'QR credential has already been used',
-                    ['jti' => $jti]
-                );
-            }
-            // Re-entry: fall through — we will open the lock without
-            // consuming again or changing the stay state.
+        $stay = $this->stays->findById($tokenStayId);
+        if ($stay === null || $stay->roomId !== $tokenRoomId) {
+            $this->writeAccessEvent(
+                $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
+                AccessEvent::RESULT_FAIL, 'not_found', $correlationId
+            );
+            throw new NotFoundException('Stay not found or mismatched', ['stay_id' => $tokenStayId]);
         }
+
+        $nowEpoch        = Clock::nowUtc()->getTimestamp();
+        $issuedEpoch     = self::epochFromSql($cred->issuedAt) ?? $nowEpoch;
+        $firstUsedEpoch  = self::epochFromSql($cred->firstUsedAt)
+            ?? self::epochFromSql($cred->consumedAt);
+        $validUntilEpoch = self::epochFromSql($cred->validUntil);
+        $arrivalMinutes  = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
+
+        // For legacy rows used without a stored valid_until, evaluate() derives
+        // the usage deadline from first_used_at + duracion_minutos.
+        $windowState = QrWindows::evaluate(
+            $issuedEpoch,
+            $firstUsedEpoch,
+            $validUntilEpoch,
+            $stay->duracionMinutos,
+            $arrivalMinutes,
+            $nowEpoch
+        );
+
+        if ($windowState === QrWindows::STATE_EXPIRED_ARRIVAL) {
+            $this->writeAccessEvent(
+                $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
+                AccessEvent::RESULT_FAIL, 'qr_expired', $correlationId
+            );
+            throw new ForbiddenException(
+                'qr_expired',
+                'QR credential was not used within the arrival window',
+                [
+                    'jti' => $jti,
+                    'window' => 'arrival',
+                    'arrival_deadline' => self::utcSql(
+                        QrWindows::arrivalDeadline($issuedEpoch, $arrivalMinutes)
+                    ),
+                ]
+            );
+        }
+
+        if ($windowState === QrWindows::STATE_EXPIRED_USAGE) {
+            $this->writeAccessEvent(
+                $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
+                AccessEvent::RESULT_FAIL, 'qr_expired', $correlationId
+            );
+            throw new ForbiddenException(
+                'qr_expired',
+                'QR credential usage window has expired',
+                ['jti' => $jti, 'window' => 'usage', 'valid_until' => $cred->validUntil]
+            );
+        }
+
+        // The first use is claimed atomically at the end (only after every
+        // other check passes) so a rejected scan does not burn the QR.
+        $needsFirstUse = ($windowState === QrWindows::STATE_OK_UNUSED);
 
         // ----------------------------------------------------------------
         // Step 5: room exists
@@ -276,16 +326,8 @@ final class QrValidateService
         }
 
         // ----------------------------------------------------------------
-        // Step 8: active stay exists and is in a valid state
+        // Step 8: stay is in a valid state (instance loaded in step 4)
         // ----------------------------------------------------------------
-        $stay = $this->stays->findById($tokenStayId);
-        if ($stay === null || $stay->roomId !== $tokenRoomId) {
-            $this->writeAccessEvent(
-                $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
-                AccessEvent::RESULT_FAIL, 'not_found', $correlationId
-            );
-            throw new NotFoundException('Stay not found or mismatched', ['stay_id' => $tokenStayId]);
-        }
         if (!in_array($stay->status, [Stay::STATUS_RESERVED, Stay::STATUS_OCCUPIED], true)) {
             $this->writeAccessEvent(
                 $tokenRoomId, $tokenStayId, AccessEvent::KIND_DENIED,
@@ -302,19 +344,24 @@ final class QrValidateService
         // All checks passed — perform mutations
         // ----------------------------------------------------------------
 
-        // Mark jti consumed (only on first use; re-entry skips this).
-        // markConsumed() is atomic (WHERE consumed_at IS NULL) so only one
-        // concurrent caller wins; use the return value as the guard to
-        // prevent double firstEntry transitions (race condition fix).
-        if (!$cred->isConsumed()) {
-            $consumed = $this->credentials->markConsumed($jti);
-            // Transition stay RESERVED → OCCUPIED (only by the winning caller)
-            if ($consumed && $stay->status === Stay::STATUS_RESERVED) {
+        // Claim the first use (only on the first scan; re-entry skips this).
+        // markFirstUse() is atomic (WHERE consumed_at IS NULL) so only one
+        // concurrent caller wins; it records first_used_at / consumed_at and
+        // valid_until = now + stay.duracion_minutos. The winning caller is
+        // also the only one allowed to transition RESERVED → OCCUPIED.
+        $claimedFirstUse = false;
+        if ($needsFirstUse) {
+            $newValidUntil = $nowEpoch + $stay->duracionMinutos * 60;
+            $claimedFirstUse = $this->credentials->markFirstUse($jti, self::utcSql($newValidUntil));
+            if ($claimedFirstUse && $stay->status === Stay::STATUS_RESERVED) {
                 $this->stateMachine->firstEntry($stay);
             }
         }
 
-        $isReEntry = $cred->isConsumed();
+        // The request that claimed the first use reports 'open'; every other
+        // allowed scan (already-used re-entry, or a lost concurrent race) is
+        // reported as 're_entry'.
+        $isReEntry = !($needsFirstUse && $claimedFirstUse);
 
         // Write QR_VALIDATE event so the dashboard can detect recent scans
         $this->writeAccessEvent(
@@ -499,5 +546,25 @@ final class QrValidateService
             // In a production system this would go to a secondary logger.
             error_log('[QrValidateService] Failed to write access_event: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Parse a DB DATETIME(3) UTC string into an epoch, or null when absent /
+     * unparsable. DATETIME columns are stored UTC so ' UTC' is appended to
+     * avoid strtotime() interpreting them as Europe/Madrid local time.
+     */
+    private static function epochFromSql(?string $sql): ?int
+    {
+        if ($sql === null || $sql === '') {
+            return null;
+        }
+        $ts = strtotime($sql . ' UTC');
+        return $ts === false ? null : $ts;
+    }
+
+    /** UTC DATETIME(3) string usable directly with MySQL. */
+    private static function utcSql(int $epoch): string
+    {
+        return gmdate('Y-m-d H:i:s', $epoch) . '.000';
     }
 }

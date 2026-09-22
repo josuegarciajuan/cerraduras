@@ -1558,3 +1558,78 @@ Si se añade el pool del API, la entrada mantiene el esquema F41:
 - Nuevo log serie: `[QR] Encolado→POST: %lu ms` (tiempo desde el callback USB al inicio del
   POST) además del existente `[QR] Validación HTTP %d (%lu ms)`.
 - Sin cambios de contrato HTTP ni de TLS. Prioridad del QR = reordenación del `loop()`.
+
+---
+
+# Fase 51: Ciclo de vida del QR de huésped (Bug 4)
+
+## 1. `POST /api/v1/qr/validate` — `qr_expired` con ventana
+
+El código de error `qr_expired` se mantiene **estable** (sin cambios de estructura). Se añade,
+de forma **aditiva**, el campo `window` en el detalle de la respuesta de error para distinguir la
+ventana agotada:
+
+```json
+403 {"error":{"code":"qr_expired","message":"...","details":{"jti":"<uuid>","window":"arrival"}}}
+403 {"error":{"code":"qr_expired","message":"...","details":{"jti":"<uuid>","window":"usage"}}}
+```
+
+- `window: "arrival"` → nunca se escaneó y se agotó `QR_ARRIVAL_WINDOW_MINUTES`.
+- `window: "usage"`   → ya usado y se agotó `first_used_at + stays.duracion_minutos`.
+- El `exp` sellado puede producir `qr_expired` **sin** `window` (comportamiento previo); los
+  clientes deben tratar `window` como opcional.
+
+`qr_already_used` deja de emitirse en el flujo de huésped (la reentrada dentro de la ventana de
+uso es válida). No hay cambios en la respuesta 200 de éxito.
+
+## 2. `qr_status` (en `/live` y SSE) — campos aditivos
+
+`qr_status` conserva todos sus campos y añade cuatro. `consumed`, `revoked`, `expired`,
+`scannable`, `jti`, `stay_id`, `expires_at` y `qr_text` mantienen su semántica.
+
+```json
+{
+  "qr_status": {
+    "scannable": true,
+    "consumed": false,
+    "revoked": false,
+    "expired": false,
+    "jti": "<uuid>",
+    "stay_id": 123,
+    "expires_at": "2026-09-22 10:45:00.000",
+    "qr_text": "<token HMAC reconstruido de issued_at/expires_at>",
+    "first_used_at": null,
+    "valid_until": null,
+    "arrival_deadline": "2026-09-22 10:15:00.000",
+    "in_use": false
+  }
+}
+```
+
+| Campo | Tipo | Semántica |
+|-------|------|-----------|
+| `first_used_at` | `string\|null` | Instante del primer escaneo (UTC `DATETIME(3)`); `null` si no usado. |
+| `valid_until` | `string\|null` | `first_used_at + duracion_minutos`; `null` si no usado. |
+| `arrival_deadline` | `string` | `issued_at + QR_ARRIVAL_WINDOW_MINUTES` (UTC `DATETIME(3)`). |
+| `in_use` | `bool` | `true` si el QR ya tuvo su primer uso. |
+
+`expired` pasa a calcularse así:
+
+- Sin uso → `now > issued_at + QR_ARRIVAL_WINDOW_MINUTES`.
+- Con uso → `now > valid_until` (o `first_used_at + duracion_minutos` si `valid_until` es `null`).
+
+Cuando no hay credencial, los cuatro campos aditivos se devuelven a `null`/`false` junto al resto
+del objeto por defecto.
+
+## 3. Emisión — sello del token
+
+Sin cambios de esquema de respuesta en `POST /api/v1/qr`: `issued_at` y `expires_at` siguen
+presentes. Semánticamente, `expires_at` ahora es
+`issued_at + (QR_ARRIVAL_WINDOW_MINUTES + duracion_minutos)`. `room_type.qr_usage_window_minutes`
+queda deprecado para el QR de huésped.
+
+## 4. Configuración
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `QR_ARRIVAL_WINDOW_MINUTES` | `15` | Ventana de llegada global (minutos); común a todas las habitaciones. |

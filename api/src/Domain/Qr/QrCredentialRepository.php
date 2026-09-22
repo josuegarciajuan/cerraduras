@@ -45,7 +45,8 @@ final class QrCredentialRepository implements QrCredentialRepositoryInterface
     public function findByJti(string $jti): ?QrCredential
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, stay_id, room_id, jti, token_hash, issued_at, expires_at, consumed_at, revoked_at
+            'SELECT id, stay_id, room_id, jti, token_hash, issued_at, expires_at, consumed_at, revoked_at,
+                    first_used_at, valid_until
              FROM qr_credentials WHERE jti = :j LIMIT 1'
         );
         $stmt->execute([':j' => $jti]);
@@ -56,7 +57,8 @@ final class QrCredentialRepository implements QrCredentialRepositoryInterface
     public function findByTokenHash(string $tokenHash): ?QrCredential
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, stay_id, room_id, jti, token_hash, issued_at, expires_at, consumed_at, revoked_at
+            'SELECT id, stay_id, room_id, jti, token_hash, issued_at, expires_at, consumed_at, revoked_at,
+                    first_used_at, valid_until
              FROM qr_credentials WHERE token_hash = :h LIMIT 1'
         );
         $stmt->execute([':h' => $tokenHash]);
@@ -72,6 +74,19 @@ final class QrCredentialRepository implements QrCredentialRepositoryInterface
              WHERE jti = :j AND consumed_at IS NULL AND revoked_at IS NULL'
         );
         $stmt->execute([':j' => $jti]);
+        return $stmt->rowCount() === 1;
+    }
+
+    public function markFirstUse(string $jti, string $validUntilUtc): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE qr_credentials
+             SET first_used_at = UTC_TIMESTAMP(3),
+                 consumed_at   = UTC_TIMESTAMP(3),
+                 valid_until   = :v
+             WHERE jti = :j AND consumed_at IS NULL AND revoked_at IS NULL'
+        );
+        $stmt->execute([':j' => $jti, ':v' => $validUntilUtc]);
         return $stmt->rowCount() === 1;
     }
 
@@ -145,7 +160,9 @@ final class QrCredentialRepository implements QrCredentialRepositoryInterface
             (string) $row['issued_at'],
             (string) $row['expires_at'],
             $row['consumed_at'] === null ? null : (string) $row['consumed_at'],
-            $row['revoked_at'] === null ? null : (string) $row['revoked_at']
+            $row['revoked_at'] === null ? null : (string) $row['revoked_at'],
+            ($row['first_used_at'] ?? null) === null ? null : (string) $row['first_used_at'],
+            ($row['valid_until'] ?? null) === null ? null : (string) $row['valid_until']
         );
     }
 }

@@ -2362,3 +2362,64 @@ reposo por un watchdog demasiado corto (churn, Bug 5); además un push sin sala 
 | F50-04 | Webhook 202 ante sala ausente | RF-58.3.2 | `TuyaWebhookController.php` | regresión |
 | F50-05 | Exponer `state`/`state_at` | RF-58.1.4 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
 | F50-06 | Contrato, requisitos y diseño | RF-58 | `contracts.md`, `requirements.md`, `design.md` | regresión |
+
+---
+
+# Fase 51 — Ciclo de vida del QR de huésped: llegada + estancia (Bug 4, RF-59)
+
+**Motivo**: el QR se sellaba con `room_type.qr_usage_window_minutes` desde la emisión; quien
+llegaba tarde no podía entrar y el token HMAC no se puede re-firmar. Se definen dos ventanas:
+llegada (global) y uso (duración de la estancia, multi-uso).
+
+### TSK-F51-01: Migración `0114_qr_arrival_window.sql`
+- **Cambio**: `qr_credentials` += `first_used_at DATETIME(3) NULL`, `valid_until DATETIME(3) NULL`
+  (`ADD COLUMN IF NOT EXISTS`); backfill idempotente `first_used_at=consumed_at`,
+  `valid_until=consumed_at + INTERVAL stays.duracion_minutos MINUTE`.
+- **Test propio**: regresión (BLOCK de la fase) + `php -l` no aplica (SQL).
+
+### TSK-F51-02: Lógica pura `QrWindows`
+- **Cambio**: nuevo `api/src/Domain/Qr/QrWindows.php` (`evaluate`, `arrivalDeadline`,
+  `usageDeadline`).
+- **Test propio**: `tests/Unit/QrArrivalWindowTest.php`.
+
+### TSK-F51-03: Modelo + repositorio
+- **Cambio**: `QrCredential` (`firstUsedAt`, `validUntil`);
+  `QrCredentialRepositoryInterface::markFirstUse()`; `QrCredentialRepository::markFirstUse()` +
+  hidratación de `first_used_at`/`valid_until`.
+- **Test propio**: `tests/Unit/QrValidateServiceTest.php` (fake con `markFirstUse`).
+
+### TSK-F51-04: Emisión unificada
+- **Cambio**: `QrIssueService` `exp = iat + (QR_ARRIVAL_WINDOW_MINUTES + duracion) * 60`;
+  `QrTestController::create/doCreate` mismo cálculo; `RoomType::qrUsageWindowMinutes` documentado
+  como deprecado; `api/.env.example` += `QR_ARRIVAL_WINDOW_MINUTES=15`.
+  (`api/bin/make-reservation-qr` emite vía `POST /api/v1/qr`: sin cálculo local que cambiar.)
+- **Test propio**: `tests/Unit/QrIssueServiceTest.php` (`exp - iat == 4500`).
+
+### TSK-F51-05: Validación por ventanas
+- **Cambio**: `QrValidateService` — carga el `Stay` en el paso 4, sustituye el bloque
+  consumed/S11 por `QrWindows::evaluate`; `qr_expired {window:arrival|usage}`; reclamo atómico
+  `markFirstUse` al final; reentrada sin exigir `OCCUPIED` por la marca de uso.
+- **Test propio**: `tests/Unit/QrValidateServiceTest.php` (4 casos + primer uso + reentrada).
+
+### TSK-F51-06: Panel (`qr_status`)
+- **Cambio**: `RoomLiveController::fetchQrStatus` y `EventStreamController::fetchQrStatus` —
+  `expired` por ventanas; campos aditivos `first_used_at`, `valid_until`, `arrival_deadline`,
+  `in_use`.
+- **Test propio**: regresión `/live` + SSE (BLOCK de la fase).
+
+### TSK-F51-07: Specs y contrato
+- **Cambio**: `requirements.md` (RF-59), `design.md` (§16), `contracts.md` (§F51),
+  `tasks.md`.
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+## Tabla resumen F51
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F51-01 | Migración columnas + backfill | RF-59.4.2 | `migrations/0114_qr_arrival_window.sql` | regresión |
+| F51-02 | Lógica pura de ventanas | RF-59.1/59.2 | `QrWindows.php` | unit PHP |
+| F51-03 | Modelo + `markFirstUse` atómico | RF-59.2.4/59.4.1 | `QrCredential.php`, `QrCredentialRepository*.php` | unit PHP |
+| F51-04 | Sello `exp` unificado | RF-59.3 | `QrIssueService.php`, `QrTestController.php`, `RoomType.php`, `.env.example` | unit PHP |
+| F51-05 | Validación por ventanas | RF-59.1.2/59.2 | `QrValidateService.php` | unit PHP |
+| F51-06 | `qr_status` aditivo | RF-59.5 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
+| F51-07 | Specs y contrato | RF-59 | `requirements/design/contracts/tasks.md` | regresión |

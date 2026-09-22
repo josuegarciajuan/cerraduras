@@ -10,11 +10,13 @@ use App\Domain\Locks\AccessEvent;
 use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSessionRepositoryInterface;
 use App\Domain\Presence\PresenceEventRepositoryInterface;
+use App\Domain\Qr\QrWindows;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Http\Request;
 use App\Http\Response;
+use App\Support\Clock;
 use App\Support\Config;
 use App\Support\Errors\NotFoundException;
 use App\Support\Qr\QrTokenizer;
@@ -330,15 +332,24 @@ final class RoomLiveController
      *
      * Mirrors the logic in GET /dashboard-api/qr-status.
      *
-     * @return array{scannable:bool,consumed:bool,revoked:bool,expired:bool,jti:string,stay_id:int|null}
+     * Fase 51 / Bug 4: `expired` follows the two-phase guest-QR lifetime:
+     *   - never used  → expired when now > issued_at + QR_ARRIVAL_WINDOW_MINUTES
+     *   - already used → expired when now > valid_until (fallback:
+     *                    consumed_at + stay.duracion_minutos)
+     *
+     * @return array<string,mixed>
      */
     private function fetchQrStatus(int $roomId): array
     {
         $default = ['scannable' => false, 'consumed' => false, 'revoked' => false,
-                     'expired' => false, 'jti' => '', 'stay_id' => null];
+                     'expired' => false, 'jti' => '', 'stay_id' => null,
+                     'first_used_at' => null, 'valid_until' => null,
+                     'arrival_deadline' => null, 'in_use' => false];
 
         $stmt = $this->pdo->prepare(
-            'SELECT qc.id, qc.jti, qc.issued_at, qc.consumed_at, qc.revoked_at, qc.expires_at, qc.stay_id, qc.room_id
+            'SELECT qc.id, qc.jti, qc.issued_at, qc.consumed_at, qc.revoked_at, qc.expires_at,
+                    qc.first_used_at, qc.valid_until, qc.stay_id, qc.room_id,
+                    s.duracion_minutos AS stay_duracion
              FROM qr_credentials qc
              JOIN stays s ON s.id = qc.stay_id
              WHERE s.room_id = :rid AND s.status IN (\'RESERVED\',\'OCCUPIED\')
@@ -351,10 +362,24 @@ final class RoomLiveController
             return $default;
         }
 
-        $nowUtc      = gmdate('Y-m-d H:i:s');
-        $expired     = $row['expires_at'] && $row['expires_at'] < $nowUtc;
-        $iatEpoch    = strtotime((string)$row['issued_at'] . ' UTC');
-        $expEpoch    = strtotime((string)$row['expires_at'] . ' UTC');
+        $nowEpoch = Clock::nowUtc()->getTimestamp();
+        $iatEpoch = self::sqlEpoch($row['issued_at'] ?? null) ?? $nowEpoch;
+        $expEpoch = self::sqlEpoch($row['expires_at'] ?? null) ?? $iatEpoch;
+
+        $firstUsedEpoch  = self::sqlEpoch($row['first_used_at'] ?? null)
+            ?? self::sqlEpoch($row['consumed_at'] ?? null);
+        $validUntilEpoch = self::sqlEpoch($row['valid_until'] ?? null);
+        $arrivalMinutes  = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
+        $stayDuration    = (int) ($row['stay_duracion'] ?? 0);
+
+        $state   = QrWindows::evaluate(
+            $iatEpoch, $firstUsedEpoch, $validUntilEpoch, $stayDuration, $arrivalMinutes, $nowEpoch
+        );
+        $expired = in_array(
+            $state,
+            [QrWindows::STATE_EXPIRED_ARRIVAL, QrWindows::STATE_EXPIRED_USAGE],
+            true
+        );
 
         $secret      = Config::getRequired('QR_SIGNING_SECRET');
         $qrTokenizer = new QrTokenizer($secret);
@@ -375,6 +400,22 @@ final class RoomLiveController
             'stay_id'    => (int) $row['stay_id'],
             'expires_at' => $row['expires_at'],
             'qr_text'    => $qrText,
+            // Fase 51 — additive fields for the new arrival/usage lifecycle.
+            'first_used_at'    => $row['first_used_at'] ?? null,
+            'valid_until'      => $row['valid_until'] ?? null,
+            'arrival_deadline' => gmdate('Y-m-d H:i:s',
+                QrWindows::arrivalDeadline($iatEpoch, $arrivalMinutes)) . '.000',
+            'in_use'           => $firstUsedEpoch !== null,
         ];
+    }
+
+    /** Parse a DB DATETIME(3) UTC string into an epoch, or null. */
+    private static function sqlEpoch(?string $sql): ?int
+    {
+        if ($sql === null || $sql === '') {
+            return null;
+        }
+        $ts = strtotime($sql . ' UTC');
+        return $ts === false ? null : $ts;
     }
 }

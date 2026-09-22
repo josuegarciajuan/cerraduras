@@ -57,6 +57,16 @@ final class FakeCredentialRepo implements QrCredentialRepositoryInterface
         $this->consumed[] = $j;
         return true;
     }
+    public function markFirstUse(string $j, string $validUntil): bool
+    {
+        if (!isset($this->byJti[$j]) || $this->byJti[$j]->consumedAt !== null
+            || $this->byJti[$j]->revokedAt !== null) return false;
+        $this->byJti[$j]->firstUsedAt = '2026-04-28 10:00:00.000';
+        $this->byJti[$j]->consumedAt  = '2026-04-28 10:00:00.000';
+        $this->byJti[$j]->validUntil  = $validUntil;
+        $this->consumed[] = $j;
+        return true;
+    }
     public function markRevoked(string $j): bool
     {
         if (!isset($this->byJti[$j]) || $this->byJti[$j]->revokedAt !== null) return false;
@@ -285,6 +295,18 @@ if ($lockGw->openCalls === 1) {
     bad('happy path: gateway.open() called once', "calls={$lockGw->openCalls}");
 }
 
+// Fase 51 / Bug 4: first use must record valid_until = now + duracion_minutos
+// (now = 10:00, duracion = 60 → 11:00), keeping consumed_at as first-use mark.
+$usedCred = $credRepo->byJti[$jti];
+if ($usedCred->validUntil === '2026-04-28 11:00:00.000'
+    && $usedCred->firstUsedAt === '2026-04-28 10:00:00.000') {
+    ok('happy path: first use sets first_used_at and valid_until (+duracion)');
+} else {
+    bad('happy path: first use sets first_used_at/valid_until',
+        'got firstUsedAt=' . var_export($usedCred->firstUsedAt, true)
+        . ' validUntil=' . var_export($usedCred->validUntil, true));
+}
+
 // ============================================================================
 // Test 2: Re-entry — jti already consumed + stay OCCUPIED → allow
 // ============================================================================
@@ -301,19 +323,22 @@ if ($lockGw->openCalls === 2) {
 }
 
 // ============================================================================
-// Test 3: jti consumed + stay NOT occupied → qr_already_used
+// Test 3: already used + usage window exhausted → qr_expired (window=usage)
+// (Fase 51 / Bug 4: qr_already_used no longer exists; re-entry is allowed
+//  inside the usage window and denied with qr_expired outside it.)
 // ============================================================================
 $jti2  = Uuid::v4();
-$tok2  = $tk->issue($roomId, 999, $jti2, $now, $exp);
-$credRepo->byJti[$jti2] = new QrCredential(2, 999, $roomId, $jti2, 'y',
+$tok2  = $tk->issue($roomId, $stayId, $jti2, $now, $exp);
+$credRepo->byJti[$jti2] = new QrCredential(2, $stayId, $roomId, $jti2, 'y',
     '2026-04-28 09:55:00.000', '2026-04-28 10:25:00.000',
-    '2026-04-28 10:01:00.000', // consumed
-    null
+    '2026-04-28 09:56:00.000', // consumed long ago
+    null,
+    '2026-04-28 09:56:00.000',
+    '2026-04-28 09:57:00.000'  // valid_until in the past
 );
-// Stay 999 not in repo → no active stay for any room → reEntry=false
-expect('qr_already_used', function () use ($service, $tok2) {
+expect('qr_expired', function () use ($service, $tok2) {
     $service->validate($tok2, 'rpi-101', 'test-corr-3');
-}, 'consumed jti + no active OCCUPIED stay → qr_already_used');
+}, 'used jti outside usage window → qr_expired (usage)');
 
 // ============================================================================
 // Test 4: revoked jti

@@ -1309,17 +1309,7 @@ function updateQrScreen() {
   const qrStatusText = document.getElementById('qr-status-text');
   const qrLaser = document.getElementById('qr-laser');
   if (!qrScreen || !qrStatusText) return;
-  if (qrData.scannable && !qrData.consumed && !qrData.revoked && !qrData.expired) {
-    qrScreen.setAttribute('fill','#0a2e0a');
-    qrStatusText.setAttribute('fill','var(--green)');
-    qrStatusText.textContent = 'ESCANEABLE';
-    if (qrLaser) { qrLaser.setAttribute('stroke','var(--green)'); qrLaser.style.display = ''; }
-  } else if (qrData.consumed) {
-    qrScreen.setAttribute('fill','#2e0a0a');
-    qrStatusText.setAttribute('fill','var(--red)');
-    qrStatusText.textContent = 'CONSUMIDO';
-    if (qrLaser) qrLaser.style.display = 'none';
-  } else if (qrData.revoked) {
+  if (qrData.revoked) {
     qrScreen.setAttribute('fill','#2e0a0a');
     qrStatusText.setAttribute('fill','var(--red)');
     qrStatusText.textContent = 'REVOCADO';
@@ -1329,6 +1319,18 @@ function updateQrScreen() {
     qrStatusText.setAttribute('fill','var(--orange)');
     qrStatusText.textContent = 'EXPIRADO';
     if (qrLaser) qrLaser.style.display = 'none';
+  } else if (qrData.scannable && !qrData.consumed) {
+    qrScreen.setAttribute('fill','#0a2e0a');
+    qrStatusText.setAttribute('fill','var(--green)');
+    qrStatusText.textContent = 'ESCANEABLE';
+    if (qrLaser) { qrLaser.setAttribute('stroke','var(--green)'); qrLaser.style.display = ''; }
+  } else if (qrData.in_use || qrData.consumed) {
+    // F51 (Bug 4): el QR no se consume de forma permanente; tras el 1er
+    // escaneo sigue EN USO (multi-uso) hasta agotar la estancia.
+    qrScreen.setAttribute('fill','#0a2e0a');
+    qrStatusText.setAttribute('fill','var(--green)');
+    qrStatusText.textContent = 'EN USO';
+    if (qrLaser) { qrLaser.setAttribute('stroke','var(--green)'); qrLaser.style.display = ''; }
   } else {
     qrScreen.setAttribute('fill','#111');
     qrStatusText.setAttribute('fill','var(--text-dim)');
@@ -1949,6 +1951,11 @@ function processLiveData(data) {
       consumed:  qs.consumed  ?? false,
       revoked:   qs.revoked   ?? false,
       expired:   qs.expired   ?? false,
+      // F51 (Bug 4): el QR no se consume de forma permanente; tras el 1er escaneo
+      // queda EN USO hasta `valid_until` (estancia desde el primer escaneo).
+      in_use:    qs.in_use    ?? false,
+      valid_until: qs.valid_until ?? null,
+      arrival_deadline: qs.arrival_deadline ?? null,
       jti:       qs.jti       ?? '',
       expires_at: qs.expires_at ?? ''
     };
@@ -1964,13 +1971,18 @@ function processLiveData(data) {
         jti: qs.jti, qr_text: qs.qr_text ?? null,
         expires_at: qs.expires_at, stay_id: qs.stay_id ?? null,
         scannable: qs.scannable ?? false, consumed: qs.consumed ?? false,
-        revoked: qs.revoked ?? false, expired: qs.expired ?? false
+        revoked: qs.revoked ?? false, expired: qs.expired ?? false,
+        in_use: qs.in_use ?? false, valid_until: qs.valid_until ?? null,
+        arrival_deadline: qs.arrival_deadline ?? null
       };
     } else {
       qrTestData.scannable = qs.scannable ?? qrTestData.scannable;
       qrTestData.consumed  = qs.consumed  ?? qrTestData.consumed;
       qrTestData.revoked   = qs.revoked   ?? qrTestData.revoked;
       qrTestData.expired   = qs.expired   ?? qrTestData.expired;
+      qrTestData.in_use    = qs.in_use    ?? qrTestData.in_use;
+      qrTestData.valid_until = qs.valid_until ?? qrTestData.valid_until;
+      qrTestData.arrival_deadline = qs.arrival_deadline ?? qrTestData.arrival_deadline;
       if (qs.qr_text) qrTestData.qr_text = qs.qr_text;
     }
   }
@@ -2623,10 +2635,15 @@ function updateQrTestPanelNew() {
   let statusText, statusColor;
   if (qrTestData.revoked) {
     statusText = 'REVOCADO'; statusColor = 'val-red';
-  } else if (qrTestData.consumed) {
-    statusText = 'CONSUMIDO'; statusColor = 'val-red';
   } else if (qrTestData.expired) {
     statusText = 'EXPIRADO'; statusColor = 'val-orange';
+  } else if (qrTestData.in_use) {
+    // F51 (Bug 4): tras el 1er escaneo el QR sigue válido (multi-uso) hasta
+    // `valid_until`; ya no se marca como consumido/inválido.
+    var _vu = (typeof Choreography !== 'undefined' && Choreography.parseTime)
+      ? Choreography.parseTime(qrTestData.valid_until) : 0;
+    statusText = 'EN USO' + (_vu ? ' · hasta ' + new Date(_vu).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '');
+    statusColor = 'val-green';
   } else {
     statusText = 'ESCANEABLE'; statusColor = 'val-green';
   }

@@ -10,6 +10,7 @@ use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\TimeSlots\TimeSlot;
 use App\Domain\TimeSlots\TimeSlotService;
 use App\Support\Clock;
+use App\Support\Config;
 use App\Support\Errors\ConflictException;
 use App\Support\Errors\NotFoundException;
 use App\Support\Errors\UnprocessableException;
@@ -28,7 +29,11 @@ use App\Support\Uuid;
  *      slot_not_rentable to fail closed.
  *   5. Insert a stay in RESERVED, capturing the supplied vb6 refs.
  *   6. Generate a UUID v4 jti, sign a token using QrTokenizer with
- *      exp = now + room_type.qr_usage_window_minutes.
+ *      exp = now + (QR_ARRIVAL_WINDOW_MINUTES + duracion_minutos). The token
+ *      cannot be re-signed, so it must span BOTH the arrival window and the
+ *      full stay usage window (Fase 51 / Bug 4).
+ *      NOTE: `room_type.qr_usage_window_minutes` is DEPRECATED for guest QR
+ *      issuance; it is no longer used to seal the token.
  *   7. Persist a qr_credentials row with the SHA-256 hash of the token.
  *   8. Return the plaintext token to the caller (this is the only point in
  *      time where the raw token exists outside the printed ticket).
@@ -122,8 +127,11 @@ final class QrIssueService
         $stayId = $this->stays->insertReserved($roomId, $duracionMinutos, $vb6Refs);
 
         // 2) Mint the token.
+        // The HMAC token cannot be re-signed, so seal exp covering the arrival
+        // window plus the whole stay duration (Fase 51 / Bug 4).
         $iat = $nowUtc->getTimestamp();
-        $exp = $iat + ($roomType->qrUsageWindowMinutes * 60);
+        $arrivalMinutes = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
+        $exp = $iat + (($arrivalMinutes + $duracionMinutos) * 60);
         $jti = Uuid::v4();
         $token = $this->tokenizer->issue($roomId, $stayId, $jti, $iat, $exp);
         $tokenHash = QrTokenizer::hashForStorage($token);
