@@ -12,6 +12,12 @@
  * reconciled periodically; on every (re)connection a rate-limited REST resync
  * probes the sensors once to recover transitions lost during the WS gap.
  *
+ * F50: TRACKED_KINDS also includes SWITCH (its real state arrives by push, no
+ * quota); the REST resync only probes RESYNC_KINDS (PROXIMITY/PRESENCE) so it
+ * never spends IoT Core quota on the light. The silence watchdog backstop is
+ * 15 min (the proactive 30 s ping detects dead sockets; idle silence is normal
+ * for door-only packs).
+ *
  * Protocol: Pulsar Reader over WebSocket (wss://mqe.tuyaeu.com:8285/)
  *   Reader mode reads from the topic directly without a subscription,
  *   avoiding 409 conflicts on the Consumer endpoint.
@@ -54,26 +60,37 @@ const DB_PORT = process.env.DB_PORT || '3306';
 const DB_NAME = process.env.DB_NAME || 'cerraduras_db';
 const DB_USER = process.env.DB_USER || 'cerraduras_user';
 const DB_PASS = process.env.DB_PASS || '';
-// Sensores que aportan estado de dominio (puerta / presencia). LOCK/SWITCH
-// son guiados por comando y no necesitan push para el panel de coreografía.
-const TRACKED_KINDS = ['PROXIMITY', 'PRESENCE'];
+// Sensores cuyo push reenviamos: puerta / presencia (estado de dominio) y
+// SWITCH (estado real de la luz, Bug 2, sin cuota). LOCK sigue guiado por
+// comando y no necesita push para el panel.
+const TRACKED_KINDS = ['PROXIMITY', 'PRESENCE', 'SWITCH'];
+// F50: solo estos kinds se sondean por REST en el resync (`/status` consume
+// cuota IoT Core). El SWITCH llega por push, así que NUNCA se sondea: su
+// estado real se obtiene sin gastar cuota.
+const RESYNC_KINDS = ['PROXIMITY', 'PRESENCE'];
 const RECONCILE_MS = 60000;              // re-resolver devices cada 60 s
 const RESYNC_MIN_INTERVAL_MS = 20000;    // rate-limit del resync REST (parpadeos)
 const REAL_GAP_MS = 10000;               // F47: hueco que justifica resync inmediato
 const RECONNECT_BASE_MS = 1000;          // F47: base de reconexión (antes 5000)
-// F47 (RF-54.3): watchdog de silencio (configurable). Por defecto 180 s: los
-// sensores de presencia emiten iluminancia cada ~10 s; un silencio mayor indica
-// WS zombie. En packs solo-puerta (sin emisión periódica) es una red de
-// seguridad secundaria, no la fuente primaria de reconexión.
-const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '180000', 10);
+// F47/F50 (RF-54.3): watchdog de silencio (configurable). Por defecto 15 min:
+// el ping proactivo cada 30 s ya detecta sockets muertos, así que el silencio en
+// reposo es NORMAL (packs solo-puerta no emiten nada periódicamente). Un backstop
+// corto (180 s) reconectaba el WS en reposo sin motivo (churn ~9k cierres) y
+// abría huecos donde se perdían eventos de puerta (Bug 5). 15 min sigue forzando
+// la reconexión de un socket realmente zombie sin castigar el reposo legítimo.
+const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '900000', 10);
 
 /** @type {string[]} */
 let knownDeviceIds = [];
+// F50: lista reconciliada de devices a sondear por REST (sin SWITCH).
+/** @type {string[]} */
+let resyncDeviceIds = [];
 let lastResyncAt = 0;
 
 // ─── F47: estado de salud del consumer (RF-54) ────────────────────────
 let currentWs = null;        // WS activo (para el watchdog)
 let lastMessageAt = 0;       // epoch ms del último mensaje recibido (cualquier DP)
+let lastPongAt = 0;          // F50: epoch ms del último pong del servidor (observabilidad)
 let disconnectedAt = 0;      // epoch ms del último cierre (0 = conectado)
 let resyncCount = 0;         // resyncs ejecutados desde el arranque
 
@@ -115,6 +132,17 @@ function receiveLatencyMs(now, tuyaT) {
   return now - t;
 }
 
+/**
+ * Pure: antigüedad (ms) del último `pong` del servidor; `null` si nunca hubo.
+ * Solo observabilidad: NO se usa para forzar reconexión (no está probado que
+ * Tuya responda siempre con pong; el ping proactivo de 30 s es la señal de vida).
+ */
+function pongAgeMs(now, lastPongAtMs) {
+  const t = Number(lastPongAtMs);
+  if (!isFinite(t) || t <= 0) return null;
+  return now - t;
+}
+
 /** Escribe el fichero de estado (best-effort, nunca rompe el consumer). */
 function writeStatus(connected) {
   try {
@@ -124,6 +152,8 @@ function writeStatus(connected) {
     fs.writeFileSync(STATUS_FILE, JSON.stringify({
       connected: !!connected,
       last_msg_at: lastMessageAt ? new Date(lastMessageAt).toISOString() : null,
+      // F50: campo aditivo de observabilidad (no participa en la decisión).
+      last_pong_at: lastPongAt ? new Date(lastPongAt).toISOString() : null,
       known_devices: knownDeviceIds.length,
       resyncs: resyncCount,
       updated_at: new Date(now).toISOString(),
@@ -154,14 +184,17 @@ function parseDeviceIds(stdout) {
     .filter((s, i, arr) => arr.indexOf(s) === i);
 }
 
-/** Resuelve desde MySQL los external_id de los sensores rastreados. */
-function loadKnownDevices() {
+/**
+ * Resuelve desde MySQL los `external_id` de los devices cuyo `kind` está en
+ * `kinds`. Devuelve `null` si la consulta falla (para conservar la lista previa).
+ */
+function queryDeviceIds(kinds) {
   try {
-    const kinds = TRACKED_KINDS.map((k) => `'${k}'`).join(',');
+    const list = kinds.map((k) => `'${k}'`).join(',');
     // F46+: los devices `presence_source='disabled'` NO se rastrean (apagado
     // fuerte). Los `push` SÍ (su tiempo real llega por este consumer).
     const sql = `SELECT external_id FROM devices
-                 WHERE kind IN (${kinds})
+                 WHERE kind IN (${list})
                    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json,'$.presence_source')),'') <> 'disabled'`;
     const out = execFileSync('mysql', [
       '-h', DB_HOST, '-P', String(DB_PORT), '-u', DB_USER, DB_NAME, '-N', '-e', sql,
@@ -169,8 +202,23 @@ function loadKnownDevices() {
     return parseDeviceIds(out);
   } catch (e) {
     console.error(`[DB] ⚠ no se pudieron resolver devices: ${e.message}`);
-    return knownDeviceIds; // conserva la lista previa si la BD falla
+    return null;
   }
+}
+
+/** Resuelve desde MySQL los external_id de los sensores rastreados (incl. SWITCH). */
+function loadKnownDevices() {
+  const ids = queryDeviceIds(TRACKED_KINDS);
+  return ids !== null ? ids : knownDeviceIds; // conserva la lista previa si la BD falla
+}
+
+/**
+ * F50: external_id de los devices que SÍ se sondean por REST en el resync.
+ * Excluye el SWITCH (llega por push) para no consumir cuota IoT Core.
+ */
+function loadResyncDevices() {
+  const ids = queryDeviceIds(RESYNC_KINDS);
+  return ids !== null ? ids : resyncDeviceIds; // conserva la lista previa si la BD falla
 }
 
 /** Pure: ¿el devId pertenece a la lista rastreada? */
@@ -251,7 +299,8 @@ function buildStatusPayload(devId, result) {
  * para no consumir cuota en reconnects frecuentes.
  */
 async function resyncKnownDevices(reason) {
-  if (knownDeviceIds.length === 0) return;
+  // F50: solo RESYNC_KINDS (PROXIMITY/PRESENCE); el SWITCH nunca se sondea.
+  if (resyncDeviceIds.length === 0) return;
   const now = Date.now();
   if (!shouldResync(now, disconnectedAt, lastResyncAt, RESYNC_MIN_INTERVAL_MS, REAL_GAP_MS)) {
     console.log('[RESYNC] omitido (hueco reciente + rate-limit activo)');
@@ -259,13 +308,13 @@ async function resyncKnownDevices(reason) {
   }
   lastResyncAt = now;
   resyncCount++;
-  console.log(`[RESYNC] (${reason}) sondeando ${knownDeviceIds.length} device(s)...`);
+  console.log(`[RESYNC] (${reason}) sondeando ${resyncDeviceIds.length} device(s)...`);
   let token;
   try { token = await getTuyaToken(); } catch (e) {
     console.error(`[RESYNC] token fail: ${e.message}`);
     return;
   }
-  for (const devId of knownDeviceIds) {
+  for (const devId of resyncDeviceIds) {
     try {
       const body = await tuyaRequest('GET', `/v1.0/iot-03/devices/${devId}/status`, '', token);
       if (!body || body.success !== true) continue;
@@ -392,6 +441,26 @@ function mapToPresenceEvent(data, ids) {
 let reconnectDelay = RECONNECT_BASE_MS;   // F47: base 1 s (RF-54.1)
 let consecutiveFails = 0;
 const MAX_BACKOFF = 60000;   // 1 minute max
+let reconnectTimer = null;       // F50: timer de reconexión (evita dobles)
+let reconnectScheduled = false;  // F50: guarda de programación
+
+/**
+ * F50: programa una única reconexión. La usan `close` y `error`: un fallo DNS
+ * (`getaddrinfo EAI_AGAIN`) puede emitir `error` sin `close`, y antes el
+ * consumer quedaba muerto sin reintentar. La guarda evita dobles timers.
+ */
+function scheduleReconnect(reason) {
+  if (reconnectScheduled) return;
+  reconnectScheduled = true;
+  const jitter = Math.floor(Math.random() * 500);
+  const delay = reconnectDelay + jitter;
+  console.log(`[WS] ↻ reconexión programada en ${Math.round(delay / 1000)}s (${reason})`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectScheduled = false;
+    connect();
+  }, delay);
+}
 
 function connect() {
   loadSocketDeps();
@@ -445,7 +514,9 @@ function connect() {
   });
 
   ws.on('ping', () => { ws.pong(ACCESS_ID); });
-  ws.on('pong', () => { /* liveness del servidor */ });
+  // F50: observable (no se usa para reconectar). El ping proactivo de 30 s es la
+  // señal de vida; no está probado que Tuya responda siempre con pong.
+  ws.on('pong', () => { lastPongAt = Date.now(); });
 
   ws.on('message', async (raw) => {
     try {
@@ -514,6 +585,11 @@ function connect() {
 
   ws.on('close', (code, reason) => {
     stopHeartbeat();
+    // F50: un cierre de un socket ya reemplazado no debe programar otra conexión.
+    if (ws !== currentWs) {
+      console.log(`[WS] close de socket obsoleto (code=${code}) — ignorado`);
+      return;
+    }
     consecutiveFails++;
     disconnectedAt = Date.now();   // F47: para decidir el resync por hueco real
     currentWs = null;
@@ -524,9 +600,8 @@ function connect() {
     } else {
       reconnectDelay = RECONNECT_BASE_MS;   // F47: cierre normal → base rápida (1 s)
     }
-    const jitter = Math.floor(Math.random() * 500);
-    console.log(`[WS] ❌ Closed (code=${code}). Consecutive fails: ${consecutiveFails}. Reconnecting in ${Math.round((reconnectDelay + jitter)/1000)}s...`);
-    setTimeout(connect, reconnectDelay + jitter);
+    console.log(`[WS] ❌ Closed (code=${code}). Consecutive fails: ${consecutiveFails}.`);
+    scheduleReconnect(`close ${code}`);
   });
 
   ws.on('error', (err) => {
@@ -534,6 +609,15 @@ function connect() {
     // HTTP 409 means subscription conflict — back off aggressively
     if (err.message && err.message.includes('409')) {
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_BACKOFF);
+    } else if (err.message && err.message.includes('EAI_AGAIN')) {
+      // F50: DNS no resuelto (getaddrinfo EAI_AGAIN). Puede no venir seguido de
+      // `close`; se aplica backoff exponencial y se reprograma la conexión.
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_BACKOFF);
+    }
+    // F50: garantiza reintento aunque `close` no llegue (bug DNS). La guarda
+    // evita dobles timers si `close` también dispara.
+    if (ws === currentWs) {
+      scheduleReconnect(`error ${err.message}`);
     }
   });
 }
@@ -547,14 +631,21 @@ function start() {
 
   // RF-50.1: resolver devices desde BD y reconciliar periódicamente.
   knownDeviceIds = loadKnownDevices();
+  resyncDeviceIds = loadResyncDevices();
   console.log(`  Devices: ${knownDeviceIds.length ? knownDeviceIds.join(', ') : '(ninguno)'}`);
+  console.log(`  Resync REST (sin SWITCH): ${resyncDeviceIds.length ? resyncDeviceIds.join(', ') : '(ninguno)'}`);
   console.log('');
 
   setInterval(() => {
     const before = knownDeviceIds.join(',');
+    const beforeResync = resyncDeviceIds.join(',');
     knownDeviceIds = loadKnownDevices();
+    resyncDeviceIds = loadResyncDevices();
     if (knownDeviceIds.join(',') !== before) {
       console.log(`[DB] 🔁 devices actualizados: ${knownDeviceIds.length ? knownDeviceIds.join(', ') : '(ninguno)'}`);
+    }
+    if (resyncDeviceIds.join(',') !== beforeResync) {
+      console.log(`[DB] 🔁 devices de resync actualizados: ${resyncDeviceIds.length ? resyncDeviceIds.join(', ') : '(ninguno)'}`);
     }
   }, RECONCILE_MS).unref();
 
@@ -586,8 +677,12 @@ module.exports = {
   buildStatusPayload,
   mapToPresenceEvent,
   TRACKED_KINDS,
+  // F50: kinds que se sondean por REST en el resync (sin SWITCH).
+  RESYNC_KINDS,
   // F47 (RF-54): helpers puros para tests
   shouldResync,
   silenceExceeded,
   receiveLatencyMs,
+  // F50: observabilidad del pong (no decide reconexión).
+  pongAgeMs,
 };

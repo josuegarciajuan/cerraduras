@@ -749,3 +749,22 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-57.5: Latencia percibida de la puerta (panel)
 - **RF-57.5.1**: El panel debe mostrar la puerta como abierta desde el **evento de apertura del relé** (`access_events` `OPEN` OK, ~instantáneo) hasta que el magneto Tuya confirme un `CLOSED` posterior, con timeout de seguridad (12 s).
 - **RF-57.5.2**: La animación no debe contradecir el estado real: si llega el `CLOSED` del magneto, la puerta vuelve a cerrada.
+
+# Fase 50: Estado real del SWITCH por push y robustez del consumer Pulsar
+
+## RF-58: Rastreo push del SWITCH sin cuota
+
+### RF-58.1: El SWITCH se rastrea por push
+- **RF-58.1.1**: El consumer Pulsar debe rastrear también los devices `kind = SWITCH` (`TRACKED_KINDS` los incluye) y reenviar su push crudo al webhook, para conocer el estado real de la luz (Bug 2) sin depender de comandos.
+- **RF-58.1.2**: El resync REST (`GET /devices/{id}/status`) **no** debe sondear el SWITCH (`RESYNC_KINDS = PROXIMITY, PRESENCE`): el estado llega por push y no debe consumir cuota IoT Core.
+- **RF-58.1.3**: El `TuyaSensorIngress` debe extraer el DP `switch` o `switch_1` (case-insensitive) y persistir `switch_state` (`ON`/`OFF`) y `switch_state_at` en `devices.meta_json`, devolviendo un no-op auditable para no alterar el pipeline de puerta/presencia.
+- **RF-58.1.4**: `/live` y el SSE deben exponer el estado real en `switch_state.state` (`UNKNOWN` si aún no hay push) y `switch_state.state_at`, de forma aditiva.
+
+### RF-58.2: Robustez de recepción del consumer
+- **RF-58.2.1**: El watchdog de silencio debe ser un backstop largo (default 15 min, `CONSUMER_SILENCE_MS` configurable): el ping proactivo de 30 s detecta sockets muertos y el silencio en reposo (packs solo-puerta) es legítimo. Un umbral corto provocaba churn de reconexión y huecos donde se perdían eventos de puerta (Bug 5).
+- **RF-58.2.2**: Un `error` del WS (p. ej. DNS `getaddrinfo EAI_AGAIN`) debe reprogramar la reconexión aunque no llegue `close`, con guarda anti-dobles-timers y manteniendo el backoff exponencial base 1 s.
+- **RF-58.2.3**: El fichero de estado del consumer debe exponer `last_pong_at` (aditivo) como observabilidad; el `pong` **no** debe forzar reconexión.
+
+### RF-58.3: No pérdida de push sin sala (N10)
+- **RF-58.3.1**: Si un device Tuya no resuelve a sala, el ingress debe devolver un no-op con `discard_reason='room_not_found'` (logueando `dev`/`kind`) en vez de dejar fluir `room_id = null`; el webhook debe responder **202** y no 500.
+- **RF-58.3.2**: Una `NotFoundException` en `processEvent` (p. ej. sala inexistente) debe responder 202 `{accepted:false, discard_reason:'room_not_found'}`. El 500 se reserva para errores inesperados.

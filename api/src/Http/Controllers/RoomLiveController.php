@@ -126,6 +126,10 @@ final class RoomLiveController
                     'external_id'  => $switchDevice->externalId,
                     'last_command' => $meta['last_command'] ?? 'UNKNOWN',
                     'commanded_at' => $meta['commanded_at'] ?? null,
+                    // F50: estado REAL del relé reportado por push de Tuya
+                    // (aditivo). `UNKNOWN` mientras no haya push.
+                    'state'        => $meta['switch_state'] ?? 'UNKNOWN',
+                    'state_at'     => $meta['switch_state_at'] ?? null,
                     // Observabilidad del último fallo Tuya (aditivo, nullable).
                     'last_error'          => $meta['last_error'] ?? null,
                     'last_error_at'       => $meta['last_error_at'] ?? null,

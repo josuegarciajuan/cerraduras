@@ -1125,16 +1125,41 @@ independiente (`exit_guard_seconds`, default 3 s) y `gap_seconds` queda como cam
 
 Campos **opcionales** que solo aparecen cuando la habitación tiene un dispositivo
 `SWITCH` registrado (si no hay `switch_state`, no aplican). Son aditivos y nullable: un
-consumidor que los ignore sigue funcionando. Reflejan el último fallo clasificado de Tuya.
+consumidor que los ignore sigue funcionando. Reflejan el estado real reportado por push y
+el último fallo clasificado de Tuya.
 
 | Campo | Tipo | Null | Descripción |
 |-------|------|------|-------------|
+| `state` | string | no | **F50**: estado REAL del relé según el push de Tuya: `ON` \| `OFF` \| `UNKNOWN`. `UNKNOWN` mientras no haya llegado ningún push con DP `switch`/`switch_1`. No procede de sondeo REST (sin cuota). |
+| `state_at` | string ISO-8601 UTC (`Y-m-d\TH:i:s\Z`) | sí | **F50**: `occurred_at` derivado del sello `t` del DP de switch. `null` si no hay estado reportado. |
 | `last_error` | string | sí | Mensaje del último fallo de Tuya (incluye `code` y `msg`). `null` si el último comando fue aceptado. |
 | `last_error_at` | string ISO-8601 UTC (`Y-m-d\TH:i:s.v\Z`) | sí | Marca UTC del último fallo. `null` si no hay error. |
 | `last_error_category` | string | sí | Taxonomía del fallo: `quota` \| `offline` \| `dp_invalid` \| `unknown`. `null` si no hay error. |
 
 > En caso de comando exitoso se limpian `last_error` y `last_error_category`; `last_command`
 > y `commanded_at` conservan su contrato. El evento SSE `state` transporta el mismo payload.
+> `state`/`state_at` (F50) los escribe el push del `TuyaSensorIngress` en `devices.meta_json`
+> (`switch_state`/`switch_state_at`), en paralelo a `last_command`/`commanded_at` (comando).
+> Un comando puede ir por delante del push; el panel debe poder mostrar ambos.
+
+### 3.6 `POST /api/v1/tuya/webhook` — descartes no-op (F50, aditivo)
+
+El webhook sigue devolviendo **202** para eventos `_noop` (heartbeats, batería, switch) y
+ahora también para `NotFoundException` (p. ej. sala inexistente), en vez de 500: Tuya ya
+entregó el push y un 500 solo provoca reenvíos/ruido. Forma de la respuesta (aditiva):
+
+| Caso | HTTP | Cuerpo |
+|------|------|--------|
+| Evento `_noop` sin motivo (batería/heartbeat) | 202 | `{"accepted":true,"note":"no_actionable_dps"}` |
+| Push de `SWITCH` con DP de switch | 202 | `{"accepted":true,"note":"no_actionable_dps","discard_reason":"switch_state"}` |
+| Device sin sala resuelta (`device → pack → room` sin room) | 202 | `{"accepted":true,"note":"no_actionable_dps","discard_reason":"room_not_found"}` |
+| `NotFoundException` en `processEvent` (sala ausente) | 202 | `{"accepted":false,"discard_reason":"room_not_found"}` |
+| Error inesperado | 500 | `{"accepted":false,"error":"…"}` |
+
+> `discard_reason` en esta respuesta es **aditivo** y no forma parte del enum de
+> `presence_events.discard_reason` (§2.2): los eventos `room_not_found`/`switch_state` no
+> llegan a `presence_events` (se cortan antes del pipeline de dominio). El 500 se reserva
+> para errores inesperados.
 
 ---
 
@@ -1425,10 +1450,19 @@ Se añaden dos campos, sin romper consumidores existentes:
 - **No contrato HTTP**: consume el WS de Tuya y hace `POST /api/v1/tuya/webhook`.
 - **Dueño único**: `cerraduras-pulsar-consumer.service`. `start-all.sh` solo reinicia el
   servicio; `stop-all.sh` solo lo detiene vía `systemctl stop`.
-- **Lista de devices**: derivada de la BD (`kind IN ('PROXIMITY','PRESENCE')`), reconciliada
-  cada 60 s. No hay `SENSOR_DEVICE_IDS` hardcodeado.
-- **Resync**: en cada `open`, `GET /v1.0/iot-03/devices/{id}/status` por device rastreado,
+- **Lista de devices rastreados (push)**: derivada de la BD
+  (`TRACKED_KINDS = PROXIMITY, PRESENCE, SWITCH`), reconciliada cada 60 s. No hay
+  `SENSOR_DEVICE_IDS` hardcodeado. El SWITCH se rastrea para conocer su estado real por push
+  (sin cuota IoT Core).
+- **Resync**: en cada `open`, `GET /v1.0/iot-03/devices/{id}/status` **solo** por device de
+  `RESYNC_KINDS = PROXIMITY, PRESENCE` (el SWITCH nunca se sondea → sin cuota),
   rate-limited a 20 s, reenviado al webhook como `{devId, status:[{code,value,t}]}`.
+- **Watchdog de silencio**: backstop de 15 min (`CONSUMER_SILENCE_MS`, default `900000`); el
+  ping proactivo de 30 s detecta sockets muertos y el silencio en reposo (packs solo-puerta)
+  es normal, por lo que un umbral corto causaba churn de reconexión.
+- **Reintento ante fallo sin `close`** (p. ej. DNS `getaddrinfo EAI_AGAIN`): `scheduleReconnect()`
+  se comparte entre `close` y `error` con guarda anti-dobles-timers, manteniendo backoff
+  exponencial base 1 s.
 
 ### 3. Presencia (RF-52)
 
@@ -1480,6 +1514,7 @@ Fichero de runtime (no versionado). Esquema:
 {
   "connected": true,
   "last_msg_at": "2026-09-17T11:21:45.123Z",
+  "last_pong_at": "2026-09-17T11:21:45.100Z",
   "known_devices": 2,
   "resyncs": 1,
   "updated_at": "2026-09-17T11:21:45.123Z"
@@ -1488,7 +1523,10 @@ Fichero de runtime (no versionado). Esquema:
 
 - `connected`: estado del WS (`ws.readyState === OPEN`).
 - `last_msg_at`: instante UTC del último mensaje recibido (cualquier DP).
-- `known_devices`: tamaño de la lista reconciliada.
+- `last_pong_at` (**F50, aditivo**): instante UTC del último `pong` del servidor; `null` si
+  nunca hubo. Es solo observabilidad: **no** fuerza reconexión (no está probado que Tuya
+  responda siempre con pong).
+- `known_devices`: tamaño de la lista reconciliada (incluye SWITCH desde F50).
 - `resyncs`: contador de resyncs ejecutados desde el arranque.
 - `updated_at`: instante de la última escritura del fichero.
 
