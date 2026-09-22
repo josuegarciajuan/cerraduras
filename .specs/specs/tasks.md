@@ -2423,3 +2423,51 @@ llegada (global) y uso (duración de la estancia, multi-uso).
 | F51-05 | Validación por ventanas | RF-59.1.2/59.2 | `QrValidateService.php` | unit PHP |
 | F51-06 | `qr_status` aditivo | RF-59.5 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
 | F51-07 | Specs y contrato | RF-59 | `requirements/design/contracts/tasks.md` | regresión |
+
+---
+
+# Fase 52 — Cola muerta del outbox (N6, RF-60)
+
+**Motivo**: los mensajes veneno (4xx de WS-VB6) quedaban `FAILED` para siempre y `health/deep`
+los contaba en `outbox_failed`, dejando el sistema `degraded` de forma indefinida.
+
+### TSK-F52-01: Migración del enum + reclasificación
+- **Cambio**: `migrations/0115_outbox_dead_letter.sql` — `MODIFY status ENUM(...,'DEAD')` y
+  `UPDATE ... SET status='DEAD' WHERE status='FAILED' AND attempts>=20 AND last_error LIKE
+  '%client_error%'` (idempotente).
+- **RF**: RF-60.1.1, RF-60.2.1, RF-60.2.2.
+- **Test propio**: guarda de fuente en `tests/Unit/OutboxDeadLetterTest.php`.
+
+### TSK-F52-02: Estados terminales en el repositorio
+- **Cambio**: `OutboxVb6Repository::markPermanentlyFailed()` → `'DEAD'`;
+  `markFailed()` → `nextAttempts >= 20 ? 'DEAD' : 'PENDING'`;
+  `scheduleRetry()` → `status IN ('PENDING','FAILED','DEAD')`; docblocks.
+- **RF**: RF-60.1.2, RF-60.1.3, RF-60.1.4, RF-60.3.2.
+- **Test propio**: `tests/Unit/OutboxDeadLetterTest.php`.
+
+### TSK-F52-03: Health diferenciado (`outbox_dead`)
+- **Cambio**: `HealthController::deep` mantiene `outbox_failed` (degrada) y añade `outbox_dead`
+  [`status`, `count`, `note`] sin tocar `$allOk`.
+- **RF**: RF-60.4.1, RF-60.4.2, RF-60.4.3.
+- **Test propio**: `tests/Unit/OutboxDeadLetterTest.php` (guarda de fuente).
+
+### TSK-F52-04: Reintento manual y visibilidad
+- **Cambio**: `AdminController::retryOutbox` documenta y confirma reencolado de cualquier estado
+  (incluido `DEAD`); `listOutbox` añade `dead` al `summary`.
+- **RF**: RF-60.3.1, RF-60.4.4.
+- **Test propio**: regresión del contrato de admin (sin cambio de forma).
+
+### TSK-F52-05: Specs y contrato
+- **Cambio**: `requirements.md` (RF-60), `design.md` (§17), `contracts.md` (§2.1/§2.2), `tasks.md`.
+- **RF**: RF-60.
+- **Test propio**: `php api/tests/Unit/OutboxDeadLetterTest.php`.
+
+## Tabla resumen F52
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F52-01 | Migración enum + reclasificación | RF-60.1.1/60.2 | `migrations/0115_outbox_dead_letter.sql` | unit PHP (guarda) |
+| F52-02 | Estados terminales DEAD | RF-60.1.2/60.1.3/60.3.2 | `OutboxVb6Repository.php` | unit PHP (guarda) |
+| F52-03 | `outbox_dead` en health | RF-60.4.1/60.4.2 | `HealthController.php` | unit PHP (guarda) |
+| F52-04 | Reintento manual + summary | RF-60.3.1/60.4.4 | `AdminController.php` | unit PHP (guarda) |
+| F52-05 | Specs y contrato | RF-60 | `requirements/design/contracts/tasks.md` | unit PHP |

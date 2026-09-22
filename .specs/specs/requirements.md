@@ -818,3 +818,44 @@ ciclo de vida en DOS ventanas consecutivas.
   ya se usó).
 - **RF-59.5.2**: `qr_status` expone de forma **aditiva** `first_used_at`, `valid_until`,
   `arrival_deadline` e `in_use`, manteniendo `consumed` por compatibilidad.
+
+---
+
+# Fase 52: Cola muerta del outbox (N6)
+
+**Motivo**: los mensajes veneno del `outbox_vb6` (4xx del bridge WS-VB6, p. ej.
+`ApiException(client_error) ... HTTP 422`) acababan en `status='FAILED'` con `attempts>=20`.
+`GET /health/deep` los contaba como `outbox_failed` y el sistema quedaba **`degraded` para
+siempre**, aunque esos mensajes nunca serán aceptados. La cola muerta los hace visibles sin
+degradar permanentemente el servicio.
+
+## RF-60: Cola muerta (dead-letter) del outbox WS-VB6
+
+### RF-60.1: Estado terminal `DEAD`
+- **RF-60.1.1**: El enum `outbox_vb6.status` incorpora el valor `DEAD`
+  (`ENUM('PENDING','SENDING','SENT','FAILED','DEAD')`, migración `0115_outbox_dead_letter.sql`).
+- **RF-60.1.2**: `markPermanentlyFailed()` (4xx del bridge) mueve el item a `'DEAD'`.
+- **RF-60.1.3**: `markFailed()` mueve a `'DEAD'` cuando `nextAttempts >= 20`; por debajo de ese
+  techo sigue reintentando con `status='PENDING'`.
+- **RF-60.1.4**: Los items `DEAD` **no** se reintentan automáticamente (`fetchDue` solo procesa
+  `PENDING`).
+
+### RF-60.2: Reclasificación idempotente de venenos
+- **RF-60.2.1**: La migración `0115` reclasifica a `DEAD` los items existentes con
+  `status='FAILED' AND attempts >= 20 AND last_error LIKE '%client_error%'`.
+- **RF-60.2.2**: Tanto el `MODIFY` del enum como el `UPDATE` son idempotentes/repetibles.
+
+### RF-60.3: Reintento manual
+- **RF-60.3.1**: `POST /admin/outbox/{id}/retry` acepta cualquier estado (`PENDING`, `FAILED` o
+  `DEAD`) y reinicia `status='PENDING'`, `attempts=0`, `last_error=NULL`.
+- **RF-60.3.2**: `scheduleRetry($idempotencyKey)` permite reencolar también `DEAD`
+  (`status IN ('PENDING','FAILED','DEAD')`).
+
+### RF-60.4: Observabilidad sin degradar
+- **RF-60.4.1**: `GET /health/deep` mantiene `outbox_failed` como COUNT de `FAILED` con
+  `updated_at < NOW() - INTERVAL 1 HOUR` (reintentables) y **degrada** si `> 0`.
+- **RF-60.4.2**: `GET /health/deep` añade `outbox_dead` con `count` de `DEAD` y
+  `status='ok'` si `0` / `'warning'` si `> 0`, sin alterar `allOk` (informativo, **no** degrada).
+- **RF-60.4.3**: El contrato de `/health/deep` es aditivo: no se rompe la semántica previa.
+- **RF-60.4.4**: El panel de administración puede listar/reintentar los items `DEAD`
+  (resumen de estados incluye `dead`).

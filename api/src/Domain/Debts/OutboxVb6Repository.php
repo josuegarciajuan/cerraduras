@@ -58,7 +58,10 @@ final class OutboxVb6Repository implements OutboxVb6RepositoryInterface
 
     /**
      * Mark an outbox entry so its next_attempt_at = now (immediate retry).
-     * Used by POST /debts/{id}/resync.
+     * Used by POST /debts/{id}/resync and POST /admin/outbox/{id}/retry.
+     *
+     * DEAD items (dead-letter queue, N6) are also re-armed: an operator may
+     * have fixed the root cause and wants a manual re-drive.
      */
     public function scheduleRetry(string $idempotencyKey): bool
     {
@@ -66,7 +69,7 @@ final class OutboxVb6Repository implements OutboxVb6RepositoryInterface
             "UPDATE outbox_vb6
              SET next_attempt_at = UTC_TIMESTAMP(3), status = 'PENDING'
              WHERE idempotency_key = :idem
-               AND status IN ('PENDING','FAILED')"
+               AND status IN ('PENDING','FAILED','DEAD')"
         );
         $stmt->execute([':idem' => $idempotencyKey]);
         return $stmt->rowCount() > 0;
@@ -108,14 +111,18 @@ final class OutboxVb6Repository implements OutboxVb6RepositoryInterface
      * Mark an outbox item as failed and schedule a retry with exponential backoff.
      *
      * Backoff: min(2^attempts, 300) seconds.
-     * Max retries: 20. After that, status = 'FAILED'.
+     * Max retries: 20. Once nextAttempts reaches 20 the item is moved to the
+     * dead-letter state 'DEAD' (never retried automatically) instead of the
+     * former 'FAILED' state, so a poison message cannot keep /health/deep
+     * degraded forever. DEAD is visible and manually re-drivable through the
+     * admin outbox panel (see AdminController::retryOutbox).
      */
     public function markFailed(int $id, string $error, int $attempts): void
     {
         $nextAttempts = $attempts + 1;
         $backoffSeconds = min((int) pow(2, $attempts), 300);
 
-        $newStatus = $nextAttempts >= 20 ? 'FAILED' : 'PENDING';
+        $newStatus = $nextAttempts >= 20 ? 'DEAD' : 'PENDING';
 
         $this->pdo->prepare(
             "UPDATE outbox_vb6
@@ -138,12 +145,16 @@ final class OutboxVb6Repository implements OutboxVb6RepositoryInterface
      *
      * Used when WS-VB6 answers 4xx (client_error): the payload will never be
      * accepted, so retrying only burns attempts and keeps the worker exiting 1.
+     *
+     * The item is moved to the dead-letter state 'DEAD' (instead of 'FAILED'),
+     * which is shown by /health/deep as `outbox_dead` without degrading the
+     * service, and can be re-queued from the admin panel.
      */
     public function markPermanentlyFailed(int $id, string $error): void
     {
         $this->pdo->prepare(
             "UPDATE outbox_vb6
-             SET status          = 'FAILED',
+             SET status          = 'DEAD',
                  attempts        = GREATEST(attempts, 20),
                  last_error      = :error,
                  next_attempt_at = UTC_TIMESTAMP(3)

@@ -2755,3 +2755,75 @@ semántica previa. El `qr_text` reconstruido sigue usando `issued_at`/`expires_a
 - `tests/Unit/QrValidateServiceTest.php`: primer uso fija `first_used_at`/`valid_until`; reentrada;
   uso fuera de ventana → `qr_expired`.
 - `tests/Unit/QrIssueServiceTest.php`: `exp - iat == (arrival + duración)`.
+
+---
+
+# Fase 52 — Cola muerta del outbox (N6, RF-60)
+
+## 17.1 Problema y decisión
+
+El `outbox_vb6` usaba un único estado terminal `FAILED` para dos situaciones muy distintas:
+(a) fallos **transitorios** que agotaron 20 reintentos y (b) **venenos** (4xx de WS-VB6) que nunca
+serán aceptados. `HealthController::deep` contaba todo `FAILED` con `updated_at` antiguo como
+`outbox_failed` y marcaba `overall.status='degraded'`; como el mensaje veneno es permanente, el
+sistema quedaba `degraded` de forma indefinida.
+
+**Decisión**: separar ambos casos con un estado terminal `DEAD` (cola muerta). `DEAD` es visible
+(health + panel) pero informativo: no degrada el servicio. Los `FAILED` se reservan para fallos
+reintentables recientes.
+
+## 17.2 Modelo de datos (migración `0115_outbox_dead_letter.sql`)
+
+```sql
+ALTER TABLE `outbox_vb6`
+    MODIFY `status` ENUM('PENDING','SENDING','SENT','FAILED','DEAD') NOT NULL DEFAULT 'PENDING';
+
+UPDATE `outbox_vb6`
+   SET `status` = 'DEAD'
+ WHERE `status` = 'FAILED' AND `attempts` >= 20 AND `last_error` LIKE '%client_error%';
+```
+
+- El `MODIFY` es seguro de repetir.
+- El `UPDATE` solo reclasifica venenos aún en `FAILED`; tras la primera pasada no afecta a más filas.
+- `idx_outbox_due(status, next_attempt_at)` sigue sirviendo: `fetchDue` únicamente lee `PENDING`.
+
+## 17.3 Repositorio (`OutboxVb6Repository`)
+
+| Método | Antes | Ahora |
+|--------|-------|-------|
+| `markPermanentlyFailed()` | `status='FAILED'` | `status='DEAD'` |
+| `markFailed()` (techo) | `nextAttempts >= 20 → 'FAILED'` | `nextAttempts >= 20 → 'DEAD'` |
+| `scheduleRetry()` | `status IN ('PENDING','FAILED')` | `status IN ('PENDING','FAILED','DEAD')` |
+
+`fetchDue()` no cambia: `DEAD` nunca se procesa automáticamente.
+
+## 17.4 Health (`GET /health/deep`)
+
+- `outbox_failed`: sin cambios — `COUNT` de `FAILED` con `updated_at < NOW()-INTERVAL 1 HOUR`,
+  `warning` si `> 0` y **degrada** (`allOk=false`).
+- `outbox_dead` (nuevo): `COUNT` de `DEAD`; `status='ok'` si `0`, `'warning'` si `> 0`; `count` y
+  `note` (`"<N> mensajes en cola muerta; reintentar desde el panel"`). **No** toca `$allOk`.
+- El contrato es aditivo: consumidores antiguos siguen leyendo `outbox_failed` igual.
+
+## 17.5 Recuperación manual (`POST /admin/outbox/{id}/retry`)
+
+`retryOutbox` no filtra por status, así que ya reencola cualquier fila (`WHERE id = :id`); se
+documenta explícitamente que `DEAD` es reencolable (`status='PENDING'`, `attempts=0`,
+`last_error=NULL`). `listOutbox` añade `dead` al `summary` de estados para visibilidad.
+
+## 17.6 Riesgos y regresiones
+
+- **No romper `/health/deep`**: `outbox_dead` es una clave nueva; `outbox_failed` conserva su
+  semántica.
+- **No reintroducir degradación permanente**: el bloque `outbox_dead` **no** debe asignar
+  `$allOk = false`. Cubierto por `tests/Unit/OutboxDeadLetterTest.php`.
+- **No procesar `DEAD` por el worker**: `fetchDue` filtra `PENDING`.
+- **Enum**: si una migración previa no hubiese aplicado `0014`, el `MODIFY` fallaría; en este
+  proyecto `0014` es la base y siempre precede a `0115`.
+
+## 17.7 Pruebas
+
+- `tests/Unit/OutboxDeadLetterTest.php` (script plano, autodescubierto en BLOCK 1): guardas de
+  fuente para (a) `DEAD` en `markPermanentlyFailed` y en el techo de `markFailed`, (b) `scheduleRetry`
+  incluye `DEAD`, (c) `HealthController` expone `outbox_dead` sin tocar `$allOk`, (d) existencia y
+  contenido de la migración `0115`.
