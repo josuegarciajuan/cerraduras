@@ -117,6 +117,29 @@ final class TuyaSensorIngress implements SensorIngressInterface
             // Non-critical
         }
 
+        // F50 (N10): sin sala no hay estado de dominio al que aplicar el evento.
+        // Antes se dejaba fluir `room_id = null` y `IotSessionService` lanzaba
+        // NotFoundException → el webhook devolvía 500 y Tuya perdía el push.
+        // Se devuelve un no-op auditable para que el webhook responda 202.
+        if ($roomId === null || $roomId <= 0) {
+            error_log('[TuyaSensorIngress] room_not_found dev=' . $devId . ' kind=' . $device->kind);
+            return [
+                'room_id'         => null,
+                'sensor'          => $device->kind,
+                'value'           => 'UNKNOWN',
+                'provider'        => self::PROVIDER,
+                'occurred_at'     => $this->tsToIso($raw['ts'] ?? $raw['t'] ?? null),
+                'source_event_id' => null,
+                'meta'            => [
+                    '_noop'          => true,
+                    'discard_reason' => 'room_not_found',
+                    'tuya_dev_id'    => $devId,
+                    'kind'           => $device->kind,
+                    'tuya_t'         => $raw['ts'] ?? $raw['t'] ?? null,
+                ],
+            ];
+        }
+
         // --- 3. Extract DPs ---
         // Legacy: status[] array
         $dps = $raw['status'] ?? [];
@@ -155,7 +178,36 @@ final class TuyaSensorIngress implements SensorIngressInterface
             ];
         }
 
-        // --- 3b. Persist battery info from any DP (F36) ---
+        // --- 3b. SWITCH: estado real por push, sin cuota (F50 / Bug 2) ---
+        // El consumer rastrea el SWITCH y reenvía su push crudo; aquí se extrae
+        // el DP `switch`/`switch_1` y se persiste en `meta_json` para que el
+        // panel conozca el estado real de la luz sin sondear Tuya.
+        if ($device->kind === Device::KIND_SWITCH) {
+            $switch = $this->extractSwitchState($dps);
+            $switchT = $switch['t'] ?? $raw['ts'] ?? $raw['t'] ?? null;
+            if ($switch !== null) {
+                $this->persistSwitchState($device, $switch['state'], $switchT);
+            }
+            // No participa en el pipeline de presencia/puerta: no-op auditable.
+            return [
+                'room_id'         => $roomId,
+                'sensor'          => Device::KIND_SWITCH,
+                'value'           => $switch['state'] ?? 'UNKNOWN',
+                'provider'        => self::PROVIDER,
+                'occurred_at'     => $this->tsToIso($switchT),
+                'source_event_id' => null,
+                'meta'            => [
+                    '_noop'          => true,
+                    'discard_reason' => 'switch_state',
+                    'tuya_dev_id'    => $devId,
+                    'kind'           => $device->kind,
+                    'switch_state'   => $switch['state'] ?? null,
+                    'tuya_t'         => $switchT,
+                ],
+            ];
+        }
+
+        // --- 3c. Persist battery info from any DP (F36) ---
         $this->persistBatteryFromDps($device->id, $dps);
 
         // --- 4. Map first actionable DP to canonical event ---
@@ -296,6 +348,54 @@ final class TuyaSensorIngress implements SensorIngressInterface
             } catch (\Throwable $e) {
                 error_log('[TuyaSensorIngress] Battery persist failed: ' . $e->getMessage());
             }
+        }
+    }
+
+    /**
+     * F50: extrae el estado del relé de un DP `switch` o `switch_1`
+     * (case-insensitive). Devuelve `['state' => 'ON'|'OFF', 't' => mixed]` o
+     * `null` si el push del SWITCH no trae ninguno de esos DPs.
+     *
+     * @param array<int,array<string,mixed>> $dps
+     * @return array{state:string,t:mixed}|null
+     */
+    private function extractSwitchState(array $dps): ?array
+    {
+        foreach ($dps as $dp) {
+            if (!is_array($dp)) continue;
+            $code = strtolower((string) ($dp['code'] ?? ''));
+            if ($code !== 'switch' && $code !== 'switch_1') continue;
+
+            $value = $dp['value'] ?? null;
+            $on = ($value === true || $value === 1 || $value === '1' || $value === 'true');
+
+            return [
+                'state' => $on ? 'ON' : 'OFF',
+                't'     => $dp['t'] ?? null,
+            ];
+        }
+        return null;
+    }
+
+    /**
+     * F50: persiste el estado real del SWITCH en `devices.meta_json` (merge).
+     * `switch_state` = ON/OFF y `switch_state_at` = ISO del DP (o `now` si no
+     * trae sello). Nunca lanza: el push no debe perderse por un fallo de BD.
+     *
+     * @param mixed $t Sello Tuya (ms) del DP.
+     */
+    private function persistSwitchState(Device $device, string $state, $t): void
+    {
+        try {
+            $meta = is_array($device->meta) ? $device->meta : [];
+            $meta['switch_state']    = $state;
+            $meta['switch_state_at'] = $this->tsToIso($t);
+
+            $this->deviceRepo->update($device->id, [
+                'meta_json' => json_encode($meta, JSON_UNESCAPED_UNICODE),
+            ]);
+        } catch (\Throwable $e) {
+            error_log('[TuyaSensorIngress] switch_state persist failed: ' . $e->getMessage());
         }
     }
 }

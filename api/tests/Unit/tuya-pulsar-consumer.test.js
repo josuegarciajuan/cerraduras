@@ -21,9 +21,12 @@ const {
   isKnownDevice,
   buildStatusPayload,
   mapToPresenceEvent,
+  TRACKED_KINDS,
+  RESYNC_KINDS,
   shouldResync,
   silenceExceeded,
   receiveLatencyMs,
+  pongAgeMs,
 } = require(path.join(__dirname, '..', '..', 'bin', 'tuya-pulsar-consumer', 'index.js'));
 
 let passed = 0;
@@ -131,6 +134,26 @@ check('receiveLatencyMs computes recv - tuya_t and tolerates junk',
   receiveLatencyMs(NOW, null) === null &&
   receiveLatencyMs(NOW, 'nope') === null &&
   receiveLatencyMs(NOW, 0) === null);
+
+// ─── 7. F50: SWITCH por push sin cuota / watchdog largo / DNS / pong ───
+console.log('\n\u2500\u2500 tuya-pulsar-consumer F50 \u2500\u2500');
+
+check('TRACKED_KINDS trackea SWITCH (estado real por push, Bug 2)',
+  Array.isArray(TRACKED_KINDS) && TRACKED_KINDS.includes('SWITCH') &&
+  TRACKED_KINDS.includes('PROXIMITY') && TRACKED_KINDS.includes('PRESENCE'));
+
+check('RESYNC_KINDS NO incluye SWITCH (no se consume cuota IoT Core)',
+  Array.isArray(RESYNC_KINDS) && !RESYNC_KINDS.includes('SWITCH') &&
+  RESYNC_KINDS.includes('PROXIMITY') && RESYNC_KINDS.includes('PRESENCE'));
+
+check('el backstop de 15 min no dispara por silencio en reposo (14 min)',
+  silenceExceeded(NOW, NOW - 14 * 60 * 1000, 3, 15 * 60 * 1000) === false);
+
+check('pongAgeMs devuelve la antigüedad del pong y tolera ausencia',
+  pongAgeMs(NOW, NOW - 30000) === 30000 &&
+  pongAgeMs(NOW, 0) === null &&
+  pongAgeMs(NOW, null) === null &&
+  pongAgeMs(NOW, 'nope') === null);
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' tuya-pulsar-consumer: ' + passed + ' passed, ' + failed + ' failed\n');

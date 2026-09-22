@@ -2309,3 +2309,56 @@ salida. Se desacoplan: ENTRADA = `entry_window_seconds` (90 s), SALIDA =
 | F49-03 | Exponer `exit_guard_seconds` | RF-47.2.4 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
 | F49-04 | Migración de overrides legacy | RF-47.2.4 | `migrations/0113_exit_absence_guard.sql` | regresión |
 | F49-05 | Config + contrato/docs | RF-47.2.4/47.2.5 | `.env.example`, specs | regresión |
+
+---
+
+# Fase 50 — Estado real del SWITCH por push y robustez del consumer Pulsar (RF-58)
+
+**Motivo**: el panel no conocía el estado real de la luz (Bug 2) y el consumer reconectaba en
+reposo por un watchdog demasiado corto (churn, Bug 5); además un push sin sala se perdía con
+500 (N10). Se rastrea el SWITCH por push (sin cuota) y se endurece el consumer.
+
+### TSK-F50-01: Consumer rastrea SWITCH sin cuota
+- **Cambio**: `api/bin/tuya-pulsar-consumer/index.js` — `TRACKED_KINDS` incluye `SWITCH`;
+  nuevo `RESYNC_KINDS` + `loadResyncDevices()`; `resyncKnownDevices()` itera solo
+  `resyncDeviceIds`; reconciliación de ambas listas.
+- **Test propio**: `tests/Unit/tuya-pulsar-consumer.test.js` (kinds).
+
+### TSK-F50-02: Watchdog largo, pong y reintento DNS
+- **Cambio**: mismo archivo — `CONSUMER_SILENCE_MS` default `900000`; `lastPongAt` +
+  `pongAgeMs` + `last_pong_at` en el status; `scheduleReconnect()` compartido por `close` y
+  `error` (guarda anti-dobles-timers), base 1 s / backoff actual.
+- **Test propio**: `pongAgeMs` y backstop en el unit JS.
+
+### TSK-F50-03: Ingress SWITCH + room_not_found
+- **Cambio**: `api/src/Infrastructure/Gateways/Sensor/TuyaSensorIngress.php` —
+  `extractSwitchState()`/`persistSwitchState()` (`switch`/`switch_1` case-insensitive →
+  `meta_json.switch_state`/`switch_state_at`); no-op `room_not_found` cuando no hay sala.
+- **Test propio**: `tests/Unit/TuyaSwitchIngressTest.php` (fake repo).
+
+### TSK-F50-04: Webhook 202 ante sala ausente
+- **Cambio**: `api/src/Http/Controllers/TuyaWebhookController.php` — `discard_reason` aditivo
+  en el 202 de no-op; captura `NotFoundException` de `processEvent` → 202
+  `{accepted:false, discard_reason:'room_not_found'}`; 500 solo para errores inesperados.
+- **Test propio**: cubierto por el unit del ingress + regresión HTTP de la fase.
+
+### TSK-F50-05: Exponer `state`/`state_at`
+- **Cambio**: `RoomLiveController.php` y `EventStreamController::fetchSwitchState()` —
+  campos aditivos `state` (`meta.switch_state ?? 'UNKNOWN'`) y `state_at`.
+- **Test propio**: regresión `/live` (BLOCK de la fase).
+
+### TSK-F50-06: Contratos y documentación
+- **Cambio**: `contracts.md` (§3.5 `state`/`state_at`, §3.6 descartes no-op/202, §2 consumer,
+  status `last_pong_at`); `requirements.md` (RF-58); `design.md` (§15).
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+## Tabla resumen F50
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F50-01 | Consumer rastrea SWITCH (sin cuota) | RF-58.1.1/58.1.2 | `bin/tuya-pulsar-consumer/index.js` | unit JS |
+| F50-02 | Watchdog 15 min + pong + reintento DNS | RF-58.2 | `bin/tuya-pulsar-consumer/index.js` | unit JS |
+| F50-03 | Ingress SWITCH + room_not_found | RF-58.1.3/58.3.1 | `TuyaSensorIngress.php` | unit PHP |
+| F50-04 | Webhook 202 ante sala ausente | RF-58.3.2 | `TuyaWebhookController.php` | regresión |
+| F50-05 | Exponer `state`/`state_at` | RF-58.1.4 | `RoomLiveController.php`, `EventStreamController.php` | regresión |
+| F50-06 | Contrato, requisitos y diseño | RF-58 | `contracts.md`, `requirements.md`, `design.md` | regresión |

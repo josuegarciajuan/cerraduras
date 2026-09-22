@@ -9,6 +9,7 @@ use App\Infrastructure\Gateways\Sensor\TuyaSensorIngress;
 use App\Http\Request;
 use App\Http\Response;
 use App\Support\Errors\BadRequestException;
+use App\Support\Errors\NotFoundException;
 
 /**
  * TuyaWebhookController: receives Tuya IoT message push notifications
@@ -59,15 +60,31 @@ final class TuyaWebhookController
             ]);
         }
 
-        // Skip events flagged as noop (heartbeats, battery-only updates)
+        // Skip events flagged as noop (heartbeats, battery/switches, no room).
+        // F50: se propaga `discard_reason` (aditivo) para que el motivo sea
+        // visible en la respuesta y en los logs sin cambiar el contrato.
         if (isset($event['meta']['_noop']) && $event['meta']['_noop'] === true) {
-            error_log('[TuyaWebhook] Noop event (battery/heartbeat) — accepted');
-            return Response::json(202, ['accepted' => true, 'note' => 'no_actionable_dps']);
+            $reason = $event['meta']['discard_reason'] ?? null;
+            error_log('[TuyaWebhook] Noop event (' . ($reason ?? 'battery/heartbeat') . ') — accepted');
+            $payload = ['accepted' => true, 'note' => 'no_actionable_dps'];
+            if ($reason !== null) {
+                $payload['discard_reason'] = $reason;
+            }
+            return Response::json(202, $payload);
         }
 
         // Process through the domain pipeline
         try {
             $result = $this->iotService->processEvent($event, $correlationId);
+        } catch (NotFoundException $e) {
+            // F50 (N10): una sala inexistente (o cualquier recurso ausente en el
+            // pipeline) no es un fallo del servidor: Tuya ya entregó el push y
+            // reintentar no ayuda. Se acepta con 202 y se audita el descarte.
+            error_log('[TuyaWebhook] room_not_found: ' . $e->getMessage());
+            return Response::json(202, [
+                'accepted'       => false,
+                'discard_reason' => 'room_not_found',
+            ]);
         } catch (\Throwable $e) {
             error_log('[TuyaWebhook] Error processing event: ' . $e->getMessage());
             return Response::json(500, [

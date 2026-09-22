@@ -2603,3 +2603,65 @@ con distancia (el 24G no reporta `target_dis_closest`). El ajuste fino
 (`sensitivity`/orientación) queda como opción cuando haya cuota.
 
 **Tests**: `tests/Unit/SensorEventDecisionTest.php` (casos F48 v2, puros).
+
+---
+
+## 15. F50 — Estado real del SWITCH por push y robustez del consumer (RF-58)
+
+### 15.1 SWITCH por push, sin cuota (Bug 2)
+
+**Síntoma**: el panel no conocía el estado real de la luz (relé EAWCBT-J); solo el
+`last_command`/`commanded_at` que escribía `TuyaSwitchGateway` al comandar. Si un comando
+no se aplicaba o la luz cambiaba por otra vía, el panel mentía.
+
+**Decisión**: rastrear el SWITCH por el mismo canal push que la puerta/presencia.
+
+- `api/bin/tuya-pulsar-consumer/index.js`:
+  - `TRACKED_KINDS = ['PROXIMITY','PRESENCE','SWITCH']` (el consumer lo reenvía).
+  - `RESYNC_KINDS = ['PROXIMITY','PRESENCE']`; `loadResyncDevices()` da la lista del resync
+    REST. El resync **no** sondea el SWITCH → cero cuota IoT Core.
+  - `mapToPresenceEvent()` no cambia: para el SWITCH devuelve `null` y se reenvía el payload
+    crudo, como ya hacía.
+- `api/src/Infrastructure/Gateways/Sensor/TuyaSensorIngress.php`:
+  - Si `$device->kind === Device::KIND_SWITCH`, busca un DP `switch`/`switch_1`
+    (case-insensitive); `true`/`'true'`/`1`/`'1'` → `ON`, resto → `OFF`.
+  - Persiste merge sobre `$device->meta`: `switch_state` y `switch_state_at` (`tsToIso($t)`)
+    vía `deviceRepo->update($id, ['meta_json' => json_encode(...)])`.
+  - Devuelve un `_noop` con `meta.discard_reason='switch_state'` → el webhook responde 202 y
+    el evento no entra en `IotSessionService`.
+  - No toca el pipeline de `PROXIMITY`/`PRESENCE`.
+- Panel: `RoomLiveController` y `EventStreamController::fetchSwitchState` añaden
+  `state` (`meta.switch_state ?? 'UNKNOWN'`) y `state_at` (`meta.switch_state_at ?? null`),
+  aditivos junto a `last_command`/`last_error`.
+
+**Interacción con comandos**: `TuyaSwitchGateway::persistMeta()` hace merge sobre el meta
+existente, por lo que no borra `switch_state`; el push tampoco borra `last_command`. Ambos
+conviven (comando = intención; estado = realidad).
+
+### 15.2 Robustez del consumer (Bug 5, N10)
+
+- **Watchdog largo**: `CONSUMER_SILENCE_MS` default `900000` (15 min). El ping proactivo de
+  30 s ya detecta sockets muertos; el silencio en reposo (packs solo-puerta) es normal. El
+  backstop corto (180 s) reconectaba en reposo (churn ~9k cierres) y abría huecos donde se
+  perdían eventos de puerta.
+- **`last_pong_at`**: `ws.on('pong')` deja de ser no-op y registra el instante; se expone en
+  `api/run/pulsar-consumer-status.json` (aditivo). **No** decide reconexión (no está probado
+  que Tuya responda siempre con pong).
+- **DNS / error sin `close`**: `scheduleReconnect(reason)` (guardas `reconnectTimer` +
+  `reconnectScheduled`) se usa desde `close` y `error`. Un `getaddrinfo EAI_AGAIN` que no
+  emite `close` ya no deja al consumer muerto. Se conserva el backoff exponencial base 1 s.
+  El cierre de un socket obsoleto (`ws !== currentWs`) se ignora para no duplicar conexiones.
+- **`room_not_found` (N10)**: el ingress, sin sala, devuelve `_noop`
+  (`discard_reason='room_not_found'`, log `dev`/`kind`) y el webhook responde 202. Además,
+  `TuyaWebhookController` captura `NotFoundException` de `processEvent` → 202
+  `{accepted:false, discard_reason:'room_not_found'}`; el 500 queda para errores inesperados.
+  Así un push no se pierde por una sala transitoriamente no resuelta.
+
+### 15.3 Pruebas
+
+- **Unit JS** (`tests/Unit/tuya-pulsar-consumer.test.js`, sin red ni cuota):
+  `TRACKED_KINDS` incluye `SWITCH`; `RESYNC_KINDS` no; `pongAgeMs`; backstop 15 min.
+- **Unit PHP** (`tests/Unit/TuyaSwitchIngressTest.php`, fake repo): `switch=true`→ON con
+  `switch_state_at`; `switch_1=false` (case-insensitive)→OFF; sala nula → `_noop`
+  `room_not_found`; no regresión de `PRESENCE`.
+- **Regresión**: `bash bin/run-tests.sh` con 0 failures (BLOCK correspondiente de la fase).
