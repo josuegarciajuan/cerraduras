@@ -24,6 +24,42 @@ GET /api/v1/health
 Response 200: {"status":"ok"}
 ```
 
+#### 2.1 Deep health check
+```
+GET /api/v1/health/deep
+Response 200: {
+  "status": "healthy|degraded",
+  "time": "<iso8601-utc-ms>",
+  "checks": {
+    "database":      {"status":"ok|error", ...},
+    "outbox_failed": {"status":"ok|warning","count":<int>,"note":"<string|null>"},
+    "outbox_dead":   {"status":"ok|warning","count":<int>,"note":"<string|null>"},
+    "workers":       {"<nombre>":"running|stopped"},
+    "ws_vb6":        "reachable|unreachable",
+    "battery":       {"status":"ok|warning|error", ...},
+    "circuit_breaker": { ... }
+  }
+}
+```
+
+- `outbox_failed`: items `FAILED` con más de 1 h sin resolverse (reintentables). Si `count > 0`,
+  `status='warning'` y el chequeo **degrada** el servicio (`overall.status='degraded'`).
+- `outbox_dead` (N6 / RF-60): items en la cola muerta (`status='DEAD'`, venenos 4xx que nunca se
+  aceptarán). `status='ok'` si `count == 0`, `'warning'` si `count > 0`. Es **informativo**: no
+  altera `allOk` y por tanto **no degrada** `overall.status`. El `note` indica
+  `"<N> mensajes en cola muerta; reintentar desde el panel"`.
+- El endpoint siempre responde HTTP 200; la salud se expresa en el campo `status`.
+
+### 2.2 Reintento manual de un item de outbox
+```
+POST /admin/outbox/{id}/retry
+Response 200: {"retried":true}
+Response 404: {"error":{"code":"not_found","message":"Outbox item not found"}}
+```
+
+- Acepta cualquier item (`PENDING`, `FAILED` o `DEAD`): reinicia `status='PENDING'`, `attempts=0`,
+  `last_error=NULL`, `next_attempt_at=now`. Es la vía de recuperación de la cola muerta.
+
 ### 3. Device heartbeat
 ```
 POST /dashboard-api/device-heartbeat

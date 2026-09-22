@@ -79,6 +79,23 @@ final class HealthController
             $allOk = false;
         }
 
+        // 2b. Outbox dead-letter queue (N6 — RF-60). Informative only: DEAD
+        // items are poison messages (4xx from WS-VB6) parked for manual review;
+        // they are never retried automatically and do NOT degrade the service.
+        try {
+            $stmt = $pdo->query(
+                "SELECT COUNT(*) AS cnt FROM outbox_vb6 WHERE status = 'DEAD'"
+            );
+            $deadCount = (int) $stmt->fetchColumn();
+            $checks['outbox_dead'] = [
+                'status' => $deadCount === 0 ? 'ok' : 'warning',
+                'count'  => $deadCount,
+                'note'   => $deadCount > 0 ? "$deadCount mensajes en cola muerta; reintentar desde el panel" : null,
+            ];
+        } catch (\Throwable $e) {
+            $checks['outbox_dead'] = ['status' => 'error', 'message' => $e->getMessage()];
+        }
+
         // 3. Background workers (pgrep-based)
         $workerNames = [
             'exit-scan'        => 'php.*bin/exit-scan',

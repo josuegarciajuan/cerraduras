@@ -112,7 +112,7 @@ final class AdminController
 
         // Summary counts
         $summary = [];
-        foreach (['PENDING','SENDING','SENT','FAILED'] as $s) {
+        foreach (['PENDING','SENDING','SENT','FAILED','DEAD'] as $s) {
             $cStmt = $this->pdo->prepare('SELECT COUNT(*) as cnt FROM outbox_vb6 WHERE status = :s');
             $cStmt->bindValue(':s', $s);
             $cStmt->execute();
@@ -127,6 +127,9 @@ final class AdminController
     public function retryOutbox(Request $request): Response
     {
         $id = (int) $request->routeParam('id');
+        // No status filter on purpose: any item (PENDING, FAILED or DEAD) is
+        // re-armed. Re-driving a DEAD item is the intended manual recovery path
+        // once the root cause of its 4xx has been fixed.
         $stmt = $this->pdo->prepare(
             "UPDATE outbox_vb6 SET status = 'PENDING', next_attempt_at = UTC_TIMESTAMP(3), attempts = 0, last_error = NULL WHERE id = :id"
         );
