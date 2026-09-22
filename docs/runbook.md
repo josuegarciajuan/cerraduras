@@ -234,3 +234,55 @@ bash /root/cerraduras/api/bin/smoke-test.sh
 - **Panel CRM:** `http://92.113.151.136:8080/panel/login.html`
 - **Logs:** `/root/cerraduras/api/logs/`
 - **BD:** `mysql -u cerraduras_user -p'f83bdcfaf5fece29e91f968a' cerraduras_db`
+
+---
+
+## 11. Diagnóstico de pruebas físicas (B3/B5)
+
+> A7. Requiere presencia física. El objetivo es separar "no llegó el evento" de
+> "llegó y no se representó". Ejecutar con el panel abierto en `?debug=1`.
+
+### 11.1 B3 — El lector QR pita pero no pasa nada
+
+El firmware productivo ya instrumenta. Capturar el **Serial del ESP32** (115200) y
+buscar por cada pitido:
+
+| Serial | Significado |
+|---|---|
+| `[QR] Formato OK → encolando para validación API` | el GM65 entregó el token |
+| `[QR] Encolado→POST: <ms>` | tiempo del callback USB al POST |
+| `[QR] Validación HTTP <code> (<ms>, reuse=...)` | respuesta real del servidor |
+| `[QR] RECHAZADO — dots=… len=…` | lectura parcial / token truncado |
+| reinicio en bucle + `reset_reason` | brownout / crash USB |
+
+Correlacionar con el servidor (debe aparecer uno por escaneo):
+```bash
+grep -a "qr/validate" /root/cerraduras/api/logs/api.log | tail -20
+mysql -u cerraduras_user -p'f83bdcfaf5fece29e91f968a' cerraduras_db -e \
+  "SELECT kind,result,reason,occurred_at FROM access_events WHERE room_id=<N> ORDER BY id DESC LIMIT 20"
+```
+**Regla de atribución**: si hay pitido pero NO hay línea `[QR]` en Serial → el
+evento se perdió en el USB/lector (hardware). Si hay `[QR]` pero NO hay
+`qr/validate` en el servidor → se perdió en WiFi/TLS (firmware). Si hay POST y
+`DENIED` → es validación (dominio).
+
+### 11.2 B5 — La puerta/monigote no se representa o tarda >10 s
+
+1. Abrir el panel con `?debug=1`. El badge muestra: `state age`, `door age`,
+   `skew` y los contadores **`state_events`** y **`door_changes`**.
+2. Arrancar la sonda sin cuota (atribuye físico→dispositivo→BD→SSE):
+   ```bash
+   cd /root/cerraduras/api && node bin/presence-latency-probe.js --room <N>
+   ```
+3. Alternar la puerta 5–10 veces y comparar:
+   - `door_changes` sube en cada apertura/cierre → el panel **recibió** el cambio.
+   - Si sube pero el monigote no se mueve → problema de **representación** (coreografía).
+   - Si NO sube pero la BD sí registra el evento (`presence_events`) → el panel no
+     recibió el `state` (SSE) o el consumer no reenvió el push.
+4. Estado del consumer: `cat /root/cerraduras/api/run/pulsar-consumer-status.json`
+   (`connected`, `last_msg_at`, `resyncs`). Log de reconexiones:
+   `grep -aE "Closed|silencio|reconexión" /root/cerraduras/api/logs/pulsar-consumer.log | tail`.
+
+**Regla de atribución**: `received_at - occurred_at` en `presence_events` es la
+latencia dispositivo→BD. Si es ~1 s y el panel tarda mucho, el problema es SSE o
+la coreografía, no el sensor.
