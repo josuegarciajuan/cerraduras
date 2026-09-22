@@ -741,6 +741,10 @@ const SSE_FORCE_RECONNECT_MS = 15000; // >15 s sin señal → reconectar EventSo
 // Fase A (diagnóstico): medir latencia real de los eventos SSE en el panel.
 let _lastStateAt = 0;        // epoch ms del último evento `state` (NO cuenta pings)
 let _lastDoorChangeAt = 0;   // epoch ms del último cambio real de door_state
+// A7 (diagnóstico B5): contadores acumulados para saber si el panel RECIBIÓ el
+// evento y si llegó a representar el cambio de puerta (vs. pérdida en el consumer).
+let _stateEventCount = 0;    // nº de eventos `state` SSE recibidos desde la carga
+let _doorChangeCount = 0;    // nº de cambios reales de door_state vistos por el panel
 let _serverSkewMs = null;    // server_ts del último state − reloj local
 let _sseDebugTimer = null;   // interval del badge de depuración
 
@@ -2046,6 +2050,7 @@ function processLiveData(data) {
   // Fase A: registrar cuándo cambia realmente la puerta (para medir latencia).
   if (previousDoor && ioForPrev.door_state && ioForPrev.door_state !== previousDoor) {
     _lastDoorChangeAt = Date.now();
+    _doorChangeCount++;
   }
   previousDoor     = ioForPrev.door_state || 'UNKNOWN';
   previousPresence = ioForPrev.presence_state || 'UNKNOWN';
@@ -2084,7 +2089,8 @@ function initSseDebugBadge() {
       '  state age: ' + (stateAge < 0 ? '—' : stateAge + 's') +
       '  door age: ' + (doorAge < 0 ? '—' : doorAge + 's') + '\n' +
       'door=' + (io.door_state || '?') + ' pres=' + (io.presence_state || '?') +
-      ' skew=' + (_serverSkewMs == null ? '—' : _serverSkewMs + 'ms');
+      ' skew=' + (_serverSkewMs == null ? '—' : _serverSkewMs + 'ms') + '\n' +
+      'state_events=' + _stateEventCount + '  door_changes=' + _doorChangeCount;
   }, 500);
   console.log('[SSE] debug badge ON (Fase A)');
 }
@@ -2152,6 +2158,7 @@ function connectSSE() {
   _eventSource.addEventListener('state', function(e) {
     _lastSseEventAt = Date.now(); // F41: señal de vida para el watchdog
     _lastStateAt = _lastSseEventAt; // Fase A: `state` real (no ping)
+    _stateEventCount++;           // A7 (B5): evento de estado recibido por el panel
     try {
       const data = JSON.parse(e.data);
       if ((data.room_id || 0) !== currentRoomId) return; // stale event from previous room
