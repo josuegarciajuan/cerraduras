@@ -1508,39 +1508,57 @@ block "BLOCK 20 — F21: QR polling (qr_text)"
     $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1" 2>/dev/null || true
     $MYSQL -sN -e "UPDATE stays SET status='CLOSED' WHERE room_id=1 AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
 
-    # Step 2: Create a QR via API
-    QR_CREATE_RESP=$(curl -s -X POST http://127.0.0.1:8080/dashboard-api/qr-test/create \
+    # Step 2: Create a QR via API — UNA sola petición. Un segundo POST haría
+    # falta contra room_busy (409) por la estancia recién creada y forzaba un
+    # SKIP artificial. Capturamos cuerpo + código en la misma llamada.
+    QR_CREATE_RAW=$(curl -s -w '\n%{http_code}' -X POST http://127.0.0.1:8080/dashboard-api/qr-test/create \
         -H "Content-Type: application/json" \
         -d '{"room_id":1,"duracion_minutos":60}')
-    QR_CREATE_CODE=$(echo "$QR_CREATE_RESP" | curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8080/dashboard-api/qr-test/create \
-        -H "Content-Type: application/json" \
-        -d '{"room_id":1,"duracion_minutos":60}' 2>/dev/null)
+    QR_CREATE_CODE=$(echo "$QR_CREATE_RAW" | tail -1)
+    QR_CREATE_RESP=$(echo "$QR_CREATE_RAW" | sed '$d')
 
     if [ "$QR_CREATE_CODE" = "201" ]; then
         QR_TEXT_CREATED=$(echo "$QR_CREATE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('qr_text',''))" 2>/dev/null || echo "")
 
-        # Step 3: GET /dashboard-api/qr-status → must include qr_text
-        http_test GET '/dashboard-api/qr-status?room_id=1' 200 \
-            "GET /qr-status (poll, includes qr_text) → 200"
+        # Step 3: el contrato vigente del poll es GET /rooms/{id}/live → qr_status
+        # (la antigua ruta /dashboard-api/qr-status ya no existe: 404).
+        http_test GET '/api/v1/rooms/1/live' 200 \
+            "GET /rooms/1/live (poll, qr_status incluido) → 200" \
+            --key ADMIN-CLI
 
-        # Step 4: Verify qr_text matches (deterministic regeneration)
-        QR_STATUS_RESP=$(curl -s 'http://127.0.0.1:8080/dashboard-api/qr-status?room_id=1')
-        QR_TEXT_POLLED=$(echo "$QR_STATUS_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('qr_text',''))" 2>/dev/null || echo "")
+        # Step 4: qr_text determinista + campos aditivos Fase 51 en qr_status
+        QR_STATUS_RESP=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" 'http://127.0.0.1:8080/api/v1/rooms/1/live')
+        QR_TEXT_POLLED=$(echo "$QR_STATUS_RESP" | python3 -c "import sys,json; print((json.load(sys.stdin).get('qr_status') or {}).get('qr_text',''))" 2>/dev/null || echo "")
 
         if [ -n "$QR_TEXT_POLLED" ] && [ "$QR_TEXT_CREATED" = "$QR_TEXT_POLLED" ]; then
-            pass "GET /qr-status qr_text matches creation token (deterministic)"
+            pass "GET /rooms/1/live qr_status.qr_text matches creation token (deterministic)"
         else
             if [ -z "$QR_TEXT_POLLED" ]; then
-                fail "GET /qr-status returns qr_text" "qr_text está vacío en la response de poll"
+                fail "GET /rooms/1/live returns qr_status.qr_text" "qr_text está vacío en la response de poll"
             else
-                fail "GET /qr-status qr_text matches creation" "qr_text creado vs polleado difieren"
+                fail "GET /rooms/1/live qr_status.qr_text matches creation" "qr_text creado vs polleado difieren"
             fi
+        fi
+
+        # F51: el poll debe exponer las ventanas de llegada/uso.
+        QR_F51_OK=$(echo "$QR_STATUS_RESP" | python3 -c "
+import sys,json
+qs=(json.load(sys.stdin).get('qr_status') or {})
+need=['first_used_at','valid_until','arrival_deadline','in_use']
+print('1' if all(k in qs for k in need) else '0 '+str([k for k in need if k not in qs]))
+" 2>/dev/null)
+        if [ "$QR_F51_OK" = "1" ]; then
+            pass "F51: qr_status expone first_used_at/valid_until/arrival_deadline/in_use"
+        else
+            fail "F51: qr_status campos de ventana" "faltan: ${QR_F51_OK#0 }"
         fi
     else
         skip "QR polling qr_text test" "No se pudo crear QR de prueba (HTTP $QR_CREATE_CODE)"
     fi
 
-    # Cleanup
+    # Cleanup: cerrar la estancia creada (si no, queda RESERVED y rompe bloques
+    # posteriores) y liberar la sala.
+    $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=1 AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
     $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1" 2>/dev/null || true
 
 # ===================================================
@@ -2149,33 +2167,36 @@ http_test GET /api/v1/rooms/1/live 200 \
   "GET /rooms/1/live: battery field present" \
   --key ADMIN-CLI
 
-# 26.5: POST /battery-refresh with valid PROXIMITY device (id=3 from seeds)
-# Note: This test requires the Tuya API credentials to be configured.
-# If Tuya API is unavailable, the endpoint may return 502, which is a valid response.
-# We test the endpoint structure, not the Tuya connectivity.
-BATT_RESP=$(curl -s -w "\n%{http_code}" \
-  -H "X-API-Key: $(get_key ADMIN-CLI)" \
-  -H "Content-Type: application/json" \
-  -d '{"device_id":3}' \
-  "http://127.0.0.1:8080/dashboard-api/battery-refresh" 2>/dev/null)
-BATT_HTTP=$(echo "$BATT_RESP" | tail -1)
+# 26.5: POST /battery-refresh con un PROXIMITY real (lookup dinámico, no id fijo).
+# Una sola llamada: `tuyaPresenceApi` respeta el presupuesto compartido
+# (run/tuya-quota.json), así que si la cuota está agotada responde 502 y el test
+# salta en vez de vaciarla. 404 ya no puede darse con un id resuelto de la BD.
+BATT_DEV=$($MYSQL -sN -e "SELECT id FROM devices WHERE kind='PROXIMITY' ORDER BY id LIMIT 1" 2>/dev/null)
+if [ -z "$BATT_DEV" ]; then
+  skip "POST /battery-refresh: sin dispositivo PROXIMITY — SKIP" \
+    "No hay dispositivos PROXIMITY en la BD"
+else
+  BATT_RESP=$(curl -s -w "\n%{http_code}" \
+    -H "X-API-Key: $(get_key ADMIN-CLI)" \
+    -H "Content-Type: application/json" \
+    -d "{\"device_id\":$BATT_DEV}" \
+    "http://127.0.0.1:8080/dashboard-api/battery-refresh" 2>/dev/null)
+  BATT_HTTP=$(echo "$BATT_RESP" | tail -1)
 
-if [ "$BATT_HTTP" = "200" ]; then
-  if echo "$BATT_RESP" | grep -q '"ok":true' && echo "$BATT_RESP" | grep -q '"kind":"PROXIMITY"'; then
-    pass "POST /battery-refresh: device 3 returns battery data"
+  if [ "$BATT_HTTP" = "200" ]; then
+    if echo "$BATT_RESP" | grep -q '"ok":true' && echo "$BATT_RESP" | grep -q '"kind":"PROXIMITY"'; then
+      pass "POST /battery-refresh: device $BATT_DEV returns battery data"
+    else
+      fail "POST /battery-refresh: device $BATT_DEV response missing fields" \
+        "response: $(echo "$BATT_RESP" | head -1)"
+    fi
+  elif [ "$BATT_HTTP" = "502" ]; then
+    skip "POST /battery-refresh: Tuya API/cuota no disponible (HTTP 502) — SKIP" \
+      "Credenciales no configuradas o presupuesto Tuya agotado (run/tuya-quota.json)"
   else
-    fail "POST /battery-refresh: device 3 response missing fields" \
+    fail "POST /battery-refresh: device $BATT_DEV unexpected HTTP $BATT_HTTP" \
       "response: $(echo "$BATT_RESP" | head -1)"
   fi
-elif [ "$BATT_HTTP" = "502" ]; then
-  skip "POST /battery-refresh: Tuya API unavailable (HTTP 502) — SKIP" \
-    "Tuya API may be down or credentials not configured"
-elif [ "$BATT_HTTP" = "404" ]; then
-  skip "POST /battery-refresh: device 3 not found in DB — SKIP" \
-    "Run seeds to create test devices"
-else
-  fail "POST /battery-refresh: device 3 unexpected HTTP $BATT_HTTP" \
-    "response: $(echo "$BATT_RESP" | head -1)"
 fi
 
 # 26.6: Verify device-status after battery-refresh (if Tuya was available)
@@ -2293,18 +2314,21 @@ http_test GET "/api/v1/anomalies?status=OPEN&room_id=1&limit=10" 200 \
   "GET /anomalies?status=OPEN&room_id=1: combined filter works" \
   --key ADMIN-CLI
 
-# 28.7: Verify anomaly has status field in response
+# 28.7: Verify anomaly has status field in response.
+# Precondición determinista: insertamos una anomalía sintética TEST-F37 (tipo que
+# el anomaly-scanner no gestiona, así no la resuelve a mitad de test). Antes el
+# caso dependía de que hubiera filas, y el scanner las limpiaba → SKIP aleatorio.
+ANOM_TEST_ID=$($MYSQL -sN -e "INSERT INTO anomalies (room_id,stay_id,anomaly_type,severity,status,context_data,detected_at,created_at,updated_at) VALUES (1,NULL,'TEST-F37','LOW','OPEN',JSON_OBJECT('source','run-tests'),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null | tail -1)
+
 ANOM_STATUS_RESP=$(curl -s -w "\n%{http_code}" \
   -H "X-API-Key: $(get_key ADMIN-CLI)" \
-  "http://127.0.0.1:8080/api/v1/anomalies?status=ALL&limit=1" 2>/dev/null)
+  "http://127.0.0.1:8080/api/v1/anomalies?status=ALL&limit=50" 2>/dev/null)
 ANOM_STATUS_HTTP=$(echo "$ANOM_STATUS_RESP" | tail -1)
 
 if [ "$ANOM_STATUS_HTTP" = "200" ]; then
   if echo "$ANOM_STATUS_RESP" | grep -q '"data":\[\]'; then
-    # F41: anomaly-scanner ahora corre y resuelve/descarta anomalías, así que la
-    # tabla puede estar vacía. No hay fila que inspeccionar → skip explicativo.
-    skip "GET /anomalies?status=ALL fields" \
-      "No hay anomalías en la BD (anomaly-scanner F41 las resuelve); nada que inspeccionar"
+    fail "GET /anomalies?status=ALL fields" \
+      "data vacía pese a la anomalía sintética TEST-F37 (precondición fallida)"
   elif echo "$ANOM_STATUS_RESP" | grep -q '"status"' && echo "$ANOM_STATUS_RESP" | grep -q '"acknowledged_at"'; then
     pass "GET /anomalies?status=ALL: response includes status and acknowledged_at fields"
   else
@@ -2312,24 +2336,22 @@ if [ "$ANOM_STATUS_HTTP" = "200" ]; then
       "response: $(echo "$ANOM_STATUS_RESP" | head -c 400)"
   fi
 else
-  pass "GET /anomalies?status=ALL: HTTP 200 (no anomalies in DB, valid response)"
+  fail "GET /anomalies?status=ALL: HTTP $ANOM_STATUS_HTTP" \
+    "response: $(echo "$ANOM_STATUS_RESP" | head -c 400)"
 fi
 
-# 28.8: Verify acknowledge endpoint still works
-# Find an OPEN anomaly first
-OPEN_ID=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" \
-  "http://127.0.0.1:8080/api/v1/anomalies?status=OPEN&limit=1" 2>/dev/null | \
-  php -r '$j=json_decode(stream_get_contents(STDIN),true);echo $j["data"][0]["id"]??"";' 2>/dev/null)
-
-if [ -n "$OPEN_ID" ]; then
-  http_test POST "/api/v1/anomalies/$OPEN_ID/acknowledge" 200 \
-    "POST /anomalies/$OPEN_ID/acknowledge: acknowledge OPEN anomaly" \
+# 28.8: Verify acknowledge endpoint still works (sobre la anomalía sintética)
+if [ -n "$ANOM_TEST_ID" ]; then
+  http_test POST "/api/v1/anomalies/$ANOM_TEST_ID/acknowledge" 200 \
+    "POST /anomalies/$ANOM_TEST_ID/acknowledge: acknowledge OPEN anomaly" \
     --key ADMIN-CLI \
     --body '{}'
 else
-  skip "POST /anomalies/acknowledge: no OPEN anomalies to test — SKIP" \
-    "No OPEN anomalies found in DB"
+  fail "POST /anomalies/acknowledge" "no se pudo crear la anomalía sintética TEST-F37"
 fi
+
+# Cleanup de la anomalía sintética (nunca deja rastro en la BD)
+$MYSQL -sN -e "DELETE FROM anomalies WHERE anomaly_type='TEST-F37'" 2>/dev/null || true
 
 # =============================================================================
 # POST-FLIGHT: Restaurar estado de producción de room 1
@@ -2478,29 +2500,54 @@ _cleanup_factory_test
 # =============================================================================
 block "BLOCK 30 — Estado verídico de dispositivos"
 
-DS_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id = r.pack_id WHERE d.kind='PRESENCE' LIMIT 1" 2>/dev/null)
+# Selección robusta: una sala cuyo pack tenga PRESENCE *y* SWITCH. Antes se
+# cogía la primera con PRESENCE (room 1, pack sin SWITCH) → SKIP permanente.
+DS_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices p ON p.pack_id=r.pack_id AND p.kind='PRESENCE' JOIN devices s ON s.pack_id=r.pack_id AND s.kind='SWITCH' GROUP BY r.id ORDER BY r.id LIMIT 1" 2>/dev/null)
 if [ -z "$DS_ROOM" ]; then
-    skip "BLOCK 30 estado verídico" "No hay habitación con sensor de presencia (Tuya cloud)"
+    skip "BLOCK 30 estado verídico" "No hay habitación con PRESENCE + SWITCH en su pack"
 else
     HAS_SW=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id = $DS_ROOM AND d.kind='SWITCH'" 2>/dev/null || echo "0")
     if [ "$HAS_SW" != "1" ]; then
         skip "BLOCK 30 estado verídico (room $DS_ROOM)" "La habitación con PRESENCE no tiene SWITCH en su pack"
     else
         DS_JSON=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=$DS_ROOM")
+        # Contrato F39 + F46++: un dispositivo Tuya cloud solo puede estar
+        # `online` si hay señal REAL y fresca: sonda Tuya fresca (online_probed_at
+        # dentro del TTL) o push reciente (PROXIMITY / presence_source='push' con
+        # last_seen_at fresco). Un `offline` exige sonda fresca (nunca se inventa).
         DS_RESULT=$(echo "$DS_JSON" | python3 -c "
-import sys, json
+import sys, json, datetime
+def parse_utc(s):
+    if not s: return None
+    s=str(s).strip().replace('T',' ')
+    if s.endswith('Z'): s=s[:-1]
+    s=s.split('.')[0]
+    try: return datetime.datetime.strptime(s,'%Y-%m-%d %H:%M:%S')
+    except Exception: return None
+def fresh(ts,secs,now): return ts is not None and 0 <= (now-ts).total_seconds() <= secs
 try:
     d=json.load(sys.stdin)
 except Exception as e:
     print('ERR '+str(e)); sys.exit(0)
+now=datetime.datetime.utcnow()
 devs=d.get('devices') or []
-states=set(dev.get('state') for dev in devs)
+states=set(x.get('state') for x in devs)
 valid=states <= {'online','offline','unknown'}
 cnt_sum = (d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
-tuya=[x for x in devs if x.get('tuya_cloud')]
-tuya_flag = bool(tuya) and all((x.get('state')=='offline' and x.get('online') is False) or
-                               (x.get('state')=='unknown' and x.get('online') is None) for x in tuya)
-print(('OK ' if (valid and cnt_sum and tuya_flag) else 'FAIL ')+('valid='+str(valid)+' sum='+str(cnt_sum)+' tuya_ok='+str(tuya_flag)+' states='+str(sorted(states))))
+bad=[]
+for x in devs:
+    if not x.get('tuya_cloud'): continue
+    on=x.get('online')
+    if on is True:
+        meta=x.get('meta') or {}
+        is_push=(x.get('kind')=='PROXIMITY') or (meta.get('presence_source')=='push')
+        probe_ok=fresh(parse_utc(x.get('online_probed_at')),600,now)
+        push_ok=is_push and fresh(parse_utc(x.get('last_seen_at')),600,now)
+        if not (probe_ok or push_ok): bad.append(str(x.get('id'))+':online_sin_senal')
+    elif on is False and not fresh(parse_utc(x.get('online_probed_at')),600,now):
+        bad.append(str(x.get('id'))+':offline_sin_sonda')
+ok=valid and cnt_sum and not bad
+print(('OK ' if ok else 'FAIL ')+('valid='+str(valid)+' sum='+str(cnt_sum)+' bad='+str(bad)+' states='+str(sorted(states))))
 " 2>/dev/null)
         case "$DS_RESULT" in
             OK*) pass "device-status: estados verídicos (online/offline/unknown) coherentes en room $DS_ROOM" ;;
