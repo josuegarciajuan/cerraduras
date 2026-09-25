@@ -3387,6 +3387,217 @@ else
 fi
 
 # =============================================================================
+# BLOCK 38 — F49: guarda de salida corta y desacople entrada/salida
+# Trazabilidad: RF-47.2.4, RF-47.2.5; TSK-F49-01..05
+# =============================================================================
+block "BLOCK 38 — F49: guarda de salida corta"
+
+# 38.1 /live expone exit_guard_seconds numérico y entry_window desacoplada
+if [ "$SERVER_UP" != true ]; then
+    skip "F49 /live exit_guard_seconds" "servidor HTTP no disponible"
+else
+    F49_LIVE=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" "${API_BASE}/api/v1/rooms/1/live" 2>/dev/null)
+    F49_RES=$(echo "$F49_LIVE" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+except Exception as e:
+    print('ERR '+str(e)); sys.exit(0)
+g=d.get('exit_guard_seconds'); w=d.get('entry_window_seconds'); gap=d.get('gap_seconds')
+ok = isinstance(g,int) and 1 <= g <= 60 and isinstance(w,int) and w > g
+print(('OK ' if ok else 'FAIL ')+('exit_guard=%s entry_window=%s gap=%s'%(g,w,gap)))
+" 2>/dev/null)
+    case "$F49_RES" in
+        OK*) pass "F49: /live exit_guard_seconds corto y entry_window_seconds mayor (desacoplados)" ;;
+        FAIL*) fail "F49: /live exit_guard_seconds/entry_window_seconds" "${F49_RES#FAIL }" ;;
+        *) fail "F49: /live parse" "${F49_RES:-respuesta vacía}" ;;
+    esac
+fi
+
+# 38.2 Guardas de fuente: migración de overrides legacy + env documentado
+[ -f migrations/0113_exit_absence_guard.sql ] \
+    && pass "F49: migración 0113_exit_absence_guard.sql presente" \
+    || fail "F49: falta migración 0113_exit_absence_guard.sql" "revisa api/migrations/"
+grep -q '^EXIT_ABSENCE_GUARD_SECONDS=3' .env.example 2>/dev/null \
+    && pass "F49: .env.example documenta EXIT_ABSENCE_GUARD_SECONDS=3" \
+    || fail "F49: falta EXIT_ABSENCE_GUARD_SECONDS en .env.example" ""
+
+# =============================================================================
+# BLOCK 39 — F50: estado real del SWITCH por push y robustez del consumer
+# Trazabilidad: RF-58; TSK-F50-01..06
+# =============================================================================
+block "BLOCK 39 — F50: estado real del SWITCH por push"
+
+# 39.1 Status del consumer con last_pong_at (watchdog/pong, F50-02)
+F50_STATUS="run/pulsar-consumer-status.json"
+if [ ! -f "$F50_STATUS" ]; then
+    skip "F50 consumer last_pong_at" "run/pulsar-consumer-status.json no generado"
+else
+    F50_ST=$(python3 -c "
+import json
+d=json.load(open('$F50_STATUS'))
+need=['connected','last_msg_at','last_pong_at','known_devices','resyncs']
+miss=[k for k in need if k not in d]
+print('OK' if not miss else 'FAIL missing='+str(miss))
+" 2>/dev/null)
+    case "$F50_ST" in
+        OK) pass "F50: status del consumer incluye last_pong_at y resyncs (watchdog/pong)" ;;
+        FAIL*) fail "F50: status del consumer incompleto" "${F50_ST#FAIL }" ;;
+        *) fail "F50: status del consumer parse" "${F50_ST:-vacío}" ;;
+    esac
+fi
+
+# 39.2 Consumer rastrea SWITCH (guard de fuente)
+if grep -q "TRACKED_KINDS" bin/tuya-pulsar-consumer/index.js 2>/dev/null \
+   && grep -q "SWITCH" bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
+    pass "F50: consumer rastrea SWITCH (TRACKED_KINDS)"
+else
+    fail "F50: consumer no rastrea SWITCH" "revisa bin/tuya-pulsar-consumer/index.js"
+fi
+
+# 39.3 /live del SWITCH expone state/state_at (room con SWITCH)
+F50_SW_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id=r.pack_id WHERE d.kind='SWITCH' GROUP BY r.id ORDER BY r.id LIMIT 1" 2>/dev/null)
+if [ -z "$F50_SW_ROOM" ]; then
+    skip "F50 /live switch state" "no hay sala con SWITCH"
+else
+    F50_SW=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" "${API_BASE}/api/v1/rooms/$F50_SW_ROOM/live" 2>/dev/null)
+    F50_SW_RES=$(echo "$F50_SW" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); s=d.get('switch_state')
+ok = isinstance(s,dict) and 'state' in s and 'state_at' in s and s.get('state') in ('ON','OFF','UNKNOWN')
+print(('OK ' if ok else 'FAIL ')+('switch_state=%s'%(json.dumps(s)[:160])))
+" 2>/dev/null)
+    case "$F50_SW_RES" in
+        OK*) pass "F50: /live room $F50_SW_ROOM switch_state con state/state_at" ;;
+        FAIL*) fail "F50: /live switch_state" "${F50_SW_RES#FAIL }" ;;
+        *) fail "F50: /live switch parse" "${F50_SW_RES:-vacío}" ;;
+    esac
+fi
+
+# 39.4 Webhook: dispositivo sin sala → 202 room_not_found (N10, no 500)
+F50_DEVID="synth-roomless-$(date +%s)"
+$MYSQL -sN -e "INSERT INTO devices (kind,external_id) VALUES ('PROXIMITY','$F50_DEVID')" 2>/dev/null || true
+F50_WH=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE}/api/v1/tuya/webhook" \
+    -H 'Content-Type: application/json' \
+    -d "{\"devId\":\"$F50_DEVID\",\"status\":[{\"code\":\"doorcontact_state\",\"value\":true,\"t\":$(date +%s)000}]}" 2>/dev/null)
+F50_WH_HTTP=$(echo "$F50_WH" | tail -1)
+$MYSQL -sN -e "DELETE FROM devices WHERE external_id='$F50_DEVID'" 2>/dev/null || true
+if [ "$F50_WH_HTTP" = "202" ] && echo "$F50_WH" | grep -q '"discard_reason":"room_not_found"'; then
+    pass "F50: webhook sin sala → 202 room_not_found (no 500)"
+else
+    fail "F50: webhook room_not_found" "HTTP=$F50_WH_HTTP respuesta=$(echo "$F50_WH" | head -1 | head -c 200)"
+fi
+
+# =============================================================================
+# BLOCK 40 — F51: ciclo de vida del QR de huésped (llegada + estancia)
+# Trazabilidad: RF-59; TSK-F51-01..07
+# =============================================================================
+block "BLOCK 40 — F51: ventanas de llegada y uso del QR"
+
+# 40.1 Guardas de fuente: migración + lógica pura
+[ -f migrations/0114_qr_arrival_window.sql ] \
+    && pass "F51: migración 0114_qr_arrival_window.sql presente" \
+    || fail "F51: falta migración 0114_qr_arrival_window.sql" ""
+[ -f src/Domain/Qr/QrWindows.php ] \
+    && pass "F51: QrWindows.php presente (ventanas puras)" \
+    || fail "F51: falta QrWindows.php" ""
+
+# 40.2 Crear QR y comprobar ventanas en /live
+$MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=1 AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
+$MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1" 2>/dev/null || true
+F51_CREATE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE}/dashboard-api/qr-test/create" \
+    -H 'Content-Type: application/json' -d '{"room_id":1,"duracion_minutos":60}' 2>/dev/null)
+F51_CODE=$(echo "$F51_CREATE" | tail -1)
+if [ "$F51_CODE" = "201" ]; then
+    F51_LIVE=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" "${API_BASE}/api/v1/rooms/1/live" 2>/dev/null)
+    F51_RES=$(echo "$F51_LIVE" | python3 -c "
+import sys,json,datetime
+d=json.load(sys.stdin); qs=d.get('qr_status') or {}
+need=['first_used_at','valid_until','arrival_deadline','in_use','scannable']
+miss=[k for k in need if k not in qs]
+def parse(s):
+    if not s: return None
+    try: return datetime.datetime.strptime(str(s).replace('T',' ').split('.')[0],'%Y-%m-%d %H:%M:%S')
+    except Exception: return None
+ad=parse(qs.get('arrival_deadline'))
+ok = not miss and ad is not None and qs.get('in_use') is False and qs.get('first_used_at') is None
+print(('OK ' if ok else 'FAIL ')+('miss=%s arrival=%s in_use=%s first_used=%s'%(miss,qs.get('arrival_deadline'),qs.get('in_use'),qs.get('first_used_at'))))
+" 2>/dev/null)
+    case "$F51_RES" in
+        OK*) pass "F51: qr_status con arrival_deadline, in_use=false y first_used=null" ;;
+        FAIL*) fail "F51: qr_status ventanas" "${F51_RES#FAIL }" ;;
+        *) fail "F51: qr_status parse" "${F51_RES:-vacío}" ;;
+    esac
+else
+    fail "F51: crear QR de prueba" "HTTP=$F51_CODE"
+fi
+# Cleanup
+$MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=1 AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
+$MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1" 2>/dev/null || true
+
+# =============================================================================
+# BLOCK 41 — F52: cola muerta (dead-letter) del outbox WS-VB6
+# Trazabilidad: RF-60; TSK-F52-01..05
+# =============================================================================
+block "BLOCK 41 — F52: cola muerta del outbox"
+
+# 41.1 health/deep: outbox_dead diferenciado y no degradante
+F52_DEEP=$(curl -s "${API_BASE}/api/v1/health/deep" 2>/dev/null)
+F52_DB_DEAD=$($MYSQL -sN -e "SELECT COUNT(*) FROM outbox_vb6 WHERE status='DEAD'" 2>/dev/null)
+F52_RES=$(echo "$F52_DEEP" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); c=d.get('checks') or {}
+od=c.get('outbox_dead'); of=c.get('outbox_failed')
+miss=[k for k in ('status','count','note') if not isinstance(od,dict) or k not in od]
+ok = not miss and isinstance(of,dict) and 'count' in of
+print(('OK ' if ok else 'FAIL ')+('miss=%s outbox_dead=%s outbox_failed_count=%s'%(miss,json.dumps(od)[:160],(of or {}).get('count'))))
+" 2>/dev/null)
+case "$F52_RES" in
+    OK*) pass "F52: health/deep expone outbox_dead con status/count/note (separado de outbox_failed)" ;;
+    FAIL*) fail "F52: health/deep outbox_dead" "${F52_RES#FAIL }" ;;
+    *) fail "F52: health/deep parse" "${F52_RES:-vacío}" ;;
+esac
+
+# 41.2 count de health/deep coincide con la BD
+F52_HEALTH_DEAD=$(echo "$F52_DEEP" | python3 -c "import sys,json;print(((json.load(sys.stdin).get('checks') or {}).get('outbox_dead') or {}).get('count',''))" 2>/dev/null)
+if [ -n "$F52_HEALTH_DEAD" ] && [ "$F52_HEALTH_DEAD" = "$F52_DB_DEAD" ]; then
+    pass "F52: outbox_dead.count ($F52_HEALTH_DEAD) coincide con la BD"
+else
+    fail "F52: outbox_dead.count" "health=$F52_HEALTH_DEAD bd=$F52_DB_DEAD"
+fi
+
+# 41.3 admin/outbox summary.dead coincide con la BD
+F52_SUM=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" "${API_BASE}/api/v1/admin/outbox?limit=1" 2>/dev/null | python3 -c "import sys,json;print((json.load(sys.stdin).get('summary') or {}).get('dead',''))" 2>/dev/null)
+if [ -n "$F52_SUM" ] && [ "$F52_SUM" = "$F52_DB_DEAD" ]; then
+    pass "F52: admin/outbox summary.dead ($F52_SUM) coincide con la BD"
+else
+    fail "F52: admin/outbox summary.dead" "summary=$F52_SUM bd=$F52_DB_DEAD"
+fi
+
+# 41.4 retry de id inexistente → 404
+http_test POST "/api/v1/admin/outbox/999999/retry" 404 \
+    "POST /admin/outbox/999999/retry: inexistente → 404" \
+    --key ADMIN-CLI --body '{}'
+
+# 41.5 retry reencola un DEAD sintético (sin tocar los reales)
+F52_IKEY="test-f52-$(date +%s)"
+$MYSQL -sN -e "INSERT INTO outbox_vb6 (topic,payload_json,idempotency_key,status,attempts,next_attempt_at,last_error) VALUES ('debt.created','{}','$F52_IKEY','DEAD',20,UTC_TIMESTAMP(3),'test')" 2>/dev/null || true
+F52_ID=$($MYSQL -sN -e "SELECT id FROM outbox_vb6 WHERE idempotency_key='$F52_IKEY' LIMIT 1" 2>/dev/null)
+if [ -n "$F52_ID" ]; then
+    F52_RETRY=$(curl -s -w "\n%{http_code}" -X POST -H "X-API-Key: $(get_key ADMIN-CLI)" -H 'Content-Type: application/json' -d '{}' "${API_BASE}/api/v1/admin/outbox/$F52_ID/retry" 2>/dev/null)
+    F52_RETRY_HTTP=$(echo "$F52_RETRY" | tail -1)
+    F52_NEWST=$($MYSQL -sN -e "SELECT status FROM outbox_vb6 WHERE id=$F52_ID" 2>/dev/null)
+    $MYSQL -sN -e "DELETE FROM outbox_vb6 WHERE id=$F52_ID" 2>/dev/null || true
+    if [ "$F52_RETRY_HTTP" = "200" ] && [ "$F52_NEWST" = "PENDING" ]; then
+        pass "F52: retry reencola DEAD → PENDING (HTTP 200)"
+    else
+        fail "F52: retry DEAD" "HTTP=$F52_RETRY_HTTP status=$F52_NEWST"
+    fi
+else
+    fail "F52: insertar DEAD sintético" "no se pudo insertar en outbox_vb6"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
