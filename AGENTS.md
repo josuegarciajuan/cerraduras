@@ -109,7 +109,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F35 Detección de anomalías** | **BLOCK 25** | **Completado** |
 | **F36 Battery Monitoring** | **BLOCK 26** | **Completado** |
 | F37 Configuración + filtro anomalías | BLOCK 27, BLOCK 28 | Completado |
-| **F38 Workers (QR maestro)** | **BLOCK 29** | **Pendiente** |
+| **F38 Workers (QR maestro)** | **BLOCK 29** | **Completado** |
 | **F39 Estado verídico de dispositivos** | **BLOCK 30** | **Completado** |
 | **F41 Robustez sensores + coreografía** | **BLOCK 33** | **Completado** |
 | **F42 Ventana de verificación de entrada** | **BLOCK 34** | **Completado** |
@@ -118,6 +118,26 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F46 Supervisión systemd de workers + latencia SSE** | **BLOCK 35** | **Completado** |
 | **F47 Latencia medible + robustez recepción Tuya + arranque consistente** | **BLOCK 36** | **Completado** |
 | **F48 Presencia contextual (credibilidad por contexto)** | **BLOCK 1 (unit)** | **Completado** |
+| **F49 Guarda de salida corta + desacople entrada/salida** | **BLOCK 38** | **Completado** |
+| **F50 Estado real del SWITCH por push + robustez consumer** | **BLOCK 39** | **Completado** |
+| **F51 Ciclo de vida del QR de huésped (llegada + estancia)** | **BLOCK 40** | **Completado** |
+| **F52 Cola muerta (dead-letter) del outbox WS-VB6** | **BLOCK 41** | **Completado** |
+
+### F49–F52 — Cierres de fase recientes (A2–A6)
+
+- **F49 (RF-47.2.4/47.2.5)**: `exit_guard_seconds` (default 3 s) resuelto de forma pura en
+  `ExitRuleEvaluator` y desacoplado de `entry_window_seconds` (90 s). Migración `0113`.
+- **F50 (RF-58)**: el consumer Pulsar rastrea `SWITCH` por push (sin cuota) y persiste
+  `meta_json.switch_state`; `/live` expone `switch_state.{state,state_at}`; watchdog 15 min con
+  `last_pong_at`; un push sin sala responde 202 `discard_reason='room_not_found'` (no 500).
+- **F51 (RF-59)**: dos ventanas de QR — llegada global (`QR_ARRIVAL_WINDOW_MINUTES`) y uso
+  (duración de la estancia, multi-uso). Migración `0114`; lógica pura `QrWindows`;
+  `qr_status` expone `first_used_at`, `valid_until`, `arrival_deadline`, `in_use`.
+- **F52 (RF-60)**: los mensajes veneno (4xx de WS-VB6) pasan a `DEAD`; `health/deep` expone
+  `outbox_dead` (informativo, no degrada) separado de `outbox_failed`; `admin/outbox` incluye
+  `summary.dead` y el retry reencola cualquier estado incluido `DEAD`.
+- **Tests**: BLOCK 38–41 del runner + units `ExitRuleEvaluatorTest`, `tuya-pulsar-consumer.test.js`,
+  `TuyaSwitchIngressTest`, `QrArrivalWindowTest`, `QrValidateServiceTest`, `OutboxDeadLetterTest`.
 
 ### F48 — Credibilidad de presencia por contexto (RF-57)
 
