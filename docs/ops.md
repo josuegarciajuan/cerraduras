@@ -70,6 +70,8 @@ Las claves API están en `api/seeds/dev_api_keys.txt`.
 | `LOCK_PROVIDER` | `LOCAL`/`ESP32`/`TUYA`/`SIMULATED` | `LOCAL` | Provider de apertura de cerradura |
 | **`QR_EXP_FROM_DB`** | `true`/`false` | **`false`** | **Caducidad de QR desde BD** |
 
+> **Migración de cuenta Tuya**: ver [`docs/tuya-account-migration.md`](tuya-account-migration.md).
+
 ### `QR_EXP_FROM_DB` — reutilización de QR físicos (pruebas)
 
 - **`false` (producción)**: la caducidad del QR la manda el `exp` sellado

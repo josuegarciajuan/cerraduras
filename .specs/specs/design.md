@@ -2444,6 +2444,11 @@ Los valores legados en milisegundos (> 1e12) se normalizan al leer. Un desajuste
 que `/live` reportara `tuya_quota.state='exhausted'` de forma permanente y que se bloquearan
 las sondas de verificación y la calibración (aunque la cuota real estuviera disponible).
 
+> **Alta/migración de cuenta/proyecto Tuya**: ver
+> [`docs/tuya-account-migration.md`](../../docs/tuya-account-migration.md). Este
+> runbook cubre el cambio de cuenta/data center, el re-emparejamiento y la
+> propagación de los nuevos `device_id`.
+
 ---
 
 ## 14. F47 — Diagnóstico de latencia, robustez de recepción Tuya y arranque consistente
