@@ -431,23 +431,30 @@ function tuyaQuotaBackoff(int $seconds): void
  * @param string $method  'GET' or 'POST'
  * @param string $path    e.g. "/v1.0/iot-03/devices/{id}/status"
  * @param string|null $body  JSON body for POST (null for GET)
+ * @param bool $ignoreLocalBudget  When true, bypass the LOCAL backoff/budget
+ *        guards so a read-only credit probe can run while the local backoff is
+ *        active. It never bypasses Tuya: the call is still counted and a quota
+ *        answer still refreshes the shared backoff. Default false keeps every
+ *        existing caller's behaviour unchanged.
  * @return array{http:int, data:array, error:string|null, elapsed_ms:int}
  */
-function tuyaPresenceApi(string $method, string $path, ?string $body): array {
+function tuyaPresenceApi(string $method, string $path, ?string $body, bool $ignoreLocalBudget = false): array {
     // ── Shared quota-exhaustion backoff (same file as checkTuyaOnline) ──
     $backoffFile = sys_get_temp_dir() . '/tuya_quota_backoff.txt';
-    if (file_exists($backoffFile)) {
-        $backoffUntil = (int) @file_get_contents($backoffFile);
-        if (time() < $backoffUntil) {
-            return ['http' => 429, 'data' => [], 'error' => 'Tuya quota exhausted — backoff active', 'elapsed_ms' => 0];
+    if (!$ignoreLocalBudget) {
+        if (file_exists($backoffFile)) {
+            $backoffUntil = (int) @file_get_contents($backoffFile);
+            if (time() < $backoffUntil) {
+                return ['http' => 429, 'data' => [], 'error' => 'Tuya quota exhausted — backoff active', 'elapsed_ms' => 0];
+            }
+            @unlink($backoffFile);
         }
-        @unlink($backoffFile);
-    }
 
-    // F46+: presupuesto compartido (mismo fichero que el poller Node).
-    $qchk = tuyaQuotaCheck();
-    if (!$qchk['ok']) {
-        return ['http' => 429, 'data' => [], 'error' => 'Tuya quota budget (' . $qchk['reason'] . ')', 'elapsed_ms' => 0];
+        // F46+: presupuesto compartido (mismo fichero que el poller Node).
+        $qchk = tuyaQuotaCheck();
+        if (!$qchk['ok']) {
+            return ['http' => 429, 'data' => [], 'error' => 'Tuya quota budget (' . $qchk['reason'] . ')', 'elapsed_ms' => 0];
+        }
     }
 
     $accessId  = $_ENV['TUYA_ACCESS_ID'] ?? getenv('TUYA_ACCESS_ID') ?: '';
@@ -525,9 +532,10 @@ function tuyaPresenceApi(string $method, string $path, ?string $body): array {
 
     $data = json_decode($resp, true);
     if (is_array($data)) {
-        // Detect quota exhaustion and set backoff
-        $code = $data['code'] ?? 0;
-        if ($code === 28841004 || stripos($data['msg'] ?? '', 'quota') !== false) {
+        // Detect quota exhaustion (shared pure classifier, also used by
+        // /dashboard-api/tuya-quota) and set the local + shared backoff.
+        $cls = \App\Domain\Devices\TuyaCreditsClassifier::classifyTuyaCredits($httpCode, $data);
+        if ($cls['category'] === 'quota') {
             file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes)
             tuyaQuotaBackoff(1800);                          // F46+: backoff compartido (30 min)
         }
@@ -1829,6 +1837,107 @@ $router->post(
             'battery_pct' => $batteryPct,
             'state' => $state,
         ]);
+    }
+);
+
+// GET /dashboard-api/tuya-quota — read-only IoT Core credit probe (diagnóstico).
+// Makes exactly ONE read-only call (GET /iot-03/devices/{id}); it NEVER uses the
+// /commands endpoint, so the relay is not touched. Query: optional
+// ?external_id=<tuya_device_id>. Without it, picks the first SWITCH device,
+// else the first PRESENCE/PROXIMITY; 404 when there is no Tuya device at all.
+// 200 for any valid request (even when Tuya is unreachable → credits=unknown);
+// 400 for invalid params; 404 when the requested/no candidate device is missing.
+$router->get(
+    '/dashboard-api/tuya-quota',
+    function (\App\Http\Request $request) use ($deviceRepo): \App\Http\Response {
+        $requested = $request->query('external_id');
+        if ($requested !== null && trim($requested) === '') {
+            return \App\Http\Response::json(400, ['error' => 'external_id must not be empty']);
+        }
+
+        if ($requested !== null) {
+            $dev = $deviceRepo->findByExternalId(trim($requested));
+            if ($dev === null) {
+                return \App\Http\Response::json(404, ['error' => 'Device not found']);
+            }
+            if (!deviceIsTuyaCloud(['kind' => $dev->kind])) {
+                return \App\Http\Response::json(400, ['error' => 'external_id is not a Tuya cloud device']);
+            }
+        } else {
+            $dev      = null;
+            $fallback = null;
+            foreach ($deviceRepo->findAll() as $candidate) {
+                if ($candidate->kind === \App\Domain\Devices\Device::KIND_SWITCH) {
+                    $dev = $candidate;
+                    break;
+                }
+                if ($fallback === null && in_array($candidate->kind, [
+                    \App\Domain\Devices\Device::KIND_PRESENCE,
+                    \App\Domain\Devices\Device::KIND_PROXIMITY,
+                ], true)) {
+                    $fallback = $candidate;
+                }
+            }
+            $dev = $dev ?? $fallback;
+            if ($dev === null) {
+                return \App\Http\Response::json(404, ['error' => 'No Tuya device available to probe']);
+            }
+        }
+
+        $externalId = (string) $dev->externalId;
+        if ($externalId === '') {
+            return \App\Http\Response::json(400, ['error' => 'Device has no external_id']);
+        }
+
+        // Única llamada, SOLO LECTURA (device details). `ignoreLocalBudget=true`
+        // permite diagnosticar aunque el backoff local esté activo; la llamada se
+        // cuenta igual y una respuesta de cuota refresca el backoff compartido.
+        $res  = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId), null, true);
+        $http = (int) ($res['http'] ?? 0);
+        $data = is_array($res['data'] ?? null) ? $res['data'] : [];
+
+        $classification = \App\Domain\Devices\TuyaCreditsClassifier::classifyTuyaCredits($http, $data);
+
+        $deviceOnline = null;
+        if (($data['success'] ?? false) === true
+            && array_key_exists('online', (array) ($data['result'] ?? []))) {
+            $deviceOnline = (bool) $data['result']['online'];
+        }
+
+        $q            = tuyaQuotaRead();
+        $backoffUntil = (int) ($q['backoffUntil'] ?? 0);
+        $meta         = is_array($dev->meta) ? $dev->meta : [];
+        $lastError    = isset($meta['last_error_category']) ? [
+            'category' => (string) $meta['last_error_category'],
+            'at'       => isset($meta['last_error_at']) ? (string) $meta['last_error_at'] : null,
+        ] : null;
+
+        $payload = [
+            'credits'            => $classification['credits'],
+            'category'           => $classification['category'],
+            'http'               => $http,
+            'code'               => $data['code'] ?? null,
+            'msg'                => $data['msg'] ?? null,
+            'device_external_id' => $externalId,
+            'device_kind'        => (string) $dev->kind,
+            'device_online'      => $deviceOnline,
+            'elapsed_ms'         => (int) ($res['elapsed_ms'] ?? 0),
+            'checked_at'         => gmdate('Y-m-d\TH:i:s\Z'),
+            'local_budget'       => [
+                'calls_day'      => (int) ($q['callsDay'] ?? 0),
+                'calls_hour'     => (int) ($q['callsHour'] ?? 0),
+                'backoff_until'  => $backoffUntil,
+                'backoff_active' => $backoffUntil > time(),
+            ],
+            'last_known_error'   => $lastError,
+        ];
+        // Only present when the probe itself failed (curl/token): keeps the
+        // documented happy-path/quota payload shape unchanged.
+        if (($res['error'] ?? null) !== null) {
+            $payload['probe_error'] = (string) $res['error'];
+        }
+
+        return \App\Http\Response::json(200, $payload);
     }
 );
 
