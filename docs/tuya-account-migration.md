@@ -158,6 +158,54 @@ Herramientas sueltas bajo `api/bin/tuya-*.php` y `docs/hardware/eawcbt-j-setup.m
 también contienen ids: revisarlas (no bloquean la migración, pero quedaran
 obsoletas).
 
+### Propagación asistida
+
+`api/bin/tuya-propagate-ids.php` automatiza (a) la actualización de
+`devices.external_id` + `meta_json` en BD y (b) la sustitución de los ids
+hardcodeados del checklist. Es **idempotente** y **dry-run por defecto**: sin
+`--apply` no escribe nada.
+
+```bash
+# Dry-run: solo muestra el plan (no toca BD ni ficheros)
+php api/bin/tuya-propagate-ids.php --map=map.json
+
+# Aplica los cambios en BD y genera el rollback
+php api/bin/tuya-propagate-ids.php --map=map.json --apply
+
+# Sustituye también los ids en ficheros de texto — ejecutar DENTRO DE UN WORKTREE,
+# nunca en el árbol de producción
+php api/bin/tuya-propagate-ids.php --map=map.json --code --apply
+
+# Alternativa sin fichero: una entrada por --id (repetible)
+php api/bin/tuya-propagate-ids.php --id=PRESENCE:<viejo>=<nuevo>
+```
+
+Formato del JSON (`devices` obligatorio; `meta` opcional y se fusiona de forma
+recursiva sobre el `meta_json` existente):
+
+```json
+{
+  "devices": [
+    {"kind":"PRESENCE","old":"<viejo>","new":"<nuevo>",
+     "meta":{"product_id":"<pid>","dp_caps":{...},
+             "presence_source":"push","calibration":{...}}},
+    {"kind":"PROXIMITY","old":"<viejo>","new":"<nuevo>"},
+    {"kind":"SWITCH","old":"<viejo>","new":"<nuevo>"}
+  ],
+  "code_refs": true
+}
+```
+
+Notas:
+
+- Si el id viejo ya no está y sí el nuevo, el script lo marca como **SKIP "ya
+  migrado"** (seguro para re-ejecutar). Si no encuentra ninguno, **WARN**.
+- Con `--apply`, **antes** de tocar la BD escribe el SQL inverso en
+  `api/run/tuya-id-rollback-<YmdHis>.sql`.
+- `--code` recorre los ficheros de texto del repo excluyendo `.git`,
+  `node_modules`, `data/`, `api/run/` y `api/migrations/` (historial inmutable);
+  en dry-run solo lista lo que cambiaría. Revisa el diff antes de `--apply`.
+
 ---
 
 ## §7 Runbook paso a paso (variante decidida: re-emparejar)
