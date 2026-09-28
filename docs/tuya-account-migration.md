@@ -203,7 +203,8 @@ Notas:
 - Con `--apply`, **antes** de tocar la BD escribe el SQL inverso en
   `api/run/tuya-id-rollback-<YmdHis>.sql`.
 - `--code` recorre los ficheros de texto del repo excluyendo `.git`,
-  `node_modules`, `data/` y `api/run/`; en dry-run solo lista lo que cambiaría.
+  `node_modules`, `data/`, `api/run/` y `api/migrations/` (historial inmutable);
+  en dry-run solo lista lo que cambiaría. Revisa el diff antes de `--apply`.
 
 ---
 

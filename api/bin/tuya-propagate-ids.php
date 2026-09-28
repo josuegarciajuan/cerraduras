@@ -107,6 +107,11 @@ function tuya_collect_text_files(string $root): array
                 if ($relative === $apiRun || str_starts_with($relative, $apiRun . DIRECTORY_SEPARATOR)) {
                     return false;
                 }
+                // `api/migrations/` es historial inmutable: no se reescribe.
+                $apiMigrations = 'api' . DIRECTORY_SEPARATOR . 'migrations';
+                if ($relative === $apiMigrations || str_starts_with($relative, $apiMigrations . DIRECTORY_SEPARATOR)) {
+                    return false;
+                }
                 return true;
             }
 
