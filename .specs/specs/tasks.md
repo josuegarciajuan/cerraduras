@@ -2511,3 +2511,62 @@ resto de polls seguían, confirmando el foco sobre el `<select>`.
 | F53-01 | Decisión pura + hardening `fetchRooms` | UX panel | `assets/room-selector.js`, `dashboard.html` | unit JS |
 | F53-02 | Fallback `showPicker` | UX panel | `dashboard.html` | manual + unit JS |
 | F53-03 | Runner y specs | UX panel | `bin/run-tests.sh`, `tasks.md` | regresión |
+
+---
+
+# Fase 54 — Batería de aceptación E2E (BLOCK 42, RF-61)
+
+**Motivo**: no existe una prueba integrada del ciclo de vida completo del huésped; los bloques
+aislados pueden pasar con la integración rota.
+
+**Sala de banco**: PROTO2 (`rooms.id=12`, pack `305`, RPI `a0e549858428`); `SIMULATED_MODE=false`
+exige `simulated_override=1` para `/sim/*` y el lock simulado.
+
+### TSK-F54-01: Specs y contrato
+- **Cambio**: `requirements.md` (RF-61), `design.md` (§18), `contracts.md` (Fase 54), `tasks.md`.
+- **RF**: RF-61.1, RF-61.5.
+- **Test propio**: revisión de que no hay cambios de contrato de API (solo test).
+
+### TSK-F54-02: Preflight, normalización y restauración de PROTO2
+- **Cambio**: en `bin/run-tests.sh`, cabecera de `BLOCK 42`: gating de SERVER_UP/claves/BD/RPI;
+  guardado `E2E_SAVE_*`; `_e2e_normalize` (cierre de stays, limpieza IoT/presence,
+  `simulated_override=1`, `presence_check_seconds=5`, `FREE`); `POST /dashboard-api/rooms/reset`;
+  `_e2e_cleanup`.
+- **RF**: RF-61.3.1, RF-61.3.2, RF-61.4.1, RF-61.4.2.
+- **Test propio**: el propio bloque (SKIP en precondición insuficiente).
+
+### TSK-F54-03: Emisión y validación de QR (S1–S4)
+- **Cambio**: `POST /api/v1/qr` (captura `stay_id`/`jti`/`qr_text`), aserciones `/live` RESERVED,
+  `POST /api/v1/qr/validate` (device_id del RPI del pack), aserciones `/live` OCCUPIED y BD
+  (`first_used_at`).
+- **RF**: RF-61.1.2, RF-61.1.3, RF-61.3.3, RF-61.2.2.
+- **Test propio**: pasos S1–S4 de BLOCK 42.
+
+### TSK-F54-04: Entrada, salida y confirmación (S5–S9)
+- **Cambio**: ciclo `/sim/*` de entrada (PRESENT/OPEN/CLOSED) y de salida (OPEN/CLOSED/ABSENT);
+  aserciones de `entry_confirmed_at` y `exit_deadline`; reutilización/arranque de `exit-scan` y
+  sondeo de `EXITED`/sala `FREE`/`AUTO_LOCK`.
+- **RF**: RF-61.1.2, RF-61.2.1, RF-61.2.3, RF-61.3.4.
+- **Test propio**: pasos S5–S9 de BLOCK 42.
+
+### TSK-F54-05: Cierre de estancia, overstay y cleanup (S10–S12)
+- **Cambio**: `POST /stays/{id}/close` (`stay.closed`), `GET /stays/{id}/overstay` (lectura),
+  `_e2e_cleanup` + verificación de PROTO2 en `FREE`.
+- **RF**: RF-61.1.2, RF-61.4.2, RF-61.4.4, RF-61.6.2.
+- **Test propio**: pasos S10–S12 de BLOCK 42.
+
+### TSK-F54-06: Registro en AGENTS.md
+- **Cambio**: fila `F54 — Batería de aceptación E2E | BLOCK 42` en la tabla de fases del runner.
+- **RF**: RF-61.5.1.
+- **Test propio**: —
+
+## Tabla resumen F54
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F54-01 | Specs y contrato | RF-61.1/61.5 | `requirements/design/contracts/tasks.md` | revisión (sin cambio de API) |
+| F54-02 | Preflight + normalize/restore PROTO2 | RF-61.3/61.4 | `api/bin/run-tests.sh` | BLOCK 42 (SKIP si falta precondición) |
+| F54-03 | QR: emisión + validación (S1–S4) | RF-61.1/61.2/61.3 | `api/bin/run-tests.sh` | BLOCK 42 |
+| F54-04 | Entrada/salida/confirmación (S5–S9) | RF-61.1/61.2/61.3 | `api/bin/run-tests.sh` | BLOCK 42 |
+| F54-05 | Cierre, overstay y cleanup (S10–S12) | RF-61.1/61.4 | `api/bin/run-tests.sh` | BLOCK 42 |
+| F54-06 | Registro en tabla de fases | RF-61.5 | `AGENTS.md` | — |

@@ -3615,6 +3615,264 @@ else
 fi
 
 # =============================================================================
+# BLOCK 42 — F54: Batería de aceptación E2E del huésped (RF-61)
+# Trazabilidad: RF-61.1..61.6; TSK-F54-01..06
+#
+# Ciclo secuencial sobre la sala de banco PROTO2 (room 12):
+#   S0 normalizar/guardar · S1 emitir QR (crea stay RESERVED)
+#   S2 live RESERVED · S3 validar QR (OCCUPIED, lock SIMULATED)
+#   S4 live OCCUPIED · S5/S6 entrada simulada + entry_confirmed_at
+#   S7/S8 salida simulada + exit_deadline · S9 exit-scan → EXITED/FREE
+#   S10 cerrar estancia · S11 overstay (lectura) · S12 cleanup/restore
+#
+# Determinista, sin hardware ni cuota Tuya: simulated_override=1 fuerza
+# SimulatedLockGateway/SensorIngressFactory y la puerta/presencia se inyectan
+# por /sim/*. Ante precondición de entorno faltante => SKIP (nunca FAIL).
+# =============================================================================
+block "BLOCK 42 — F54: Batería de aceptación E2E (PROTO2)"
+
+E2E_ROOM=12
+E2E_DUR=60
+E2E_SIM=$(get_key SIM-CLIENT)
+E2E_VB6=$(get_key VB6-MAIN)
+E2E_RPIKEY=$(get_key RPI-DEV)
+E2E_ADM=$(get_key ADMIN-CLI)
+E2E_ROOM_PACK=$($MYSQL -sN -e "SELECT COALESCE(pack_id,'NULL') FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null || echo "ERR")
+E2E_RPI_EXT=$($MYSQL -sN -e "SELECT d.external_id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$E2E_ROOM AND d.kind='RPI' LIMIT 1" 2>/dev/null || echo "")
+
+if [ "$SERVER_UP" != "true" ]; then
+    skip "BLOCK 42 — F54 (E2E)" "servidor HTTP no disponible"
+elif [ -z "$E2E_SIM" ] || [ -z "$E2E_VB6" ] || [ -z "$E2E_RPIKEY" ] || [ -z "$E2E_ADM" ]; then
+    skip "BLOCK 42 — F54 (E2E)" "faltan claves SIM-CLIENT/VB6-MAIN/RPI-DEV/ADMIN-CLI en $KEYS_FILE"
+elif ! db_exec "SELECT 1" > /dev/null 2>&1; then
+    skip "BLOCK 42 — F54 (E2E)" "BD no accesible"
+elif [ "$E2E_ROOM_PACK" = "NULL" ] || [ "$E2E_ROOM_PACK" = "ERR" ] || [ -z "$E2E_RPI_EXT" ]; then
+    skip "BLOCK 42 — F54 (E2E)" "room $E2E_ROOM sin pack/RPI resoluble (pack=$E2E_ROOM_PACK)"
+else
+    # ── S0: guardar estado de PROTO2 y normalizar ──────────────────────────
+    E2E_SAVE_SIM=$($MYSQL -sN -e "SELECT COALESCE(simulated_override,'NULL') FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null || echo "NULL")
+    E2E_SAVE_PCS=$($MYSQL -sN -e "SELECT COALESCE(presence_check_seconds,'NULL') FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null || echo "NULL")
+    E2E_AL_BEFORE=$($MYSQL -sN -e "SELECT COUNT(*) FROM access_events WHERE room_id=$E2E_ROOM AND kind='AUTO_LOCK'" 2>/dev/null || echo "0")
+
+    _e2e_normalize() {
+        $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=$E2E_ROOM AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        $MYSQL -sN -e "UPDATE rooms SET pack_id=$E2E_ROOM_PACK, simulated_override=1, presence_check_seconds=5, status='FREE', cooldown_until=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
+    }
+    _e2e_cleanup() {
+        db_exec "SELECT 1" > /dev/null 2>&1 || return 0
+        $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=$E2E_ROOM AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        if [ "$E2E_SAVE_SIM" = "NULL" ]; then
+            $MYSQL -sN -e "UPDATE rooms SET simulated_override=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
+        else
+            $MYSQL -sN -e "UPDATE rooms SET simulated_override=$E2E_SAVE_SIM WHERE id=$E2E_ROOM" 2>/dev/null || true
+        fi
+        if [ "$E2E_SAVE_PCS" = "NULL" ]; then
+            $MYSQL -sN -e "UPDATE rooms SET presence_check_seconds=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
+        else
+            $MYSQL -sN -e "UPDATE rooms SET presence_check_seconds=$E2E_SAVE_PCS WHERE id=$E2E_ROOM" 2>/dev/null || true
+        fi
+        # PROTO2 es banco de pruebas: se deja limpia en FREE (no se restaura el
+        # estado RESERVED con estancia OVERSTAY que existía antes de la corrida).
+        $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
+        [ -n "${E2E_EXIT_PID:-}" ] && kill "$E2E_EXIT_PID" 2>/dev/null || true
+    }
+
+    _e2e_normalize
+    http_test POST /dashboard-api/rooms/reset 200 \
+        "S0: reset determinista de PROTO2 (room $E2E_ROOM)" \
+        --body "{\"room_id\":$E2E_ROOM}"
+    _e2e_normalize  # reafirmar pack/sim tras el reset
+
+    E2E_FLOW=1
+
+    # ── S1: emitir QR (crea stay RESERVED) ─────────────────────────────────
+    E2E_IDEM_QR="e2e-f54-qr-$(date +%s)"
+    E2E_QR_RAW=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/api/v1/qr" \
+        -H "X-API-Key: $E2E_VB6" -H 'Content-Type: application/json' \
+        -H "Idempotency-Key: $E2E_IDEM_QR" \
+        -d "{\"room_id\":$E2E_ROOM,\"duracion_minutos\":$E2E_DUR}" 2>/dev/null)
+    E2E_QR_CODE=$(echo "$E2E_QR_RAW" | tail -1)
+    E2E_QR_BODY=$(echo "$E2E_QR_RAW" | sed '$d')
+    E2E_QR_TEXT=$(echo "$E2E_QR_BODY" | python3 -c "import sys,json;print((json.load(sys.stdin) or {}).get('qr_text',''))" 2>/dev/null || echo "")
+    E2E_JTI=$(echo "$E2E_QR_BODY" | python3 -c "import sys,json;print((json.load(sys.stdin) or {}).get('jti',''))" 2>/dev/null || echo "")
+    E2E_STAY_ID=$(echo "$E2E_QR_BODY" | python3 -c "import sys,json;print((json.load(sys.stdin) or {}).get('stay_id',''))" 2>/dev/null || echo "")
+
+    if [ "$E2E_QR_CODE" = "201" ] && [ -n "$E2E_QR_TEXT" ] && [ -n "$E2E_JTI" ] && [ -n "$E2E_STAY_ID" ]; then
+        pass "S1: POST /api/v1/qr → 201 (stay RESERVED creado)  [HTTP 201]"
+        E2E_ST=$($MYSQL -sN -e "SELECT status FROM stays WHERE id=$E2E_STAY_ID" 2>/dev/null)
+        if [ "$E2E_ST" = "RESERVED" ]; then
+            pass "S1: stays.status=RESERVED en BD"
+        else
+            fail "S1: stays.status=RESERVED en BD" "esperado RESERVED, got $E2E_ST"
+        fi
+    else
+        skip "S1: POST /api/v1/qr" "HTTP $E2E_QR_CODE — $E2E_QR_BODY (precondición de entorno)"
+        E2E_FLOW=0
+    fi
+
+    if [ "$E2E_FLOW" = "1" ]; then
+        # ── S2: /live pre-entrada (RESERVED) ──────────────────────────────
+        E2E_LIVE=$(curl -s --max-time 5 "$API_BASE/api/v1/rooms/$E2E_ROOM/live" 2>/dev/null)
+        E2E_S2=$(echo "$E2E_LIVE" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); s=d.get('active_stay') or {}; q=d.get('qr_status') or {}
+print('%s|%s|%s'%(s.get('status'),q.get('scannable'),q.get('in_use')))" 2>/dev/null || echo "PARSE_ERROR")
+        if [ "$E2E_S2" = "RESERVED|True|False" ]; then
+            pass "S2: /live RESERVED, scannable=true, in_use=false"
+        else
+            fail "S2: /live pre-entrada" "esperado RESERVED|True|False, got $E2E_S2"
+        fi
+
+        # ── S3: validar QR → OCCUPIED (lock SIMULATED) ────────────────────
+        E2E_VAL_RAW=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/api/v1/qr/validate" \
+            -H "X-API-Key: $E2E_RPIKEY" -H 'Content-Type: application/json' \
+            -d "{\"qr_text\":\"$E2E_QR_TEXT\",\"device_id\":\"$E2E_RPI_EXT\"}" 2>/dev/null)
+        E2E_VAL_CODE=$(echo "$E2E_VAL_RAW" | tail -1)
+        E2E_VAL_BODY=$(echo "$E2E_VAL_RAW" | sed '$d')
+        E2E_VAL_ALLOW=$(echo "$E2E_VAL_BODY" | python3 -c "import sys,json;print((json.load(sys.stdin) or {}).get('allow'))" 2>/dev/null || echo "")
+        if [ "$E2E_VAL_CODE" = "200" ] && [ "$E2E_VAL_ALLOW" = "True" ]; then
+            pass "S3: POST /qr/validate → 200 allow=true (OCCUPIED, lock SIMULATED)  [HTTP 200]"
+        else
+            fail "S3: POST /qr/validate" "HTTP $E2E_VAL_CODE body=$E2E_VAL_BODY"
+        fi
+        E2E_ST=$($MYSQL -sN -e "SELECT status FROM stays WHERE id=$E2E_STAY_ID" 2>/dev/null)
+        if [ "$E2E_ST" = "OCCUPIED" ]; then
+            pass "S3: stays.status=OCCUPIED en BD"
+        else
+            fail "S3: stays.status=OCCUPIED en BD" "got $E2E_ST"
+        fi
+        E2E_FU=$($MYSQL -sN -e "SELECT IFNULL(DATE_FORMAT(first_used_at,'%Y-%m-%d %H:%i:%s'),'NULL') FROM qr_credentials WHERE jti='$E2E_JTI' LIMIT 1" 2>/dev/null)
+        if [ -n "$E2E_FU" ] && [ "$E2E_FU" != "NULL" ]; then
+            pass "S3: qr_credentials.first_used_at fijado (F51)"
+        else
+            fail "S3: qr_credentials.first_used_at" "got $E2E_FU"
+        fi
+
+        # ── S4: /live OCCUPIED + in_use ────────────────────────────────────
+        E2E_LIVE=$(curl -s --max-time 5 "$API_BASE/api/v1/rooms/$E2E_ROOM/live" 2>/dev/null)
+        E2E_S4=$(echo "$E2E_LIVE" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); s=d.get('active_stay') or {}; q=d.get('qr_status') or {}
+print('%s|%s'%(s.get('status'),q.get('in_use')))" 2>/dev/null || echo "PARSE_ERROR")
+        if [ "$E2E_S4" = "OCCUPIED|True" ]; then
+            pass "S4: /live OCCUPIED, qr in_use=true"
+        else
+            fail "S4: /live post-validación" "esperado OCCUPIED|True, got $E2E_S4"
+        fi
+
+        # ── S5: entrada simulada ───────────────────────────────────────────
+        http_test POST "/sim/rooms/$E2E_ROOM/presence" 202 \
+            "S5: presence=PRESENT → 202" --key SIM-CLIENT --body '{"sensor":"PRESENCE","value":"PRESENT"}'
+        http_test POST "/sim/rooms/$E2E_ROOM/door" 202 \
+            "S5: door=OPEN → 202" --key SIM-CLIENT --body '{"state":"OPEN"}'
+        http_test POST "/sim/rooms/$E2E_ROOM/door" 202 \
+            "S5: door=CLOSED → 202" --key SIM-CLIENT --body '{"state":"CLOSED"}'
+
+        # ── S6: entrada consolidada (entry_confirmed_at) ───────────────────
+        E2E_LIVE=$(curl -s --max-time 5 "$API_BASE/api/v1/rooms/$E2E_ROOM/live" 2>/dev/null)
+        E2E_S6=$(echo "$E2E_LIVE" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); s=d.get('active_stay') or {}; i=d.get('iot_session') or {}
+print('%s|%s|%s|%s'%(bool(s.get('entry_confirmed_at')),i.get('presence_state'),i.get('door_state'),bool(d.get('exit_deadline'))))" 2>/dev/null || echo "PARSE_ERROR")
+        if [ "$E2E_S6" = "True|PRESENT|CLOSED|False" ]; then
+            pass "S6: entry_confirmed_at fijado (PRESENT+OPEN+CLOSED), exit_deadline null"
+        else
+            fail "S6: entrada consolidada" "esperado True|PRESENT|CLOSED|False, got $E2E_S6"
+        fi
+
+        # ── S7: salida simulada (ciclo acreditado + ABSENT) ────────────────
+        http_test POST "/sim/rooms/$E2E_ROOM/door" 202 \
+            "S7: door=OPEN (ciclo de salida) → 202" --key SIM-CLIENT --body '{"state":"OPEN"}'
+        http_test POST "/sim/rooms/$E2E_ROOM/door" 202 \
+            "S7: door=CLOSED (ciclo de salida) → 202" --key SIM-CLIENT --body '{"state":"CLOSED"}'
+        http_test POST "/sim/rooms/$E2E_ROOM/presence" 202 \
+            "S7: presence=ABSENT → 202" --key SIM-CLIENT --body '{"sensor":"PRESENCE","value":"ABSENT"}'
+
+        # ── S8: exit_deadline activo ───────────────────────────────────────
+        E2E_LIVE=$(curl -s --max-time 5 "$API_BASE/api/v1/rooms/$E2E_ROOM/live" 2>/dev/null)
+        E2E_S8=$(echo "$E2E_LIVE" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); i=d.get('iot_session') or {}
+print('%s|%s|%s'%(bool(d.get('exit_deadline')),i.get('presence_state'),i.get('door_state')))" 2>/dev/null || echo "PARSE_ERROR")
+        if [ "$E2E_S8" = "True|ABSENT|CLOSED" ]; then
+            pass "S8: exit_deadline activo tras ABSENT + ciclo acreditado"
+        else
+            fail "S8: exit_deadline" "esperado True|ABSENT|CLOSED, got $E2E_S8"
+        fi
+
+        # ── S9: exit-scan confirma EXITED / sala FREE / AUTO_LOCK ──────────
+        if ! pgrep -f "[e]xit-scan.php" >/dev/null 2>&1; then
+            nohup php "$PROJECT_DIR/bin/exit-scan.php" >> "$PROJECT_DIR/logs/exit-scan.log" 2>&1 &
+            E2E_EXIT_PID=$!
+        fi
+        E2E_EXITED=0
+        E2E_ST=""
+        for _i in $(seq 1 25); do
+            E2E_ST=$($MYSQL -sN -e "SELECT status FROM stays WHERE id=$E2E_STAY_ID" 2>/dev/null)
+            if [ "$E2E_ST" = "EXITED" ]; then E2E_EXITED=1; break; fi
+            sleep 1
+        done
+        if [ "$E2E_EXITED" = "1" ]; then
+            pass "S9: exit-scan confirma stay EXITED (F49)"
+        else
+            fail "S9: stay EXITED tras salida" "got '$E2E_ST' (timeout 25s)"
+        fi
+        E2E_ROOM_ST=$($MYSQL -sN -e "SELECT status FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null)
+        if [ "$E2E_ROOM_ST" = "FREE" ]; then
+            pass "S9: room FREE tras confirmar salida"
+        else
+            fail "S9: room FREE tras salida" "got $E2E_ROOM_ST"
+        fi
+        E2E_AL_AFTER=$($MYSQL -sN -e "SELECT COUNT(*) FROM access_events WHERE room_id=$E2E_ROOM AND kind='AUTO_LOCK'" 2>/dev/null || echo "0")
+        if [ "${E2E_AL_AFTER:-0}" -gt "${E2E_AL_BEFORE:-0}" ] 2>/dev/null; then
+            pass "S9: access_event AUTO_LOCK registrado"
+        else
+            fail "S9: AUTO_LOCK tras salida" "before=$E2E_AL_BEFORE after=$E2E_AL_AFTER"
+        fi
+
+        # ── S10: cerrar estancia EXITED → CLOSED ───────────────────────────
+        E2E_IDEM_CLOSE="e2e-f54-close-$(date +%s)"
+        E2E_CL_RAW=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/api/v1/stays/$E2E_STAY_ID/close" \
+            -H "X-API-Key: $E2E_ADM" -H 'Content-Type: application/json' \
+            -H "Idempotency-Key: $E2E_IDEM_CLOSE" -d '{}' 2>/dev/null)
+        E2E_CL_CODE=$(echo "$E2E_CL_RAW" | tail -1)
+        E2E_CL_ST=$($MYSQL -sN -e "SELECT status FROM stays WHERE id=$E2E_STAY_ID" 2>/dev/null)
+        if [ "$E2E_CL_CODE" = "200" ] && [ "$E2E_CL_ST" = "CLOSED" ]; then
+            pass "S10: POST /stays/{id}/close → 200 (EXITED→CLOSED)  [HTTP 200]"
+        else
+            fail "S10: POST /stays/{id}/close" "HTTP $E2E_CL_CODE status=$E2E_CL_ST"
+        fi
+
+        # ── S11: overstay (lectura determinista, opcional) ─────────────────
+        E2E_OV_RAW=$(curl -s -w '\n%{http_code}' "$API_BASE/api/v1/stays/$E2E_STAY_ID/overstay" \
+            -H "X-API-Key: $E2E_ADM" 2>/dev/null)
+        E2E_OV_CODE=$(echo "$E2E_OV_RAW" | tail -1)
+        if [ "$E2E_OV_CODE" = "200" ]; then
+            pass "S11: GET /stays/{id}/overstay → 200 (lectura)"
+        elif [ "$E2E_OV_CODE" = "404" ] || [ "$E2E_OV_CODE" = "409" ]; then
+            skip "S11: GET /stays/{id}/overstay" "HTTP $E2E_OV_CODE (no aplicable a estancia cerrada)"
+        else
+            fail "S11: GET /stays/{id}/overstay" "HTTP $E2E_OV_CODE"
+        fi
+    fi
+
+    # ── S12: cleanup y restauración de PROTO2 ──────────────────────────────
+    _e2e_cleanup
+    if [ "$E2E_FLOW" = "1" ]; then
+        E2E_FINAL_ST=$($MYSQL -sN -e "SELECT status FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null)
+        if [ "$E2E_FINAL_ST" = "FREE" ]; then
+            pass "S12: PROTO2 restaurada (FREE, sin stays/iot/presence)"
+        else
+            fail "S12: PROTO2 restaurada" "got status=$E2E_FINAL_ST"
+        fi
+    fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

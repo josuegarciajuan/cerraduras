@@ -1669,3 +1669,83 @@ queda deprecado para el QR de huésped.
 | Variable | Default | Descripción |
 |----------|---------|-------------|
 | `QR_ARRIVAL_WINDOW_MINUTES` | `15` | Ventana de llegada global (minutos); común a todas las habitaciones. |
+
+---
+
+# Fase 54: Batería de aceptación E2E (BLOCK 42)
+
+## 0. Alcance
+
+**No hay cambios de contrato de API.** Esta fase es exclusivamente un test de aceptación en
+`api/bin/run-tests.sh` (BLOCK 42) sobre PROTO2 (`rooms.id=12`). Se documentan aquí las llamadas
+que el test encadena y los campos de `/live` que usa como aserciones, para que una futura
+modificación de contrato sepa qué rompe la aceptación.
+
+## 1. Secuencia de llamadas
+
+| # | Método y ruta | Auth | Códigos | Efecto/observación |
+|---|---------------|------|---------|--------------------|
+| S0 | `POST /dashboard-api/rooms/reset` | pública | 200 / 400 / 404 | Reset determinista previo (`{"room_id":12}`) |
+| S1 | `POST /api/v1/qr` | `VB6-MAIN` + `Idempotency-Key` | 201 / 409 / 422 | Crea stay `RESERVED`; devuelve `stay_id`, `jti`, `qr_text`, `issued_at`, `expires_at` |
+| S2 | `GET /api/v1/rooms/12/live` | pública | 200 / 404 | `active_stay.status`, `qr_status` |
+| S3 | `POST /api/v1/qr/validate` | `RPI-DEV` | 200 / 403 | `RESERVED→OCCUPIED`, `first_used_at`, lock (SIMULATED) |
+| S4 | `GET /api/v1/rooms/12/live` | pública | 200 | `active_stay.status=OCCUPIED`, `qr_status.in_use=true` |
+| S5 | `POST /sim/rooms/12/presence` + `POST /sim/rooms/12/door` ×2 | `SIM-CLIENT` | 202 / 403 | `PRESENT` + `OPEN` + `CLOSED` |
+| S6 | `GET /api/v1/rooms/12/live` | pública | 200 | `entry_confirmed_at` no nulo, `exit_deadline` nulo |
+| S7 | `POST /sim/rooms/12/door` ×2 + `POST /sim/rooms/12/presence` | `SIM-CLIENT` | 202 | `OPEN`+`CLOSED` (post-entrada) + `ABSENT` |
+| S8 | `GET /api/v1/rooms/12/live` | pública | 200 | `exit_deadline` no nulo |
+| S9 | worker `bin/exit-scan.php` (no HTTP) | — | — | `OCCUPIED→EXITED`, sala `FREE`, `AUTO_LOCK` |
+| S10 | `POST /api/v1/stays/{id}/close` | `ADMIN-CLI` + `Idempotency-Key` | 200 / 409 | `EXITED→CLOSED`; encola `stay.closed` en `outbox_vb6` |
+| S11 | `GET /api/v1/stays/{id}/overstay` | `ADMIN-CLI` | 200 / 404 / 409 | Lectura de overstay (opcional) |
+
+Notas de contrato relevantes:
+- **No existe `POST /api/v1/stays`**: la estancia la crea `POST /api/v1/qr` (`QrIssueService`).
+- `/sim/rooms/{id}/door|presence` exigen `SIMULATED_MODE=true` **o** `rooms.simulated_override=1`.
+- `POST /api/v1/qr` puede responder `422 slot_not_rentable` fuera de franja rentable o
+  `409 room_busy` si la sala tiene estancia activa (el test normaliza antes).
+- `POST /api/v1/qr/validate` exige que `device_id` sea un `RPI` del pack de la sala
+  (`403 device_mismatch`).
+- `POST /stays/{id}/close` encola `stay.closed` (efecto de contrato conocido).
+
+## 2. Campos de `GET /api/v1/rooms/12/live` usados como aserciones
+
+```json
+{
+  "room_id": 12,
+  "status": "FREE",
+  "iot_session": { "door_state": "CLOSED", "presence_state": "ABSENT", "last_absent_since": "..." },
+  "active_stay": {
+    "id": 123, "status": "OCCUPIED", "duracion_minutos": 60,
+    "first_entry_at": "...", "entry_confirmed_at": "..." 
+  },
+  "exit_deadline": "2026-09-28 10:00:09.000",
+  "gap_seconds": 15,
+  "exit_guard_seconds": 5,
+  "entry_window_seconds": 90,
+  "exit_check_seconds": 40,
+  "qr_status": {
+    "scannable": false, "consumed": true, "in_use": true,
+    "first_used_at": "...", "valid_until": "...", "arrival_deadline": "..."
+  }
+}
+```
+
+Aserciones por paso:
+- **S2**: `active_stay.status == "RESERVED"`, `qr_status.scannable == true`, `in_use == false`.
+- **S4**: `active_stay.status == "OCCUPIED"`, `qr_status.in_use == true`.
+- **S6**: `active_stay.entry_confirmed_at` no nulo, `iot_session.presence_state == "PRESENT"`,
+  `door_state == "CLOSED"`, `exit_deadline` nulo.
+- **S8**: `iot_session.presence_state == "ABSENT"`, `door_state == "CLOSED"`, `exit_deadline` no nulo.
+
+> Formato de fechas de `/live`: `Y-m-d H:i:s.v` (espacio, sin `T`/`Z`), según la serialización
+> vigente del proyecto.
+
+## 3. Idempotencia
+
+- Claves por ejecución: `Idempotency-Key: e2e-f54-qr-<ts>` (S1) y `e2e-f54-close-<ts>` (S10).
+- `/sim/*` no requieren `Idempotency-Key`; `rooms/reset` es seguro de repetir.
+
+## 4. No regresión de contrato
+
+Al no añadir rutas, campos ni códigos, ningún consumidor existente se ve afectado. La fase solo
+verifica contratos ya vigentes.

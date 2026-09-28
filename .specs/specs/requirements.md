@@ -859,3 +859,76 @@ degradar permanentemente el servicio.
 - **RF-60.4.3**: El contrato de `/health/deep` es aditivo: no se rompe la semántica previa.
 - **RF-60.4.4**: El panel de administración puede listar/reintentar los items `DEAD`
   (resumen de estados incluye `dead`).
+
+---
+
+# Fase 54: Batería de aceptación E2E (BLOCK 42)
+
+**Motivo**: la suite cubre cada pieza por separado (unitarias y bloques por fase), pero no existía
+una prueba que recorriera el **ciclo de vida completo de un huésped** encadenando los endpoints
+reales con los simulados `/sim/*`. Una regresión de integración (p. ej. que la salida F49 no
+dispare tras una entrada F42, o que el QR de F51 no transicione RESERVED→OCCUPIED antes de la
+coreografía) podía pasar desapercibida aunque cada bloque aislado siguiera en verde.
+
+**Sala de banco**: PROTO2 (`rooms.id=12`, `code='PROTO2'`, pack `305`, RPI `a0e549858428`,
+`room_type` STANDARD con franja RENTABLE 24/7).
+
+## RF-61: Batería de aceptación end-to-end determinista (BLOCK 42)
+
+### RF-61.1: Objetivo y alcance
+- **RF-61.1.1**: debe existir un único bloque secuencial de aceptación (`BLOCK 42` en
+  `api/bin/run-tests.sh`) que recorra el ciclo completo de un huésped sobre PROTO2, compartiendo
+  el estado (`stay_id`, `jti`, `qr_text`) entre pasos.
+- **RF-61.1.2**: el ciclo mínimo es: emisión de QR (crea stay `RESERVED`) → validación de QR +
+  apertura → entrada simulada → consolidación de `entry_confirmed_at` → salida simulada →
+  `exit_deadline` → confirmación de salida por el worker `exit-scan` → cierre de la estancia.
+- **RF-61.1.3**: cada paso asertará tanto la respuesta HTTP como el estado observable en
+  `GET /api/v1/rooms/12/live` y/o la BD (`stays`, `qr_credentials`, `iot_sessions`,
+  `access_events`).
+- **RF-61.1.4**: el bloque es el último de la suite (tras `BLOCK 41`) y no altera la semántica de
+  los bloques 1–41.
+
+### RF-61.2: Determinismo, sin hardware y sin cuota
+- **RF-61.2.1**: el bloque no depende de hardware físico: la puerta y la presencia se inyectan con
+  `POST /sim/rooms/12/door` y `POST /sim/rooms/12/presence` (`provider=SIMULATED`).
+- **RF-61.2.2**: el bloque no consume cuota Tuya/IoT Core: con `rooms.simulated_override=1`,
+  `LockGatewayFactory` resuelve `SimulatedLockGateway` (no acciona el relé real) y
+  `SensorIngressFactory` resuelve el ingress simulado; no se invoca la nube ni el poller.
+- **RF-61.2.3**: las esperas son acotadas y con sondeo (poll con timeout), no `sleep` fijos
+  arbitrarios; el bloque no queda colgado si una precondición no se cumple.
+
+### RF-61.3: Precondiciones y SKIP explicativo
+- **RF-61.3.1**: si falta el servidor HTTP, alguna de las claves `SIM-CLIENT`, `VB6-MAIN`,
+  `RPI-DEV` o `ADMIN-CLI`, o el acceso a BD, el bloque completo se marca **SKIP** con motivo
+  explícito (nunca FAIL).
+- **RF-61.3.2**: si PROTO2 no tiene un **pack con dispositivo `RPI` resoluble**, se hace SKIP del
+  bloque con mensaje.
+- **RF-61.3.3**: si `POST /api/v1/qr` no devuelve `201` (p. ej. `409 room_busy` o
+  `422 slot_not_rentable`), se hace SKIP del flujo completo, no FAIL.
+- **RF-61.3.4**: si no hay ningún worker `exit-scan` en ejecución, el bloque arranca uno propio y
+  lo detiene en el cleanup.
+
+### RF-61.4: Idempotencia y limpieza
+- **RF-61.4.1**: el bloque es repetible: al inicio normaliza PROTO2 (cierra estancias activas,
+  limpia `iot_sessions`/`presence_events`, fija `simulated_override=1` y `presence_check_seconds=5`)
+  y usa `POST /dashboard-api/rooms/reset` como reset determinista.
+- **RF-61.4.2**: al terminar (éxito o fallo) restaura `simulated_override` y
+  `presence_check_seconds` al valor previo, cierra su estancia, borra su `iot_sessions`/
+  `presence_events`, deja la sala en `FREE` sin `cooldown_until` y mata solo el `exit-scan` que él
+  haya arrancado.
+- **RF-61.4.3**: las claves de idempotencia se generan por ejecución (`e2e-f54-qr-…-$(date +%s)`,
+  `e2e-f54-close-…-$(date +%s)`) para permitir repetición sin colisiones.
+- **RF-61.4.4**: se preservan `access_events` y `qr_credentials` como auditoría (patrón `BLOCK 22`).
+
+### RF-61.5: Trazabilidad
+- **RF-61.5.1**: el bloque se documenta en `AGENTS.md` (tabla de fases → runner) como
+  `F54 / BLOCK 42`.
+- **RF-61.5.2**: cada aserción indica el requisito que cubre (F51 para el ciclo de QR, F42 para la
+  ventana de entrada, F49/RF-47 para la salida, F41 para la atomicidad/dedup).
+- **RF-61.5.3**: el bloque no introduce cambios de contrato de API (ver `contracts.md`, Fase 54).
+
+### RF-61.6: No regresión
+- **RF-61.6.1**: `bash bin/run-tests.sh` termina con **0 failures**; el nuevo bloque solo añade
+  PASS o SKIP.
+- **RF-61.6.2**: el bloque no degrada `health/deep` por su cuenta más allá del efecto real de
+  `POST /stays/{id}/close` (encola `stay.closed` en `outbox_vb6`).
