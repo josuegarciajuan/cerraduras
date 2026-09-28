@@ -2832,3 +2832,98 @@ documenta explícitamente que `DEAD` es reencolable (`status='PENDING'`, `attemp
   fuente para (a) `DEAD` en `markPermanentlyFailed` y en el techo de `markFailed`, (b) `scheduleRetry`
   incluye `DEAD`, (c) `HealthController` expone `outbox_dead` sin tocar `$allOk`, (d) existencia y
   contenido de la migración `0115`.
+
+---
+
+# Fase 54 — Batería de aceptación E2E (BLOCK 42, RF-61)
+
+## 18.1 Problema y decisión
+
+La suite valida capacidades por bloques, pero **nadie recorre el ciclo completo de un huésped con
+estado compartido**. Un fallo de integración (que la salida F49 no dispare tras una entrada F42, o
+que el QR F51 no transicione RESERVED→OCCUPIED antes de la coreografía) no se detecta si cada
+bloque se prueba por separado con su propio setup.
+
+**Decisión**: un único bloque secuencial `BLOCK 42` en `api/bin/run-tests.sh` que encadena los
+endpoints reales y `/sim/*` sobre **PROTO2** (`rooms.id=12`, pack `305`, RPI `a0e549858428`),
+compartiendo `stay_id`/`jti`/`qr_text` entre pasos.
+
+## 18.2 Por qué un bloque secuencial y no tests sueltos
+
+- El valor es la **secuencia**: emitir → validar → entrar → salir → cerrar. Cada paso depende del
+  estado dejado por el anterior (`stay_id`, `first_used_at`, `entry_confirmed_at`, `last_absent_since`).
+- Un test aislado tendría que recrear el preámbulo entero, duplicando setup y volviendo el fallo
+  más difícil de localizar. En secuencia, un rojo señala el eslabón exacto.
+- Se mantiene el estilo del runner (helpers `pass/fail/skip/http_test`, `get_key`, `$MYSQL`).
+
+## 18.3 Por qué PROTO2 y por qué `/sim/*` + API real
+
+- PROTO2 es la sala de banco del proyecto (pack `proto2`, room_type STANDARD con franja RENTABLE
+  24/7), ya usada por BLOCK 32/35; es el entorno donde el usuario realiza las pruebas físicas.
+- La puerta y la presencia **reales** dependen de Tuya/ESP32 (no deterministas y con cuota).
+  `/sim/*` inyecta eventos `provider=SIMULATED`.
+- Con `rooms.simulated_override=1`, `LockGatewayFactory` (regla 1) resuelve
+  `SimulatedLockGateway` y `SensorIngressFactory` el ingress simulado: **no** se acciona el relé
+  real ni se consume cuota. El resto del recorrido usa la **API real** (`POST /api/v1/qr`,
+  `POST /api/v1/qr/validate`, `GET /live`, `POST /stays/{id}/close`, `GET /stays/{id}/overstay`)
+  y la BD real, de modo que cubre los contratos de producción.
+
+## 18.4 Estado compartido entre pasos
+
+- **No existe `POST /api/v1/stays`** (solo `GET`): la estancia `RESERVED` la crea `POST /api/v1/qr`
+  (`QrIssueService::issue()`), que devuelve `stay_id`, `jti`, `qr_text`, `issued_at`, `expires_at`.
+- `POST /api/v1/qr/validate` reclama el primer uso (`first_used_at`/`valid_until`) y transiciona
+  RESERVED→OCCUPIED de forma atómica (`markFirstUse`); precondición de la coreografía.
+- La entrada se consolida con un ciclo de puerta acreditado + presencia (`entry_confirmed_at`). El
+  orden probado (BLOCK 22) es `PRESENT → OPEN → CLOSED`.
+- La salida exige un ciclo de puerta **posterior** a `entry_confirmed_at` (`OPEN → CLOSED`) y luego
+  `ABSENT` (RF-47). Entonces `/live` emite `exit_deadline = last_absent_since + exit_guard_seconds`
+  (`exit_guard_seconds` = `rooms.presence_check_seconds` > `EXIT_ABSENCE_GUARD_SECONDS` > 3).
+- La confirmación la hace `bin/exit-scan.php` (supervisado por systemd con tick 2 s,
+  `ExitActionService::executeIfPending` idempotente). El stay pasa a `EXITED` y la sala a `FREE`.
+- `POST /stays/{id}/close` (ADMIN-CLI) lleva `EXITED→CLOSED` y encola `stay.closed` en `outbox_vb6`.
+
+## 18.5 Limpieza y restauración
+
+`BLOCK 42` es el último y deja el banco limpio. Patrón:
+
+1. Guardar `simulated_override` y `presence_check_seconds` de PROTO2 (`E2E_SAVE_*`).
+2. Normalizar: cerrar estancias activas (SQL) + borrar `presence_events`/`iot_sessions` de la sala
+   + fijar `pack_id`, `simulated_override=1`, `presence_check_seconds=5`, `status='FREE'`,
+   `cooldown_until=NULL`; después `POST /dashboard-api/rooms/reset`.
+3. Cleanup final (éxito o fallo, `_e2e_cleanup`): cerrar su estancia, borrar sus
+   `presence_events`/`iot_sessions`, restaurar `simulated_override`/`presence_check_seconds`, dejar
+   la sala en `FREE` sin `cooldown_until`, y matar solo el `exit-scan` propio. Se conservan
+   `access_events`/`qr_credentials` como auditoría (patrón BLOCK 22).
+4. No se usa `trap EXIT` para no pisar el `trap _cleanup_factory_test EXIT` de F40; el cleanup se
+   invoca explícitamente al final del bloque.
+
+> **PROTO2 queda en `FREE`**, no se restaura el `status='RESERVED'` con estancia `OVERSTAY` que
+> pudiera existir antes de la corrida: la sala es un banco de pruebas y se normaliza deliberadamente.
+
+## 18.6 SKIP vs FAIL
+
+**SKIP** (con motivo), nunca FAIL, cuando falta una precondición del entorno: servidor HTTP caído;
+claves `SIM-CLIENT`/`VB6-MAIN`/`RPI-DEV`/`ADMIN-CLI` ausentes; BD no accesible; PROTO2 sin pack/RPI
+resoluble; `POST /qr` ≠ `201`. **FAIL** solo ante una violación real de contrato/estado.
+
+## 18.7 Riesgos de regresión y mitigación
+
+- **Push real de presencia**: el sensor 24G (`presence_source='push'`) podría alterar el estado si
+  alguien se mueve en la sala durante la corrida. La sala está en reposo durante el test; riesgo
+  bajo. No se llama a la nube ni al poller.
+- **`POST /qr` ocupado/no rentable**: se normaliza antes (SQL + reset); si aun así ≠ 201 → SKIP.
+- **Resolución del RPI**: `/qr/validate` rechaza `device_mismatch` si el `device_id` no pertenece a
+  la sala; se resuelve por SQL desde `rooms.pack_id` y se SKIP si no existe.
+- **`exit-scan` concurrente**: puede haber varias instancias; `executeIfPending` garantiza una sola
+  transición. Se reutiliza el de systemd si existe; solo se arranca/mata uno propio en su defecto.
+- **Tiempo**: el sondeo de salida tiene timeout de 25 s; el bloque no cuelga la suite.
+- **Ruido en `outbox_vb6`**: `POST /stays/{id}/close` encola `stay.closed` (efecto real de
+  contrato); no degrada `health/deep`.
+
+## 18.8 Pruebas (este bloque es la prueba)
+
+- Unitarias puras (F42/F49/F51) ya cubren la lógica; `BLOCK 42` cubre la **integración**.
+- Criterio de aceptación: `bash bin/run-tests.sh` con **0 failures** y `BLOCK 42` en verde (o SKIP
+  justificado por entorno).
+- Guardas de no regresión: los 297 passed previos no deben caer; el bloque solo añade PASS/SKIP.

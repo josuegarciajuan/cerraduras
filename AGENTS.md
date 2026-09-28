@@ -122,6 +122,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F50 Estado real del SWITCH por push + robustez consumer** | **BLOCK 39** | **Completado** |
 | **F51 Ciclo de vida del QR de huésped (llegada + estancia)** | **BLOCK 40** | **Completado** |
 | **F52 Cola muerta (dead-letter) del outbox WS-VB6** | **BLOCK 41** | **Completado** |
+| **F54 Batería de aceptación E2E (ciclo del huésped)** | **BLOCK 42** | **Completado** |
 
 ### F49–F52 — Cierres de fase recientes (A2–A6)
 
