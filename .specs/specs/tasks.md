@@ -2471,3 +2471,43 @@ los contaba en `outbox_failed`, dejando el sistema `degraded` de forma indefinid
 | F52-03 | `outbox_dead` en health | RF-60.4.1/60.4.2 | `HealthController.php` | unit PHP (guarda) |
 | F52-04 | Reintento manual + summary | RF-60.3.1/60.4.4 | `AdminController.php` | unit PHP (guarda) |
 | F52-05 | Specs y contrato | RF-60 | `requirements/design/contracts/tasks.md` | unit PHP |
+
+---
+
+# F53 — Panel: selector de habitación robusto (bugfix UX)
+
+**Motivo**: en el panel (`/dashboard`) el desplegable de habitación no se abría
+(Firefox/Safari escritorio). Diagnóstico: `fetchRooms()` corría cada 5 s y reconstruía los
+`<option>` con `innerHTML=''`; la guarda de foco sólo se comprobaba **antes** del `await`, así
+que una respuesta en vuelo cerraba/impedía el picker nativo. En algunos navegadores el click
+enfoca el `<select>` pero no abre la lista (`showPicker()` sí). Los logs de `api.log` muestran
+que el poll de `/dashboard-api/rooms` se detenía en seco al enfocar el selector mientras el
+resto de polls seguían, confirmando el foco sobre el `<select>`.
+
+### TSK-F53-01: Decisión pura + hardening de `fetchRooms`
+- **Cambio**: nuevo `api/public/assets/room-selector.js` (UMD) con
+  `shouldRebuildRoomOptions(...)`; `dashboard.html::fetchRooms` la usa y **re-comprueba tras el
+  `await`** (foco o ventana `_roomPickerBusyUntil`); actualiza etiquetas **en sitio** cuando no
+  cambian los ids; `_roomsSignature` sólo se fija tras un rebuild efectivo; el interval de 5 s
+  también respeta la ventana de interacción.
+- **Test propio**: `tests/Unit/room-selector.test.js` (16 casos).
+
+### TSK-F53-02: Fallback del picker nativo (`showPicker`)
+- **Cambio**: `wireRoomPicker()` en `dashboard.html` — en `#room-selector` y
+  `#modal-room-select`, listeners `focusin/pointerdown/mousedown/touchstart` marcan la ventana
+  de interacción; el listener `click` llama a `showPicker()` sólo si la lista no está ya
+  abierta (`:open`), con try/catch para navegadores sin soporte `:open`.
+- **Test propio**: verificación manual en Chromium/Firefox; cubierto también por la decisión
+  pura de TSK-F53-01.
+
+### TSK-F53-03: Runner y specs
+- **Cambio**: `bin/run-tests.sh` añade el bloque JS `room-selector.test.js`; `tasks.md` (F53).
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+## Tabla resumen F53
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F53-01 | Decisión pura + hardening `fetchRooms` | UX panel | `assets/room-selector.js`, `dashboard.html` | unit JS |
+| F53-02 | Fallback `showPicker` | UX panel | `dashboard.html` | manual + unit JS |
+| F53-03 | Runner y specs | UX panel | `bin/run-tests.sh`, `tasks.md` | regresión |

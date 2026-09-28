@@ -3133,6 +3133,23 @@ else
     skip "JS: cal-walktest.test.js" "fichero no encontrado"
 fi
 
+# ── 35.0c Unit JS: selector de habitación del panel (sin navegador/red/BD) ──
+ROOMSEL_JS="tests/Unit/room-selector.test.js"
+if [ -f "$ROOMSEL_JS" ]; then
+    ROOMSEL_OUT=$(node "$ROOMSEL_JS" 2>&1)
+    ROOMSEL_RC=$?
+    ROOMSEL_SUM=$(echo "$ROOMSEL_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$ROOMSEL_SUM" ] && ROOMSEL_SUM="exit=$ROOMSEL_RC"
+    if [ "$ROOMSEL_RC" -eq 0 ]; then
+        pass "JS: room-selector.test.js ($ROOMSEL_SUM)"
+    else
+        fail "JS: room-selector.test.js" \
+            "$ROOMSEL_SUM — $(echo "$ROOMSEL_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: room-selector.test.js" "fichero no encontrado"
+fi
+
 # ── 35.1 Migración 0109: columna de ventana de entrada ─────────────────────
 F44_COL=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='room_types'

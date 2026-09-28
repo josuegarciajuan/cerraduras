@@ -7,6 +7,7 @@
 <script src="/assets/qrcode.min.js"></script>
 <script src="/assets/choreography.js"></script>
 <script src="/assets/cal-walktest.js"></script>
+<script src="/assets/room-selector.js"></script>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -1371,6 +1372,35 @@ function toggleZone5() { document.getElementById('zone5').classList.toggle('coll
 // ╚══════════════════════════════════════════════════════════╝
 
 let _roomsSignature = null;
+// Ventana (epoch ms) durante la cual NO se toca el DOM del selector: el usuario
+// está abriendo/usando el picker nativo y reconstruir los <option> lo cerraría.
+let _roomPickerBusyUntil = 0;
+
+// Red de seguridad del picker nativo: en algunos navegadores (Firefox/Safari) un
+// click enfoca el <select> pero no llega a abrir la lista. `showPicker()` sí la
+// abre; sólo se llama si la lista NO está ya abierta (`:open`) para no cerrarla
+// en navegadores donde el click nativo funciona. Sin soporte `:open` no se toca.
+function wireRoomPicker() {
+  const sel = document.getElementById('room-selector');
+  if (sel) {
+    const markBusy = () => { _roomPickerBusyUntil = Date.now() + 8000; };
+    sel.addEventListener('focusin', markBusy);
+    sel.addEventListener('pointerdown', markBusy);
+    sel.addEventListener('mousedown', markBusy);
+    sel.addEventListener('touchstart', markBusy, { passive: true });
+    sel.addEventListener('click', function () {
+      if (typeof this.showPicker !== 'function') return;
+      try { if (!this.matches(':open')) this.showPicker(); } catch (e) { /* sin soporte :open */ }
+    });
+  }
+  const msel = document.getElementById('modal-room-select');
+  if (msel && typeof msel.showPicker === 'function') {
+    msel.addEventListener('click', function () {
+      try { if (!this.matches(':open')) this.showPicker(); } catch (e) { /* sin soporte :open */ }
+    });
+  }
+}
+wireRoomPicker();
 
 async function fetchRooms() {
   try {
@@ -1378,22 +1408,47 @@ async function fetchRooms() {
     if (!res.ok) return;
     roomList = await res.json();
     const sel = document.getElementById('room-selector');
-    // Signature of what the <select> actually renders (id/code/status/pack).
-    // Rebuilding <option> nodes while the native picker is open dismisses it
-    // (notably on Android/mobile), so only touch the DOM when it really changed.
+    if (!sel) return;
+    // Firma de lo que el <select> debe renderizar (id/code/status/pack).
     const signature = JSON.stringify(roomList.map(r => [r.id, r.code, r.pack_id ? r.status : 'sin pack']));
-    if (signature === _roomsSignature && sel.options.length === roomList.length) return;
+    // Decisión pura y testeable (assets/room-selector.js). Importante: se
+    // re-comprueba DESPUÉS del await, porque la petición pudo empezar antes de
+    // que el usuario abriese el picker (la guarda previa al fetch no basta).
+    const decision = (typeof RoomSelector !== 'undefined' && RoomSelector.shouldRebuildRoomOptions)
+      ? RoomSelector.shouldRebuildRoomOptions({
+          prevSignature: _roomsSignature,
+          nextSignature: signature,
+          optionCount: sel.options.length,
+          roomCount: roomList.length,
+          focused: document.activeElement === sel,
+          interactingUntil: _roomPickerBusyUntil,
+          now: Date.now(),
+        })
+      : { rebuild: signature !== _roomsSignature || sel.options.length !== roomList.length, blocked: false };
+    if (!decision.rebuild) return; // sin cambios o bloqueado → se reintenta al siguiente tick
+
     _roomsSignature = signature;
     const currentVal = sel.value; // preserve selection
-    sel.innerHTML = '';
-    roomList.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.id;
-      const label = r.code;
-      const statusText = r.pack_id ? r.status : 'sin pack';
-      opt.textContent = `${label} (${statusText})`;
-      sel.appendChild(opt);
-    });
+    const idsChanged = sel.options.length !== roomList.length;
+    if (idsChanged) {
+      // Cambió el conjunto de habitaciones: reconstruir nodos.
+      sel.innerHTML = '';
+      roomList.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = `${r.code} (${r.pack_id ? r.status : 'sin pack'})`;
+        sel.appendChild(opt);
+      });
+    } else {
+      // Mismo conjunto: actualizar etiquetas EN SITIO (no destruye el picker).
+      roomList.forEach((r, i) => {
+        const opt = sel.options[i];
+        if (!opt) return;
+        if (opt.value != r.id) opt.value = r.id;
+        const label = `${r.code} (${r.pack_id ? r.status : 'sin pack'})`;
+        if (opt.textContent !== label) opt.textContent = label;
+      });
+    }
     if (currentVal && roomList.find(r => r.id == currentVal)) sel.value = currentVal;
     else if (roomList.length > 0) sel.value = currentRoomId;
   } catch(e) { console.error('fetchRooms:', e); }
@@ -3125,11 +3180,12 @@ async function init() {
   // F41·TSK-F41-14: conteo local a 250 ms (no se congela si no llegan eventos).
   setInterval(updateCountdown, 250);
   // Rooms refresh (less frequent, keep for room selector).
-  // Skip while the selector is focused: rebuilding <option> closes the native
-  // picker mid-interaction (Android/mobile). It will refresh on the next tick.
+  // Skip while the selector is focused/interacting: rebuilding <option> closes
+  // the native picker mid-interaction (Firefox/Safari/Android). fetchRooms()
+  // vuelve a comprobarlo tras el await, así que aquí sólo se evita el fetch.
   setInterval(() => {
     const sel = document.getElementById('room-selector');
-    if (sel && document.activeElement === sel) return;
+    if (sel && (document.activeElement === sel || Date.now() < _roomPickerBusyUntil)) return;
     fetchRooms();
   }, 5000);
 }
