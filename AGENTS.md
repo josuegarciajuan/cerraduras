@@ -123,6 +123,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F51 Ciclo de vida del QR de huésped (llegada + estancia)** | **BLOCK 40** | **Completado** |
 | **F52 Cola muerta (dead-letter) del outbox WS-VB6** | **BLOCK 41** | **Completado** |
 | **F54 Batería de aceptación E2E (ciclo del huésped)** | **BLOCK 42** | **Completado** |
+| **F55 Panel de aceptación manual (`/pruebas`)** | **BLOCK 43** | **Completado** |
 
 ### F49–F52 — Cierres de fase recientes (A2–A6)
 

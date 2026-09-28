@@ -178,6 +178,150 @@ $router->get(
     }
 );
 
+// Public acceptance checklist HTML (no auth — LAN/MVP dev tool, F55/RF-62)
+$router->get(
+    '/pruebas',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $htmlFile = __DIR__ . '/pruebas.html';
+        if (!is_file($htmlFile)) {
+            return \App\Http\Response::json(404, ['error' => 'pruebas HTML not found']);
+        }
+        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+    }
+);
+
+// ── Acceptance runs store (no auth — LAN/MVP dev tool, F55/RF-62) ─────────────
+// Guarda cada corrida de aceptación manual en api/run/acceptance/<run-id>.json.
+// run_id saneado por whitelist para impedir path traversal; escritura atómica.
+$acceptanceDir    = dirname(__DIR__) . '/run/acceptance';
+$acceptanceRunIdOk = static function (string $id): bool {
+    return (bool) preg_match('/^[A-Za-z0-9_-]{1,64}$/', $id);
+};
+$acceptanceSummaryOf = static function (array $tests, array $config): array {
+    $naGreen = !isset($config['naCountsAsGreen']) || (bool) $config['naCountsAsGreen'];
+    $pass = 0; $fail = 0; $na = 0; $pending = 0;
+    foreach ($tests as $t) {
+        $st = is_array($t) ? ($t['status'] ?? 'PENDING') : 'PENDING';
+        if ($st === 'PASS') $pass++;
+        elseif ($st === 'FAIL') $fail++;
+        elseif ($st === 'NA') $na++;
+        else $pending++;
+    }
+    $total = count($tests);
+    $green = $total > 0 && $pending === 0 && $fail === 0 && ($naGreen || $na === 0);
+    return ['pass' => $pass, 'fail' => $fail, 'na' => $na, 'pending' => $pending, 'total' => $total, 'green' => $green];
+};
+
+$router->post(
+    '/dashboard-api/acceptance/save',
+    function (\App\Http\Request $request) use ($acceptanceDir, $acceptanceRunIdOk, $acceptanceSummaryOf): \App\Http\Response {
+        $body  = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $runId = (string) ($body['run_id'] ?? '');
+        if (!$acceptanceRunIdOk($runId)) {
+            return \App\Http\Response::json(400, ['error' => 'run_id inválido']);
+        }
+        if (!isset($body['tests']) || !is_array($body['tests'])) {
+            return \App\Http\Response::json(400, ['error' => 'tests requerido']);
+        }
+        $config = is_array($body['config'] ?? null) ? $body['config'] : [];
+        $record = [
+            'run_id'     => $runId,
+            'operator'   => (string) ($body['operator'] ?? ''),
+            'room_id'    => (int) ($body['room_id'] ?? 0),
+            'commit'     => (string) ($body['commit'] ?? ''),
+            'started_at' => (string) ($body['started_at'] ?? ''),
+            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            'revision'   => (int) ($body['revision'] ?? 0),
+            'config'     => $config,
+            'tests'      => $body['tests'],
+            'summary'    => $acceptanceSummaryOf($body['tests'], $config),
+        ];
+        if (!is_dir($acceptanceDir) && !@mkdir($acceptanceDir, 0775, true) && !is_dir($acceptanceDir)) {
+            return \App\Http\Response::json(500, ['error' => 'no se pudo crear el directorio de corridas']);
+        }
+        $path = $acceptanceDir . '/' . $runId . '.json';
+        $tmp  = $path . '.tmp';
+        $ok = @file_put_contents(
+            $tmp,
+            json_encode($record, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            LOCK_EX
+        );
+        if ($ok === false || !@rename($tmp, $path)) {
+            @unlink($tmp);
+            return \App\Http\Response::json(500, ['error' => 'no se pudo guardar la corrida']);
+        }
+        return \App\Http\Response::json(200, ['ok' => true, 'run_id' => $runId, 'saved_at' => $record['updated_at']]);
+    }
+);
+
+$router->get(
+    '/dashboard-api/acceptance/list',
+    function () use ($acceptanceDir): \App\Http\Response {
+        $out = [];
+        if (is_dir($acceptanceDir)) {
+            foreach (glob($acceptanceDir . '/*.json') ?: [] as $f) {
+                $j = json_decode((string) @file_get_contents($f), true);
+                if (!is_array($j) || !isset($j['run_id'])) continue;
+                $s = is_array($j['summary'] ?? null) ? $j['summary'] : [];
+                $out[] = [
+                    'run_id'     => $j['run_id'],
+                    'operator'   => $j['operator'] ?? '',
+                    'room_id'    => $j['room_id'] ?? null,
+                    'commit'     => $j['commit'] ?? '',
+                    'started_at' => $j['started_at'] ?? '',
+                    'updated_at' => $j['updated_at'] ?? '',
+                    'pass'       => $s['pass'] ?? 0,
+                    'fail'       => $s['fail'] ?? 0,
+                    'na'         => $s['na'] ?? 0,
+                    'pending'    => $s['pending'] ?? 0,
+                    'total'      => $s['total'] ?? 0,
+                    'green'      => (bool) ($s['green'] ?? false),
+                ];
+            }
+        }
+        usort($out, static function ($a, $b) {
+            return strcmp((string) $b['updated_at'], (string) $a['updated_at']);
+        });
+        return \App\Http\Response::json(200, $out);
+    }
+);
+
+$router->get(
+    '/dashboard-api/acceptance/get',
+    function (\App\Http\Request $request) use ($acceptanceDir, $acceptanceRunIdOk): \App\Http\Response {
+        $id = (string) ($request->query('id') ?? '');
+        if (!$acceptanceRunIdOk($id)) {
+            return \App\Http\Response::json(400, ['error' => 'id inválido']);
+        }
+        $path = $acceptanceDir . '/' . $id . '.json';
+        if (!is_file($path)) {
+            return \App\Http\Response::json(404, ['error' => 'corrida no encontrada']);
+        }
+        $j = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($j)) {
+            return \App\Http\Response::json(500, ['error' => 'corrida corrupta']);
+        }
+        return \App\Http\Response::json(200, $j);
+    }
+);
+
+$router->delete(
+    '/dashboard-api/acceptance/delete',
+    function (\App\Http\Request $request) use ($acceptanceDir, $acceptanceRunIdOk): \App\Http\Response {
+        $id = (string) ($request->query('id') ?? '');
+        if (!$acceptanceRunIdOk($id)) {
+            return \App\Http\Response::json(400, ['error' => 'id inválido']);
+        }
+        $path = $acceptanceDir . '/' . $id . '.json';
+        if (!is_file($path)) {
+            return \App\Http\Response::json(404, ['error' => 'corrida no encontrada']);
+        }
+        return @unlink($path)
+            ? \App\Http\Response::json(200, ['ok' => true, 'deleted' => $id])
+            : \App\Http\Response::json(500, ['error' => 'no se pudo borrar']);
+    }
+);
+
 // --- Dashboard internal API (no auth — LAN/MVP) ---
 
 /**

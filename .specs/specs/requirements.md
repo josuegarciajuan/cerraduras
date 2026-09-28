@@ -932,3 +932,54 @@ coreografía) podía pasar desapercibida aunque cada bloque aislado siguiera en 
   PASS o SKIP.
 - **RF-61.6.2**: el bloque no degrada `health/deep` por su cuenta más allá del efecto real de
   `POST /stays/{id}/close` (encola `stay.closed` en `outbox_vb6`).
+
+---
+
+# Fase 55: Panel de aceptación manual `/pruebas` (dev tool)
+
+**Motivo**: la batería E2E (F54/BLOCK 42) es automática y determinista, pero las pruebas que
+requieren hardware real (escaneo físico del QR, apertura del relé, sensor de puerta, presencia
+24G, switch) deben ejecutarse a mano. Faltaba una herramienta de campo para recorrerlas, anotar el
+resultado de cada una y guardar corridas comparables hasta que todo quede en verde.
+
+## RF-62: Panel de aceptación manual
+
+### RF-62.1: Página y catálogo
+- **RF-62.1.1**: debe existir una página pública (`GET /pruebas`, sin auth, coherente con
+  `/dashboard` y `/simula`) que liste las **53 pruebas** del protocolo manual de PROTO2.
+- **RF-62.1.2**: el catálogo vive versionado en `api/public/assets/acceptance-tests.json` con
+  `blocks` y `tests` (campos `id`, `block`, `type`, `title`, `action`, `expected`, `evidence`);
+  la página lo carga con `fetch` y muestra un estado de error si falta o está malformado.
+- **RF-62.1.3**: cada prueba es marcable como **PASS / FAIL / N/A / Pendiente** con notas libres;
+  `N/A` exige nota por defecto.
+
+### RF-62.2: Progreso y navegación
+- **RF-62.2.1**: la UI muestra el progreso global (contadores por estado y porcentaje), la tira de
+  celdas por prueba, el bloque actual y la posición (`N/53`).
+- **RF-62.2.2**: existen "siguiente pendiente", navegación anterior/siguiente, índice por bloques
+  y salto directo a una prueba.
+- **RF-62.2.3**: el estado se distingue **nunca solo por color** (icono + etiqueta + forma/patrón).
+- **RF-62.2.4**: la página es usable en móvil (objetivos táctiles grandes, barra de veredictos fija)
+  y en escritorio (índice lateral + detalle).
+
+### RF-62.3: Captura de estado y criterio de cierre
+- **RF-62.3.1**: cada prueba ofrece **📸 Capturar estado**, que adjunta a esa prueba un snapshot de
+  `GET /api/v1/rooms/<room>/live` y `GET /api/v1/health/deep` (con `captured_at` y errores si son
+  parciales).
+- **RF-62.3.2**: el banner **TODO EN VERDE** aparece solo cuando `pending=0` y `fail=0`; por defecto
+  `N/A` cuenta como verde (`config.naCountsAsGreen=true`), con modo estricto alternativo.
+
+### RF-62.4: Persistencia y corridas
+- **RF-62.4.1**: las corridas se guardan en `api/run/acceptance/<run-id>.json` (fuera de git) a
+  través de `POST /dashboard-api/acceptance/save`; `run_id` saneado por whitelist
+  `^[A-Za-z0-9_-]{1,64}$` y escritura atómica.
+- **RF-62.4.2**: `GET /dashboard-api/acceptance/list` lista las corridas (metadatos y resumen) y
+  `GET /dashboard-api/acceptance/get?id=` devuelve una corrida completa.
+- **RF-62.4.3**: `DELETE /dashboard-api/acceptance/delete?id=` borra una corrida.
+- **RF-62.4.4**: la UI autoguarda (debounce + indicador), permite reanudar una corrida en curso,
+  cargar una anterior, exportar JSON/Markdown e imprimir.
+
+### RF-62.5: No regresión
+- **RF-62.5.1**: los endpoints existentes no cambian de contrato; las rutas nuevas son aditivas.
+- **RF-62.5.2**: `bash bin/run-tests.sh` termina con **0 failures** con el nuevo `BLOCK 43`.
+- **RF-62.5.3**: la lógica pura se cubre con `tests/Unit/acceptance-logic.test.js` (sin DOM/red/BD).

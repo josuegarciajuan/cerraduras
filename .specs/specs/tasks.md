@@ -2570,3 +2570,55 @@ exige `simulated_override=1` para `/sim/*` y el lock simulado.
 | F54-04 | Entrada/salida/confirmación (S5–S9) | RF-61.1/61.2/61.3 | `api/bin/run-tests.sh` | BLOCK 42 |
 | F54-05 | Cierre, overstay y cleanup (S10–S12) | RF-61.1/61.4 | `api/bin/run-tests.sh` | BLOCK 42 |
 | F54-06 | Registro en tabla de fases | RF-61.5 | `AGENTS.md` | — |
+
+---
+
+# Fase 55 — Panel de aceptación manual `/pruebas` (RF-62)
+
+**Motivo**: las pruebas con hardware real deben ejecutarse a mano y dejar traza comparable hasta
+que todo quede en verde.
+
+### TSK-F55-01: Specs y contrato
+- **Cambio**: `requirements.md` (RF-62), `design.md` (§19), `contracts.md` (F55), `tasks.md`, `AGENTS.md`.
+- **RF**: RF-62.1, RF-62.5.
+- **Test propio**: revisión de rutas aditivas.
+
+### TSK-F55-02: Catálogo + lógica pura
+- **Cambio**: `public/assets/acceptance-tests.json` (53 pruebas), `public/assets/acceptance-logic.js` (UMD),
+  `tests/Unit/acceptance-logic.test.js`.
+- **RF**: RF-62.1.2, RF-62.2.1, RF-62.3.2, RF-62.5.3.
+- **Test propio**: `node tests/Unit/acceptance-logic.test.js` (BLOCK 1/43).
+
+### TSK-F55-03: Página y controlador
+- **Cambio**: `public/pruebas.html`, `public/assets/acceptance-app.js` (marcado, navegación,
+  captura, autosave, corridas, export, banner verde).
+- **RF**: RF-62.2, RF-62.3, RF-62.4.4.
+- **Test propio**: `GET /pruebas` 200 + prueba manual.
+
+### TSK-F55-04: Rutas y persistencia
+- **Cambio**: `public/index.php` — `GET /pruebas` y `dashboard-api/acceptance/{save,list,get,delete}`
+  con whitelist de `run_id` y escritura atómica en `api/run/acceptance/`.
+- **RF**: RF-62.1.1, RF-62.4.1, RF-62.4.2, RF-62.4.3.
+- **Test propio**: `BLOCK 43`.
+
+### TSK-F55-05: Runner
+- **Cambio**: `bin/run-tests.sh` — `BLOCK 43` (lógica JS, catálogo, endpoints save/get/list/delete,
+  run_id inseguro → 400, 404).
+- **RF**: RF-62.5.2.
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+### TSK-F55-06: Registro en AGENTS.md
+- **Cambio**: fila `F55 — Panel de aceptación manual | BLOCK 43`.
+- **RF**: RF-62.1.
+- **Test propio**: —
+
+## Tabla resumen F55
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F55-01 | Specs y contrato | RF-62.1/62.5 | `requirements/design/contracts/tasks.md`, `AGENTS.md` | revisión |
+| F55-02 | Catálogo + lógica pura | RF-62.1.2/62.2.1/62.3.2 | `assets/acceptance-tests.json`, `assets/acceptance-logic.js`, `tests/Unit/acceptance-logic.test.js` | unit JS |
+| F55-03 | Página + controlador | RF-62.2/62.3/62.4.4 | `public/pruebas.html`, `assets/acceptance-app.js` | `GET /pruebas` + manual |
+| F55-04 | Rutas + persistencia | RF-62.1.1/62.4 | `public/index.php` | BLOCK 43 |
+| F55-05 | Runner | RF-62.5.2 | `bin/run-tests.sh` | regresión |
+| F55-06 | Registro AGENTS.md | RF-62.1 | `AGENTS.md` | — |

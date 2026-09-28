@@ -2927,3 +2927,68 @@ resoluble; `POST /qr` ≠ `201`. **FAIL** solo ante una violación real de contr
 - Criterio de aceptación: `bash bin/run-tests.sh` con **0 failures** y `BLOCK 42` en verde (o SKIP
   justificado por entorno).
 - Guardas de no regresión: los 297 passed previos no deben caer; el bloque solo añade PASS/SKIP.
+
+---
+
+# Fase 55 — Panel de aceptación manual `/pruebas` (RF-62)
+
+## 19.1 Problema y decisión
+
+La aceptación de hardware (escaneo físico, relé, sensor de puerta, presencia, switch) no se puede
+automatizar sin hardware ni cuota. Ejecutarla desde un documento hace perder el estado entre
+pruebas y no deja traza comparable. **Decisión**: una página vanilla en `GET /pruebas`
+(`api/public/pruebas.html`) que consume un catálogo JSON versionado y persiste cada corrida como
+un fichero JSON en `api/run/acceptance/` (gitignored), siguiendo el patrón de `/dashboard`,
+`/simula` y los `dashboard-api/*` sin auth (LAN/MVP).
+
+## 19.2 Arquitectura
+
+| Capa | Artefacto | Responsabilidad |
+|------|-----------|-----------------|
+| Catálogo | `public/assets/acceptance-tests.json` | 53 pruebas + bloques (datos, versionado) |
+| Lógica pura | `public/assets/acceptance-logic.js` (UMD) | `summarize`, `isGreen`, `nextPending`, `nextOpen`, `progressCells`, `diffRuns`, `toMarkdown` |
+| UI | `public/pruebas.html` | marcado + CSS (tema oscuro del dashboard), sin build |
+| Controlador | `public/assets/acceptance-app.js` | estado, render, autosave, captura, navegación |
+| Rutas | `public/index.php` | `GET /pruebas` + `dashboard-api/acceptance/{save,list,get,delete}` |
+
+Sin frameworks ni build: coherente con `dashboard.html` y `cal-walktest.js`.
+
+## 19.3 Datos
+
+**Catálogo** (`version`, `room_id`, `room_label`, `blocks[]`, `tests[]`). Tipos de prueba:
+`shell`, `nav`, `fisico`, `mixto`.
+
+**Corrida** `api/run/acceptance/<run-id>.json`:
+`run_id`, `operator`, `room_id`, `commit`, `started_at`, `updated_at`, `revision`, `config`
+(`naCountsAsGreen`, `naRequiresNote`), `tests` (`{id:{status,notes,snapshot}}`) y `summary`
+calculado en el servidor (`pass/fail/na/pending/total/green`).
+
+## 19.4 Persistencia y seguridad
+
+- `run_id` se valida con whitelist `^[A-Za-z0-9_-]{1,64}$` → evita path traversal.
+- Escritura atómica: `file_put_contents(<path>.tmp)` + `rename`, con `LOCK_EX`.
+- El directorio `api/run/` está en `.gitignore`: **git = código, no datos**.
+- Sin auth (coherente con el resto de `dashboard-api`); no expone secretos ni credenciales.
+
+## 19.5 UX (resumen)
+
+Modelo dual *Foco* (móvil, una prueba) / *Panel* (escritorio, índice+detalle). Tira de progreso de
+53 celdas, contadores por estado, "siguiente pendiente", auto-avance configurable con **Deshacer**,
+barra de veredictos fija (objetivos ≥56 px), captura de estado con feedback (idle/loading/ok/parcial/
+error), autosave con indicador y cola offline en `localStorage`, reanudar/lista/comparar corridas,
+export JSON/Markdown e impresión. Estado nunca solo por color. Atajos `P/F/N/U`, `J/K`, `S`, `C`.
+
+## 19.6 Riesgos y mitigación
+
+- **Página densa** → modelo dual, índice con bloques, evidencia colapsada.
+- **Pérdida de anotaciones en campo** → autosave + `localStorage` + Deshacer.
+- **`N/A` perezoso** → nota obligatoria, gris (nunca verde), contador propio y toggle estricto.
+- **Escritura sin auth** → whitelist de `run_id` + directorio fijo + escritura atómica.
+- **Catálogo roto** → estado de error explícito; no bloquea el resto de la app.
+
+## 19.7 Pruebas
+
+- `tests/Unit/acceptance-logic.test.js` (Node, autodescubierto en BLOCK 1) cubre la lógica pura.
+- `BLOCK 43` del runner: catálogo (53 ids únicos), `GET /pruebas`, y ciclo
+  save/get/list/delete + validación de `run_id` inseguro y 404.
+- Criterio de aceptación: `bash bin/run-tests.sh` con **0 failures** y `BLOCK 43` en verde.
