@@ -3873,6 +3873,111 @@ print('%s|%s|%s'%(bool(d.get('exit_deadline')),i.get('presence_state'),i.get('do
 fi
 
 # =============================================================================
+# BLOCK 43 — F55: Panel de aceptación manual (/pruebas) (RF-62)
+# Trazabilidad: RF-62.1..62.5; TSK-F55-01..06
+# =============================================================================
+block "BLOCK 43 — F55: Panel de aceptación manual (/pruebas)"
+
+# 43.1 Lógica pura (JS, sin navegador)
+ACC_JS="$PROJECT_DIR/tests/Unit/acceptance-logic.test.js"
+if [ -f "$ACC_JS" ]; then
+    ACC_OUT=$(node "$ACC_JS" 2>&1)
+    ACC_RC=$?
+    ACC_SUM=$(echo "$ACC_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$ACC_SUM" ] && ACC_SUM="exit=$ACC_RC"
+    if [ "$ACC_RC" -eq 0 ]; then
+        pass "JS: acceptance-logic.test.js ($ACC_SUM)"
+    else
+        fail "JS: acceptance-logic.test.js" \
+            "$ACC_SUM — $(echo "$ACC_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    skip "JS: acceptance-logic.test.js" "fichero no encontrado"
+fi
+
+# 43.2 Catálogo válido (53 pruebas, ids únicos)
+ACC_CATALOG="$PROJECT_DIR/public/assets/acceptance-tests.json"
+if [ -f "$ACC_CATALOG" ]; then
+    ACC_CAT=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('$ACC_CATALOG'))
+except Exception as e:
+    print('ERR '+str(e)); sys.exit()
+ts=d.get('tests') or []
+ids=[t.get('id') for t in ts]
+print('%d|%d' % (len(ts), len(set(ids))))
+" 2>/dev/null)
+    ACC_N=${ACC_CAT%%|*}
+    ACC_U=${ACC_CAT##*|}
+    if [ "$ACC_N" = "53" ] && [ "$ACC_U" = "53" ]; then
+        pass "F55: catálogo con 53 pruebas e ids únicos"
+    else
+        fail "F55: catálogo" "pruebas=$ACC_N únicas=$ACC_U (esperado 53|53)"
+    fi
+else
+    fail "F55: catálogo" "no existe public/assets/acceptance-tests.json"
+fi
+
+# 43.3-43.4 Endpoints HTTP (requieren servidor)
+if [ "$SERVER_UP" = true ]; then
+    http_test GET /pruebas 200 "F55: GET /pruebas → 200 (panel de aceptación)"
+
+    ACC_RUNID="test-f55-$(date +%s)"
+    ACC_SAVE=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/dashboard-api/acceptance/save" \
+        -H 'Content-Type: application/json' \
+        -d "{\"run_id\":\"$ACC_RUNID\",\"operator\":\"runner\",\"room_id\":12,\"commit\":\"test\",\"started_at\":\"2026-01-01T00:00:00Z\",\"revision\":1,\"config\":{\"naCountsAsGreen\":true},\"tests\":{\"P1\":{\"status\":\"PASS\"},\"P2\":{\"status\":\"NA\"}}}")
+    ACC_SAVE_CODE=$(echo "$ACC_SAVE" | tail -1)
+    if [ "$ACC_SAVE_CODE" = "200" ]; then
+        pass "F55: POST /acceptance/save → 200"
+    else
+        fail "F55: POST /acceptance/save" "HTTP $ACC_SAVE_CODE"
+    fi
+
+    ACC_GET=$(curl -s -w '\n%{http_code}' "$API_BASE/dashboard-api/acceptance/get?id=$ACC_RUNID")
+    ACC_GET_CODE=$(echo "$ACC_GET" | tail -1)
+    ACC_GET_BODY=$(echo "$ACC_GET" | sed '$d')
+    if [ "$ACC_GET_CODE" = "200" ] && echo "$ACC_GET_BODY" | grep -q "\"run_id\": *\"$ACC_RUNID\""; then
+        pass "F55: GET /acceptance/get devuelve la corrida guardada"
+    else
+        fail "F55: GET /acceptance/get" "HTTP $ACC_GET_CODE body=$(echo "$ACC_GET_BODY" | head -c 200)"
+    fi
+
+    ACC_GREEN=$(echo "$ACC_GET_BODY" | python3 -c "import sys,json;print((json.load(sys.stdin).get('summary') or {}).get('green'))" 2>/dev/null)
+    if [ "$ACC_GREEN" = "True" ]; then
+        pass "F55: summary.green con PASS+NA (naCountsAsGreen)"
+    else
+        fail "F55: summary.green" "got $ACC_GREEN"
+    fi
+
+    ACC_LIST=$(curl -s "$API_BASE/dashboard-api/acceptance/list")
+    if echo "$ACC_LIST" | grep -q "$ACC_RUNID"; then
+        pass "F55: GET /acceptance/list incluye la corrida"
+    else
+        fail "F55: GET /acceptance/list" "no aparece $ACC_RUNID"
+    fi
+
+    http_test GET "/dashboard-api/acceptance/get?id=does-not-exist-xyz" 404 \
+        "F55: GET /acceptance/get inexistente → 404"
+
+    http_test POST "/dashboard-api/acceptance/save" 400 \
+        "F55: POST /acceptance/save run_id con '..' → 400" \
+        --body '{"run_id":"../evil","tests":{}}'
+
+    ACC_DEL=$(curl -s -w '\n%{http_code}' -X DELETE "$API_BASE/dashboard-api/acceptance/delete?id=$ACC_RUNID")
+    ACC_DEL_CODE=$(echo "$ACC_DEL" | tail -1)
+    ACC_GONE=$(curl -s -o /dev/null -w '%{http_code}' "$API_BASE/dashboard-api/acceptance/get?id=$ACC_RUNID")
+    if [ "$ACC_DEL_CODE" = "200" ] && [ "$ACC_GONE" = "404" ]; then
+        pass "F55: DELETE /acceptance/delete borra la corrida"
+    else
+        fail "F55: DELETE /acceptance/delete" "delete=$ACC_DEL_CODE get=$ACC_GONE"
+        rm -f "$PROJECT_DIR/run/acceptance/$ACC_RUNID.json" 2>/dev/null || true
+    fi
+else
+    skip "F55 endpoints de corridas" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

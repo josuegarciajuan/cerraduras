@@ -1749,3 +1749,45 @@ Aserciones por paso:
 
 Al no añadir rutas, campos ni códigos, ningún consumidor existente se ve afectado. La fase solo
 verifica contratos ya vigentes.
+
+---
+
+# Fase 55: Panel de aceptación manual `/pruebas`
+
+## 1. Rutas nuevas (aditivas, sin auth — LAN/MVP)
+
+| Método | Ruta | Cuerpo / Query | Respuestas |
+|--------|------|----------------|------------|
+| GET | `/pruebas` | — | `200 text/html` (panel) |
+| POST | `/dashboard-api/acceptance/save` | `{run_id, operator, room_id, commit, started_at, updated_at, revision, config, tests}` | `200 {ok,run_id,saved_at}` · `400` (`run_id` inválido / `tests` ausente) · `500` (escritura) |
+| GET | `/dashboard-api/acceptance/list` | — | `200 [ {run_id,operator,room_id,commit,started_at,updated_at,pass,fail,na,pending,total,green} ]` |
+| GET | `/dashboard-api/acceptance/get` | `?id=<run_id>` | `200 <corrida>` · `400` (id inválido) · `404` |
+| DELETE | `/dashboard-api/acceptance/delete` | `?id=<run_id>` | `200 {ok,deleted}` · `400` · `404` |
+
+- `run_id` debe cumplir `^[A-Za-z0-9_-]{1,64}$` (si no, `400`) → sin path traversal.
+- Persistencia: `api/run/acceptance/<run_id>.json`; el `summary` lo recalcula el servidor
+  (`green` = `pending=0 && fail=0 && (naCountsAsGreen || na=0)`).
+
+## 2. Catálogo (`public/assets/acceptance-tests.json`)
+
+```json
+{
+  "version": 1,
+  "room_id": 12,
+  "blocks": [ { "id": "0", "name": "Precondiciones", "order": 0 } ],
+  "tests":  [ { "id": "P1", "block": "0", "type": "shell", "title": "…",
+                "action": "…", "expected": "…", "evidence": "…" } ]
+}
+```
+
+`type ∈ {shell, nav, fisico, mixto}`. 53 pruebas, `id` único.
+
+## 3. Snapshot de evidencia
+
+`📸 Capturar estado` hace `GET /api/v1/rooms/<room_id>/live` y `GET /api/v1/health/deep` (mismo
+origen) y adjunta a la prueba `{captured_at, room_id, live, health, errors[]}`. Son contratos ya
+vigentes; no se modifican.
+
+## 4. No regresión
+
+Rutas aditivas; ningún contrato existente cambia. `api/run/` es gitignored (no se versionan datos).

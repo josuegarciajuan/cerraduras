@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "room_id": 12,
+  "room_label": "PROTO2",
+  "blocks": [
+    { "id": "0", "name": "Precondiciones", "order": 0 },
+    { "id": "A", "name": "Estado inicial", "order": 1 },
+    { "id": "B", "name": "Emitir QR", "order": 2 },
+    { "id": "C", "name": "Escanear QR / apertura", "order": 3 },
+    { "id": "D", "name": "Entrada real", "order": 4 },
+    { "id": "F", "name": "Reentradas / multi-uso", "order": 5 },
+    { "id": "E", "name": "Salida real", "order": 6 },
+    { "id": "G", "name": "Casos negativos", "order": 7 },
+    { "id": "H", "name": "Extras (opcional)", "order": 8 }
+  ],
+  "tests": [
+    { "id": "P1", "block": "0", "type": "shell", "title": "Helpers de terminal", "action": "Pega los helpers del protocolo y ejecuta `q \"SELECT 1\"`.", "expected": "Devuelve `1` sin errores.", "evidence": "Salida de la terminal." },
+    { "id": "P2", "block": "0", "type": "shell", "title": "Health y workers", "action": "`curl -s .../api/v1/health/deep | python3 -m json.tool`.", "expected": "`status=healthy`, `database=ok`, `ws_vb6=reachable`. `outbox_dead` puede salir warning (no degrada).", "evidence": "JSON completo de health/deep." },
+    { "id": "P3", "block": "0", "type": "shell", "title": "System-status de workers", "action": "`curl -s .../dashboard-api/system-status`.", "expected": "6 workers `online:true, instances:1, healthy:true`.", "evidence": "JSON de system-status." },
+    { "id": "P4", "block": "0", "type": "shell", "title": "Estado de PROTO2", "action": "`SELECT id,code,status,pack_id,simulated_override,cooldown_until FROM rooms WHERE id=12`.", "expected": "`FREE`, `pack_id=305`, `simulated_override=NULL`, `cooldown_until=NULL`.", "evidence": "Fila de rooms." },
+    { "id": "P5", "block": "0", "type": "shell", "title": "Dispositivos del pack 305", "action": "`SELECT kind,external_id FROM devices WHERE pack_id=305`.", "expected": "RPI, LOCK, PROXIMITY, PRESENCE, SWITCH, SCANNER presentes.", "evidence": "Filas de devices." },
+    { "id": "P6", "block": "0", "type": "shell", "title": "Cuota Tuya", "action": "`live` y mira `tuya_quota.state`.", "expected": "`FREE`; anota si `tuya_quota` está `ok` o `exhausted`.", "evidence": "Campo tuya_quota." },
+    { "id": "P7", "block": "0", "type": "nav", "title": "Abrir dashboard con debug", "action": "Abre `/dashboard?room=12&debug=1`.", "expected": "Panel Instalador, croquis, tarjetas y badge debug visibles.", "evidence": "Captura de pantalla completa." },
+    { "id": "P8", "block": "0", "type": "nav", "title": "Abrir panel CRM", "action": "Login en `/panel/login.html` y recorre Habitaciones, Dispositivos, QRs, Estancias, Deudas, Anomalías, Salud, Monitor.", "expected": "Todas las pestañas cargan; Salud muestra sistema saludable.", "evidence": "Captura del panel." },
+    { "id": "P9", "block": "0", "type": "nav", "title": "Contadores base", "action": "Anota `state_events` y `door_changes` del badge debug.", "expected": "Valores base registrados para comparar después.", "evidence": "Anotación en notas." },
+
+    { "id": "P10", "block": "A", "type": "nav", "title": "Seleccionar PROTO2", "action": "En `Habitación a visualizar` elige PROTO2 (12).", "expected": "Indicador 🟢 Pack 305 visible; croquis activo.", "evidence": "Captura del indicador." },
+    { "id": "P11", "block": "A", "type": "nav", "title": "Reset de habitación", "action": "Pulsa **Reset** y confirma.", "expected": "Toast de reseteo; el botón vuelve a `Reset`.", "evidence": "Captura del toast." },
+    { "id": "P12", "block": "A", "type": "shell", "title": "Live inicial limpio", "action": "`live | python3 -m json.tool`.", "expected": "`status=FREE`, `active_stay=null`, `cooldown_until=null`, `qr_status.scannable=false`, `exit_deadline=null`.", "evidence": "JSON de /live." },
+    { "id": "P13", "block": "A", "type": "mixto", "title": "Croquis y sensores", "action": "Observa el croquis y la tarjeta **Sensores**.", "expected": "Monigote en el pasillo (fuera), puerta cerrada; filas Puerta/Presencia/Cerradura/Luz/Batería/Cooldown.", "evidence": "Captura del croquis." },
+
+    { "id": "P14", "block": "B", "type": "nav", "title": "Crear QR de pruebas", "action": "En **QR de pruebas**, Duración 60 min → **Crear QR**.", "expected": "QR visible con JTI, Expira y `Estado=ESCANEABLE`.", "evidence": "Captura del QR." },
+    { "id": "P15", "block": "B", "type": "shell", "title": "qr_status escaneable", "action": "`live | qr_status`.", "expected": "`scannable:true`, `in_use:false`, `expired:false`, `first_used_at:null`, `arrival_deadline = emisión+15min`.", "evidence": "JSON de qr_status." },
+    { "id": "P16", "block": "B", "type": "shell", "title": "Credencial en BD", "action": "`SELECT s.status,q.first_used_at,q.valid_until,q.revoked_at,q.expires_at FROM stays s JOIN qr_credentials q ON q.stay_id=s.id WHERE s.room_id=12 ORDER BY s.id DESC LIMIT 1`.", "expected": "Stay `RESERVED`; `first_used_at/valid_until/revoked_at=NULL`; `expires_at ≈ issued_at+(15+duracion)`.", "evidence": "Fila de la consulta." },
+    { "id": "P17", "block": "B", "type": "nav", "title": "Anotar arrival_deadline", "action": "Anota `arrival_deadline` y la hora actual.", "expected": "El primer escaneo debe ocurrir antes de `arrival_deadline`.", "evidence": "Anotación en notas." },
+
+    { "id": "P18", "block": "C", "type": "shell", "title": "Serial ESP32 listo", "action": "Abre el monitor Serial del ESP32 a 115200 y límpialo.", "expected": "Serial en reposo (heartbeat).", "evidence": "Captura del Serial." },
+    { "id": "P19", "block": "C", "type": "fisico", "title": "Escanear el QR", "action": "Escanea el QR en el lector GM65 de PROTO2.", "expected": "Pitido; Serial con `[QR] Formato OK`, `[QR] Encolado→POST`, `[QR] Validación HTTP 200`.", "evidence": "Captura del Serial + api.log." },
+    { "id": "P20", "block": "C", "type": "mixto", "title": "Puerta abre y panel EN USO", "action": "Observa el relé, la puerta y el croquis; mira el estado del panel QR.", "expected": "Chasquido del relé; puerta abre en el croquis; Timeline registra; panel QR pasa a EN USO.", "evidence": "Captura del croquis + panel." },
+    { "id": "P21", "block": "C", "type": "shell", "title": "Live OCCUPIED", "action": "`live`.", "expected": "`active_stay.status=OCCUPIED`, `first_entry_at` no nulo, `qr_status.in_use=true`, `first_used_at` fijado.", "evidence": "JSON de /live." },
+    { "id": "P22", "block": "C", "type": "shell", "title": "access_events", "action": "`SELECT id,kind,result,reason,provider,correlation_id FROM access_events WHERE room_id=12 ORDER BY id DESC LIMIT 5`.", "expected": "`QR_VALIDATE OK` + `OPEN OK` con el mismo `correlation_id`.", "evidence": "Filas de access_events." },
+    { "id": "P23", "block": "C", "type": "nav", "title": "Monigote en el umbral", "action": "Observa el monigote mientras la puerta está abierta.", "expected": "Avanza al umbral (altura de la puerta).", "evidence": "Captura del croquis." },
+
+    { "id": "P24", "block": "D", "type": "fisico", "title": "Cruzar al interior", "action": "Con la puerta abierta, cruza y sitúate a 1–2 m del radar.", "expected": "El radar 24G detecta movimiento/presencia.", "evidence": "Captura de Sensores." },
+    { "id": "P25", "block": "D", "type": "fisico", "title": "Cerrar la puerta", "action": "Cierra la puerta y permanece dentro.", "expected": "Puerta=CLOSED, Presencia=PRESENT.", "evidence": "Captura de Sensores." },
+    { "id": "P26", "block": "D", "type": "nav", "title": "Monigote dentro", "action": "Observa el croquis.", "expected": "El monigote entra al interior (✓); desaparece el conteo de entrada.", "evidence": "Captura del croquis." },
+    { "id": "P27", "block": "D", "type": "shell", "title": "entry_confirmed_at", "action": "`live`.", "expected": "`active_stay.entry_confirmed_at` no nulo; `presence_state=PRESENT`; `door_state=CLOSED`; `exit_deadline=null`.", "evidence": "JSON de /live." },
+    { "id": "P28", "block": "D", "type": "shell", "title": "BD de entrada", "action": "`SELECT status,entry_confirmed_at FROM stays WHERE room_id=12 ORDER BY id DESC LIMIT 1` + `SELECT door_state,presence_state,last_close_at FROM iot_sessions WHERE room_id=12`.", "expected": "`OCCUPIED` + `entry_confirmed_at` no nulo; `CLOSED`/`PRESENT`.", "evidence": "Filas de stays/iot_sessions." },
+    { "id": "P29", "block": "D", "type": "shell", "title": "presence_events aplicados", "action": "`SELECT sensor,value,applied,discard_reason,TIMESTAMPDIFF(MILLISECOND,occurred_at,received_at) lat_ms FROM presence_events WHERE room_id=12 ORDER BY id DESC LIMIT 5`.", "expected": "`PRESENT` con `applied=1`; latencia dispositivo→BD ~1–3 s.", "evidence": "Filas de presence_events." },
+    { "id": "P30", "block": "D", "type": "nav", "title": "Contadores suben", "action": "Mira el badge debug.", "expected": "`state_events` y `door_changes` mayores que la base de P9.", "evidence": "Captura del badge." },
+
+    { "id": "P31", "block": "F", "type": "shell", "title": "Reentrada por API", "action": "Reenvía el token a `POST /api/v1/qr/validate` (ver protocolo).", "expected": "200 `action=re_entry`; `first_used_at` no cambia; nuevo `QR_VALIDATE OK`.", "evidence": "Respuesta JSON + access_events." },
+    { "id": "P32", "block": "F", "type": "fisico", "title": "Reentrada física", "action": "Abre la puerta, escanea el mismo QR, vuelve a entrar y cierra.", "expected": "La estancia sigue `OCCUPIED`; `entry_confirmed_at` no cambia; no aparece `exit_deadline`.", "evidence": "Captura + /live." },
+    { "id": "P33", "block": "F", "type": "mixto", "title": "Límite de ventana de uso", "action": "`UPDATE qr_credentials SET valid_until=UTC_TIMESTAMP(3)-INTERVAL 1 MINUTE WHERE jti='<JTI>'` y escanea.", "expected": "403 `qr_expired` con `details.window=\"usage\"`; `access_events DENIED`.", "evidence": "Respuesta de error + access_events." },
+
+    { "id": "P34", "block": "E", "type": "fisico", "title": "Salir y cerrar", "action": "Abre la puerta, sal al pasillo, cierra y aléjate del radar.", "expected": "OPEN→CLOSED; Presencia→ABSENT.", "evidence": "Captura de Sensores." },
+    { "id": "P35", "block": "E", "type": "nav", "title": "Cooldown verificando", "action": "Observa **Cooldown** en Sensores.", "expected": "Muestra “verificando (Ns)” durante la guarda (exit_guard_seconds=3).", "evidence": "Captura de Sensores." },
+    { "id": "P36", "block": "E", "type": "shell", "title": "exit_deadline activo", "action": "`live` justo tras ABSENT.", "expected": "`exit_deadline = last_absent_since + 3s` (no nulo); `presence_state=ABSENT`; `door_state=CLOSED`.", "evidence": "JSON de /live." },
+    { "id": "P37", "block": "E", "type": "nav", "title": "Estado tras salida", "action": "Espera ~3 s + tick de exit-scan; observa el dashboard.", "expected": "Estancia EXITED; sala FREE; monigote fuera; luz OFF.", "evidence": "Captura del dashboard." },
+    { "id": "P38", "block": "E", "type": "shell", "title": "Live FREE + cooldown", "action": "`live`.", "expected": "`status=FREE`, `active_stay=null`, `exit_deadline=null`, `switch_state.last_command=OFF`, `cooldown_until ≈ ahora+20s`.", "evidence": "JSON de /live." },
+    { "id": "P39", "block": "E", "type": "shell", "title": "BD de salida", "action": "`SELECT status,exit_detected_at FROM stays ...` + `SELECT id,kind,result,provider FROM access_events WHERE room_id=12 ORDER BY id DESC LIMIT 3`.", "expected": "`EXITED` + `exit_detected_at`; evento `AUTO_LOCK OK`.", "evidence": "Filas de stays/access_events." },
+
+    { "id": "P40", "block": "G", "type": "mixto", "title": "Ventana de llegada agotada", "action": "Emite QR, `UPDATE qr_credentials SET issued_at=UTC_TIMESTAMP(3)-INTERVAL 20 MINUTE WHERE jti='<JTI>'` y escanea.", "expected": "403 `qr_expired` con `details.window=\"arrival\"`.", "evidence": "Respuesta de error + access_events." },
+    { "id": "P41", "block": "G", "type": "mixto", "title": "QR de otra sala", "action": "Crea un QR en otra sala con pack y escanéalo en PROTO2.", "expected": "403 `device_mismatch` (el RPI no pertenece a esa sala).", "evidence": "Respuesta de error." },
+    { "id": "P42", "block": "G", "type": "mixto", "title": "QR revocado", "action": "Guarda el QR actual, pulsa **Generar nuevo QR** y escanea el antiguo.", "expected": "403 `qr_revoked`; `revoked_at` del JTI antiguo no nulo.", "evidence": "Respuesta de error + BD." },
+    { "id": "P43", "block": "G", "type": "shell", "title": "Estancia ya EXITED", "action": "Con la sala FREE, escanea un QR de una estancia `EXITED`.", "expected": "403 `stay_wrong_state`.", "evidence": "Respuesta de error." },
+    { "id": "P44", "block": "G", "type": "fisico", "title": "Puerta sin QR", "action": "En sala FREE, abre y cierra la puerta sin escanear nada.", "expected": "Sin `QR_VALIDATE`/`OPEN`; aparece anomalía A3 “Puerta abierta sin QR” (CRITICAL) en ≤15 s.", "evidence": "Captura de Anomalías + access_events." },
+    { "id": "P45", "block": "G", "type": "fisico", "title": "Presencia sin ciclo de puerta", "action": "En sala FREE, sitúate ante el radar sin abrir la puerta.", "expected": "El monigote no se mueve; `presence_events` con `applied=0`, `discard_reason='no_context'`.", "evidence": "presence_events + croquis." },
+    { "id": "P46", "block": "G", "type": "mixto", "title": "Ventana de entrada agotada", "action": "QR válido → escanear → abrir/cerrar sin entrar → esperar >90 s.", "expected": "Durante la ventana el monigote queda en el umbral con `?`; al agotarse vuelve fuera, `entry_confirmed_at=NULL` y sin `exit_deadline`.", "evidence": "Captura + /live." },
+
+    { "id": "P47", "block": "H", "type": "mixto", "title": "Overstay / deuda", "action": "QR 30 min, entra y confirma; `UPDATE stays SET duracion_minutos=1 WHERE room_id=12 AND status='OCCUPIED'`; espera overstay-scan.", "expected": "Deuda visible en panel **Deudas** / `GET /api/v1/debts`; `outbox_vb6` encola.", "evidence": "Captura de Deudas + outbox." },
+    { "id": "P48", "block": "H", "type": "nav", "title": "Batería del sensor", "action": "Mira **Sensores → Batería** y la barra en Dispositivos (PROXIMITY).", "expected": "Muestra porcentaje/estado o `--` si no hay dato.", "evidence": "Captura." },
+    { "id": "P49", "block": "H", "type": "nav", "title": "Anomalías reconocer/descartar", "action": "En panel **Anomalías**, pulsa ✓ y 🗑 sobre una.", "expected": "Cambian de estado (`OPEN`→`ACKNOWLEDGED`/`DISMISSED`).", "evidence": "Captura del panel." },
+    { "id": "P50", "block": "H", "type": "fisico", "title": "Botón Mírame", "action": "Pulsa el botón físico Mírame del pack RPI de PROTO2.", "expected": "En Zone 1 “Packs con Mírame activo” aparece una tarjeta (~15 s).", "evidence": "Captura de Zone 1." },
+    { "id": "P51", "block": "H", "type": "nav", "title": "Calibración de presencia", "action": "Clic en ⚙️ del sensor de presencia → modal de calibración; no guardar.", "expected": "El modal abre; sliders reflejan el sensor; Cancelar no persiste.", "evidence": "Captura del modal." },
+    { "id": "P52", "block": "H", "type": "nav", "title": "Comprobar dispositivos", "action": "En **Dispositivos**, pulsa **Comprobar dispositivos**.", "expected": "Estado verídico (conectado/offline/sin verificar). Con cuota agotada los Tuya quedan `sin verificar` (ámbar).", "evidence": "Captura de Dispositivos." },
+    { "id": "P53", "block": "H", "type": "nav", "title": "Resiliencia SSE", "action": "Deja el dashboard 1–2 min abierto.", "expected": "Tras reconectar el stream, el estado se resincroniza solo (sin recargar).", "evidence": "Captura + event-stream.log." }
+  ]
+}
