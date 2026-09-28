@@ -54,12 +54,25 @@ PANEL_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$API/panel/log
 if [ "$PANEL_CODE" = "200" ]; then green "CRM Panel → HTTP 200"
 else red "CRM Panel → HTTP $DASH_CODE" "¿panel/login.html existe?"; fi
 
-# 7. Workers
-for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker" "node.*index.js" "presence-poller-manager" "node.*tuya-presence-poller"; do
-  label=$(echo "$w" | sed 's/.*bin\///' | sed 's/node\.\*//' | sed 's/\.js//')
-  if pgrep -f "$w" >/dev/null 2>&1; then green "Worker: $label → running"
-  else red "Worker: $label → stopped" "¿start-all.sh ejecutado?"; fi
-done
+# 7. Workers — supervisados por systemd (F46). Se consulta el unit, no el proceso:
+#    los workers de tick largo (overstay 60s, outbox 30s) pasan la mayor parte del
+#    tiempo en `sleep` y pgrep los reportaba como caídos (falso negativo).
+#    Nota: no hay unidad `tuya-presence-poller` por diseño (F44/F46 — sensores
+#    con presence_source='push'/'disabled' no lanzan poller de nube).
+WORKER_UNITS="cerraduras-worker@exit-scan cerraduras-worker@overstay-scan cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner cerraduras-pulsar-consumer cerraduras-presence-poller"
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cerraduras-api 2>/dev/null; then
+  for u in $WORKER_UNITS; do
+    if systemctl is-active --quiet "$u" 2>/dev/null; then green "Unit: $u → active"
+    else red "Unit: $u → inactive" "systemctl status $u"; fi
+  done
+else
+  # Fallback sin systemd: comprobar procesos (los de tick largo pueden estar en sleep)
+  for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker" "presence-poller-manager"; do
+    label=$(echo "$w" | sed 's/.*bin\///')
+    if pgrep -f "$w" >/dev/null 2>&1; then green "Worker: $label → running"
+    else red "Worker: $label → stopped" "¿start-all.sh ejecutado?"; fi
+  done
+fi
 
 # 8. SSH hardening check (informative)
 if systemctl is-active --quiet sshd 2>/dev/null; then green "SSH → activo"
