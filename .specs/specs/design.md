@@ -2992,3 +2992,56 @@ export JSON/Markdown e impresión. Estado nunca solo por color. Atajos `P/F/N/U`
 - `BLOCK 43` del runner: catálogo (53 ids únicos), `GET /pruebas`, y ciclo
   save/get/list/delete + validación de `run_id` inseguro y 404.
 - Criterio de aceptación: `bash bin/run-tests.sh` con **0 failures** y `BLOCK 43` en verde.
+
+---
+
+# 20. F56 — La puerta del croquis sigue al sensor físico (RF-63)
+
+## 20.1 Síntoma
+
+Al escanear un QR válido, el croquis del panel abría la puerta **en el mismo instante** del
+escaneo, 5–7 s antes de que la puerta se abriera físicamente.
+
+## 20.2 Causa raíz
+
+- Backend correcto: al validar el QR se escriben `QR_VALIDATE OK` y `OPEN OK` (comando al
+  relé) en `access_events`; `door_state` **no** se falsea (`QrValidateService.php`, F28).
+- Panel: `renderSensorSvg()` construía `optimisticOpen` desde `recent_events` (`kind=OPEN`,
+  `result=OK`) y lo sumaba a `doorOpen` (`dashboard.html`, TSK-F48-05/RF-57.5). El comando del
+  relé liberaba el pestillo, pero la puerta seguía cerrada hasta el empujón físico.
+- Evidencia (sala 12): `QR_VALIDATE OK` 07:32:44.643 + `OPEN OK` 07:32:44.644 vs
+  `PROXIMITY OPEN` 07:32:50.000 → 5,4 s de puerta "abierta" en pantalla sin apertura real.
+
+## 20.3 Decisión (F56/RF-63)
+
+1. Se elimina la apertura optimista por comando. El comando del relé **no** es entrada de la
+   decisión visual de la puerta.
+2. El feedback del acceso es el **pestillo en verde** en `QR_OK` (ya existente) y el toast.
+3. Se conserva el **pulso anti-colapso** (`_doorPulseUntil`, `DOOR_PULSE_HOLD_MS = 1200 ms`)
+   derivado de `PROXIMITY OPEN` **aplicado**: cubre `OPEN`+`CLOSED` colapsados en el mismo
+   ciclo SSE sin inventar apertura.
+4. La regla queda pura y testeable: `Choreography.resolveDoorOpen(doorState, pulseUntilMs, nowMs)`
+   (`assets/choreography.js`), con fallback inline en el panel por si el navegador conserva una
+   caché antigua del asset.
+
+## 20.4 Qué NO cambia
+
+- `/live` y SSE (contratos y campos intactos), coreografía del monigote (usa `io.door_state`
+  real), regla de salida, anomalías, toast y panel QR (EN USO), contadores de debug.
+- La luz sigue encendiéndose con la apertura física (`IotSessionService` post-commit sobre
+  `PROXIMITY OPEN`), que era el comportamiento de F28.
+- Sin cuota Tuya: todo ocurre sobre push/SSE existentes.
+
+## 20.5 Trade-off asumido
+
+Entre el escaneo y la apertura física el panel muestra la puerta cerrada (típico 5–7 s). Es el
+precio de no contradecir el sensor; el pestillo verde cubre el feedback inmediato. Se acepta
+frente a la alternativa (F48) de mentir sobre el estado físico.
+
+## 20.6 Pruebas
+
+- `tests/Unit/choreography.test.js` (BLOCK 33): casos F56 de `resolveDoorOpen` (CLOSED sin
+  pulso → cerrada aunque exista comando; OPEN real → abierta; pulso vigente/expirado).
+- `acceptance-tests.json` (P20): criterio manual actualizado — pestillo verde y puerta cerrada
+  hasta la apertura física.
+- Regresión: `bash bin/run-tests.sh` con **0 failures**.

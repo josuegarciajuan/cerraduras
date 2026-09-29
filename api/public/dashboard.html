@@ -775,7 +775,7 @@ const STATES = {
   FUERA_SERVICIO:      { icon:'🚫', desc:'Habitación fuera de servicio.',    bg:'rgba(255,82,82,0.12)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'Fuera de servicio' },
   ESPERANDO_HUESPED:   { icon:'🛎️', desc:'Reserva activa. QR listo.',        bg:'rgba(68,138,255,0.1)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'Reserva activa — sin QR aún' },
   QR_DISPONIBLE:       { icon:'📱', desc:'QR escaneable. Acércate al lector.',bg:'rgba(0,230,118,0.12)',  moni:'NEAR_QR', door:'closed', bulb:false, phase:'QR disponible — acércate al lector' },
-  QR_OK:               { icon:'✅', desc:'QR validado. Acceso concedido.',   bg:'rgba(0,230,118,0.15)',   moni:'AT_QR',   door:'opening',bulb:false, phase:'QR validado ✓ — abriendo puerta' },
+  QR_OK:               { icon:'✅', desc:'QR validado. Acceso concedido.',   bg:'rgba(0,230,118,0.15)',   moni:'AT_QR',   door:'opening',bulb:false, phase:'QR validado ✓ — pestillo abierto, esperando puerta' },
   QR_ESPERANDO:        { icon:'🚶', desc:'QR validado. Esperando apertura...', bg:'rgba(0,230,118,0.08)', moni:'AT_QR', door:'closed', bulb:false, phase:'QR validado — esperando apertura' },
   QR_RECHAZADO:        { icon:'❌', desc:'QR inválido, expirado o revocado.',bg:'rgba(255,82,82,0.15)',   moni:'OUTSIDE', door:'closed', bulb:false, phase:'QR rechazado ✗' },
   ANOMALIA_RP:         { icon:'⚠️', desc:'Puerta abierta sin huésped activo.',bg:'rgba(255,145,0,0.12)',  moni:'OUTSIDE', door:'open',   bulb:false, phase:'Anomalía: puerta abierta sin huésped' },
@@ -823,25 +823,16 @@ function renderSensorSvg() {
     _doorPulseUntil = Math.max(_doorPulseUntil, latestOpenMs + DOOR_PULSE_HOLD_MS);
   }
 
-  // F48: apertura optimista desde el COMANDO de apertura (access_events OPEN OK).
-  // El evento del magneto Tuya puede tardar segundos; el comando es instantáneo.
-  // Mostramos la puerta abierta desde el comando hasta que el magneto confirme un
-  // CLOSED posterior (o 12 s de timeout si nunca llega).
-  let latestAccessOpenMs = 0;
-  (lastLiveData.recent_events || []).forEach(function (e) {
-    if (e.kind !== 'OPEN' || e.result !== 'OK') return;
-    latestAccessOpenMs = Math.max(latestAccessOpenMs, toMsDoor(e.occurred_at));
-  });
-  let latestDoorClosedMs = 0;
-  (lastLiveData.recent_presence || []).forEach(function (e) {
-    if (e.sensor !== 'PROXIMITY' || e.value !== 'CLOSED') return;
-    latestDoorClosedMs = Math.max(latestDoorClosedMs, toMsDoor(e.occurred_at));
-  });
-  const optimisticOpen = latestAccessOpenMs > 0
-    && latestAccessOpenMs > latestDoorClosedMs
-    && (Date.now() - latestAccessOpenMs) < 12000;
-
-  const doorOpen = (realDoor === 'OPEN') || (Date.now() < _doorPulseUntil) || optimisticOpen;
+  // F56 (RF-63): la puerta del croquis sigue SOLO al sensor físico (magneto).
+  // El comando del relé (`access_events` OPEN OK) NO la abre: libera el pestillo,
+  // y su feedback visual es el pestillo verde en QR_OK (más abajo) + toast.
+  // Se conserva el pulso anti-colapso derivado de PROXIMITY OPEN real (FIX #3).
+  // `resolveDoorOpen` es la regla pura testeada en tests/Unit/choreography.test.js;
+  // el fallback cubre una caché antigua de choreography.js en el navegador.
+  const nowMsDoor = Date.now();
+  const doorOpen = (typeof Choreography !== 'undefined' && Choreography.resolveDoorOpen)
+    ? Choreography.resolveDoorOpen(realDoor, _doorPulseUntil, nowMsDoor)
+    : ((realDoor === 'OPEN') || (nowMsDoor < _doorPulseUntil));
 
   // ── Door animation ──
   const doorG = document.getElementById('door-group');

@@ -124,6 +124,19 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F52 Cola muerta (dead-letter) del outbox WS-VB6** | **BLOCK 41** | **Completado** |
 | **F54 Batería de aceptación E2E (ciclo del huésped)** | **BLOCK 42** | **Completado** |
 | **F55 Panel de aceptación manual (`/pruebas`)** | **BLOCK 43** | **Completado** |
+| **F56 Puerta del croquis = sensor físico** | **BLOCK 33 (unit JS)** | **Completado** |
+
+### F56 — La puerta del croquis sigue al sensor físico (RF-63)
+
+- **Bug**: al escanear el QR, el panel abría la puerta con el comando `access_events OPEN OK`
+  (F48-05/RF-57.5, 12 s de ventana), 5–7 s antes de la apertura física real.
+- **Fix (solo panel)**: `renderSensorSvg()` deja de usar `recent_events` para la puerta; la regla
+  pura `Choreography.resolveDoorOpen(door, pulseUntil, now)` (`assets/choreography.js`) abre la
+  puerta **solo** con `PROXIMITY OPEN` aplicado o el pulso anti-colapso de 1,2 s (también del
+  sensor real). Se conserva el pestillo verde en `QR_OK` y el toast de acceso.
+- **Sin tocar**: backend, `/live`/SSE, coreografía del monigote, regla de salida, anomalías ni
+  luz (sigue encendiéndose con la apertura física, F28). Sin cuota Tuya.
+- **Tests**: casos F56 en `tests/Unit/choreography.test.js` (BLOCK 33) + P20 de la batería manual.
 
 ### F49–F52 — Cierres de fase recientes (A2–A6)
 
