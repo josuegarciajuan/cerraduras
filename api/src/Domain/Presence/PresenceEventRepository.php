@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Presence;
 
+use App\Support\IsoTime;
 use PDO;
 use PDOException;
 
@@ -191,27 +192,12 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
 
     /**
      * Convert an ISO-8601 string (with any offset) to a UTC DATETIME(3) string
-     * suitable for MySQL. Falls back to NOW() string if parsing fails.
+     * suitable for MySQL. Delega en `IsoTime` (F58/RF-65): conserva la fracción
+     * de ms y no desplaza el sello por un `\Z` literal. Fallback: NOW() sin ms.
      */
     private function toMysqlUtc(string $iso): string
     {
-        // F58 (RF-65): acepta fracción de segundos (`.sss`) de los sellos Tuya.
-        $dt = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.v\Z', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.vP', $iso)
-            ?: \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s\Z', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s.v', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $iso);
-
-        if ($dt === false) {
-            $ts = strtotime($iso);
-            if ($ts === false) {
-                return gmdate('Y-m-d H:i:s.000');
-            }
-            return gmdate('Y-m-d H:i:s', $ts) . '.000';
-        }
-        $utc = $dt->setTimezone(new \DateTimeZone('UTC'));
-        return $utc->format('Y-m-d H:i:s.v');
+        return IsoTime::toMysqlUtc($iso) ?? gmdate('Y-m-d H:i:s.000');
     }
 
     /** @param array<string,mixed> $row */
