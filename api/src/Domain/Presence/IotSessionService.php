@@ -18,6 +18,7 @@ use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
 use App\Domain\Anomalies\AnomalyService;
 use App\Support\Clock;
 use App\Support\Errors\NotFoundException;
+use App\Support\IsoTime;
 use PDOException;
 
 /**
@@ -492,24 +493,12 @@ final class IotSessionService
      * Convert an ISO-8601 timestamp (any offset) to a MySQL UTC DATETIME(3)
      * string. Tolerates various formats including bare UTC.
      *
-     * F58 (RF-65): acepta fracción de segundos (`.sss`), que es lo que Tuya
-     * entrega en `status[].t`; sin ella el orden del mismo segundo se perdía.
+     * F58 (RF-65): delega en `IsoTime` (RFC3339_EXTENDED, con fracción de ms);
+     * un `\Z` literal se interpretaría en la TZ por defecto y desplazaría el
+     * sello. Sin fecha válida se usa el ahora UTC con ms.
      */
     private function isoToMysqlUtc(string $iso): string
     {
-        $dt = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.v\Z', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.vP', $iso)
-            ?: \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s\Z', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s.v', $iso)
-            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $iso);
-
-        if ($dt === false) {
-            $ts = strtotime($iso);
-            return $ts === false
-                ? Clock::nowUtc()->format('Y-m-d H:i:s.v')
-                : gmdate('Y-m-d H:i:s', $ts) . '.000';
-        }
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.v');
+        return IsoTime::toMysqlUtc($iso) ?? Clock::nowUtc()->format('Y-m-d H:i:s.v');
     }
 }
