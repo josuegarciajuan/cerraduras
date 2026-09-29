@@ -1838,3 +1838,31 @@ Campos existentes, sin cambios de semántica:
 Ningún consumidor externo se ve afectado. El conteo de entrada (RF-46.4) conserva su anclaje y
 ventana; la verificación es la regresión completa del runner (`BLOCK 33` incluye los unit tests
 JS de la coreografía).
+
+---
+
+# Fase 58: Orden por milisegundos de los eventos de sensor (RF-65)
+
+## 1. Formato de `occurred_at` (precisión)
+
+- Sin cambios de forma: sigue siendo ISO-8601 UTC (`Y-m-d\TH:i:s.v\Z` para eventos reales de
+  Tuya; un sello en segundos se acepta como fallback).
+- **Cambio de precisión**: los eventos reales de Tuya conservan ahora los **milisegundos** del
+  DP `status[].t` (antes se truncaban a segundos). Afecta a:
+  - `presence_events.occurred_at` (la columna ya era `DATETIME(3)`),
+  - `iot_session.last_door_event_at` / `last_presence_event_at`,
+  - `recent_presence[].occurred_at` en `/live` y SSE (misma forma, con `.sss`).
+- Los consumidores existentes parsean la fracción (el panel usa `Choreography.parseTime`);
+  `strtotime()` de PHP la ignora donde solo se comparan segundos (regla de salida).
+
+## 2. Idempotencia
+
+El `event_fingerprint` lógico **no cambia** (`sha1(room|sensor|value|segundo)`): los reenvíos
+del mismo hecho en el mismo segundo siguen colapsando. El orden entre eventos del mismo segundo
+se decide por `occurred_at` en milisegundos (`stale` si es anterior al último aplicado).
+
+## 3. No regresión
+
+Rutas, códigos, campos y eventos `SIMULATED` intactos; sin migración (columnas `DATETIME(3)` ya
+existentes). La verificación es la regresión completa del runner con el caso nuevo de llegada
+invertida del mismo segundo.

@@ -126,6 +126,22 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F55 Panel de aceptación manual (`/pruebas`)** | **BLOCK 43** | **Completado** |
 | **F56 Puerta del croquis = sensor físico** | **BLOCK 33 (unit JS)** | **Completado** |
 | **F57 Verificación de salida visible (20 s)** | **BLOCK 33 (unit JS)** | **Completado** |
+| **F58 Orden de eventos por milisegundos** | **BLOCK 1/33** | **Completado** |
+
+### F58 — Orden por milisegundos de los eventos de sensor (RF-65)
+
+- **Bug**: con el huésped dentro, el cierre de puerta aparecía a veces 4–5 s tarde en el croquis.
+  Tuya entrega el sello del DP en ms, pero `tsToIso()` lo truncaba a segundos y `decide()`
+  comparaba a segundos: OPEN+CLOSED del mismo segundo se ordenaban por llegada/lock y el OPEN
+  podía aplicarse después del CLOSED, dejando `door_state=OPEN` hasta el siguiente evento.
+  Evidencia: 18 respuestas históricas con OPEN aplicado tras CLOSED del mismo segundo.
+- **Fix**: `TuyaSensorIngress::tsToIso()` conserva ms; `SensorEventDecision::toEpoch()` compara
+  en ms (`fingerprint` sigue a segundo para idempotencia); parsers MySQL aceptan fracción.
+  Columnas ya `DATETIME(3)` → **sin migración**. Sin cambios de forma de contrato ni panel.
+- **Tests**: `SensorEventDecisionTest.php` (mismo segundo invertido → `stale`),
+  `TuyaSensorIngressTest.php` (ms), `BLOCK 33` (llegada invertida vía `/sim`) y regresión.
+- **Pendiente de campo**: si algún cierre tardase, protocolo en `design.md` §22.5
+  (`applied`/`discard_reason`/`meta.tuya_t`).
 
 ### F57 — Verificación de salida visible y coherente (RF-64)
 

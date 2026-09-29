@@ -491,11 +491,17 @@ final class IotSessionService
     /**
      * Convert an ISO-8601 timestamp (any offset) to a MySQL UTC DATETIME(3)
      * string. Tolerates various formats including bare UTC.
+     *
+     * F58 (RF-65): acepta fracción de segundos (`.sss`), que es lo que Tuya
+     * entrega en `status[].t`; sin ella el orden del mismo segundo se perdía.
      */
     private function isoToMysqlUtc(string $iso): string
     {
-        $dt = \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
+        $dt = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.v\Z', $iso)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.vP', $iso)
+            ?: \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
             ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s\Z', $iso)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s.v', $iso)
             ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $iso);
 
         if ($dt === false) {

@@ -2717,3 +2717,54 @@ la ventana interna (6 s) no cubría la cadencia del radar (4–8 s) ni su ausenc
 | F57-03 | Timer visible en el panel | RF-64.1.2/64.2/64.3.2 | `public/dashboard.html` | unit JS + manual |
 | F57-04 | Criterio de aceptación manual | RF-64.1.2/64.3 | `assets/acceptance-tests.json` | manual + regresión |
 | F57-05 | Diagnóstico latencia puerta | RF-64.4.1 | `design.md` §21.4 | evidencia manual |
+
+---
+
+# Fase 58 — Orden por milisegundos de los eventos de sensor (RF-65)
+
+**Motivo**: OPEN+CLOSED del mismo segundo podían aplicarse invertidos (el sello de Tuya se
+truncaba a segundos y la decisión comparaba a segundos), dejando la puerta abierta en el croquis
+3–5 s tras un cierre físico. Evidencia: 18 casos históricos `last_close_at == last_open_at` en
+un OPEN aplicado tras un CLOSED del mismo segundo.
+
+### TSK-F58-01: Specs y trazabilidad
+- **Cambio**: `requirements.md` (RF-65, RF-44.1.4), `design.md` (§2.1, §2.4, §22),
+  `contracts.md` (precisión de `occurred_at`), `tasks.md`, `AGENTS.md`.
+- **RF**: RF-65.1/65.2/65.3.
+- **Test propio**: revisión + regresión.
+
+### TSK-F58-02: Sello del dispositivo con ms
+- **Cambio**: `src/Infrastructure/Gateways/Sensor/TuyaSensorIngress.php` — `tsToIso()` conserva
+  ms (`Y-m-d\TH:i:s.v\Z`) con fallback a segundos (10 dígitos).
+- **RF**: RF-65.1.1.
+- **Test propio**: `tests/Unit/TuyaSensorIngressTest.php` (nuevo).
+
+### TSK-F58-03: Decisión y parsers en ms
+- **Cambio**: `src/Domain/Presence/SensorEventDecision.php` (`toEpoch` en ms; `fingerprint`
+  floors a segundo), `IotSessionService::isoToMysqlUtc()`,
+  `PresenceEventRepository::toMysqlUtc()` (aceptan fracción).
+- **RF**: RF-65.2.1/65.2.2/65.2.3.
+- **Test propio**: casos F58 en `tests/Unit/SensorEventDecisionTest.php` (BLOCK 1) +
+  `IotSessionServiceTest.php`.
+
+### TSK-F58-04: Regresión de llegada invertida
+- **Cambio**: `bin/run-tests.sh` — caso en `BLOCK 33`: CLOSED `.900` antes de OPEN `.100` del
+  mismo segundo → gana CLOSED y el OPEN queda `applied=0/stale`; y el caso ascendente legítimo.
+- **RF**: RF-65.3.3.
+- **Test propio**: `bash bin/run-tests.sh` 0 failures.
+
+### TSK-F58-05: Verificación de campo
+- **Cambio**: ninguno (protocolo en `design.md` §22.5): repetir apertura/cierre rápido y, si
+  tardase, revisar `applied`/`discard_reason`/`meta.tuya_t`.
+- **RF**: RF-65.3.1.
+- **Test propio**: evidencia manual en la corrida de aceptación.
+
+## Tabla resumen F58
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F58-01 | Specs y trazabilidad | RF-65.1/65.2/65.3 | `requirements/design/contracts/tasks.md`, `AGENTS.md` | revisión |
+| F58-02 | Sello del dispositivo con ms | RF-65.1.1 | `TuyaSensorIngress.php` | unit PHP |
+| F58-03 | Decisión y parsers en ms | RF-65.2 | `SensorEventDecision.php`, `IotSessionService.php`, `PresenceEventRepository.php` | unit PHP |
+| F58-04 | Regresión de llegada invertida | RF-65.3.3 | `bin/run-tests.sh` (BLOCK 33) | regresión |
+| F58-05 | Verificación de campo | RF-65.3.1 | `design.md` §22.5 | manual |

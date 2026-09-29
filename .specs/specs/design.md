@@ -1539,9 +1539,9 @@ fingerprint = sha1( room_id | sensor | value | floor(occurred_at a segundo) )
 ```
 
 - Incluye `value`, así `OPEN` y `CLOSED` en el mismo segundo se conservan ambos.
-- Trunca a segundo porque la fuente (`t` de Tuya en ms) y el poller (`Date.now()`) no aportan
-  resolución fiable; dos eventos idénticos en el mismo segundo son el mismo hecho a efectos de
-  dominio.
+- Trunca a segundo porque dos eventos idénticos en el mismo segundo son el mismo hecho a
+  efectos de dominio (idempotencia de reenvíos). **F58/RF-65**: el orden entre eventos del mismo
+  segundo NO usa el fingerprint: se decide por `occurred_at` con milisegundos.
 - Se persiste con índice `UNIQUE` (`uq_presence_fingerprint`); `1062` ⇒ duplicado.
 
 **Trade-off** frente a una ventana anti-rebote temporal (p. ej. descartar mismo valor < 1 s):
@@ -1586,7 +1586,8 @@ función decide(event, session):
 
     # 1) Duplicado lógico exacto: ya existe fingerprint (detectado en insertOrGet) → duplicate
     # 2) Atrasado: el hecho ocurrió antes que el último aplicado de ese sensor
-    si lastAt != null y event.occurred_at < lastAt:
+    #    (F58/RF-65: comparación en MILISEGUNDOS, no en segundos)
+    si lastAt != null y event.occurred_at_ms < lastAt_ms:
         returns ATRASADO
 
     # 3) Mismo instante y mismo valor → no aporta transición (Pulsar reenvía)
@@ -3113,4 +3114,68 @@ de `io.door_state` en cada evento y el SSE emite en ≤200 ms tras el cambio en 
   (+20 s); `PRESENT` a +5 s sigue verificando y a +21 s → `DENTRO`; `ABSENT` con deadline →
   conteo del backend; reapertura re-arma la ventana; `UNKNOWN` al final → `DENTRO`.
 - `acceptance-tests.json` (P35): el croquis muestra `?` + timer durante la verificación.
+- Regresión: `bash bin/run-tests.sh` con **0 failures**.
+
+---
+
+# 22. F58 — Orden por milisegundos de los eventos de sensor (RF-65)
+
+## 22.1 Síntoma
+
+Con el huésped dentro, al abrir y cerrar la puerta, el croquis mostraba el cierre **a veces**
+con 4–5 s de retardo. El pipeline y el panel estaban descartados: `recv-tuya_t` 111–412 ms,
+`received_at − occurred_at` 0,1–1,3 s, SSE ≤200 ms y la puerta se pinta de `door_state` (el
+pulso anti-colapso retiene como máximo 1,2 s).
+
+## 22.2 Causa raíz
+
+- Tuya entrega el sello del DP en **milisegundos** (`status[].t`, 13 dígitos), pero
+  `TuyaSensorIngress::tsToIso()` hacía `(int)($ts/1000)` y formateaba **sin fracción**
+  (el `tuya_t` en ms solo sobrevivía en `meta_json`).
+- `SensorEventDecision::decide()` comparaba `occurred_at` con `getTimestamp()` (segundos): la
+  guarda `stale` (`<` estricto) no podía distinguir dos eventos del mismo segundo.
+- El consumer reenvía los mensajes con `ws.on('message', async …)` sin serializar; el API
+  serializa por sala con `FOR UPDATE`, pero el **orden de adquisición del lock no es FIFO**.
+  Una pareja OPEN+CLOSED del mismo segundo podía aplicarse invertida.
+- Resultado: tras un cierre físico, `door_state` podía quedar `OPEN` (y `last_close_at` sin
+  actualizar respecto a `last_open_at`) hasta el **siguiente** evento de puerta (3–5 s en los
+  ciclos de prueba). Evidencia: 18 respuestas históricas con OPEN aplicado tras CLOSED del
+  mismo segundo (`last_close_at == last_open_at`); última 2026-09-29 07:22:33.
+
+## 22.3 Decisión (F58/RF-65)
+
+1. `TuyaSensorIngress::tsToIso()` conserva ms (`Y-m-d\TH:i:s.v\Z`); acepta 10 dígitos (s) como
+   fallback. Función pura y testeable.
+2. `SensorEventDecision::toEpoch()` compara en **ms**; `fingerprint()` sigue floors a segundo
+   (idempotencia de reenvíos intacta).
+3. `IotSessionService::isoToMysqlUtc()` y `PresenceEventRepository::toMysqlUtc()` aceptan
+   ISO-8601 con fracción (las columnas ya son `DATETIME(3)`; **sin migración**).
+4. Con esto, un OPEN que llegue tarde y cuyo sello sea anterior al CLOSED ya aplicado se marca
+   `stale` y **no revierte** el cierre; una secuencia legítima cierre→reapertura (sellos
+   ascendentes) se aplica igual.
+
+## 22.4 Qué NO cambia
+
+- Forma de contratos, rutas y códigos; panel (F56/F57), coreografía, regla de salida, luz,
+  anomalías, workers ni cuota. Los eventos `SIMULATED` no se ven afectados.
+
+## 22.5 Verificación de campo (si algún cierre tardase)
+
+1. `?debug=1` en el panel: al cerrar, `door age` debe resetear en ~1 s.
+2. Si no: `SELECT value, occurred_at, applied, discard_reason,
+   JSON_UNQUOTE(JSON_EXTRACT(meta_json,'$.tuya_t')) FROM presence_events
+   WHERE room_id=12 AND sensor='PROXIMITY' ORDER BY id DESC LIMIT 6`.
+   Diferencia esperada: la pareja completa con `tuya_t` ascendente y el OPEN descartado
+   (`applied=0, discard_reason='stale'`) si llegó invertido.
+3. Si apareciera una inversión con `tuya_t` **también invertido** (es decir, el sello de Tuya
+   fuese hora de nube y no del dispositivo), se escalaría a serializar el consumer y/o usar una
+   secuencia del dispositivo (fase aparte; no se parchea a ciegas).
+
+## 22.6 Pruebas
+
+- `tests/Unit/SensorEventDecisionTest.php`: mismo segundo, OPEN con ms anterior al CLOSED
+  aplicado → `stale`; OPEN con ms posterior → `apply`.
+- `tests/Unit/TuyaSensorIngressTest.php` (nuevo): `tsToIso` conserva ms y acepta segundos.
+- `BLOCK 33` del runner: caso de llegada invertida del mismo segundo vía `/sim` → gana CLOSED
+  y el OPEN queda `applied=0/stale`; y el caso ascendente legítimo.
 - Regresión: `bash bin/run-tests.sh` con **0 failures**.

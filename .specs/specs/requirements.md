@@ -484,6 +484,7 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-44.1.1**: Los eventos de sensor deben aplicarse según su marca temporal de ocurrencia (`occurred_at`), no según el orden de llegada al backend.
 - **RF-44.1.2**: Un evento cuya marca temporal sea anterior a la última transición aplicada para ese mismo sensor debe considerarse atrasado y no puede modificar el estado actual.
 - **RF-44.1.3**: Cuando el orden relativo entre sensores distintos sea determinante para la coreografía de una misma habitación, la aplicación debe respetar dicho orden temporal.
+- **RF-44.1.4** *(F58/RF-65)*: La marca temporal debe conservar la **precisión de milisegundos** que entrega Tuya (`status[].t`); comparar a segundos hacía que dos eventos del mismo segundo (p. ej. OPEN+CLOSED de una puerta) se ordenaran por llegada/lock, revirtiendo el cierre. Los eventos con la misma marca de ms se resuelven por llegada.
 
 ### RF-44.2: Idempotencia y descarte de duplicados
 - **RF-44.2.1**: Cada evento de sensor debe tener una identidad lógica que permita reconocer reenvíos o duplicados del mismo hecho físico, aunque cambie la marca temporal del mensajero.
@@ -1052,3 +1053,38 @@ interna esperaba un `PRESENT` fresco con un hold corto (6 s) que el radar (4–8
 - **RF-64.4.2**: no cambian contratos de API; la lógica nueva es **pura y testeable** sin
   DOM/red/BD; no consume cuota Tuya.
 - **RF-64.4.3**: la regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.
+
+# Fase 58: Orden por milisegundos de los eventos de sensor (Bug del panel)
+
+**Motivo**: con el huésped dentro, al abrir y cerrar la puerta, el croquis mostraba a veces el
+cierre 4–5 s tarde. El pipeline es rápido (0,1–1,3 s) y el panel pinta de `door_state`; la causa
+es que Tuya entrega el sello del dispositivo en milisegundos (`status[].t`) pero el pipeline lo
+**truncaba a segundos** y comparaba a segundos, por lo que OPEN+CLOSED del mismo segundo se
+ordenaban por llegada/lock (no por ocurrencia) y el OPEN podía aplicarse **después** del CLOSED,
+dejando `door_state=OPEN` tras un cierre físico hasta el siguiente evento (3–5 s).
+
+## RF-65: Orden por ocurrencia con precisión de milisegundos
+
+### RF-65.1: Conservación del sello del dispositivo
+- **RF-65.1.1**: `occurred_at` de un evento real de Tuya debe conservar los milisegundos del
+  sello `status[].t` (13 dígitos); un sello en segundos (10 dígitos) se acepta como fallback.
+- **RF-65.1.2**: `presence_events.occurred_at` e `iot_sessions.last_door_event_at` /
+  `last_presence_event_at` (ya `DATETIME(3)`) deben almacenar la fracción; sin migración.
+
+### RF-65.2: Decisión por ms
+- **RF-65.2.1**: `SensorEventDecision::decide()` debe comparar `occurred_at` en **milisegundos**:
+  un evento con ms anterior al último aplicado del mismo sensor es `stale` aunque esté en el
+  mismo segundo (p. ej. OPEN llegado tarde tras CLOSED).
+- **RF-65.2.2**: El `fingerprint` lógico (`sha1(room|sensor|value|segundo)`) se mantiene a
+  segundos para conservar la idempotencia de reenvíos; la igualdad de ms + mismo valor sigue
+  siendo `duplicate`.
+- **RF-65.2.3**: Sellos convertidos a MySQL (auditoría y estado de sesión) deben preservar la
+  fracción; los parsers aceptan ISO-8601 con `.sss`.
+
+### RF-65.3: No regresión
+- **RF-65.3.1**: No cambian contratos de forma, rutas, códigos ni la lógica de puerta/presencia,
+  la coreografía del panel (F56/F57), la regla de salida, la luz ni las anomalías.
+- **RF-65.3.2**: Los eventos simulados (`/sim/*`, `provider=SIMULATED`) y las estancias no se
+  ven afectados; la lógica es **pura y testeable**.
+- **RF-65.3.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**,
+  con un caso nuevo que reproduce la llegada invertida del mismo segundo.
