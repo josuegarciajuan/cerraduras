@@ -357,6 +357,26 @@ r = deriveChoreography(exitCloseSnap(), ep, T0 + 63000 + 8 * 1000);
 eq('E5 fallback gap a los 8s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
 
 // ============================================================================
+// F56 · Puerta visual: solo evidencia física (RF-63)
+// ============================================================================
+console.log('\nF56 · Puerta del croquis sigue al sensor físico (RF-63)\n');
+
+const resolveDoorOpen = Ch.resolveDoorOpen;
+check('F56 resolveDoorOpen exportada', typeof resolveDoorOpen === 'function');
+
+// RF-63.1.2: el comando del relé (access_events OPEN OK) NO es entrada de la
+// regla → con la puerta CLOSED y sin pulso el croquis la mantiene cerrada,
+// aunque el acceso se acabe de conceder.
+eq('F56 CLOSED sin pulso → cerrada (aunque haya OPEN OK del relé)', resolveDoorOpen('CLOSED', 0, T0), false);
+eq('F56 UNKNOWN sin pulso → cerrada', resolveDoorOpen('UNKNOWN', 0, T0), false);
+// RF-63.2.1: PROXIMITY OPEN real → abierta.
+eq('F56 PROXIMITY OPEN real → abierta', resolveDoorOpen('OPEN', 0, T0), true);
+// RF-63.2.1: pulso anti-colapso vigente (OPEN+CLOSED colapsados en el mismo ciclo SSE).
+eq('F56 pulso de PROXIMITY OPEN vigente → abierta', resolveDoorOpen('CLOSED', T0 + 1200, T0), true);
+eq('F56 pulso expirado → cerrada', resolveDoorOpen('CLOSED', T0, T0), false);
+eq('F56 pulso nulo → cerrada', resolveDoorOpen('CLOSED', 0, T0), false);
+
+// ============================================================================
 // Resultado
 // ============================================================================
 console.log('\nTotal: ' + PASS + ' passed, ' + FAIL + ' failed\n');
