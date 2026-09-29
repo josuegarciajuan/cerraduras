@@ -1088,3 +1088,42 @@ dejando `door_state=OPEN` tras un cierre físico hasta el siguiente evento (3–
   ven afectados; la lógica es **pura y testeable**.
 - **RF-65.3.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**,
   con un caso nuevo que reproduce la llegada invertida del mismo segundo.
+
+# Fase 59: Un QR nuevo limpia el ciclo anterior (Bug del panel)
+
+**Motivo**: tras una prueba completa (salida confirmada, monigote fuera), al generar un nuevo QR
+el monigote saltaba dentro. La salida deja `rooms.cooldown_until = +20 s` (anti-reentrada) y
+marcas IoT del ciclo anterior; la creación de QR (`/dashboard-api/qr-test/create` y la emisión
+real `POST /api/v1/qr`) **no limpiaba** ni el cooldown ni el estado IoT. La coreografía evalúa
+`cooldown && (OCCUPIED || RESERVED)` antes del grupo QR → `ANTI_REENTRADA` (monigote `INSIDE`).
+Además, tras una salida el panel no muestra QR activo (`qr_status` solo considera estancias
+RESERVED/OCCUPIED), por lo que el único botón visible es "➕ Crear QR": la UI empujaba a la ruta
+sin reset.
+
+## RF-66: La emisión de un QR nuevo parte de un ciclo limpio
+
+### RF-66.1: Limpieza al crear/emitir
+- **RF-66.1.1**: Al crear un QR nuevo (panel de pruebas `POST /dashboard-api/qr-test/create` y
+  emisión real `POST /api/v1/qr`), la habitación debe quedar sin cooldown heredado
+  (`rooms.cooldown_until = NULL`).
+- **RF-66.1.2**: El estado IoT heredado del ciclo anterior debe quedar neutro:
+  `door_state`/`presence_state = UNKNOWN` y `last_open_at`, `last_close_at`,
+  `last_absent_since`, `last_door_event_at`, `last_presence_event_at`, `last_door_value` y
+  `last_presence_value` a `NULL`. La limpieza es **idempotente** y compartida por ambos flujos.
+- **RF-66.1.3**: No se crean/alteran estancias, deudas ni credenciales por la limpieza; cada
+  flujo conserva sus guardas (`404`/`409`/`422` en el panel de pruebas, `room_busy` en la
+  emisión real) y su respuesta sin cambios de forma.
+
+### RF-66.2: Efecto en panel y validación
+- **RF-66.2.1**: Tras generar un QR nuevo no debe mostrarse `ANTI_REENTRADA` por el ciclo
+  anterior; el panel debe representar el estado del QR nuevo (p. ej. `QR_DISPONIBLE`, fuera).
+- **RF-66.2.2**: El QR nuevo debe poder escanearse sin el rechazo `room_cooldown` provocado por
+  el ciclo anterior.
+
+### RF-66.3: No regresión
+- **RF-66.3.1**: No se altera la semántica de `ANTI_REENTRADA` en la coreografía, ni F56/F57/F58,
+  ni la regla de salida, la luz, las anomalías o el resto de endpoints.
+- **RF-66.3.2**: La limpieza es una pieza **única y compartida** (interfaz + implementación PDO)
+  usada por el panel de pruebas (crear/reset) y por la emisión real; sin SQL duplicado divergente.
+- **RF-66.3.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**, con
+  un caso que ensucia cooldown + IoT y verifica la limpieza al crear el QR (panel y real).

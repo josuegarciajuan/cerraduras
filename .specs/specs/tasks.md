@@ -2768,3 +2768,52 @@ un OPEN aplicado tras un CLOSED del mismo segundo.
 | F58-03 | Decisión y parsers en ms | RF-65.2 | `SensorEventDecision.php`, `IotSessionService.php`, `PresenceEventRepository.php` | unit PHP |
 | F58-04 | Regresión de llegada invertida | RF-65.3.3 | `bin/run-tests.sh` (BLOCK 33) | regresión |
 | F58-05 | Verificación de campo | RF-65.3.1 | `design.md` §22.5 | manual |
+
+---
+
+# Fase 59 — Un QR nuevo limpia el ciclo anterior (RF-66)
+
+**Motivo**: tras una salida confirmada queda `cooldown_until` (+20 s) y estado IoT del ciclo
+anterior; crear un QR nuevo (panel o real) sin resetear hacía que la coreografía mostrara
+`ANTI_REENTRADA` (monigote dentro). Evidencia: `qr-test/create` a las 09:13:58 con cooldown
+activo hasta 09:14:08; reproducción pura `cooldown=true → ANTI_REENTRADA (INSIDE)`.
+
+### TSK-F59-01: Specs y trazabilidad
+- **Cambio**: `requirements.md` (RF-66), `design.md` §23, `contracts.md` (semántica de
+  creación/emisión), `tasks.md`, `AGENTS.md`.
+- **RF**: RF-66.1/66.2/66.3.
+- **Test propio**: revisión + regresión.
+
+### TSK-F59-02: Limpieza compartida
+- **Cambio**: `src/Domain/Rooms/RoomCycleResetterInterface.php` +
+  `src/Domain/Rooms/RoomCycleResetter.php` (PDO): cooldown NULL + `iot_sessions` a UNKNOWN/null.
+- **RF**: RF-66.1.1, RF-66.1.2, RF-66.3.2.
+- **Test propio**: cobertura vía runner (BLOCK 19) + unit del servicio real.
+
+### TSK-F59-03: Panel de pruebas
+- **Cambio**: `QrTestController` — `doCreate()` limpia con el resetter; `create()` delega en
+  `doCreate()` tras sus guardas; `reset()`/`roomsReset()` reutilizan el resetter.
+- **RF**: RF-66.1.3.
+- **Test propio**: `BLOCK 19` (create sucio → limpio) + regresión.
+
+### TSK-F59-04: Emisión real
+- **Cambio**: `QrIssueService::issue()` limpia antes de `insertReserved` (respetando
+  `room_busy`); wiring en `public/index.php`.
+- **RF**: RF-66.1.1/66.1.2.
+- **Test propio**: `QrIssueServiceTest` (espía del resetter) + bloque de emisión del runner.
+
+### TSK-F59-05: Panel UI
+- **Cambio**: `public/dashboard.html` — `createTestQr()` usa `/dashboard-api/qr-test/reset`
+  (reset+create) para que ambos botones garanticen el ciclo limpio.
+- **RF**: RF-66.2.1.
+- **Test propio**: verificación manual + regresión.
+
+## Tabla resumen F59
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F59-01 | Specs y trazabilidad | RF-66.1/66.2/66.3 | `requirements/design/contracts/tasks.md`, `AGENTS.md` | revisión |
+| F59-02 | Limpieza compartida | RF-66.1/66.3.2 | `Domain/Rooms/RoomCycleResetter*.php` | runner + unit |
+| F59-03 | Panel de pruebas | RF-66.1.3 | `QrTestController.php` | BLOCK 19 |
+| F59-04 | Emisión real | RF-66.1 | `QrIssueService.php`, `index.php` | unit + runner |
+| F59-05 | Panel UI | RF-66.2.1 | `public/dashboard.html` | manual |

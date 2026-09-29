@@ -137,7 +137,14 @@ Clock::freeze(new DateTimeImmutable('2026-04-24T10:00:00Z', new DateTimeZone('UT
 putenv('APP_TZ=UTC');
 putenv('QR_ARRIVAL_WINDOW_MINUTES=15');
 
-$service = new QrIssueService($rooms, $roomTypes, $stayRepo, $timeSlotService, $creds, $tokenizer);
+// F59 (RF-66): espía del resetter de ciclo (cooldown + estado IoT).
+$cycleResetter = new class implements \App\Domain\Rooms\RoomCycleResetterInterface {
+    /** @var list<int> */
+    public array $resetCalls = [];
+    public function reset(int $roomId): void { $this->resetCalls[] = $roomId; }
+};
+
+$service = new QrIssueService($rooms, $roomTypes, $stayRepo, $timeSlotService, $creds, $tokenizer, $cycleResetter);
 
 $passed = 0; $failed = 0;
 function ok(string $l): void { global $passed; $passed++; echo "  PASS  {$l}\n"; }
@@ -154,6 +161,9 @@ echo "QrIssueService\n";
 
 $res = $service->issue(1, 60, ['codtic' => 19995, 'codart' => 2]);
 ok('issue returned a result');
+// F59 (RF-66): la emisión limpia el ciclo anterior de la habitación.
+if ($cycleResetter->resetCalls === [1]) ok('issue limpia el ciclo anterior (resetter llamado con room 1)');
+else bad('issue limpia el ciclo anterior', 'calls=' . json_encode($cycleResetter->resetCalls));
 if (!empty($res['qr_text']) && !empty($res['jti']) && $res['room_id'] === 1) ok('issue returns token+jti+room_id');
 else bad('issue returns token+jti+room_id');
 if (substr_count($res['qr_text'], '.') === 2) ok('token has three segments');
@@ -173,7 +183,11 @@ else bad('credential persisted with correct token_hash');
 
 // room_busy
 $stayRepo->activeStay = $stayRepo->findById($res['stay_id']);
+$resetsBeforeBusy = count($cycleResetter->resetCalls);
 expect('room_busy', function () use ($service) { $service->issue(1, 60, []); }, 'room_busy when stay is active');
+// F59: con estancia activa no se crea QR y no se limpia el ciclo.
+if (count($cycleResetter->resetCalls) === $resetsBeforeBusy) ok('room_busy no limpia ciclo (no crea estancia)');
+else bad('room_busy no limpia ciclo', 'calls=' . json_encode($cycleResetter->resetCalls));
 $stayRepo->activeStay = null;
 
 // duration_out_of_range

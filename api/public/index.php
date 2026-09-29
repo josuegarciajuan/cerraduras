@@ -1275,7 +1275,10 @@ $router->post(
     }
 );
 
-$qrTestCtrl         = new QrTestController($pdo, $qrTokenizer, $switchService);
+// F59 (RF-66): limpieza del ciclo anterior (cooldown + estado IoT) compartida
+// por el panel de pruebas y la emisión real de QR.
+$roomCycleResetter  = new \App\Domain\Rooms\RoomCycleResetter($pdo);
+$qrTestCtrl         = new QrTestController($pdo, $qrTokenizer, $switchService, $roomCycleResetter);
 
 $switchController = new SwitchController($switchService);
 
@@ -2099,7 +2102,8 @@ $qrIssueService = new QrIssueService(
     $stayRepo,
     $timeSlotService,
     $qrCredRepo,
-    $qrTokenizer
+    $qrTokenizer,
+    $roomCycleResetter
 );
 
 $accessEventRepo  = new AccessEventRepository($pdo);
