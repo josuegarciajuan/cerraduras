@@ -164,19 +164,30 @@ eq('T11 cierre + ausencia → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRES
 eq('T14 lógico VERIFICANDO', r.logical, 'VERIFICANDO');
 ep = r.episodeUpdates;
 
-// T13: reaparición de presencia antes del deadline → cancela y vuelve a DENTRO.
+// T13 (F57/RF-64.2.2): la reaparición de presencia DENTRO de la ventana NO
+// cancela; se cumple la espera prudencial completa y solo entonces vuelve DENTRO.
 r = deriveChoreography(baseSnap({
   door: 'CLOSED', presence: 'PRESENT',
   entryConfirmedAt: iso(T0),
   lastOpenAt: iso(T0 + 60000), lastCloseAt: iso(T0 + 63000),
-  exitDeadline: iso(T0 + 79000),
-  prevDoor: 'CLOSED',
-  freshPresenceAfterClose: true
+  prevDoor: 'CLOSED'
 }), ep, T0 + 68000);
-eq('T13 reaparición cancela salida → OCUPADA', r.state, 'OCUPADA');
+eq('T13 PRESENT a +5s → sigue VERIFICANDO (espera completa)', r.state, 'VERIFICANDO_PRESENCIA');
 ep = r.episodeUpdates;
-check('T13 la cancelación no deja residuos de exitEpisode',
-  ep.exitActive === false && ep.exitDeadline === 0 && ep.exitDoorOpenedAt === 0);
+check('T13 la ventana sigue anclada al cierre (+20s)',
+  ep.exitVerifyUntil === T0 + 63000 + 20000 && ep.exitDeadline === 0);
+
+// T13b: ventana agotada con presencia → DENTRO, sin residuos.
+r = deriveChoreography(baseSnap({
+  door: 'CLOSED', presence: 'PRESENT',
+  entryConfirmedAt: iso(T0),
+  lastOpenAt: iso(T0 + 60000), lastCloseAt: iso(T0 + 63000),
+  prevDoor: 'CLOSED'
+}), ep, T0 + 63000 + 20001);
+eq('T13b ventana agotada → OCUPADA (cancela salida)', r.state, 'OCUPADA');
+ep = r.episodeUpdates;
+check('T13b la cancelación no deja residuos de exitEpisode',
+  ep.exitActive === false && ep.exitDeadline === 0 && ep.exitDoorOpenedAt === 0 && ep.exitVerifyUntil === 0);
 
 // RF-47.3.2: tras cancelar, una nueva salida debe poder iniciarse.
 r = deriveChoreography(baseSnap({
@@ -341,20 +352,31 @@ function exitCloseSnap(over) {
   }, over || {}));
 }
 
-// E3: exitGuardSeconds=3 → hold de 6 s; a los 5 s del cierre aún sostiene.
+// E3 (F57): exitGuard=3 s → ventana de 20 s; a los 5 s del cierre sigue verificando.
 ep = exitEpBeforeClose({ exitGuardSeconds: 3 });
 r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 3 }), ep, T0 + 63000 + 5 * 1000);
-eq('E3 hold 3s a los 5s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+eq('E3 ventana 20s a los 5s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
 
-// E4: exitGuardSeconds=3 → a los 8 s (>6 s) el hold termina y cancela la salida.
+// E4 (F57): la ventana ya no es el hold de 6 s; a los 8 s sigue verificando y a
+// los 21 s (>20 s) cancela y vuelve a OCUPADA.
 ep = exitEpBeforeClose({ exitGuardSeconds: 3 });
 r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 3 }), ep, T0 + 63000 + 8 * 1000);
-eq('E4 hold 3s a los 8s → OCUPADA (cancela salida)', r.state, 'OCUPADA');
+eq('E4 ventana 20s a los 8s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 3 }), ep, T0 + 63000 + 21 * 1000);
+eq('E4 ventana 20s a los 21s → OCUPADA (cancela salida)', r.state, 'OCUPADA');
 
-// E5: sin exitGuardSeconds se conserva el fallback legacy a gap (hold=18 s).
+// E5 (F57): una guarda de salida mayor extiende la ventana (nunca < guarda + 3).
+ep = exitEpBeforeClose({ exitGuardSeconds: 25 });
+r = deriveChoreography(exitCloseSnap({ exitGuardSeconds: 25 }), ep, T0 + 63000 + 21 * 1000);
+eq('E5 guarda 25s a los 21s → sigue VERIFICANDO', r.state, 'VERIFICANDO_PRESENCIA');
+check('E5 ventana = guarda + 3 (28 s)',
+  r.episodeUpdates.exitVerifyUntil === T0 + 63000 + 28000);
+
+// E6 (F57): override explícito de la ventana por snapshot (`exitVerifySeconds`).
 ep = exitEpBeforeClose();
-r = deriveChoreography(exitCloseSnap(), ep, T0 + 63000 + 8 * 1000);
-eq('E5 fallback gap a los 8s → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+r = deriveChoreography(exitCloseSnap({ exitVerifySeconds: 30 }), ep, T0 + 63000 + 25 * 1000);
+eq('E6 exitVerifySeconds=30 a los 25s → sigue VERIFICANDO', r.state, 'VERIFICANDO_PRESENCIA');
+check('E6 ventana de 30 s', r.episodeUpdates.exitVerifyUntil === T0 + 63000 + 30000);
 
 // ============================================================================
 // F56 · Puerta visual: solo evidencia física (RF-63)
@@ -375,6 +397,93 @@ eq('F56 PROXIMITY OPEN real → abierta', resolveDoorOpen('OPEN', 0, T0), true);
 eq('F56 pulso de PROXIMITY OPEN vigente → abierta', resolveDoorOpen('CLOSED', T0 + 1200, T0), true);
 eq('F56 pulso expirado → cerrada', resolveDoorOpen('CLOSED', T0, T0), false);
 eq('F56 pulso nulo → cerrada', resolveDoorOpen('CLOSED', 0, T0), false);
+
+// ============================================================================
+// F57 · Ventana de verificación de salida visible (RF-64)
+// ============================================================================
+console.log('\nF57 · Verificación de salida visible (RF-64)\n');
+
+eq('F57 DEFAULT_EXIT_VERIFY_SECONDS = 20', Ch.DEFAULT_EXIT_VERIFY_SECONDS, 20);
+
+// Cierre tras ciclo de salida (apertura posterior a la confirmación).
+function exitWindowEp(over) {
+  let e = emptyEpisodes(305);
+  let rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'CLOSED', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0), lastCloseAt: iso(T0), prevDoor: 'CLOSED'
+  }, over || {})), e, T0 + 1000);
+  e = rr.episodeUpdates;
+  rr = deriveChoreography(baseSnap(Object.assign({
+    door: 'OPEN', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0), lastOpenAt: iso(T0 + 60000), prevDoor: 'CLOSED'
+  }, over || {})), e, T0 + 60000);
+  return rr.episodeUpdates;
+}
+
+function exitWindowClosedSnap(over) {
+  return baseSnap(Object.assign({
+    door: 'CLOSED', presence: 'PRESENT',
+    entryConfirmedAt: iso(T0),
+    lastOpenAt: iso(T0 + 60000), lastCloseAt: iso(T0 + 63000),
+    prevDoor: 'OPEN'
+  }, over || {}));
+}
+
+const EXIT_CLOSE_MS  = T0 + 63000;
+const EXIT_WINDOW_MS = EXIT_CLOSE_MS + 20000;
+
+// T11 (F57): el cierre arranca SIEMPRE la verificación visible (con `?` + timer).
+ep = exitWindowEp();
+r = deriveChoreography(exitWindowClosedSnap(), ep, EXIT_CLOSE_MS + 1000);
+eq('F57 cierre con PRESENT → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+eq('F57 lógico VERIFICANDO', r.logical, 'VERIFICANDO');
+ep = r.episodeUpdates;
+check('F57 ventana anclada al cierre (+20 s)', ep.exitVerifyUntil === EXIT_WINDOW_MS);
+
+// RF-64.2.2: PRESENT nuevo durante la ventana NO cancela; espera completa.
+r = deriveChoreography(exitWindowClosedSnap(), ep, EXIT_CLOSE_MS + 5000);
+eq('F57 PRESENT a +5s → sigue verificando', r.state, 'VERIFICANDO_PRESENCIA');
+ep = r.episodeUpdates;
+
+// RF-64.2.3: ventana agotada con PRESENT → DENTRO sin residuos.
+r = deriveChoreography(exitWindowClosedSnap(), ep, EXIT_WINDOW_MS + 1000);
+eq('F57 ventana agotada con PRESENT → OCUPADA', r.state, 'OCUPADA');
+check('F57 limpia el episodio al agotar la ventana',
+  r.episodeUpdates.exitActive === false && r.episodeUpdates.exitVerifyUntil === 0);
+
+// UNKNOWN: misma ventana y mismo desenlace (timer visible en ambos).
+ep = exitWindowEp();
+r = deriveChoreography(exitWindowClosedSnap({ presence: 'UNKNOWN' }), ep, EXIT_CLOSE_MS + 1000);
+eq('F57 cierre con UNKNOWN → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+ep = r.episodeUpdates;
+r = deriveChoreography(exitWindowClosedSnap({ presence: 'UNKNOWN' }), ep, EXIT_WINDOW_MS + 1000);
+eq('F57 ventana agotada con UNKNOWN → OCUPADA', r.state, 'OCUPADA');
+
+// RF-64.3.1: con ausencia + deadline del backend, manda el deadline.
+ep = exitWindowEp();
+r = deriveChoreography(exitWindowClosedSnap({
+  presence: 'ABSENT', lastAbsentSince: iso(EXIT_CLOSE_MS + 1000),
+  exitDeadline: iso(EXIT_CLOSE_MS + 4000), prevDoor: 'CLOSED'
+}), ep, EXIT_CLOSE_MS + 2000);
+eq('F57 ausencia + deadline → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+check('F57 el episodio guarda el deadline del backend',
+  r.episodeUpdates.exitDeadline === EXIT_CLOSE_MS + 4000);
+
+// RF-64.1.1/T12: una reapertura re-arma la ventana para el siguiente cierre.
+ep = exitWindowEp();
+r = deriveChoreography(baseSnap({
+  door: 'OPEN', presence: 'PRESENT',
+  entryConfirmedAt: iso(T0), lastOpenAt: iso(EXIT_CLOSE_MS + 5000), prevDoor: 'CLOSED'
+}), ep, EXIT_CLOSE_MS + 5000);
+eq('F57 reapertura → PUERTA_ABIERTA', r.state, 'PUERTA_ABIERTA');
+check('F57 la reapertura limpia la ventana', r.episodeUpdates.exitVerifyUntil === 0);
+ep = r.episodeUpdates;
+r = deriveChoreography(exitWindowClosedSnap({
+  lastOpenAt: iso(EXIT_CLOSE_MS + 5000), lastCloseAt: iso(EXIT_CLOSE_MS + 7000), prevDoor: 'OPEN'
+}), ep, EXIT_CLOSE_MS + 8000);
+eq('F57 nuevo cierre → VERIFICANDO_PRESENCIA', r.state, 'VERIFICANDO_PRESENCIA');
+check('F57 nueva ventana anclada al nuevo cierre',
+  r.episodeUpdates.exitVerifyUntil === (EXIT_CLOSE_MS + 7000) + 20000);
 
 // ============================================================================
 // Resultado
