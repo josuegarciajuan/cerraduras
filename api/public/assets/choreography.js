@@ -2,6 +2,7 @@
  * choreography.js — Fase 41: máquina de estados del monigote por EPISODIOS.
  *
  * Trazabilidad: RF-46, RF-47, RF-49 · design.md §5 (T1–T18) · TSK-F41-13.
+ * F56 (RF-63): `resolveDoorOpen()` — la puerta del croquis sigue SOLO al sensor físico.
  *
  * Función PURA `deriveChoreography(snapshot, episodes, now)`:
  *   - no lee `Date.now()`, ni el DOM, ni variables globales;
@@ -97,6 +98,24 @@
     if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += 'Z';
     var t = Date.parse(s);
     return isNaN(t) ? 0 : t;
+  }
+
+  /**
+   * F56 (RF-63): decisión PURA del estado visual de la puerta del croquis.
+   *
+   * La puerta se abre SOLO con evidencia física:
+   *   - `doorState === 'OPEN'` (evento PROXIMITY OPEN aplicado), o
+   *   - pulso anti-colapso vigente (`nowMs < doorPulseUntilMs`), derivado de un
+   *     PROXIMITY OPEN real reciente (cubre OPEN+CLOSED en el mismo ciclo SSE).
+   *
+   * El comando del relé (`access_events` OPEN OK) NO es entrada de esta función
+   * a propósito: solo libera el pestillo y no debe pintar la puerta abierta
+   * (RF-63.1.2). Su feedback es el pestillo verde en `QR_OK` + toast.
+   */
+  function resolveDoorOpen(doorState, doorPulseUntilMs, nowMs) {
+    var pulse = (typeof doorPulseUntilMs === 'number' && doorPulseUntilMs > 0)
+      && (typeof nowMs === 'number' && nowMs < doorPulseUntilMs);
+    return doorState === 'OPEN' || pulse;
   }
 
   /**
@@ -374,6 +393,7 @@
     deriveChoreography: deriveChoreography,
     parseTime: parseTime,
     emptyEpisodes: emptyEpisodes,
+    resolveDoorOpen: resolveDoorOpen,
     LOGICAL_TO_UI: LOGICAL_TO_UI
   };
 });
