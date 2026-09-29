@@ -747,8 +747,8 @@ panel dejan de ser fiables en varios escenarios encadenados.
 - **RF-57.4.3**: El cambio no debe consumir cuota Tuya (opera sobre el push).
 
 ### RF-57.5: Latencia percibida de la puerta (panel)
-- **RF-57.5.1**: El panel debe mostrar la puerta como abierta desde el **evento de apertura del relé** (`access_events` `OPEN` OK, ~instantáneo) hasta que el magneto Tuya confirme un `CLOSED` posterior, con timeout de seguridad (12 s).
-- **RF-57.5.2**: La animación no debe contradecir el estado real: si llega el `CLOSED` del magneto, la puerta vuelve a cerrada.
+- **RF-57.5.1**: ~~El panel debe mostrar la puerta como abierta desde el **evento de apertura del relé** (`access_events` `OPEN` OK, ~instantáneo) hasta que el magneto Tuya confirme un `CLOSED` posterior, con timeout de seguridad (12 s).~~ **SUPERSEDED por RF-63.1** (F56): el comando del relé no debe abrir la puerta del croquis; ver Fase 56.
+- **RF-57.5.2**: La animación no debe contradecir el estado real: si llega el `CLOSED` del magneto, la puerta vuelve a cerrada. (Reforzado por RF-63.)
 
 # Fase 50: Estado real del SWITCH por push y robustez del consumer Pulsar
 
@@ -983,3 +983,33 @@ resultado de cada una y guardar corridas comparables hasta que todo quede en ver
 - **RF-62.5.1**: los endpoints existentes no cambian de contrato; las rutas nuevas son aditivas.
 - **RF-62.5.2**: `bash bin/run-tests.sh` termina con **0 failures** con el nuevo `BLOCK 43`.
 - **RF-62.5.3**: la lógica pura se cubre con `tests/Unit/acceptance-logic.test.js` (sin DOM/red/BD).
+
+# Fase 56: La puerta del croquis sigue al sensor físico (Bug del panel)
+
+**Motivo**: al escanear un QR válido, el panel abría la puerta del croquis en el mismo instante
+del comando al relé (`access_events` `OPEN` OK), 5–7 s antes de que la puerta se abriera de
+verdad (magneto `PROXIMITY OPEN`). El comando del relé no es apertura física: solo libera el
+pestillo. Esto revoca la decisión de RF-57.5.1 (F48/TSK-F48-05).
+
+## RF-63: Puerta visual = evidencia física
+
+### RF-63.1: Al escanear el QR solo cambia el pestillo
+- **RF-63.1.1**: al validar un QR, el croquis debe mantener la puerta **cerrada**; el único
+  cambio visual de acceso es el **pestillo en verde** (y el toast de acceso concedido).
+- **RF-63.1.2**: el comando de apertura (`access_events` `OPEN` OK) **no** debe alterar el
+  estado visual de la puerta (arco/hoja) ni encender la bombilla por sí mismo.
+
+### RF-63.2: La puerta se abre con el sensor de puerta
+- **RF-63.2.1**: la puerta del croquis se abre **únicamente** con evidencia física:
+  `iot_session.door_state = OPEN` (evento `PROXIMITY OPEN` aplicado) o el pulso anti-colapso
+  derivado de un `PROXIMITY OPEN` real reciente (`DOOR_PULSE_HOLD_MS = 1200 ms`), que cubre
+  `OPEN`+`CLOSED` colapsados en el mismo ciclo SSE.
+- **RF-63.2.2**: la puerta vuelve a cerrada con `PROXIMITY CLOSED` (o al expirar el pulso si
+  no llega el `CLOSED`).
+
+### RF-63.3: Sin regresiones ni cuota
+- **RF-63.3.1**: no cambian contratos de API (`/live`, SSE, `recent_events`, `recent_presence`),
+  ni la coreografía del monigote, ni la regla de salida, ni las anomalías.
+- **RF-63.3.2**: la decisión visual es una **función pura** testeable sin DOM/red/BD.
+- **RF-63.3.3**: no consume cuota Tuya (opera sobre el push y el SSE existentes).
+- **RF-63.3.4**: la regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.

@@ -2622,3 +2622,45 @@ que todo quede en verde.
 | F55-04 | Rutas + persistencia | RF-62.1.1/62.4 | `public/index.php` | BLOCK 43 |
 | F55-05 | Runner | RF-62.5.2 | `bin/run-tests.sh` | regresión |
 | F55-06 | Registro AGENTS.md | RF-62.1 | `AGENTS.md` | — |
+
+---
+
+# Fase 56 — La puerta del croquis sigue al sensor físico (RF-63)
+
+**Motivo**: al escanear el QR, el panel abría la puerta del croquis con el comando al relé
+(`access_events` `OPEN` OK), 5–7 s antes de la apertura física. F48-05 (RF-57.5) queda revocado.
+
+### TSK-F56-01: Specs y trazabilidad
+- **Cambio**: `requirements.md` (RF-63, RF-57.5.1 superseded), `design.md` §20,
+  `contracts.md` (sin cambios de contrato), `tasks.md`, `AGENTS.md`.
+- **RF**: RF-63.1/63.2/63.3.
+- **Test propio**: revisión + regresión.
+
+### TSK-F56-02: Regla pura de puerta visual
+- **Cambio**: `public/assets/choreography.js` — `resolveDoorOpen(doorState, pulseUntilMs, nowMs)`
+  (aditiva; el comando del relé no es entrada de la función).
+- **RF**: RF-63.2.1, RF-63.3.2.
+- **Test propio**: casos F56 en `tests/Unit/choreography.test.js`.
+
+### TSK-F56-03: Panel sin apertura optimista
+- **Cambio**: `public/dashboard.html` — `renderSensorSvg()` elimina `optimisticOpen`
+  (`latestAccessOpenMs`/`latestDoorClosedMs`) y calcula la puerta con `resolveDoorOpen`
+  (fallback inline si el asset está cacheado); se conserva el pulso `PROXIMITY` y el pestillo
+  verde de `QR_OK`; texto de fase de `QR_OK` ajustado.
+- **RF**: RF-63.1.1, RF-63.1.2, RF-63.2.2.
+- **Test propio**: unit JS (BLOCK 33) + verificación manual en `/dashboard`.
+
+### TSK-F56-04: Criterio de aceptación manual
+- **Cambio**: `public/assets/acceptance-tests.json` — P20 actualizada: pestillo verde y puerta
+  cerrada hasta la apertura física; la puerta del croquis abre al abrirla de verdad.
+- **RF**: RF-63.1.1, RF-63.2.1.
+- **Test propio**: verificación manual (P19–P23) + regresión.
+
+## Tabla resumen F56
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F56-01 | Specs y trazabilidad | RF-63.1/63.2/63.3 | `requirements/design/contracts/tasks.md`, `AGENTS.md` | revisión |
+| F56-02 | Regla pura `resolveDoorOpen` | RF-63.2.1/63.3.2 | `assets/choreography.js` | unit JS |
+| F56-03 | Panel sin apertura optimista | RF-63.1/63.2 | `public/dashboard.html` | unit JS + manual |
+| F56-04 | Criterio de aceptación manual | RF-63.1/63.2 | `assets/acceptance-tests.json` | manual + regresión |

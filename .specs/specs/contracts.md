@@ -1791,3 +1791,25 @@ vigentes; no se modifican.
 ## 4. No regresión
 
 Rutas aditivas; ningún contrato existente cambia. `api/run/` es gitignored (no se versionan datos).
+
+---
+
+# Fase 56: La puerta del croquis sigue al sensor físico (RF-63)
+
+## 1. Sin cambios de contrato
+
+F56 es **solo panel** (regla visual pura + render). No añade ni modifica rutas, campos,
+códigos de estado ni formatos de `/live`, SSE, outbox o `/sim/*`.
+
+Los campos existentes mantienen su semántica:
+
+- `iot_session.door_state`: `OPEN` **solo** con `PROXIMITY OPEN` aplicado; el comando del relé
+  no lo altera (ya era así en backend desde F28).
+- `recent_events`: sigue incluyendo `OPEN OK` (comando); el panel deja de usarlo para pintar
+  la puerta y lo conserva para el toast de acceso.
+- `recent_presence` (solo `applied = 1`): fuente del pulso visual anti-colapso de la puerta.
+
+## 2. No regresión
+
+Ningún consumidor externo se ve afectado; la verificación es la regresión completa del runner
+(`BLOCK 33` incluye los unit tests JS de la regla pura).
