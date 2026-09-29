@@ -3,6 +3,7 @@
  *
  * Trazabilidad: RF-46, RF-47, RF-49 · design.md §5 (T1–T18) · TSK-F41-13.
  * F56 (RF-63): `resolveDoorOpen()` — la puerta del croquis sigue SOLO al sensor físico.
+ * F57 (RF-64): ventana de verificación de salida (`exitVerifyUntil`, 20 s) visible en el panel.
  *
  * Función PURA `deriveChoreography(snapshot, episodes, now)`:
  *   - no lee `Date.now()`, ni el DOM, ni variables globales;
@@ -55,6 +56,13 @@
     ANTI_REENTRADA:       'ANTI_REENTRADA'
   };
 
+  /**
+   * F57 (RF-64): duración por defecto de la ventana de verificación de salida.
+   * Se usa `max(DEFAULT_EXIT_VERIFY_SECONDS, exit_guard_seconds + 3)` para no
+   * contradecir guardas de salida mayores configuradas por sala.
+   */
+  var DEFAULT_EXIT_VERIFY_SECONDS = 20;
+
   /** Episodios vacíos, listos para un nuevo `stayId` (o ninguno). */
   function emptyEpisodes(stayId) {
     return {
@@ -74,7 +82,9 @@
       exitClosedAt:        0,
       exitPresenceSeen:    false,
       exitAbsentAt:        0,
-      exitDeadline:        0
+      exitDeadline:        0,
+      // F57 (RF-64): fin de la ventana prudencial de verificación de salida.
+      exitVerifyUntil:     0
     };
   }
 
@@ -124,13 +134,15 @@
    * snapshot: {
    *   roomStatus, door, presence, stayId, stayStatus,
    *   entryConfirmedAt, lastOpenAt, lastCloseAt, lastAbsentSince,
-   *   exitDeadline, gapSeconds, entryWindowSeconds, exitGuardSeconds, cooldown,
+   *   exitDeadline, gapSeconds, entryWindowSeconds, exitGuardSeconds,
+   *   exitVerifySeconds,  // F57: override de la ventana de salida (default 20 s)
+   *   cooldown,
    *   qrScannable, qrConsumed, qrRevoked, qrExpired,
    *   qrRecentAt, qrRecentResult,  // QR_VALIDATE en ventana de 10 s
    *   qrBroadAt,                   // QR_VALIDATE OK en ventana de 120 s
    *   qrDeniedAt,                  // DENIED en ventana de 10 s
    *   sensorsEverSeen, anomalies, anyDeviceReachable,
-   *   prevDoor, prevPresence, prevStayStatus, freshPresenceAfterClose
+   *   prevDoor, prevPresence, prevStayStatus
    * }
    * episodes: objeto devuelto en la llamada anterior (o `emptyEpisodes()`).
    * now: epoch en ms.
@@ -159,13 +171,15 @@
     // campos nuevos se conserva el comportamiento previo (fallback a gap).
     var entryWindowSecs = (typeof s.entryWindowSeconds === 'number' && s.entryWindowSeconds > 0) ? s.entryWindowSeconds : gapSecs;
     var exitGuardSecs = (typeof s.exitGuardSeconds === 'number' && s.exitGuardSeconds > 0) ? s.exitGuardSeconds : gapSecs;
-    var holdMs = (exitGuardSecs + 3) * 1000;
+    // F57 (RF-64): ventana prudencial de salida. Nunca menor que la guarda + margen.
+    var exitVerifySecs = (typeof s.exitVerifySeconds === 'number' && s.exitVerifySeconds > 0)
+      ? s.exitVerifySeconds : DEFAULT_EXIT_VERIFY_SECONDS;
+    var verifyMs = Math.max(exitVerifySecs, exitGuardSecs + 3) * 1000;
 
     var qrRecentMs = s.qrRecentAt || 0;
     var qrRecentResult = s.qrRecentResult || null;
     var qrBroadMs = s.qrBroadAt || 0;
     var qrDeniedMs = s.qrDeniedAt || 0;
-    var freshPresenceAfterClose = !!s.freshPresenceAfterClose;
 
     // Un cambio de estancia reinicia el episodio (RF-46 / RF-47.5).
     if (stayId !== ep.stayId) {
@@ -212,6 +226,7 @@
       ep.exitPresenceSeen = false;
       ep.exitAbsentAt = 0;
       ep.exitDeadline = 0;
+      ep.exitVerifyUntil = 0; // F57 (RF-64)
     }
 
     // ── T18: las anomalías A1–A8 son informativas, no alteran la coreografía ──
@@ -350,6 +365,7 @@
           ep.exitPresenceSeen = presence === 'PRESENT';
           ep.exitAbsentAt = 0;
           ep.exitDeadline = deadlineMs;
+          ep.exitVerifyUntil = 0; // F57: el cierre re-arma la ventana
           return out('POSIBLE_SALIDA');
         }
         // Apertura sin ciclo nuevo: el huésped sigue dentro.
@@ -359,19 +375,28 @@
       if (door === 'CLOSED') {
         if (ep.exitActive) {
           ep.exitClosedAt = lastCloseMs || nowMs;
-          // T11 hold: puerta recién cerrada y radar aún PRESENT sin evento fresco.
-          var holding = presence === 'PRESENT' && !freshPresenceAfterClose
-            && ((nowMs - (lastCloseMs || nowMs)) < holdMs);
-          if (presence === 'PRESENT' && !holding) {
-            // T13: la presencia vuelve a asentarse dentro → se cancela la salida.
-            clearExit();
-            return out('DENTRO');
+          // F57 (RF-64): ventana única de verificación de salida, visible en el
+          // panel con independencia del estado de presencia (T11).
+          if (!ep.exitVerifyUntil) {
+            ep.exitVerifyUntil = (lastCloseMs || nowMs) + verifyMs;
           }
-          if (presence === 'ABSENT' || presence === 'UNKNOWN' || holding) {
-            if (presence === 'ABSENT') ep.exitAbsentAt = lastAbsentMs || nowMs;
-            ep.exitDeadline = deadlineMs;
+          // El backend puede cancelar la ausencia (presencia reaparición): sin
+          // snapshot de deadline, el episodio no debe conservar el anterior.
+          ep.exitDeadline = deadlineMs || 0;
+          if (deadlineMs) {
+            // T14: el backend ya confirma ausencia sostenida; su deadline manda y
+            // puede cortar la ventana local (T14/RF-64.3.1).
             return out('VERIFICANDO');
           }
+          if (nowMs < ep.exitVerifyUntil) {
+            // T13: la presencia no cancela; se cumple la espera prudencial completa
+            // (RF-64.2.2). Si hay ausencia sin deadline todavía, se sigue verificando.
+            if (presence === 'ABSENT') ep.exitAbsentAt = lastAbsentMs || nowMs;
+            return out('VERIFICANDO');
+          }
+          // T13b: ventana agotada sin confirmación de salida → el huésped sigue dentro.
+          clearExit();
+          return out('DENTRO');
         }
         if (deadlineMs && presence === 'ABSENT') {
           // T14: verificación activa, el conteo local corre en el panel.
@@ -394,6 +419,7 @@
     parseTime: parseTime,
     emptyEpisodes: emptyEpisodes,
     resolveDoorOpen: resolveDoorOpen,
+    DEFAULT_EXIT_VERIFY_SECONDS: DEFAULT_EXIT_VERIFY_SECONDS,
     LOGICAL_TO_UI: LOGICAL_TO_UI
   };
 });

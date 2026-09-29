@@ -3045,11 +3045,13 @@ function toggleEventDetail(row) {
 // ╚══════════════════════════════════════════════════════════╝
 
 /**
- * F41·TSK-F41-14 (RF-49.2) + F42 (RF-46.4): conteo por temporizador LOCAL.
- * No depende de que lleguen eventos: calcula el restante con el reloj del
- * navegador mientras exista una verificación real (de salida o de entrada) y
- * se ancla a `exit_deadline` (salida) o a `last_close_at + gap_seconds` (entrada).
- * A 0 pide resync (la confirmación la decide el backend, no el cliente).
+ * F41·TSK-F41-14 (RF-49.2) + F42 (RF-46.4) + F57 (RF-64): conteo por temporizador LOCAL.
+ * No depende de que lleguen eventos: calcula el restante con el reloj del navegador
+ * mientras exista una verificación real:
+ *   - ENTRADA: `last_close_at + entry_window_seconds` (sin cambios, RF-46.4).
+ *   - SALIDA (F57): ventana local `exitVerifyUntil` (cierre + 20 s) o, si el backend
+ *     ya emite `exit_deadline` (ausencia + guarda), ese deadline manda y puede cortar.
+ * A 0 pide resync (la confirmación/ventana la decide la coreografía, no el cliente).
  */
 function updateCountdown() {
   const el = document.getElementById('countdown-text');
@@ -3063,22 +3065,30 @@ function updateCountdown() {
   const stay = data.active_stay;
   const deadline = data.exit_deadline ? new Date(data.exit_deadline) : null;
   const now = new Date();
-  const gapSeconds = data.gap_seconds || 15;
   const entryWindowSeconds = data.entry_window_seconds || 90;
+  const exitGuardSecs = data.exit_guard_seconds || 3;
+  const defaultWindowSecs = (typeof Choreography !== 'undefined' && Choreography.DEFAULT_EXIT_VERIFY_SECONDS)
+    ? Choreography.DEFAULT_EXIT_VERIFY_SECONDS : 20;
   const toMs = (typeof Choreography !== 'undefined' && Choreography.parseTime)
     ? Choreography.parseTime
     : function (v) { return v ? Date.parse(String(v) + 'Z') : 0; };
 
-  // RF-49.2.2: salida (deadline + ausencia + cerrado + OCCUPIED).
-  const exitActive = !!deadline
-    && io.presence_state === 'ABSENT'
-    && io.door_state === 'CLOSED'
-    && !!stay && stay.status === 'OCCUPIED';
+  const stayOccupied = !!stay && stay.status === 'OCCUPIED';
+  const doorClosed = io.door_state === 'CLOSED';
+
+  // F57 (RF-64.1.2): verificación de SALIDA visible en CUALQUIER estado de
+  // presencia (antes exigía ABSENT y por eso no aparecía al cerrar). Requiere
+  // episodio de salida activo (o deadline del backend) para no confundirse con
+  // el fallback VERIFICANDO de una entrada aún sin consolidar.
+  const exitVerifyUntil = (_choreoEpisodes && _choreoEpisodes.exitVerifyUntil) || 0;
+  const exitEpisodeActive = !!(_choreoEpisodes && _choreoEpisodes.exitActive);
+  const exitActive = currentState === 'VERIFICANDO_PRESENCIA'
+    && doorClosed && stayOccupied
+    && (!!deadline || (exitVerifyUntil > 0 && exitEpisodeActive));
 
   // RF-46.4: entrada (puerta cerrada sin presencia, ventana de verificación).
   const entryActive = currentState === 'VERIFICANDO_ENTRADA'
-    && io.door_state === 'CLOSED'
-    && !!stay && stay.status === 'OCCUPIED';
+    && doorClosed && stayOccupied;
 
   if (!exitActive && !entryActive) { group.style.display = 'none'; return; }
 
@@ -3091,16 +3101,28 @@ function updateCountdown() {
     if (!closeMs) { group.style.display = 'none'; return; }
     remainMs = (closeMs + totalSec * 1000) - now.getTime();
   } else {
-    totalSec = Math.max(1, gapSeconds);
-    remainMs = deadline - now;
+    // F57: deadline del backend manda; si no existe, ventana local del cierre.
+    const closeMs = toMs(io.last_close_at);
+    const localUntil = exitVerifyUntil || (closeMs + defaultWindowSecs * 1000);
+    const anchor = deadline ? deadline.getTime() : localUntil;
+    totalSec = deadline
+      ? Math.max(1, exitGuardSecs)
+      : Math.max(1, Math.round((localUntil - (closeMs || localUntil)) / 1000));
+    remainMs = anchor - now.getTime();
   }
 
   if (remainMs <= 0) {
-    group.style.display = 'none';
+    // No se oculta de golpe: se muestra 0 y se pide resync. La coreografía
+    // (ventana agotada → DENTRO, o EXITED del backend) decide y el grupo se oculta.
     if (Date.now() - _lastCountdownResyncAt > 5000) {
       _lastCountdownResyncAt = Date.now();
-      resyncLive(); // la confirmación la decide el backend
+      resyncLive();
     }
+    if (arc) arc.setAttribute('stroke-dashoffset', '0');
+    if (labelEl) labelEl.textContent = entryActive ? 'ventana entrada' : 'ventana salida';
+    el.style.opacity = '1';
+    el.textContent = '0';
+    group.style.display = '';
     return;
   }
 
@@ -3115,7 +3137,7 @@ function updateCountdown() {
     arc.setAttribute('stroke-dashoffset', offset);
     arc.setAttribute('stroke-dasharray', circumference);
   }
-  if (labelEl) labelEl.textContent = entryActive ? 'ventana entrada' : 'ventana presencia';
+  if (labelEl) labelEl.textContent = entryActive ? 'ventana entrada' : 'ventana salida';
   // Blinking effect + circular arc
   el.style.opacity = (Math.floor(Date.now() / 500) % 2 === 0) ? '1' : '0.3';
   el.textContent = sec;
