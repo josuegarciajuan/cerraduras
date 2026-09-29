@@ -124,10 +124,33 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::STALE) pass('decide: stale OPEN cannot revert a newer CLOSED');
 else fail('decide: stale OPEN should be discarded, got ' . $decision);
 
+// ── F58 (RF-65): mismo segundo, orden por milisegundos ───────────────────
+// OPEN con ms anterior al CLOSED ya aplicado → stale (no revierte el cierre).
+$session = sessionWithDoor('2026-04-28 10:00:10.900', 'CLOSED');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:10.100Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::STALE) pass('decide F58: OPEN .100 tras CLOSED .900 (mismo segundo) → stale');
+else fail('decide F58: OPEN del mismo segundo con ms anterior debe ser stale, got ' . $decision);
+
+// La secuencia legítima del mismo segundo (cierre .100 → reapertura .900) se aplica.
+$session = sessionWithDoor('2026-04-28 10:00:10.100', 'CLOSED');
+$decision = SensorEventDecision::decide(
+    doorEvent('2026-04-28T10:00:10.900Z', 'OPEN'), $session, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('decide F58: CLOSED .100 → OPEN .900 (mismo segundo) → apply');
+else fail('decide F58: reapertura del mismo segundo con ms posterior debe aplicar, got ' . $decision);
+
+// El fingerprint lógico sigue floors a segundo (idempotencia de reenvíos).
+$fpEarly = SensorEventDecision::fingerprint(12, 'PROXIMITY', 'CLOSED', '2026-04-28T10:00:10.100Z');
+$fpLate  = SensorEventDecision::fingerprint(12, 'PROXIMITY', 'CLOSED', '2026-04-28T10:00:10.900Z');
+if ($fpEarly === $fpLate) pass('fingerprint F58: mismo segundo mismo valor → mismo id (floor a segundo)');
+else fail('fingerprint F58: la identidad lógica debe seguir floors a segundo');
+
 // ── decide: duplicate (same instant + same value) ────────────────────────
 $session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
 $decision = SensorEventDecision::decide(
-    doorEvent('2026-04-28T10:00:10.400Z', 'OPEN'), $session, false
+    doorEvent('2026-04-28T10:00:10.000Z', 'OPEN'), $session, false
 );
 if ($decision === SensorEventDecision::DUPLICATE) pass('decide: same instant + value → duplicate');
 else fail('decide: same instant + value should be duplicate, got ' . $decision);

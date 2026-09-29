@@ -154,7 +154,9 @@ $evA = $ingress->normalize([
 ]);
 
 $metaA = lastMetaFor($repo, 701);
-$expectedAtA = gmdate('Y-m-d\TH:i:s\Z', (int) ($tA / 1000));
+// F58 (RF-65): tsToIso conserva la fracción de ms del sello Tuya.
+$expectedAtA = gmdate('Y-m-d\TH:i:s', (int) ($tA / 1000))
+    . '.' . str_pad((string) ($tA % 1000), 3, '0', STR_PAD_LEFT) . 'Z';
 if (($evA['meta']['_noop'] ?? false) === true
     && ($evA['meta']['discard_reason'] ?? '') === 'switch_state'
     && ($evA['meta']['switch_state'] ?? '') === 'ON'
@@ -184,7 +186,9 @@ $evB = $ingress->normalize([
 ]);
 
 $metaB = lastMetaFor($repo, 702);
-$expectedAtB = gmdate('Y-m-d\TH:i:s\Z', (int) ($tB / 1000));
+// F58 (RF-65): tsToIso conserva la fracción de ms del sello Tuya.
+$expectedAtB = gmdate('Y-m-d\TH:i:s', (int) ($tB / 1000))
+    . '.' . str_pad((string) ($tB % 1000), 3, '0', STR_PAD_LEFT) . 'Z';
 if (($evB['meta']['discard_reason'] ?? '') === 'switch_state'
     && ($evB['meta']['switch_state'] ?? '') === 'OFF'
     && $metaB !== null

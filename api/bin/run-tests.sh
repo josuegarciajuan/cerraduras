@@ -2908,6 +2908,47 @@ print('OK' if ok else 'FAIL door=' + str(iot.get('last_door_value')) +
             "codes=$F41_CODE_O/$F41_CODE_C estado=$F41_CONC (esperado CLOSED|CLOSED)"
     fi
 
+    # ── 33.7b F58/RF-65: mismo segundo con llegada invertida → gana la ms ──
+    # CLOSED (.900) llega primero; OPEN (.100), que ocurrió antes, llega después.
+    # Sin ms (comportamiento anterior) el OPEN revertía el cierre y la puerta
+    # quedaba OPEN; con F58 el OPEN es stale y gana CLOSED.
+    f41_reset >/dev/null 2>&1 || true
+    F41_TI=$((F41_NOW + 500))
+    F41_TI_BASE=$(f41_iso "$F41_TI")
+    F41_TS_EARLY="${F41_TI_BASE%Z}.100Z"
+    F41_TS_LATE="${F41_TI_BASE%Z}.900Z"
+    F41_TS_EARLY_MYSQL="${F41_TS_EARLY%Z}"
+    F41_TS_EARLY_MYSQL="${F41_TS_EARLY_MYSQL/T/ }"
+    F41_RC_LATE=$(f41_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$F41_TS_LATE\"}")
+    F41_RC_EARLY=$(f41_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$F41_TS_EARLY\"}")
+    F41_INV_STATE=$($MYSQL -sN -e "SELECT CONCAT(IFNULL(door_state,'?'),'|',IFNULL(last_door_value,'NULL')) FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    F41_INV_STALE=$($MYSQL -sN -e "SELECT COUNT(*) FROM presence_events WHERE room_id=$F41_ROOM AND sensor='PROXIMITY' AND value='OPEN' AND occurred_at='$F41_TS_EARLY_MYSQL' AND applied=0 AND discard_reason='stale'" 2>/dev/null || echo "-1")
+    if [ "$F41_INV_STATE" = "ERR" ]; then
+        skip "F58 orden ms: llegada invertida" "BD no accesible"
+    elif [ "$F41_RC_LATE" = "202" ] && [ "$F41_RC_EARLY" = "202" ] && [ "$F41_INV_STATE" = "CLOSED|CLOSED" ] && [ "$F41_INV_STALE" != "-1" ] && [ "$F41_INV_STALE" -ge 1 ]; then
+        pass "F58 orden ms: CLOSED .900 + OPEN .100 invertido → CLOSED gana y OPEN stale"
+    else
+        fail "F58 orden ms: llegada invertida" \
+            "codes=$F41_RC_LATE/$F41_RC_EARLY state=$F41_INV_STATE stale=$F41_INV_STALE"
+    fi
+
+    # ── 33.7c F58/RF-65: mismo segundo ascendente legítimo (cierre→reapertura) ──
+    f41_reset >/dev/null 2>&1 || true
+    F41_TJ=$((F41_NOW + 520))
+    F41_TJ_BASE=$(f41_iso "$F41_TJ")
+    F41_TS_J1="${F41_TJ_BASE%Z}.100Z"
+    F41_TS_J2="${F41_TJ_BASE%Z}.900Z"
+    f41_sim door "{\"state\":\"CLOSED\",\"occurred_at\":\"$F41_TS_J1\"}" >/dev/null
+    F41_RC_J2=$(f41_sim door "{\"state\":\"OPEN\",\"occurred_at\":\"$F41_TS_J2\"}")
+    F41_J_STATE=$($MYSQL -sN -e "SELECT CONCAT(IFNULL(door_state,'?'),'|',IFNULL(last_door_value,'NULL')) FROM iot_sessions WHERE room_id=$F41_ROOM LIMIT 1" 2>/dev/null || echo "ERR")
+    if [ "$F41_J_STATE" = "ERR" ]; then
+        skip "F58 orden ms: ascendente" "BD no accesible"
+    elif [ "$F41_RC_J2" = "202" ] && [ "$F41_J_STATE" = "OPEN|OPEN" ]; then
+        pass "F58 orden ms: CLOSED .100 → OPEN .900 (mismo segundo) aplica OPEN"
+    else
+        fail "F58 orden ms: ascendente" "code=$F41_RC_J2 state=$F41_J_STATE"
+    fi
+
     # ── 33.8 Coreografía de salida: entry_confirmed_at + exit_deadline (RF-47)
     f41_reset >/dev/null 2>&1 || true
     F41_GSTAY=$($MYSQL -sN -e "INSERT INTO stays
