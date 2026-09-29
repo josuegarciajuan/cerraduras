@@ -2664,3 +2664,56 @@ que todo quede en verde.
 | F56-02 | Regla pura `resolveDoorOpen` | RF-63.2.1/63.3.2 | `assets/choreography.js` | unit JS |
 | F56-03 | Panel sin apertura optimista | RF-63.1/63.2 | `public/dashboard.html` | unit JS + manual |
 | F56-04 | Criterio de aceptación manual | RF-63.1/63.2 | `assets/acceptance-tests.json` | manual + regresión |
+
+---
+
+# Fase 57 — Verificación de salida visible y coherente (RF-64)
+
+**Motivo**: al cerrar la puerta tras una salida, el panel se quedaba 4–5 s sin timer y saltaba
+de dentro a verificando/fuera. El conteo de salida exigía `exit_deadline` (solo con `ABSENT`) y
+la ventana interna (6 s) no cubría la cadencia del radar (4–8 s) ni su ausencia (13–40 s).
+
+### TSK-F57-01: Specs y trazabilidad
+- **Cambio**: `requirements.md` (RF-64; RF-49.2.3 extendido), `design.md` (§5.2, §5.3, §6.2,
+  §21), `contracts.md` (sin cambios de API), `tasks.md`, `AGENTS.md`.
+- **RF**: RF-64.1–64.4.
+- **Test propio**: revisión + regresión.
+
+### TSK-F57-02: Ventana de verificación de salida (pura)
+- **Cambio**: `public/assets/choreography.js` — `DEFAULT_EXIT_VERIFY_SECONDS = 20`,
+  `max(20, exit_guard + 3)`; episodio `exitVerifyUntil`; T11 siempre `VERIFICANDO`; T13 espera
+  la ventana completa; T13b al agotar → `DENTRO`; T14 deadline del backend manda; reapertura
+  re-arma la ventana.
+- **RF**: RF-64.1, RF-64.2, RF-64.3.1.
+- **Test propio**: casos F57 en `tests/Unit/choreography.test.js` (BLOCK 33).
+
+### TSK-F57-03: Timer visible en el panel
+- **Cambio**: `public/dashboard.html` — `updateCountdown()` pinta el timer en
+  `VERIFICANDO_PRESENCIA` con cualquier `presence_state`, anclado a `exitVerifyUntil`; con
+  `exit_deadline` usa el deadline; arco con la ventana real; etiqueta `ventana salida`; al
+  llegar a 0 → `resyncLive()`. La rama de entrada no se toca.
+- **RF**: RF-64.1.2, RF-64.2, RF-64.3.2.
+- **Test propio**: unit JS (BLOCK 33) + verificación manual en `/dashboard`.
+
+### TSK-F57-04: Criterio de aceptación manual
+- **Cambio**: `public/assets/acceptance-tests.json` — P35 actualizada: `?` + timer visible
+  durante la verificación de salida (20 s / deadline real).
+- **RF**: RF-64.1.2, RF-64.3.
+- **Test propio**: verificación manual (P34–P37) + regresión.
+
+### TSK-F57-05: Diagnóstico de latencia de la puerta (si procede)
+- **Cambio**: ninguno (protocolo en `design.md` §21.4). Medir con `?debug=1` el `door age` al
+  cerrar; cruzar con `presence_events.received_at − occurred_at` y `[LAT] recv-tuya_t`. Si el
+  retardo es de Tuya (físico→cloud), documentar y decidir fase aparte.
+- **RF**: RF-64.4.1.
+- **Test propio**: evidencia en la corrida de aceptación.
+
+## Tabla resumen F57
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F57-01 | Specs y trazabilidad | RF-64.1/64.2/64.3/64.4 | `requirements/design/contracts/tasks.md`, `AGENTS.md` | revisión |
+| F57-02 | Ventana de salida pura | RF-64.1/64.2/64.3.1 | `assets/choreography.js` | unit JS |
+| F57-03 | Timer visible en el panel | RF-64.1.2/64.2/64.3.2 | `public/dashboard.html` | unit JS + manual |
+| F57-04 | Criterio de aceptación manual | RF-64.1.2/64.3 | `assets/acceptance-tests.json` | manual + regresión |
+| F57-05 | Diagnóstico latencia puerta | RF-64.4.1 | `design.md` §21.4 | evidencia manual |

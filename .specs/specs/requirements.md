@@ -589,7 +589,7 @@ panel dejan de ser fiables en varios escenarios encadenados.
 ### RF-49.2: Conteo de verificación visible
 - **RF-49.2.1**: Mientras exista una verificación activa (de salida o de entrada, RF-46.4), el panel debe mostrar de forma fiable el conteo restante.
 - **RF-49.2.2**: El conteo debe reflejar el estado real (inicio, cancelación por reaparición de presencia, confirmación) y no quedar congelado ni mostrarse cuando ya no hay verificación.
-- **RF-49.2.3**: El conteo de entrada se ancla al cierre de puerta (`last_close_at`) y usa `entry_window_seconds`; el de salida se ancla a `exit_deadline`, calculado como `last_absent_since + exit_guard_seconds`.
+- **RF-49.2.3**: El conteo de entrada se ancla al cierre de puerta (`last_close_at`) y usa `entry_window_seconds`; el de salida arranca en el cierre acreditado con la ventana prudencial de RF-64 (20 s) y **se apoya en `exit_deadline`** (`last_absent_since + exit_guard_seconds`) en cuanto el backend lo emite. *(Extendido por RF-64.)*
 
 ### RF-49.3: Trazabilidad de la coreografía
 - **RF-49.3.1**: Las transiciones de coreografía (umbral, interior, verificación de salida, salida confirmada) deben ser observables y diagnosticables a partir de logs o estado consultable.
@@ -1013,3 +1013,42 @@ pestillo. Esto revoca la decisión de RF-57.5.1 (F48/TSK-F48-05).
 - **RF-63.3.2**: la decisión visual es una **función pura** testeable sin DOM/red/BD.
 - **RF-63.3.3**: no consume cuota Tuya (opera sobre el push y el SSE existentes).
 - **RF-63.3.4**: la regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.
+
+# Fase 57: Verificación de salida visible y coherente (Bug del panel)
+
+**Motivo**: con el huésped dentro, al abrir y cerrar la puerta el panel se quedaba 4–5 s sin
+reaccionar (sin timer) y después saltaba de dentro a verificando/fuera. Causas: el conteo de
+salida solo existía si ya había `exit_deadline` (es decir, `presence = ABSENT`), y la ventana
+interna esperaba un `PRESENT` fresco con un hold corto (6 s) que el radar (4–8 s entre eventos,
+13–40 s para reportar ausencia) no cubría.
+
+## RF-64: Ventana de verificación de salida visible
+
+### RF-64.1: La verificación arranca al cerrar
+- **RF-64.1.1**: tras un cierre de puerta con ciclo de salida acreditado (apertura posterior a
+  `entry_confirmed_at`), el monigote debe pasar **inmediatamente** al umbral con `?`.
+- **RF-64.1.2**: durante toda la ventana debe verse un **timer encima de la cabeza** del
+  monigote, con independencia de que `presence_state` sea `PRESENT`, `ABSENT` o `UNKNOWN`.
+
+### RF-64.2: Ventana prudencial
+- **RF-64.2.1**: la ventana dura **20 s** por defecto, anclada en `last_close_at`
+  (`DEFAULT_EXIT_VERIFY_SECONDS` en `assets/choreography.js`), nunca menos que
+  `exit_guard_seconds + 3` para no contradecir guardas mayores por sala.
+- **RF-64.2.2**: si durante la ventana llega un `PRESENT` nuevo tras el cierre, el `?` se
+  mantiene hasta agotar la ventana (espera prudencial completa) y solo entonces el monigote
+  vuelve dentro.
+- **RF-64.2.3**: si la ventana se agota sin ausencia confirmada (presencia o desconocido), la
+  verificación se cancela y el monigote vuelve dentro (`DENTRO`), sin residuos de episodio.
+
+### RF-64.3: La ausencia corta la verificación
+- **RF-64.3.1**: cuando el backend emite `exit_deadline` (`last_absent_since + exit_guard_seconds`),
+  el timer pasa a ese deadline (manda sobre la ventana local).
+- **RF-64.3.2**: al confirmar el dominio la salida (`stay.status = EXITED`), el timer se corta y
+  el monigote sale fuera (`SALIDA_CONFIRMADA`); no se inventa la confirmación en el cliente.
+
+### RF-64.4: Sin regresiones ni cuota
+- **RF-64.4.1**: la verificación de **entrada** (`VERIFICANDO_ENTRADA`, RF-46.4) no cambia;
+  tampoco la puerta/pestillo (RF-63), la luz, las anomalías ni la regla de salida del backend.
+- **RF-64.4.2**: no cambian contratos de API; la lógica nueva es **pura y testeable** sin
+  DOM/red/BD; no consume cuota Tuya.
+- **RF-64.4.3**: la regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.

@@ -125,6 +125,24 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F54 Batería de aceptación E2E (ciclo del huésped)** | **BLOCK 42** | **Completado** |
 | **F55 Panel de aceptación manual (`/pruebas`)** | **BLOCK 43** | **Completado** |
 | **F56 Puerta del croquis = sensor físico** | **BLOCK 33 (unit JS)** | **Completado** |
+| **F57 Verificación de salida visible (20 s)** | **BLOCK 33 (unit JS)** | **Completado** |
+
+### F57 — Verificación de salida visible y coherente (RF-64)
+
+- **Bug**: con el huésped dentro, al cerrar la puerta el panel tardaba 4–5 s en reaccionar,
+  quedaba con `?` **sin timer** y saltaba de dentro a verificando/fuera. El timer de salida
+  exigía `exit_deadline` (solo existe con `ABSENT`) y la ventana interna era de 6 s, menor que
+  la cadencia del radar (4–8 s por evento; 13–40 s para `ABSENT`).
+- **Fix (solo panel)**: ventana única `exitVerifyUntil = last_close_at + 20 s`
+  (`DEFAULT_EXIT_VERIFY_SECONDS`, nunca menor que `exit_guard + 3`); al cerrar tras ciclo
+  acreditado → siempre `VERIFICANDO` con `?` y timer visible en cualquier estado de presencia.
+  Un `PRESENT` nuevo espera la ventana completa; `exit_deadline` (ausencia + guarda) manda y
+  puede cortar antes; la salida a "fuera" la confirma el backend (`EXITED`), nunca el cliente.
+- **Sin tocar**: entrada (`VERIFICANDO_ENTRADA`), puerta/pestillo (RF-63), luz, anomalías,
+  regla de salida, contratos ni cuota.
+- **Pendiente diagnóstico**: retardo percibido de la puerta del croquis — protocolo `?debug=1`
+  en `design.md` §21.4 (separa panel vs Tuya; sin parche a ciegas).
+- **Tests**: casos F57 en `tests/Unit/choreography.test.js` (BLOCK 33) + P35 de la batería manual.
 
 ### F56 — La puerta del croquis sigue al sensor físico (RF-63)
 
