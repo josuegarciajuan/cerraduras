@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Qr;
 
+use App\Domain\Rooms\RoomCycleResetterInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
@@ -55,6 +56,7 @@ final class QrIssueService
     private TimeSlotService $timeSlots;
     private QrCredentialRepositoryInterface $credentials;
     private QrTokenizer $tokenizer;
+    private RoomCycleResetterInterface $cycleResetter;
 
     public function __construct(
         RoomRepositoryInterface $rooms,
@@ -62,7 +64,8 @@ final class QrIssueService
         StayRepositoryInterface $stays,
         TimeSlotService $timeSlots,
         QrCredentialRepositoryInterface $credentials,
-        QrTokenizer $tokenizer
+        QrTokenizer $tokenizer,
+        RoomCycleResetterInterface $cycleResetter
     ) {
         $this->rooms = $rooms;
         $this->roomTypes = $roomTypes;
@@ -70,6 +73,7 @@ final class QrIssueService
         $this->timeSlots = $timeSlots;
         $this->credentials = $credentials;
         $this->tokenizer = $tokenizer;
+        $this->cycleResetter = $cycleResetter;
     }
 
     /**
@@ -122,6 +126,12 @@ final class QrIssueService
                 ['room_id' => $roomId, 'active_stay_id' => $active->id]
             );
         }
+
+        // F59 (RF-66): la nueva reserva no hereda el ciclo anterior. Se limpia
+        // el cooldown de anti-reentrada y el estado IoT residual para que el
+        // primer escaneo no sea rechazado con `room_cooldown` ni el panel
+        // muestre `ANTI_REENTRADA`.
+        $this->cycleResetter->reset($roomId);
 
         // 1) Create the stay.
         $stayId = $this->stays->insertReserved($roomId, $duracionMinutos, $vb6Refs);

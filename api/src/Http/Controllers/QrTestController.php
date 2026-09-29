@@ -8,6 +8,8 @@ use App\Http\Response;
 use App\Support\Config;
 use App\Support\Qr\QrTokenizer;
 use App\Domain\Devices\SwitchService;
+use App\Domain\Rooms\RoomCycleResetter;
+use App\Domain\Rooms\RoomCycleResetterInterface;
 
 /**
  * QrTestController: endpoints del dashboard para QR de pruebas (RF-20).
@@ -15,18 +17,27 @@ use App\Domain\Devices\SwitchService;
  * POST /dashboard-api/qr-test/create  — Crea un QR real de pruebas
  * POST /dashboard-api/qr-test/reset   — Método A: revoca + limpia + crea nuevo QR
  * POST /dashboard-api/rooms/reset     — Método B: hard reset, sin crear nuevo QR
+ *
+ * F59 (RF-66): toda creación de QR deja la habitación sin el ciclo anterior
+ * (cooldown de anti-reentrada + estado IoT) mediante `RoomCycleResetter`.
  */
 final class QrTestController
 {
     private \PDO $pdo;
     private ?QrTokenizer $qrTokenizer;
     private ?SwitchService $switchService;
+    private RoomCycleResetterInterface $cycleResetter;
 
-    public function __construct(\PDO $pdo, ?QrTokenizer $qrTokenizer = null, ?SwitchService $switchService = null)
-    {
+    public function __construct(
+        \PDO $pdo,
+        ?QrTokenizer $qrTokenizer = null,
+        ?SwitchService $switchService = null,
+        ?RoomCycleResetterInterface $cycleResetter = null
+    ) {
         $this->pdo = $pdo;
         $this->qrTokenizer = $qrTokenizer;
         $this->switchService = $switchService;
+        $this->cycleResetter = $cycleResetter ?? new RoomCycleResetter($pdo);
     }
 
     /**
@@ -69,57 +80,9 @@ final class QrTestController
             return Response::json(409, ['error' => 'room_busy', 'message' => 'La habitación ya tiene una estancia activa. Usa reset primero.']);
         }
 
-        // Create stay
-        $this->pdo->prepare(
-            "INSERT INTO stays (room_id, status, duracion_minutos, reserved_at, created_at, updated_at)
-             VALUES (:rid, 'RESERVED', :dur, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))"
-        )->execute([':rid' => $roomId, ':dur' => $duracionMinutos]);
-        $stayId = (int) $this->pdo->lastInsertId();
-
-        // Update room status
-        $this->pdo->prepare("UPDATE rooms SET status = 'RESERVED' WHERE id = :rid")
-            ->execute([':rid' => $roomId]);
-
-        // Generate QR token. exp must cover the arrival window + the stay
-        // duration because the signed token cannot be re-signed (Fase 51).
-        $jti = bin2hex(random_bytes(16));
-        $iat = time();
-        $arrivalMinutes = Config::getInt('QR_ARRIVAL_WINDOW_MINUTES', 15) ?? 15;
-        $exp = $iat + (($arrivalMinutes + $duracionMinutos) * 60);
-
-        try {
-            $qrText = $this->qrTokenizer->issue($roomId, $stayId, $jti, $iat, $exp);
-        } catch (\Throwable $e) {
-            // Cleanup on failure
-            $this->pdo->prepare("DELETE FROM stays WHERE id = :sid")->execute([':sid' => $stayId]);
-            $this->pdo->prepare("UPDATE rooms SET status = 'FREE' WHERE id = :rid")->execute([':rid' => $roomId]);
-            return Response::json(500, ['error' => 'qr_generation_failed', 'message' => $e->getMessage()]);
-        }
-
-        // Store in qr_credentials
-        $tokenHash = hash('sha256', $qrText);
-        $iatUtc = gmdate('Y-m-d H:i:s.v', $iat);
-        $expUtc = gmdate('Y-m-d H:i:s.v', $exp);
-        $this->pdo->prepare(
-            'INSERT INTO qr_credentials (stay_id, room_id, jti, token_hash, issued_at, expires_at, created_at, updated_at)
-             VALUES (:sid, :rid, :jti, :hash, :iat_utc, :exp_utc, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))'
-        )->execute([
-            ':sid'     => $stayId,
-            ':rid'     => $roomId,
-            ':jti'     => $jti,
-            ':hash'    => $tokenHash,
-            ':iat_utc' => $iatUtc,
-            ':exp_utc' => $expUtc,
-        ]);
-
-        return Response::json(201, [
-            'stay_id'    => $stayId,
-            'jti'        => $jti,
-            'qr_text'    => $qrText,
-            'room_id'    => $roomId,
-            'expires_at' => gmdate('Y-m-d\TH:i:s.v\Z', $exp),
-            'duracion_minutos' => $duracionMinutos,
-        ]);
+        // F59 (RF-66): misma creación que el reset (incluye limpieza del ciclo
+        // anterior: cooldown + estado IoT) para no duplicar la lógica.
+        return $this->doCreate($roomId, $duracionMinutos);
     }
 
     /**
@@ -165,18 +128,11 @@ final class QrTestController
         )->execute([':rid' => $roomId]);
 
         // ── Step 3: Clean room state ──
-        $this->pdo->prepare("UPDATE rooms SET status = 'FREE', cooldown_until = NULL WHERE id = :rid")
+        $this->pdo->prepare("UPDATE rooms SET status = 'FREE' WHERE id = :rid")
             ->execute([':rid' => $roomId]);
 
-        // ── Step 4: Clean IoT session ──
-        $this->pdo->prepare(
-            "INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
-             VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
-             ON DUPLICATE KEY UPDATE door_state = 'UNKNOWN', presence_state = 'UNKNOWN',
-                     last_open_at = NULL, last_close_at = NULL, last_absent_since = NULL,
-                     exit_evaluated_at = NULL, last_door_event_at = NULL, last_presence_event_at = NULL,
-                     last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"
-        )->execute([':rid' => $roomId]);
+        // ── Step 4: Clean IoT session + cooldown (F59/RF-66, pieza compartida) ──
+        $this->cycleResetter->reset($roomId);
 
         // ── Step 5: Clean debts (and their outbox_vb6 items) ──
         try {
@@ -239,18 +195,11 @@ final class QrTestController
         )->execute([':rid' => $roomId]);
 
         // ── Clean room state ──
-        $this->pdo->prepare("UPDATE rooms SET status = 'FREE', cooldown_until = NULL WHERE id = :rid")
+        $this->pdo->prepare("UPDATE rooms SET status = 'FREE' WHERE id = :rid")
             ->execute([':rid' => $roomId]);
 
-        // ── Clean IoT session ──
-        $this->pdo->prepare(
-            "INSERT INTO iot_sessions (room_id, door_state, presence_state, updated_at)
-             VALUES (:rid, 'UNKNOWN', 'UNKNOWN', UTC_TIMESTAMP(3))
-             ON DUPLICATE KEY UPDATE door_state = 'UNKNOWN', presence_state = 'UNKNOWN',
-                     last_open_at = NULL, last_close_at = NULL, last_absent_since = NULL,
-                     exit_evaluated_at = NULL, last_door_event_at = NULL, last_presence_event_at = NULL,
-                     last_door_value = NULL, last_presence_value = NULL, updated_at = UTC_TIMESTAMP(3)"
-        )->execute([':rid' => $roomId]);
+        // ── Clean IoT session + cooldown (F59/RF-66, pieza compartida) ──
+        $this->cycleResetter->reset($roomId);
 
         // ── Clean debts (and their outbox_vb6 items) ──
         try {
@@ -281,12 +230,19 @@ final class QrTestController
 
     /**
      * Internal method: create a QR without the route-level checks.
+     *
+     * F59 (RF-66): limpia el ciclo anterior (cooldown de anti-reentrada + estado
+     * IoT) antes de crear la estancia, para que un QR nuevo no herede
+     * `ANTI_REENTRADA` ni el rechazo `room_cooldown`.
      */
     private function doCreate(int $roomId, int $duracionMinutos): Response
     {
         if ($duracionMinutos < 30 || $duracionMinutos > 720) {
             $duracionMinutos = 60;
         }
+
+        // F59 (RF-66): ciclo limpio antes de la nueva reserva.
+        $this->cycleResetter->reset($roomId);
 
         // Create stay
         $this->pdo->prepare(

@@ -2726,7 +2726,11 @@ async function createTestQr() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Creando...'; }
 
   try {
-    const res = await fetch('/dashboard-api/qr-test/create', {
+    // F59 (RF-66): crear un QR nuevo aplica primero el reset del ciclo anterior
+    // (cooldown de anti-reentrada + estado IoT) y después crea el QR: mismo
+    // camino que "Generar nuevo QR". Evita que el monigote salte a
+    // ANTI_REENTRADA (dentro) tras una salida reciente.
+    const res = await fetch('/dashboard-api/qr-test/reset', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({room_id: currentRoomId, duracion_minutos: dur})
@@ -2744,7 +2748,7 @@ async function createTestQr() {
         expired: false
       };
       updateQrTestPanelNew();
-      showQrToast(true, 'QR de pruebas creado');
+      showQrToast(true, 'QR de pruebas creado (ciclo limpio)');
     } else {
       showQrToast(false, data.error || 'Error al crear QR');
     }
