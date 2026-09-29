@@ -127,6 +127,21 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F56 Puerta del croquis = sensor físico** | **BLOCK 33 (unit JS)** | **Completado** |
 | **F57 Verificación de salida visible (20 s)** | **BLOCK 33 (unit JS)** | **Completado** |
 | **F58 Orden de eventos por milisegundos** | **BLOCK 1/33** | **Completado** |
+| **F59 Un QR nuevo limpia el ciclo anterior** | **BLOCK 19 + emisión** | **Completado** |
+
+### F59 — Un QR nuevo limpia el ciclo anterior (RF-66)
+
+- **Bug**: tras una prueba completa, al generar un QR nuevo desde el panel el monigote saltaba
+  dentro (`ANTI_REENTRADA`). La salida deja `rooms.cooldown_until` (+20 s) y marcas IoT del ciclo
+  anterior; la ruta `qr-test/create` (y la emisión real) **no las limpiaba**. La UI además solo
+  mostraba "➕ Crear QR" tras la salida (`qr_status` solo considera estancias activas).
+- **Fix**: `RoomCycleResetter` compartido (cooldown NULL + `iot_sessions` UNKNOWN/null),
+  usado por `QrTestController` (create/doCreate/reset/roomsReset) y por `QrIssueService::issue`
+  (emisión real). El botón "➕ Crear QR" del panel pasa por `/qr-test/reset` (reset+create).
+- **Sin tocar**: semántica de `ANTI_REENTRADA`, F56/F57/F58, regla de salida, luz, anomalías ni
+  formas/códigos de los endpoints.
+- **Tests**: `BLOCK 19` (cooldown+IoT sucios → create limpio), emisión real en el runner,
+  `QrIssueServiceTest` (espía del resetter) y regresión completa.
 
 ### F58 — Orden por milisegundos de los eventos de sensor (RF-65)
 

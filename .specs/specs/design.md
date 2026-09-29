@@ -3179,3 +3179,59 @@ pulso anti-colapso retiene como máximo 1,2 s).
 - `BLOCK 33` del runner: caso de llegada invertida del mismo segundo vía `/sim` → gana CLOSED
   y el OPEN queda `applied=0/stale`; y el caso ascendente legítimo.
 - Regresión: `bash bin/run-tests.sh` con **0 failures**.
+
+---
+
+# 23. F59 — Un QR nuevo limpia el ciclo anterior (RF-66)
+
+## 23.1 Síntoma
+
+Tras una prueba completa (salida confirmada, monigote fuera), al pulsar "generar un nuevo QR"
+en el dashboard el monigote **saltaba dentro de la habitación** (`ANTI_REENTRADA`, con bombilla
+encendida).
+
+## 23.2 Causa raíz (evidencia)
+
+- 09:13:48 salida confirmada (stay EXITED) → `ExitActionService` fija anti-reentrada:
+  `rooms.cooldown_until = +20 s`.
+- 09:13:58 el log de API registra `POST /dashboard-api/qr-test/create 201` (sin `rooms/reset`):
+  la ruta de creación **no limpia** el cooldown ni el estado IoT heredado.
+- La coreografía evalúa `if (s.cooldown && (roomStatus OCCUPIED || RESERVED))` **antes** del
+  grupo RESERVED/QR (`choreography.js`), así que con el nuevo stay RESERVED y el cooldown activo
+  devuelve `ANTI_REENTRADA`, cuyo estado UI tiene `moni:'INSIDE'` (`dashboard.html`).
+- Reproducción pura: con `cooldown=true` → `ANTI_REENTRADA` (INSIDE); con `cooldown=false` →
+  `QR_DISPONIBLE` (NEAR_QR, fuera).
+- **Detonante de UI**: tras una salida, `qr_status` solo considera estancias RESERVED/OCCUPIED
+  (`RoomLiveController::fetchQrStatus`), el panel queda "Sin QR activo" y el único botón visible
+  es "➕ Crear QR" (la ruta que no resetea).
+
+No es una regresión de F56/F57/F58 (esos cambios no tocan este camino): es un hueco latente que
+solo aparece si se genera un QR dentro de los 20 s posteriores a una salida **sin** pulsar reset.
+
+## 23.3 Decisión (F59/RF-66)
+
+1. **Limpieza compartida**: `RoomCycleResetterInterface` + `RoomCycleResetter` (PDO):
+   `rooms.cooldown_until = NULL` + `iot_sessions` a `UNKNOWN`/marcas `NULL` (mismo SQL que el
+   reset del panel, idempotente; no toca `rooms.status`, estancias, deudas ni credenciales).
+2. **Panel de pruebas** (`QrTestController`): `doCreate()` ejecuta la limpieza antes de insertar
+   la estancia; `create()` delega en `doCreate()` tras sus guardas (404/409/422 intactas) y
+   `reset()`/`roomsReset()` reutilizan el resetter (sin SQL duplicado).
+3. **Emisión real** (`QrIssueService::issue`): ejecuta la limpieza tras validar (incluido
+   `room_busy`) y antes de `insertReserved`.
+4. **Panel (UI)**: `createTestQr()` usa el endpoint `/dashboard-api/qr-test/reset` (mismo camino
+   reset+create), de modo que ambos botones garantizan el ciclo limpio.
+
+## 23.4 Qué NO cambia
+
+- La semántica de `ANTI_REENTRADA` en la coreografía, F56/F57/F58, la regla de salida, la luz,
+  las anomalías, ni las respuestas de los endpoints (misma forma y códigos).
+- La limpieza no cierra estancias ni revoca QRs: eso sigue siendo responsabilidad de
+  `reset`/`roomsReset` cuando corresponde.
+
+## 23.5 Pruebas
+
+- `BLOCK 19` del runner: ensuciar `cooldown_until` + marcas IoT → `qr-test/create` → 201 y estado
+  limpio (cooldown NULL, IoT UNKNOWN/NULL).
+- Bloque de emisión real del runner (`POST /api/v1/qr`): mismo ensuciado → emisión → estado limpio.
+- `tests/Unit/QrIssueServiceTest.php`: espía del resetter invocado en `issue()`.
+- Regresión: `bash bin/run-tests.sh` con **0 failures**.

@@ -1866,3 +1866,28 @@ se decide por `occurred_at` en milisegundos (`stale` si es anterior al último a
 Rutas, códigos, campos y eventos `SIMULATED` intactos; sin migración (columnas `DATETIME(3)` ya
 existentes). La verificación es la regresión completa del runner con el caso nuevo de llegada
 invertida del mismo segundo.
+
+---
+
+# Fase 59: Un QR nuevo limpia el ciclo anterior (RF-66)
+
+## 1. Semántica de creación/emisión (sin cambios de forma)
+
+Toda creación de QR deja la habitación sin el ciclo anterior:
+
+- `POST /dashboard-api/qr-test/create` → `201` (mismos campos), previa limpieza:
+  `rooms.cooldown_until = NULL` + `iot_sessions` a `UNKNOWN`/marcas `NULL`.
+- `POST /api/v1/qr` (emisión real) → igual semántica, conservando `room_busy` (409) y el resto
+  de validaciones. Mismos campos de respuesta.
+- `POST /dashboard-api/qr-test/reset` y `POST /dashboard-api/rooms/reset` reutilizan la misma
+  limpieza (antes duplicada); sus pasos adicionales (revocar QR, cerrar estancias, deudas, luz)
+  no cambian.
+
+La limpieza **no** modifica `rooms.status`, estancias, credenciales ni deudas; no hay columnas ni
+migraciones nuevas.
+
+## 2. No regresión
+
+Rutas, códigos y campos intactos; la coreografía (`ANTI_REENTRADA`), F56/F57/F58, la regla de
+salida, la luz y las anomalías no se tocan. Verificación: regresión completa del runner con el
+caso de cooldown + IoT sucios antes de crear/emitir.
