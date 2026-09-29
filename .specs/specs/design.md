@@ -1939,7 +1939,7 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 | `VERIFICANDO_ENTRADA` | `VERIFICANDO_ENTRADA` | `WAITING` | F42: puerta cerrada tras apertura acreditada, sin presencia aún; conteo `gap_seconds` + `?`. |
 | `DENTRO` | `OCUPADA` | `INSIDE` | Entrada consolidada (puerta cerrada + presencia). |
 | `POSIBLE_SALIDA` | `PUERTA_ABIERTA` | `WAITING` | Apertura tras entrada confirmada. |
-| `VERIFICANDO` | `VERIFICANDO_PRESENCIA` | `WAITING` | Puerta cerrada + ausencia; conteo activo. |
+| `VERIFICANDO` | `VERIFICANDO_PRESENCIA` | `WAITING` | F57 (RF-64): cierre tras ciclo de salida; verificación visible (20 s, `?` + timer) en cualquier estado de presencia. |
 | `SALIDA_CONFIRMADA` | `SALIDA_DETECTADA` / `HUESPED_HA_SALIDO` | `OUTSIDE` | Estancia cerrada; luz off. |
 | `ANOMALIA_*`, `EXCESO_TIEMPO`, `LIMPIEZA`, `FUERA_SERVICIO`, `ANTI_REENTRADA`, `SIN_CONFIGURAR`, `SENSORES_DESCONECTADOS` | igual | igual | Sin cambios (A1–A8 informativas, RF-35). |
 
@@ -1961,10 +1961,11 @@ hasBeenInside(stayId) = active_stay.entry_confirmed_at != null    // autoridad d
 | T8e | `EN_UMBRAL` | `door == OPEN` con `entryEpisode.timedOut` | re-ancla `doorOpenedAt`; limpia `timedOut` | `EN_UMBRAL` |
 | T9 | `DENTRO` | `door == OPEN` y `entry_confirmed_at` y `last_open_at > entry_confirmed_at` | inicia `exitEpisode` | `POSIBLE_SALIDA` |
 | T10 | `DENTRO` | `presence == ABSENT` sin apertura | — (no cierra estancia) | `DENTRO` |
-| T11 | `POSIBLE_SALIDA` | `door == CLOSED` | `exitEpisode.closedAt = last_close_at` | `VERIFICANDO` si `presence == ABSENT`; si no, `DENTRO` |
-| T12 | `POSIBLE_SALIDA` | PRESENT y `door == OPEN` | mantiene | `POSIBLE_SALIDA` |
-| T13 | `VERIFICANDO` | llega PRESENT | cancela conteo (`last_absent_since = null`) | `DENTRO` |
-| T14 | `VERIFICANDO` | `presence == ABSENT` y `deadline` activo | muestra conteo local | `VERIFICANDO` |
+| T11 | `POSIBLE_SALIDA` | `door == CLOSED` | `exitEpisode.closedAt = last_close_at`; `exitVerifyUntil = last_close_at + 20 s` (RF-64) | `VERIFICANDO` (siempre; `?` + timer) |
+| T12 | `POSIBLE_SALIDA` | PRESENT y `door == OPEN` | mantiene; re-arma la ventana al cerrar de nuevo | `POSIBLE_SALIDA` |
+| T13 | `VERIFICANDO` | llega PRESENT dentro de la ventana | **no** cancela: espera prudencial completa (RF-64.2.2) | `VERIFICANDO` |
+| T13b | `VERIFICANDO` | `now >= exitVerifyUntil` sin `exit_deadline` | cancela y limpia el episodio | `DENTRO` |
+| T14 | `VERIFICANDO` | `exit_deadline` emitido (ausencia + guarda) | muestra el conteo del backend (manda el deadline) | `VERIFICANDO` |
 | T15 | `VERIFICANDO` | `deadline` cumplido y estancia `EXITED` | limpia episodios | `SALIDA_CONFIRMADA` |
 | T16 | `SALIDA_CONFIRMADA` | `room FREE` sin estancia | — | `FREE` |
 | T17 | cualquiera | `stay.status == EXITED` precedido de OCCUPIED | — | `SALIDA_CONFIRMADA` |
@@ -2102,16 +2103,22 @@ Para que la señal de vida sea fiable, el servidor emite un evento SSE nombrado 
 
 ### 6.2 Conteo por temporizador local
 
-`updateCountdown()` deja de depender exclusivamente de la llegada de eventos: se ejecuta en un
-`setInterval(…, 250)` mientras exista `exit_deadline`, y:
+`updateCountdown()` no depende de la llegada de eventos: se ejecuta en un
+`setInterval(…, 250)` y pinta el conteo con el reloj del navegador.
 
-- calcula `sec = max(0, floor((deadline − now)/1000))` localmente;
-- oculta el grupo si no hay deadline, si `presence != ABSENT`, si `door != CLOSED` o si la
-  estancia no está `OCCUPIED` (RF-49.2.2);
-- al llegar a 0, llama a `resyncLive()` para reflejar la confirmación real (no inventa el
+**Entrada (RF-46.4, sin cambios):** anclado a `last_close_at + entry_window_seconds` mientras el
+estado es `VERIFICANDO_ENTRADA`.
+
+**Salida (F57 / RF-64):**
+- se muestra en `VERIFICANDO_PRESENCIA` con `door == CLOSED` y estancia `OCCUPIED`, **con
+  independencia de `presence_state`** (antes exigía `ABSENT`, por eso no aparecía);
+- sin `exit_deadline`: se ancla a `exitVerifyUntil` (cierre + 20 s, `DEFAULT_EXIT_VERIFY_SECONDS`);
+- con `exit_deadline` (ausencia + guarda): manda el deadline del backend, que puede cortar la
+  ventana antes de tiempo;
+- al llegar a 0, llama a `resyncLive()` para reflejar la confirmación/ventana real (no inventa el
   cierre en cliente);
-- al reaparecer presencia (`presence == PRESENT`) o desaparecer el deadline, oculta el conteo
-  de inmediato.
+- el arco usa la ventana real como total (antes usaba `gap_seconds`, descuadrado);
+- se oculta en cuanto la coreografía abandona `VERIFICANDO_PRESENCIA` (dentro o fuera).
 
 ### 6.3 Trazabilidad de la coreografía
 
@@ -3044,4 +3051,66 @@ frente a la alternativa (F48) de mentir sobre el estado físico.
   pulso → cerrada aunque exista comando; OPEN real → abierta; pulso vigente/expirado).
 - `acceptance-tests.json` (P20): criterio manual actualizado — pestillo verde y puerta cerrada
   hasta la apertura física.
+- Regresión: `bash bin/run-tests.sh` con **0 failures**.
+
+---
+
+# 21. F57 — Verificación de salida visible y coherente (RF-64)
+
+## 21.1 Síntoma
+
+Con el huésped dentro (`OCUPADA`), al abrir y cerrar la puerta:
+1. la representación tardaba 4–5 s en reaccionar (monigote y, percibido, la puerta);
+2. el monigote quedaba con `?` pero **sin timer**;
+3. después saltaba de dentro a verificando/fuera de forma extraña.
+
+## 21.2 Causa raíz
+
+- **Timer ausente (estructural)**: `updateCountdown()` exigía `exit_deadline` +
+  `presence_state = ABSENT` (`dashboard.html`). El backend solo emite `exit_deadline` cuando ya
+  hay `ABSENT` (`last_absent_since + exit_guard_seconds`; `RoomLiveController` /
+  `EventStreamController`). En la ventana real (puerta recién cerrada, presencia aún `PRESENT`
+  o `UNKNOWN`) no había deadline ⇒ el timer no podía aparecer.
+- **Decisión tardía**: `T11` esperaba un `PRESENT` **aplicado después del cierre** con un hold de
+  `exit_guard + 3 = 6 s`; el radar aplica `PRESENT` cada 4–8 s y reporta `ABSENT` 13–40 s después
+  del cierre (evidencia sala 12: cierre 07:58:05 → ausencia 07:58:45 → EXITED 07:58:48). De ahí
+  los 4–5 s sin reacción y los saltos dentro→verificando→fuera.
+- **Arco descuadrado**: el total del arco de salida usaba `gap_seconds` (15 s) mientras el
+  deadline real es `exit_guard_seconds` (3 s).
+
+## 21.3 Decisión (F57/RF-64)
+
+1. **Ventana única de verificación de salida**: al cerrar un ciclo acreditado, el episodio fija
+   `exitVerifyUntil = last_close_at + 20 s` (`DEFAULT_EXIT_VERIFY_SECONDS`, nunca menor que
+   `exit_guard_seconds + 3`) y la coreografía devuelve **siempre** `VERIFICANDO` con `?`.
+2. **Timer visible en todos los estados de presencia**: `updateCountdown()` lo pinta en
+   `VERIFICANDO_PRESENCIA` anclado a `exitVerifyUntil`; si el backend emite `exit_deadline`
+   (ausencia + guarda), **manda el deadline** y puede cortar la ventana.
+3. **Espera prudencial completa**: un `PRESENT` nuevo durante la ventana **no** cancela; el `?`
+   se mantiene hasta agotar la ventana y entonces el monigote vuelve dentro (decisión del
+   usuario). Al agotarse sin `exit_deadline`, se limpia el episodio (`DENTRO`).
+4. **Fuera solo con confirmación del dominio**: al llegar a 0 el panel llama a `resyncLive()`;
+   la salida (`SALIDA_CONFIRMADA`) la decide el backend (`stay = EXITED`). No se inventa.
+5. **Sin tocar entrada, puerta/pestillo, luz, anomalías ni regla de salida**.
+
+## 21.4 Diagnóstico pendiente (puerta del croquis)
+
+El retardo percibido de la **puerta** no se explica por el panel: `renderSensorSvg()` la pinta
+de `io.door_state` en cada evento y el SSE emite en ≤200 ms tras el cambio en BD (evidencia:
+`CLOSED` recibido 0,3–1,3 s tras el sello de Tuya). Protocolo de medida (sin cambios de código):
+
+1. Abrir `/dashboard?debug=1` en la misma pestaña (badge con `door age`, `state age`,
+   `door_changes`).
+2. Cerrar la puerta físicamente y anotar el `door age` en el momento en que el croquis cierra.
+   - ~1 s → el panel va bien; el retardo percibido era la decisión del monigote (resuelto aquí).
+   - 4–5 s → cruzar con `presence_events.received_at − occurred_at` y `[LAT] recv-tuya_t` del
+     consumer para separar Tuya ↔ consumer ↔ API; si el sello de Tuya llega tarde (físico→cloud),
+     se documenta y se decide fase aparte (no se parchea el panel a ciegas).
+
+## 21.5 Pruebas
+
+- `tests/Unit/choreography.test.js` (BLOCK 33): cierre → `VERIFICANDO` con `exitVerifyUntil`
+  (+20 s); `PRESENT` a +5 s sigue verificando y a +21 s → `DENTRO`; `ABSENT` con deadline →
+  conteo del backend; reapertura re-arma la ventana; `UNKNOWN` al final → `DENTRO`.
+- `acceptance-tests.json` (P35): el croquis muestra `?` + timer durante la verificación.
 - Regresión: `bash bin/run-tests.sh` con **0 failures**.

@@ -1813,3 +1813,28 @@ Los campos existentes mantienen su semántica:
 
 Ningún consumidor externo se ve afectado; la verificación es la regresión completa del runner
 (`BLOCK 33` incluye los unit tests JS de la regla pura).
+
+---
+
+# Fase 57: Verificación de salida visible y coherente (RF-64)
+
+## 1. Sin cambios de contrato
+
+F57 es **solo panel** (ventana de verificación pura + render del timer). No añade ni modifica
+rutas, campos, códigos de estado ni formatos de `/live`, SSE, outbox o `/sim/*`.
+
+Campos existentes, sin cambios de semántica:
+
+- `exit_deadline`: sigue emitiéndose solo con `presence_state = ABSENT`, ciclo de puerta
+  acreditado, puerta `CLOSED` y `entry_confirmed_at`; el panel ahora lo usa como deadline
+  **preferente** dentro de la ventana de salida.
+- `exit_guard_seconds` / `entry_window_seconds` / `gap_seconds`: sin cambios. `gap_seconds`
+  sigue siendo legacy y ya no se usa como total del arco en el panel.
+- `iot_session.last_close_at`: ancla de la ventana local de 20 s
+  (`DEFAULT_EXIT_VERIFY_SECONDS`); no cambia su formato.
+
+## 2. No regresión
+
+Ningún consumidor externo se ve afectado. El conteo de entrada (RF-46.4) conserva su anclaje y
+ventana; la verificación es la regresión completa del runner (`BLOCK 33` incluye los unit tests
+JS de la coreografía).
