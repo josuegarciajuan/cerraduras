@@ -195,8 +195,12 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
      */
     private function toMysqlUtc(string $iso): string
     {
-        $dt = \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
+        // F58 (RF-65): acepta fracción de segundos (`.sss`) de los sellos Tuya.
+        $dt = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.v\Z', $iso)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.vP', $iso)
+            ?: \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, $iso)
             ?: \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s\Z', $iso)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s.v', $iso)
             ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $iso);
 
         if ($dt === false) {

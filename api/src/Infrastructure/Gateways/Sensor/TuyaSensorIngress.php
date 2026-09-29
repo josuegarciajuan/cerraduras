@@ -272,8 +272,9 @@ final class TuyaSensorIngress implements SensorIngressInterface
                     'tuya_dp'      => $code,
                     'tuya_dev_id'  => $devId,
                     'tuya_raw_val' => $value,
-                    // F41: raw millisecond timestamp kept for fine-grained audit
-                    // (fingerprint/ordering use the second-truncated occurred_at).
+                    // F58 (RF-65): el sello en ms se conserva en `occurred_at`
+                    // (orden por ocurrencia); el fingerprint lógico sigue
+                    // floors a segundo para la idempotencia de reenvíos.
                     'tuya_t'       => $t,
                 ],
             ];
@@ -301,14 +302,27 @@ final class TuyaSensorIngress implements SensorIngressInterface
     }
 
     /**
-     * Convert a Tuya 13-digit millisecond timestamp to ISO-8601 UTC.
+     * Convert a Tuya timestamp to ISO-8601 UTC **preserving milliseconds**.
+     *
+     * F58 (RF-65): Tuya reporta `status[].t` como epoch de 13 dígitos en ms.
+     * Truncar a segundos impedía ordenar dos eventos del mismo segundo
+     * (OPEN+CLOSED) y permitía que un OPEN llegado tarde revirtiera el cierre.
+     * Un sello de 10 dígitos (segundos) se acepta como fallback.
+     *
+     * Pública y estática para poder testearla sin repositorio de dispositivos.
      */
-    private function tsToIso($ts): string
+    public static function tsToIso($ts): string
     {
         if (is_numeric($ts) && $ts > 0) {
-            return gmdate('Y-m-d\TH:i:s\Z', (int)($ts / 1000));
+            $ms = (int) $ts;
+            if ($ms < 100000000000) { // 10 dígitos → segundos
+                $ms *= 1000;
+            }
+            return gmdate('Y-m-d\TH:i:s', intdiv($ms, 1000))
+                . '.' . str_pad((string) ($ms % 1000), 3, '0', STR_PAD_LEFT)
+                . 'Z';
         }
-        return Clock::nowUtc()->format('Y-m-d\TH:i:s\Z');
+        return Clock::nowUtc()->format('Y-m-d\TH:i:s.v\Z');
     }
 
     /**

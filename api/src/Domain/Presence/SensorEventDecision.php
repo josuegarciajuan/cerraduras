@@ -40,6 +40,9 @@ final class SensorEventDecision
     /**
      * Logical identity of a physical fact (contracts.md §2.1):
      *   sha1( room_id | sensor | value | floor(occurred_at, second) )
+     *
+     * F58 (RF-65): la identidad sigue a segundos (idempotencia de reenvíos),
+     * aunque el orden use milisegundos (ver `decide()`).
      */
     public static function fingerprint(
         int    $roomId,
@@ -47,8 +50,8 @@ final class SensorEventDecision
         string $value,
         string $occurredAt
     ): string {
-        $ts     = self::toEpoch($occurredAt);
-        $second = $ts === null ? $occurredAt : gmdate('Y-m-d H:i:s', $ts);
+        $tsMs   = self::toEpochMs($occurredAt);
+        $second = $tsMs === null ? $occurredAt : gmdate('Y-m-d H:i:s', intdiv($tsMs, 1000));
 
         return sha1($roomId . '|' . $sensor . '|' . $value . '|' . $second);
     }
@@ -78,10 +81,13 @@ final class SensorEventDecision
         $lastAt  = $isDoor ? $session->lastDoorEventAt : $session->lastPresenceEventAt;
         $lastVal = $isDoor ? $session->lastDoorValue : $session->lastPresenceValue;
 
-        $evtTs  = self::toEpoch($occurredAt);
-        $lastTs = self::toEpoch($lastAt);
+        $evtTs  = self::toEpochMs($occurredAt);
+        $lastTs = self::toEpochMs($lastAt);
 
         // 1) Stale: the fact happened before the last applied event of this sensor.
+        // F58 (RF-65): comparación en MILISEGUNDOS. Sin ella, OPEN y CLOSED del
+        // mismo segundo se ordenaban por llegada/lock y el OPEN podía revertir
+        // un CLOSED ya aplicado (puerta "abierta" tras cerrarla).
         if ($evtTs !== null && $lastTs !== null && $evtTs < $lastTs) {
             return self::STALE;
         }
@@ -138,16 +144,19 @@ final class SensorEventDecision
     }
 
     /**
-     * Parse ISO-8601 or MySQL UTC datetime strings to an epoch (seconds).
-     * Accepts both because the event carries ISO and the session stores MySQL.
+     * Parse ISO-8601 (con o sin fracción) o MySQL UTC datetime a epoch en
+     * MILISEGUNDOS. Acepta ambos porque el evento llega en ISO y la sesión
+     * guarda MySQL (DATETIME(3)). F58 (RF-65): la fracción es lo que permite
+     * ordenar dos eventos del mismo segundo.
      */
-    private static function toEpoch(?string $ts): ?int
+    private static function toEpochMs(?string $ts): ?int
     {
         if ($ts === null || $ts === '') {
             return null;
         }
         try {
-            return (new \DateTimeImmutable($ts, new \DateTimeZone('UTC')))->getTimestamp();
+            $dt = new \DateTimeImmutable($ts, new \DateTimeZone('UTC'));
+            return $dt->getTimestamp() * 1000 + intdiv((int) $dt->format('u'), 1000);
         } catch (\Throwable $e) {
             return null;
         }
