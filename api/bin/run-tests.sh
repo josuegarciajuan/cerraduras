@@ -1496,6 +1496,78 @@ block "BLOCK 19 — F27: QR de pruebas panel"
         http_test POST /dashboard-api/rooms/reset 400 \
             "POST /rooms/reset no room_id → 400" \
             --body "{}"
+
+        # ── Test 10 (F59/RF-66): crear QR limpia cooldown + estado IoT previos ──
+        # Simula el estado tras una salida confirmada: anti-reentrada activa
+        # (+20 s) y marcas IoT del ciclo anterior. Sin la limpieza, el panel
+        # mostraría ANTI_REENTRADA (monigote dentro).
+        http_test POST /dashboard-api/rooms/reset 200 \
+            "F59 pre: rooms/reset → 200" \
+            --body "{\"room_id\":1}"
+        $MYSQL -sN -e "UPDATE rooms SET cooldown_until = UTC_TIMESTAMP(3) + INTERVAL 20 SECOND WHERE id=1" 2>/dev/null || true
+        $MYSQL -sN -e "INSERT INTO iot_sessions
+                (room_id, door_state, presence_state, last_open_at, last_close_at, last_absent_since,
+                 last_door_event_at, last_presence_event_at, last_door_value, last_presence_value, updated_at)
+             VALUES (1,'CLOSED','ABSENT',UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),
+                     UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'CLOSED','ABSENT',UTC_TIMESTAMP(3))
+             ON DUPLICATE KEY UPDATE door_state='CLOSED', presence_state='ABSENT',
+                     last_open_at=UTC_TIMESTAMP(3), last_close_at=UTC_TIMESTAMP(3),
+                     last_absent_since=UTC_TIMESTAMP(3), last_door_event_at=UTC_TIMESTAMP(3),
+                     last_presence_event_at=UTC_TIMESTAMP(3), last_door_value='CLOSED',
+                     last_presence_value='ABSENT', updated_at=UTC_TIMESTAMP(3)" 2>/dev/null || true
+        http_test POST /dashboard-api/qr-test/create 201 \
+            "F59: qr-test/create con ciclo sucio → 201" \
+            --body "{\"room_id\":1,\"duracion_minutos\":60}"
+        F59_TEST_COOLDOWN=$($MYSQL -sN -e "SELECT IF(cooldown_until IS NULL,'NULL','SET') FROM rooms WHERE id=1" 2>/dev/null || echo "ERR")
+        F59_TEST_IOT=$($MYSQL -sN -e "SELECT CONCAT(IFNULL(door_state,'?'),'|',IFNULL(presence_state,'?'),'|',
+                IF(COALESCE(last_open_at,last_close_at,last_absent_since,last_door_event_at,
+                            last_presence_event_at,last_door_value,last_presence_value) IS NULL,'CLEAN','DIRTY'))
+             FROM iot_sessions WHERE room_id=1" 2>/dev/null || echo "ERR")
+        if [ "$F59_TEST_COOLDOWN" = "NULL" ] && [ "$F59_TEST_IOT" = "UNKNOWN|UNKNOWN|CLEAN" ]; then
+            pass "F59: crear QR limpia cooldown + estado IoT del ciclo anterior"
+        else
+            fail "F59: create limpia ciclo (panel)" "cooldown=$F59_TEST_COOLDOWN iot=$F59_TEST_IOT"
+        fi
+
+        # ── Test 11 (F59/RF-66): la emisión real también limpia el ciclo ──
+        VB6_KEY_F59=$(get_key "VB6-MAIN")
+        if [ -z "$VB6_KEY_F59" ]; then
+            skip "F59: emisión real limpia ciclo" "Clave VB6-MAIN no disponible"
+        else
+            http_test POST /dashboard-api/rooms/reset 200 \
+                "F59 pre real: rooms/reset → 200" \
+                --body "{\"room_id\":1}"
+            $MYSQL -sN -e "UPDATE rooms SET cooldown_until = UTC_TIMESTAMP(3) + INTERVAL 20 SECOND WHERE id=1" 2>/dev/null || true
+            $MYSQL -sN -e "INSERT INTO iot_sessions
+                    (room_id, door_state, presence_state, last_open_at, last_close_at, last_absent_since,
+                     last_door_event_at, last_presence_event_at, last_door_value, last_presence_value, updated_at)
+                 VALUES (1,'CLOSED','ABSENT',UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),
+                         UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'CLOSED','ABSENT',UTC_TIMESTAMP(3))
+                 ON DUPLICATE KEY UPDATE door_state='CLOSED', presence_state='ABSENT',
+                         last_open_at=UTC_TIMESTAMP(3), last_close_at=UTC_TIMESTAMP(3),
+                         last_absent_since=UTC_TIMESTAMP(3), last_door_event_at=UTC_TIMESTAMP(3),
+                         last_presence_event_at=UTC_TIMESTAMP(3), last_door_value='CLOSED',
+                         last_presence_value='ABSENT', updated_at=UTC_TIMESTAMP(3)" 2>/dev/null || true
+            http_test POST /api/v1/qr 201 \
+                "F59: POST /qr (emisión real) con ciclo sucio → 201" \
+                --key VB6-MAIN \
+                --idem "f59-real-$(date +%s)" \
+                --body '{"room_id":1,"duracion_minutos":60}'
+            F59_REAL_COOLDOWN=$($MYSQL -sN -e "SELECT IF(cooldown_until IS NULL,'NULL','SET') FROM rooms WHERE id=1" 2>/dev/null || echo "ERR")
+            F59_REAL_IOT=$($MYSQL -sN -e "SELECT CONCAT(IFNULL(door_state,'?'),'|',IFNULL(presence_state,'?'),'|',
+                    IF(COALESCE(last_open_at,last_close_at,last_absent_since,last_door_event_at,
+                                last_presence_event_at,last_door_value,last_presence_value) IS NULL,'CLEAN','DIRTY'))
+                 FROM iot_sessions WHERE room_id=1" 2>/dev/null || echo "ERR")
+            if [ "$F59_REAL_COOLDOWN" = "NULL" ] && [ "$F59_REAL_IOT" = "UNKNOWN|UNKNOWN|CLEAN" ]; then
+                pass "F59: emisión real limpia cooldown + estado IoT del ciclo anterior"
+            else
+                fail "F59: emisión real limpia ciclo" "cooldown=$F59_REAL_COOLDOWN iot=$F59_REAL_IOT"
+            fi
+            # Limpieza para no dejar estancia activa a bloques posteriores.
+            http_test POST /dashboard-api/rooms/reset 200 \
+                "F59 post: rooms/reset → 200" \
+                --body "{\"room_id\":1}"
+        fi
     fi
 
 # ===================================================
