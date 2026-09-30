@@ -159,6 +159,11 @@ hasta el momento (regresión completa). Debe ejecutarse:
   /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now
   cerraduras-warehouse-recorder` (y `bash api/bin/install-go2rtc.sh`). `start-all.sh` /
   `stop-all.sh` ya los gestionan.
+- **Montaje de pruebas (PROTO2)**: `php api/bin/seed-warehouse-test.php --rf-prod` convierte
+  PROTO2 en tipo `ALMACEN_BEBIDAS` y añade 2 cámaras `CAMERA` al pack `proto2`
+  (exterior `Puerta`, interior `tests`), resolviendo sus RTSP desde la BD del proyecto de
+  reconocimiento facial (prod por SSH). Se crean **desactivadas** para no grabar durante la
+  E2E; actívalas en `/almacen` antes de probar.
 
 ### F59 — Un QR nuevo limpia el ciclo anterior (RF-66)
 
