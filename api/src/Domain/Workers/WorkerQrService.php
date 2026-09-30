@@ -33,6 +33,7 @@ final class WorkerQrService
     private RoomRepositoryInterface $roomRepo;
     private RoomTypeRepositoryInterface $roomTypeRepo;
     private AccessEventRepositoryInterface $accessEvents;
+    private ?WarehouseAccessPolicyInterface $accessPolicy;
 
     public function __construct(
         QrTokenizer $tokenizer,
@@ -41,7 +42,8 @@ final class WorkerQrService
         WorkerSessionRepositoryInterface $sessionRepo,
         RoomRepositoryInterface $roomRepo,
         RoomTypeRepositoryInterface $roomTypeRepo,
-        AccessEventRepositoryInterface $accessEvents
+        AccessEventRepositoryInterface $accessEvents,
+        ?WarehouseAccessPolicyInterface $accessPolicy = null
     ) {
         $this->tokenizer    = $tokenizer;
         $this->workerRepo   = $workerRepo;
@@ -50,6 +52,7 @@ final class WorkerQrService
         $this->roomRepo     = $roomRepo;
         $this->roomTypeRepo = $roomTypeRepo;
         $this->accessEvents = $accessEvents;
+        $this->accessPolicy = $accessPolicy;
     }
 
     /**
@@ -112,8 +115,12 @@ final class WorkerQrService
 
         $roomType = $this->roomTypeRepo->findById($room->roomTypeId);
 
-        // 5. Check role → room_type access
-        if (!$this->roleRepo->canAccessRoomType($worker->roleId, $room->roomTypeId)) {
+        // 5. Check access: per-worker exception wins over role → room_type
+        //    (F62/RF-69). Without an exception this equals the previous role check.
+        $allowed = $this->accessPolicy !== null
+            ? $this->accessPolicy->canAccess($workerId, $worker->roleId, $room->roomTypeId)
+            : $this->roleRepo->canAccessRoomType($worker->roleId, $room->roomTypeId);
+        if (!$allowed) {
             $this->writeDenied(
                 $roomId, null, 'access_denied',
                 $provider, $correlationId,

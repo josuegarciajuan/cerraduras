@@ -62,6 +62,8 @@ use App\Domain\Workers\WorkerRoleRepository;
 use App\Domain\Workers\WorkerRoleService;
 use App\Domain\Workers\WorkerService;
 use App\Domain\Workers\WorkerSessionRepository;
+use App\Domain\Workers\WorkerRoomOverrideRepository;
+use App\Domain\Workers\WarehouseAccessPolicy;
 use App\Http\Request;
 use App\Http\ResponseEmitter;
 use App\Http\Router;
@@ -98,6 +100,7 @@ use App\Http\Controllers\TimeSlotController;
 use App\Http\Controllers\WorkerRoleController;
 use App\Http\Controllers\WorkerController;
 use App\Http\Controllers\WorkerQrController;
+use App\Http\Controllers\WarehouseAccessController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2109,6 +2112,9 @@ $qrIssueService = new QrIssueService(
 $accessEventRepo  = new AccessEventRepository($pdo);
 
 // --- F38: Worker QR Validate ---
+// F62/RF-69: per-worker ALLOW/DENY exception wins over the role grant.
+$workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
+$warehouseAccessPolicy  = new WarehouseAccessPolicy($workerRoomOverrideRepo, $workerRoleRepo);
 $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $qrTokenizer,
     $workerRepoForRoles,
@@ -2116,7 +2122,8 @@ $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $workerSessionRepo,
     $roomRepo,
     $roomTypeRepo,
-    $accessEventRepo
+    $accessEventRepo,
+    $warehouseAccessPolicy
 );
 $workerQrController  = new WorkerQrController($workerQrService);
 
@@ -2616,6 +2623,12 @@ $router->delete('/api/v1/workers/{id}',       [$workerController, 'deactivate'],
 $router->post('/api/v1/workers/{id}/qr',    [$workerController, 'regenerateQr'],  $authFactory(['workers:write']));
 $router->get('/api/v1/workers/{id}/sessions', [$workerController, 'sessions'],      $authFactory(['workers:read']));
 $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],   $authFactory(['qr:validate']));
+
+// --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
+$warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);
+$router->get('/almacen-api/access',            [$warehouseAccessController, 'index']);
+$router->put('/almacen-api/access/role/{id}',  [$warehouseAccessController, 'setRole']);
+$router->put('/almacen-api/access/worker/{id}',[$warehouseAccessController, 'setWorker']);
 
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
