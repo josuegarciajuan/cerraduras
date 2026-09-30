@@ -34,6 +34,7 @@ final class WorkerQrService
     private RoomTypeRepositoryInterface $roomTypeRepo;
     private AccessEventRepositoryInterface $accessEvents;
     private ?WarehouseAccessPolicyInterface $accessPolicy;
+    private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
 
     public function __construct(
         QrTokenizer $tokenizer,
@@ -43,7 +44,8 @@ final class WorkerQrService
         RoomRepositoryInterface $roomRepo,
         RoomTypeRepositoryInterface $roomTypeRepo,
         AccessEventRepositoryInterface $accessEvents,
-        ?WarehouseAccessPolicyInterface $accessPolicy = null
+        ?WarehouseAccessPolicyInterface $accessPolicy = null,
+        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null
     ) {
         $this->tokenizer    = $tokenizer;
         $this->workerRepo   = $workerRepo;
@@ -53,6 +55,7 @@ final class WorkerQrService
         $this->roomTypeRepo = $roomTypeRepo;
         $this->accessEvents = $accessEvents;
         $this->accessPolicy = $accessPolicy;
+        $this->warehouseRecorder = $warehouseRecorder;
     }
 
     /**
@@ -175,6 +178,18 @@ final class WorkerQrService
             );
         } catch (\Throwable $e) {
             error_log('[WorkerQrService] Failed to write access_event: ' . $e->getMessage());
+        }
+
+        // 10. F63/RF-71: start warehouse recording (best-effort; ignores non-warehouse rooms).
+        if ($this->warehouseRecorder !== null) {
+            try {
+                $this->warehouseRecorder->onSignal($roomId, \App\Domain\Warehouse\WarehouseRecordingDecision::EV_QR_OK, [
+                    'worker_id' => $workerId,
+                    'worker_session_id' => $workerSessionId,
+                ]);
+            } catch (\Throwable $e) {
+                error_log('[WorkerQrService] Warehouse recording failed (best-effort): ' . $e->getMessage());
+            }
         }
 
         return [

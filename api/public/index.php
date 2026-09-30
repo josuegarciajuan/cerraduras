@@ -101,6 +101,7 @@ use App\Http\Controllers\WorkerRoleController;
 use App\Http\Controllers\WorkerController;
 use App\Http\Controllers\WorkerQrController;
 use App\Http\Controllers\WarehouseAccessController;
+use App\Http\Controllers\WarehouseVisitController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2115,6 +2116,7 @@ $accessEventRepo  = new AccessEventRepository($pdo);
 // F62/RF-69: per-worker ALLOW/DENY exception wins over the role grant.
 $workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
 $warehouseAccessPolicy  = new WarehouseAccessPolicy($workerRoomOverrideRepo, $workerRoleRepo);
+$warehouseRecordingService = new \App\Domain\Warehouse\WarehouseRecordingService($pdo);
 $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $qrTokenizer,
     $workerRepoForRoles,
@@ -2123,7 +2125,8 @@ $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $roomRepo,
     $roomTypeRepo,
     $accessEventRepo,
-    $warehouseAccessPolicy
+    $warehouseAccessPolicy,
+    $warehouseRecordingService
 );
 $workerQrController  = new WorkerQrController($workerQrService);
 
@@ -2198,7 +2201,8 @@ $iotSessionService = new IotSessionService(
     $switchService,    // RF-16: turn on light on door open
     $exitActionService, // F28: shared exit action service
     $anomalyService,    // F35: anomaly detection
-    $workerSessionRepo  // F38: worker sessions in exit rule
+    $workerSessionRepo, // F38: worker sessions in exit rule
+    $warehouseRecordingService // F63: warehouse recording engine
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
 // room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.
@@ -2629,6 +2633,11 @@ $warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAcces
 $router->get('/almacen-api/access',            [$warehouseAccessController, 'index']);
 $router->put('/almacen-api/access/role/{id}',  [$warehouseAccessController, 'setRole']);
 $router->put('/almacen-api/access/worker/{id}',[$warehouseAccessController, 'setWorker']);
+
+// --- Routes: Visitas del almacén (F63/RF-70.3, público LAN) ---
+$warehouseVisitController = new WarehouseVisitController($pdo);
+$router->get('/almacen-api/visits',      [$warehouseVisitController, 'index']);
+$router->get('/almacen-api/visits/{id}', [$warehouseVisitController, 'show']);
 
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
