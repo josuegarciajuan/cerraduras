@@ -63,6 +63,7 @@ final class DeviceController
         $externalId = JsonBody::string($body, 'external_id', 128);
         $label = isset($body['label']) && $body['label'] !== '' ? (string) $body['label'] : null;
         $apiClientId = JsonBody::intOpt($body, 'api_client_id', 1);
+        $subtype = isset($body['subtype']) && $body['subtype'] !== '' ? (string) $body['subtype'] : null;
         $meta = null;
         if (array_key_exists('meta', $body)) {
             $m = $body['meta'];
@@ -71,7 +72,7 @@ final class DeviceController
             }
             $meta = $m;
         }
-        $device = $this->devices->createInRoom($roomId, $kind, $externalId, $label, $apiClientId, $meta);
+        $device = $this->devices->createInRoom($roomId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
         return Response::json(201, $device->toArray());
     }
 
@@ -94,6 +95,9 @@ final class DeviceController
         }
         if (array_key_exists('pack_id', $body)) {
             $fields['pack_id'] = $body['pack_id'];
+        }
+        if (array_key_exists('subtype', $body)) {
+            $fields['subtype'] = $body['subtype'];
         }
         $device = $this->devices->update($id, $fields);
         return Response::json(200, $device->toArray());
@@ -120,6 +124,7 @@ final class DeviceController
         $kind       = JsonBody::string($body, 'kind', 32);
         $externalId = JsonBody::string($body, 'external_id', 128);
         $apiClientId = JsonBody::intOpt($body, 'api_client_id', 1);
+        $subtype = isset($body['subtype']) && $body['subtype'] !== '' ? (string) $body['subtype'] : null;
         $meta = null;
         if (array_key_exists('meta', $body)) {
             $m = $body['meta'];
@@ -128,7 +133,7 @@ final class DeviceController
             }
             $meta = $m;
         }
-        $device = $this->devices->create($packId, $kind, $externalId, null, $apiClientId, $meta);
+        $device = $this->devices->create($packId, $kind, $externalId, null, $apiClientId, $meta, $subtype);
         return Response::json(201, $device->toArray());
     }
 

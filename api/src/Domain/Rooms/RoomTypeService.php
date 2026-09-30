@@ -35,6 +35,10 @@ final class RoomTypeService
     private const MAX_ENTRY_WIN  = 600;
     private const MIN_EXIT_CHECK = 1;   // seconds (política ≥40 fijada en migración/config)
     private const MAX_EXIT_CHECK = 600;
+    private const MIN_WH_CONFIRM = 10;  // seconds (F60/RF-67.2)
+    private const MAX_WH_CONFIRM = 600;
+    private const MIN_WH_MARGIN  = 0;   // seconds
+    private const MAX_WH_MARGIN  = 60;
 
     public function __construct(RoomTypeRepositoryInterface $repo)
     {
@@ -67,7 +71,9 @@ final class RoomTypeService
         int $reentryCooldownSeconds,
         int $qrUsageWindowMinutes,
         int $presenceEntryWindowSeconds = 90,
-        int $exitCheckSeconds = 40
+        int $exitCheckSeconds = 40,
+        int $warehouseConfirmSeconds = 40,
+        int $warehouseExteriorMarginSeconds = 5
     ): RoomType {
         $code = trim($code);
         $name = trim($name);
@@ -79,7 +85,9 @@ final class RoomTypeService
             $reentryCooldownSeconds,
             $qrUsageWindowMinutes,
             $presenceEntryWindowSeconds,
-            $exitCheckSeconds
+            $exitCheckSeconds,
+            $warehouseConfirmSeconds,
+            $warehouseExteriorMarginSeconds
         );
 
         if ($this->repo->findByCode($code) !== null) {
@@ -98,7 +106,9 @@ final class RoomTypeService
             $reentryCooldownSeconds,
             $qrUsageWindowMinutes,
             $presenceEntryWindowSeconds,
-            $exitCheckSeconds
+            $exitCheckSeconds,
+            $warehouseConfirmSeconds,
+            $warehouseExteriorMarginSeconds
         );
 
         return $this->getOrFail($id);
@@ -138,11 +148,17 @@ final class RoomTypeService
         $qr = $fields['qr_usage_window_minutes'] ?? $current->qrUsageWindowMinutes;
         $entryWin = $fields['presence_entry_window_seconds'] ?? $current->presenceEntryWindowSeconds;
         $exitChk = $fields['exit_check_seconds'] ?? $current->exitCheckSeconds;
-        $this->validateRanges((int) $grace, (int) $gap, (int) $cool, (int) $qr, (int) $entryWin, (int) $exitChk);
+        $whConfirm = $fields['warehouse_confirm_seconds'] ?? $current->warehouseConfirmSeconds;
+        $whMargin = $fields['warehouse_exterior_margin_seconds'] ?? $current->warehouseExteriorMarginSeconds;
+        $this->validateRanges(
+            (int) $grace, (int) $gap, (int) $cool, (int) $qr,
+            (int) $entryWin, (int) $exitChk, (int) $whConfirm, (int) $whMargin
+        );
 
         foreach ([
             'grace_minutes','exit_presence_gap_seconds','reentry_cooldown_seconds','qr_usage_window_minutes',
             'presence_entry_window_seconds','exit_check_seconds',
+            'warehouse_confirm_seconds','warehouse_exterior_margin_seconds',
         ] as $k) {
             if (array_key_exists($k, $fields) && $fields[$k] !== null) {
                 $sanitized[$k] = (int) $fields[$k];
@@ -188,8 +204,11 @@ final class RoomTypeService
         }
     }
 
-    private function validateRanges(int $grace, int $gap, int $cool, int $qr, int $entryWin = 90, int $exitChk = 40): void
-    {
+    private function validateRanges(
+        int $grace, int $gap, int $cool, int $qr,
+        int $entryWin = 90, int $exitChk = 40,
+        int $whConfirm = 40, int $whMargin = 5
+    ): void {
         if ($grace < self::MIN_GRACE || $grace > self::MAX_GRACE) {
             throw new UnprocessableException(
                 'invalid_range',
@@ -230,6 +249,20 @@ final class RoomTypeService
                 'invalid_range',
                 'exit_check_seconds out of range',
                 ['min' => self::MIN_EXIT_CHECK, 'max' => self::MAX_EXIT_CHECK]
+            );
+        }
+        if ($whConfirm < self::MIN_WH_CONFIRM || $whConfirm > self::MAX_WH_CONFIRM) {
+            throw new UnprocessableException(
+                'invalid_range',
+                'warehouse_confirm_seconds out of range',
+                ['min' => self::MIN_WH_CONFIRM, 'max' => self::MAX_WH_CONFIRM]
+            );
+        }
+        if ($whMargin < self::MIN_WH_MARGIN || $whMargin > self::MAX_WH_MARGIN) {
+            throw new UnprocessableException(
+                'invalid_range',
+                'warehouse_exterior_margin_seconds out of range',
+                ['min' => self::MIN_WH_MARGIN, 'max' => self::MAX_WH_MARGIN]
             );
         }
     }

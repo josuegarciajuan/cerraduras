@@ -27,7 +27,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
         $rows = $this->pdo->query(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
                     reentry_cooldown_seconds, qr_usage_window_minutes,
-                    presence_entry_window_seconds, exit_check_seconds
+                    presence_entry_window_seconds, exit_check_seconds,
+                    warehouse_confirm_seconds, warehouse_exterior_margin_seconds
              FROM room_types
              ORDER BY id ASC'
         )->fetchAll(PDO::FETCH_ASSOC);
@@ -40,7 +41,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
         $stmt = $this->pdo->prepare(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
                     reentry_cooldown_seconds, qr_usage_window_minutes,
-                    presence_entry_window_seconds, exit_check_seconds
+                    presence_entry_window_seconds, exit_check_seconds,
+                    warehouse_confirm_seconds, warehouse_exterior_margin_seconds
              FROM room_types WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -53,7 +55,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
         $stmt = $this->pdo->prepare(
             'SELECT id, code, name, grace_minutes, exit_presence_gap_seconds,
                     reentry_cooldown_seconds, qr_usage_window_minutes,
-                    presence_entry_window_seconds, exit_check_seconds
+                    presence_entry_window_seconds, exit_check_seconds,
+                    warehouse_confirm_seconds, warehouse_exterior_margin_seconds
              FROM room_types WHERE code = :c LIMIT 1'
         );
         $stmt->execute([':c' => $code]);
@@ -69,14 +72,17 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
         int $reentryCooldownSeconds,
         int $qrUsageWindowMinutes,
         int $presenceEntryWindowSeconds = 90,
-        int $exitCheckSeconds = 40
+        int $exitCheckSeconds = 40,
+        int $warehouseConfirmSeconds = 40,
+        int $warehouseExteriorMarginSeconds = 5
     ): int {
         $stmt = $this->pdo->prepare(
             'INSERT INTO room_types
                 (code, name, grace_minutes, exit_presence_gap_seconds,
                  reentry_cooldown_seconds, qr_usage_window_minutes,
-                 presence_entry_window_seconds, exit_check_seconds)
-             VALUES (:code, :name, :g, :ex, :re, :qr, :ew, :xc)'
+                 presence_entry_window_seconds, exit_check_seconds,
+                 warehouse_confirm_seconds, warehouse_exterior_margin_seconds)
+             VALUES (:code, :name, :g, :ex, :re, :qr, :ew, :xc, :wc, :wm)'
         );
         $stmt->execute([
             ':code' => $code,
@@ -87,6 +93,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             ':qr' => $qrUsageWindowMinutes,
             ':ew' => $presenceEntryWindowSeconds,
             ':xc' => $exitCheckSeconds,
+            ':wc' => $warehouseConfirmSeconds,
+            ':wm' => $warehouseExteriorMarginSeconds,
         ]);
         return (int) $this->pdo->lastInsertId();
     }
@@ -111,6 +119,8 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             'qr_usage_window_minutes' => ':qr',
             'presence_entry_window_seconds' => ':ew',
             'exit_check_seconds' => ':xc',
+            'warehouse_confirm_seconds' => ':wc',
+            'warehouse_exterior_margin_seconds' => ':wm',
         ];
         $sets = [];
         $params = [':id' => $id];
@@ -151,7 +161,9 @@ final class RoomTypeRepository implements RoomTypeRepositoryInterface
             (int) $row['reentry_cooldown_seconds'],
             (int) $row['qr_usage_window_minutes'],
             (int) ($row['presence_entry_window_seconds'] ?? 90),
-            (int) ($row['exit_check_seconds'] ?? 40)
+            (int) ($row['exit_check_seconds'] ?? 40),
+            (int) ($row['warehouse_confirm_seconds'] ?? 40),
+            (int) ($row['warehouse_exterior_margin_seconds'] ?? 5)
         );
     }
 }

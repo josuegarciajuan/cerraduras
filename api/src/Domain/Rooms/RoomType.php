@@ -25,6 +25,10 @@ namespace App\Domain\Rooms;
  *  - exit_check_seconds         F44/RF-51.4: seconds the presence poller keeps
  *                               sampling after a door CLOSE to decide the exit
  *                               (>= 40 by policy).
+ *  - warehouse_confirm_seconds  F60/RF-67.2: 'X' seconds to confirm presence
+ *                               after a QR/door trigger before discarding.
+ *  - warehouse_exterior_margin_seconds  F60/RF-67.2: 'M' extra seconds the
+ *                               EXTERIOR camera keeps recording after absence.
  */
 final class RoomType
 {
@@ -37,6 +41,8 @@ final class RoomType
     public int $qrUsageWindowMinutes;
     public int $presenceEntryWindowSeconds;
     public int $exitCheckSeconds;
+    public int $warehouseConfirmSeconds;
+    public int $warehouseExteriorMarginSeconds;
 
     public function __construct(
         int $id,
@@ -47,7 +53,9 @@ final class RoomType
         int $reentryCooldownSeconds,
         int $qrUsageWindowMinutes,
         int $presenceEntryWindowSeconds = 90,
-        int $exitCheckSeconds = 40
+        int $exitCheckSeconds = 40,
+        int $warehouseConfirmSeconds = 40,
+        int $warehouseExteriorMarginSeconds = 5
     ) {
         $this->id = $id;
         $this->code = $code;
@@ -58,6 +66,8 @@ final class RoomType
         $this->qrUsageWindowMinutes = $qrUsageWindowMinutes;
         $this->presenceEntryWindowSeconds = $presenceEntryWindowSeconds;
         $this->exitCheckSeconds = $exitCheckSeconds;
+        $this->warehouseConfirmSeconds = $warehouseConfirmSeconds;
+        $this->warehouseExteriorMarginSeconds = $warehouseExteriorMarginSeconds;
     }
 
     /**
@@ -75,6 +85,8 @@ final class RoomType
             'qr_usage_window_minutes' => $this->qrUsageWindowMinutes,
             'presence_entry_window_seconds' => $this->presenceEntryWindowSeconds,
             'exit_check_seconds' => $this->exitCheckSeconds,
+            'warehouse_confirm_seconds' => $this->warehouseConfirmSeconds,
+            'warehouse_exterior_margin_seconds' => $this->warehouseExteriorMarginSeconds,
         ];
     }
 }
