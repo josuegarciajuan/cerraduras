@@ -1,0 +1,19 @@
+[Unit]
+Description=Cerraduras — Warehouse recorder daemon (F64/RF-73)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/usr/bin/php bin/warehouse-recorder.php
+Restart=always
+RestartSec=3
+KillMode=control-group
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

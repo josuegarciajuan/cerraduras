@@ -71,9 +71,11 @@ final class DeviceService
         string $externalId,
         ?string $label,
         ?int $apiClientId,
-        ?array $meta
+        ?array $meta,
+        ?string $subtype = null
     ): Device {
         $this->validateKind($kind);
+        $this->validateSubtype($kind, $subtype);
         $this->validateExternalId($externalId);
 
         if ($this->devices->findByKindAndExternalId($kind, $externalId) !== null) {
@@ -84,7 +86,7 @@ final class DeviceService
             );
         }
 
-        $id = $this->devices->insert($packId, $kind, $externalId, $label, $apiClientId, $meta);
+        $id = $this->devices->insert($packId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
         $device = $this->devices->findById($id);
         if ($device === null) {
             throw new \RuntimeException('Device not found after insert');
@@ -105,7 +107,8 @@ final class DeviceService
         string $externalId,
         ?string $label,
         ?int $apiClientId,
-        ?array $meta
+        ?array $meta,
+        ?string $subtype = null
     ): Device {
         $room = $this->rooms->findById($roomId);
         if ($room === null) {
@@ -118,7 +121,7 @@ final class DeviceService
                 ['room_id' => $roomId]
             );
         }
-        return $this->create($room->packId, $kind, $externalId, $label, $apiClientId, $meta);
+        return $this->create($room->packId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
     }
 
     /**
@@ -166,6 +169,11 @@ final class DeviceService
         if (array_key_exists('label', $fields)) {
             $sanitized['label'] = $fields['label'] === null ? null : (string) $fields['label'];
         }
+        if (array_key_exists('subtype', $fields)) {
+            $st = $fields['subtype'] === null ? null : (string) $fields['subtype'];
+            $this->validateSubtype($current->kind, $st);
+            $sanitized['subtype'] = $st;
+        }
         if (!empty($sanitized)) {
             $this->devices->update($id, $sanitized);
         }
@@ -194,6 +202,36 @@ final class DeviceService
                 ['allowed' => Device::allKinds()]
             );
         }
+    }
+
+    /**
+     * Camera devices (KIND_CAMERA) must declare EXTERIOR|INTERIOR; any other
+     * kind must not carry a subtype (F60/RF-68.2).
+     */
+    public function validateSubtype(string $kind, ?string $subtype): void
+    {
+        if (Device::isValidSubtype($kind, $subtype)) {
+            return;
+        }
+        if ($kind === Device::KIND_CAMERA) {
+            if ($subtype === null || $subtype === '') {
+                throw new UnprocessableException(
+                    'subtype_required',
+                    'Las cámaras requieren subtipo EXTERIOR o INTERIOR',
+                    ['field' => 'subtype', 'allowed' => Device::cameraPositions()]
+                );
+            }
+            throw new UnprocessableException(
+                'subtype_invalid',
+                'Subtipo de cámara no válido',
+                ['field' => 'subtype', 'allowed' => Device::cameraPositions()]
+            );
+        }
+        throw new UnprocessableException(
+            'subtype_not_allowed',
+            'Solo las cámaras admiten subtipo',
+            ['field' => 'subtype']
+        );
     }
 
     private function validateExternalId(string $externalId): void

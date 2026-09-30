@@ -50,7 +50,9 @@ final class RoomTypeController
             JsonBody::int($body, 'reentry_cooldown_seconds', 0, 600),
             JsonBody::int($body, 'qr_usage_window_minutes', 5, 240),
             JsonBody::intOpt($body, 'presence_entry_window_seconds', 1, 600) ?? 90,
-            JsonBody::intOpt($body, 'exit_check_seconds', 1, 600) ?? 40
+            JsonBody::intOpt($body, 'exit_check_seconds', 1, 600) ?? 40,
+            JsonBody::intOpt($body, 'warehouse_confirm_seconds', 10, 600) ?? 40,
+            JsonBody::intOpt($body, 'warehouse_exterior_margin_seconds', 0, 60) ?? 5
         );
         return Response::json(201, $rt->toArray());
     }
@@ -70,6 +72,8 @@ final class RoomTypeController
             'qr_usage_window_minutes',
             'presence_entry_window_seconds',
             'exit_check_seconds',
+            'warehouse_confirm_seconds',
+            'warehouse_exterior_margin_seconds',
         ] as $k) {
             if (array_key_exists($k, $body)) {
                 $fields[$k] = $body[$k];

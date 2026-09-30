@@ -128,6 +128,37 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F57 Verificación de salida visible (20 s)** | **BLOCK 33 (unit JS)** | **Completado** |
 | **F58 Orden de eventos por milisegundos** | **BLOCK 1/33** | **Completado** |
 | **F59 Un QR nuevo limpia el ciclo anterior** | **BLOCK 19 + emisión** | **Completado** |
+| **F60 Tipo AlmacenBebidas + cámara IP (kind CAMERA + subtipo)** | **BLOCK 44** | **Completado** |
+| **F61 Gestión de cámaras + directo go2rtc** | **BLOCK 44** | **Completado** |
+| **F62 Permisos rol + excepción por empleado** | **BLOCK 44** | **Completado** |
+| **F63 Visitas + motor de grabación (casos A–D)** | **BLOCK 44** | **Completado** |
+| **F64 Recorder (ffmpeg) + retención** | **BLOCK 44** | **Completado** |
+| **F65 Panel `/almacen` + `/almacen-api` + SSE** | **BLOCK 44** | **Completado** |
+| **F66 Pruebas y trazabilidad** | **BLOCK 44** | **Completado** |
+
+### F60–F66 — Almacén de bebidas (RF-67..RF-76)
+
+- **Tipo** `ALMACEN_BEBIDAS` + ventanas X=40 s / M=5 s (migración `0117`). **Dispositivo
+  `CAMERA`** con subtipo `EXTERIOR|INTERIOR` (`0116`); RTSP en `devices.meta_json.rtsp_url`.
+- **Permisos**: rol→tipo (existente) + excepción por empleado (`worker_room_overrides`,
+  `0118`); la excepción manda sobre el rol (`WarehouseAccessPolicy`).
+- **Visitas + grabación** (`0119`): `warehouse_visits`, `camera_recordings`,
+  `warehouse_state`; motor puro `WarehouseRecordingDecision` (QR/puerta/presencia, X
+  sin-presencia → descarta INT y conserva EXT solo con QR, salida con margen M; sin QR
+  se descartan ambas).
+- **Vídeo**: `bin/warehouse-recorder.php` (systemd `cerraduras-warehouse-recorder`)
+  gestiona ffmpeg; `bin/warehouse-retention.php` purga según
+  `system_settings.warehouse.retention_days` (**1** en pruebas; `0` = sin borrado).
+- **Directo**: go2rtc (`bash api/bin/install-go2rtc.sh`); `GO2RTC_BASE_URL` en `.env`
+  (p. ej. `http://92.113.151.136:1984`). Streams `almacen_<room>_<position>`.
+- **Panel**: `GET /almacen` (público LAN) + `/almacen-api/{state,event-stream,visits,
+  recordings,cameras,access,door/open}`.
+- **Tests**: `tests/Unit/{DeviceCameraSubtypeTest,WarehouseAccessPolicyTest,
+  WarehouseRecordingDecisionTest}.php` (BLOQUE 1) + **BLOCK 44** del runner.
+- **Arranque**: `install -m0644 docs/systemd/cerraduras-warehouse-recorder.service
+  /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now
+  cerraduras-warehouse-recorder` (y `bash api/bin/install-go2rtc.sh`). `start-all.sh` /
+  `stop-all.sh` ya los gestionan.
 
 ### F59 — Un QR nuevo limpia el ciclo anterior (RF-66)
 

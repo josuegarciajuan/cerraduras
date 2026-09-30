@@ -62,6 +62,8 @@ use App\Domain\Workers\WorkerRoleRepository;
 use App\Domain\Workers\WorkerRoleService;
 use App\Domain\Workers\WorkerService;
 use App\Domain\Workers\WorkerSessionRepository;
+use App\Domain\Workers\WorkerRoomOverrideRepository;
+use App\Domain\Workers\WarehouseAccessPolicy;
 use App\Http\Request;
 use App\Http\ResponseEmitter;
 use App\Http\Router;
@@ -98,6 +100,12 @@ use App\Http\Controllers\TimeSlotController;
 use App\Http\Controllers\WorkerRoleController;
 use App\Http\Controllers\WorkerController;
 use App\Http\Controllers\WorkerQrController;
+use App\Http\Controllers\WarehouseAccessController;
+use App\Http\Controllers\WarehouseVisitController;
+use App\Http\Controllers\WarehouseRecordingController;
+use App\Http\Controllers\WarehouseCameraController;
+use App\Http\Controllers\WarehouseStateController;
+use App\Http\Controllers\AlmacenEventStreamController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2109,6 +2117,10 @@ $qrIssueService = new QrIssueService(
 $accessEventRepo  = new AccessEventRepository($pdo);
 
 // --- F38: Worker QR Validate ---
+// F62/RF-69: per-worker ALLOW/DENY exception wins over the role grant.
+$workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
+$warehouseAccessPolicy  = new WarehouseAccessPolicy($workerRoomOverrideRepo, $workerRoleRepo);
+$warehouseRecordingService = new \App\Domain\Warehouse\WarehouseRecordingService($pdo);
 $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $qrTokenizer,
     $workerRepoForRoles,
@@ -2116,7 +2128,9 @@ $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $workerSessionRepo,
     $roomRepo,
     $roomTypeRepo,
-    $accessEventRepo
+    $accessEventRepo,
+    $warehouseAccessPolicy,
+    $warehouseRecordingService
 );
 $workerQrController  = new WorkerQrController($workerQrService);
 
@@ -2191,7 +2205,8 @@ $iotSessionService = new IotSessionService(
     $switchService,    // RF-16: turn on light on door open
     $exitActionService, // F28: shared exit action service
     $anomalyService,    // F35: anomaly detection
-    $workerSessionRepo  // F38: worker sessions in exit rule
+    $workerSessionRepo, // F38: worker sessions in exit rule
+    $warehouseRecordingService // F63: warehouse recording engine
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
 // room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.
@@ -2617,6 +2632,66 @@ $router->post('/api/v1/workers/{id}/qr',    [$workerController, 'regenerateQr'],
 $router->get('/api/v1/workers/{id}/sessions', [$workerController, 'sessions'],      $authFactory(['workers:read']));
 $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],   $authFactory(['qr:validate']));
 
+// --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
+$warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);
+$router->get('/almacen-api/access',            [$warehouseAccessController, 'index']);
+$router->put('/almacen-api/access/role/{id}',  [$warehouseAccessController, 'setRole']);
+$router->put('/almacen-api/access/worker/{id}',[$warehouseAccessController, 'setWorker']);
+
+// --- Routes: Visitas del almacén (F63/RF-70.3, público LAN) ---
+$warehouseVisitController = new WarehouseVisitController($pdo);
+$router->get('/almacen-api/visits',      [$warehouseVisitController, 'index']);
+$router->get('/almacen-api/visits/{id}', [$warehouseVisitController, 'show']);
+
+// --- Routes: servido de clips (F64/RF-73.4, público LAN) ---
+$warehouseRecordingController = new WarehouseRecordingController($pdo);
+$router->get('/almacen-api/recordings/{id}/video',  [$warehouseRecordingController, 'video']);
+$router->get('/almacen-api/recordings/{id}/poster', [$warehouseRecordingController, 'poster']);
+
+// --- Routes: cámaras del almacén (F61/RF-72, público LAN) ---
+$go2rtcClient = new \App\Domain\Warehouse\Go2rtcClient((string) (Config::get('GO2RTC_BASE_URL', '') ?? ''));
+$warehouseCameraController = new WarehouseCameraController($pdo, $deviceService, $go2rtcClient);
+$router->get('/almacen-api/cameras',            [$warehouseCameraController, 'index']);
+$router->post('/almacen-api/cameras',           [$warehouseCameraController, 'create']);
+$router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'update']);
+$router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
+$router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
+
+// --- Routes: estado del almacén (F65/RF-74.2, público LAN) ---
+$warehouseStateController = new WarehouseStateController($pdo, $go2rtcClient);
+$router->get('/almacen-api/state', [$warehouseStateController, 'show']);
+
+// POST /almacen-api/door/open — apertura manual desde el panel (F65/RF-74).
+$router->post(
+    '/almacen-api/door/open',
+    function (\App\Http\Request $request) use ($lockService): \App\Http\Response {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id_required']);
+        }
+        $correlationId = (string) ($request->attr('correlation_id', '') ?? '');
+        try {
+            $result = $lockService->open($roomId, 'manual_almacen', true, $correlationId);
+            return \App\Http\Response::json(200, array_merge(['ok' => true], is_array($result) ? $result : []));
+        } catch (\Throwable $e) {
+            return \App\Http\Response::json(409, ['error' => 'door_error', 'message' => $e->getMessage()]);
+        }
+    }
+);
+
+// --- Página única del almacén (F65/RF-74.1, público LAN) ---
+$router->get(
+    '/almacen',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $htmlFile = __DIR__ . '/almacen.html';
+        if (!is_file($htmlFile)) {
+            return \App\Http\Response::json(404, ['error' => 'almacen HTML not found']);
+        }
+        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+    }
+);
+
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
 $router->get('/api/v1/factory-devices', [$factoryDeviceController, 'list'], $authFactory(['audit:read']));
@@ -3025,6 +3100,13 @@ if ($requestPath === '/dashboard-api/event-stream' && ($_SERVER['REQUEST_METHOD'
         (new EventStreamController($pdo))->stream($roomId);
         // stream() calls exit() — execution ends here for SSE clients
     }
+}
+
+// --- SSE del almacén (F65/RF-74.3) — bypass middleware ---
+if ($requestPath === '/almacen-api/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    $roomId = (int) ($_GET['room_id'] ?? 0);
+    (new AlmacenEventStreamController($warehouseStateController))->stream($roomId);
+    // stream() calls exit()
 }
 
 // --- Dispatch ---

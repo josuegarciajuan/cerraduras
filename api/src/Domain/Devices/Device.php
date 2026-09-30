@@ -15,6 +15,7 @@ namespace App\Domain\Devices;
  *   PROXIMITY Door open/closed sensor
  *   PRESENCE  Body-presence sensor inside the room
  *   SWITCH    Smart electricity protector (EAWCBT-J via Tuya) — RF-16
+ *   CAMERA    IP camera (RTSP). `subtype` = EXTERIOR|INTERIOR — F60/RF-68
  */
 final class Device
 {
@@ -24,10 +25,17 @@ final class Device
     public const KIND_PRESENCE  = 'PRESENCE';
     public const KIND_SWITCH    = 'SWITCH';
     public const KIND_SCANNER   = 'SCANNER';
+    public const KIND_CAMERA    = 'CAMERA';
+
+    /** Camera positions (device subtype). */
+    public const SUBTYPE_CAMERA_EXTERIOR = 'EXTERIOR';
+    public const SUBTYPE_CAMERA_INTERIOR = 'INTERIOR';
 
     public int $id;
     public ?int $packId;
     public string $kind;
+    /** Only meaningful for CAMERA: EXTERIOR|INTERIOR (null otherwise). */
+    public ?string $subtype;
     public string $externalId;
     public ?string $label;
     public ?int $apiClientId;
@@ -50,11 +58,13 @@ final class Device
         ?array $meta,
         ?int $batteryPct = null,
         bool $isIdentified = false,
-        ?string $identifiedAt = null
+        ?string $identifiedAt = null,
+        ?string $subtype = null
     ) {
         $this->id = $id;
         $this->packId = $packId;
         $this->kind = $kind;
+        $this->subtype = $subtype;
         $this->externalId = $externalId;
         $this->label = $label;
         $this->apiClientId = $apiClientId;
@@ -71,6 +81,7 @@ final class Device
             'id' => $this->id,
             'pack_id' => $this->packId,
             'kind' => $this->kind,
+            'subtype' => $this->subtype,
             'external_id' => $this->externalId,
             'label' => $this->label,
             'api_client_id' => $this->apiClientId,
@@ -82,6 +93,29 @@ final class Device
     /** @return list<string> */
     public static function allKinds(): array
     {
-        return [self::KIND_RPI, self::KIND_LOCK, self::KIND_PROXIMITY, self::KIND_PRESENCE, self::KIND_SWITCH, self::KIND_SCANNER];
+        return [
+            self::KIND_RPI, self::KIND_LOCK, self::KIND_PROXIMITY, self::KIND_PRESENCE,
+            self::KIND_SWITCH, self::KIND_SCANNER, self::KIND_CAMERA,
+        ];
+    }
+
+    /** @return list<string> */
+    public static function cameraPositions(): array
+    {
+        return [self::SUBTYPE_CAMERA_EXTERIOR, self::SUBTYPE_CAMERA_INTERIOR];
+    }
+
+    /**
+     * Pure subtype validity matrix (F60/RF-68.2):
+     *  - CAMERA requires EXTERIOR|INTERIOR.
+     *  - Any other kind must carry no subtype (null or '').
+     */
+    public static function isValidSubtype(string $kind, ?string $subtype): bool
+    {
+        if ($kind === self::KIND_CAMERA) {
+            return $subtype !== null && $subtype !== ''
+                && in_array($subtype, self::cameraPositions(), true);
+        }
+        return $subtype === null || $subtype === '';
     }
 }

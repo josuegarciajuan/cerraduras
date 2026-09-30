@@ -51,6 +51,7 @@ final class IotSessionService
     private ?ExitActionService               $exitActionService;
     private ?AnomalyService                  $anomalyService;
     private ?WorkerSessionRepositoryInterface $workerSessionRepo;
+    private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
 
     public function __construct(
         PresenceEventRepositoryInterface $presenceEvents,
@@ -64,7 +65,8 @@ final class IotSessionService
         ?SwitchService                   $switchService = null,
         ?ExitActionService               $exitActionService = null,
         ?AnomalyService                  $anomalyService = null,
-        ?WorkerSessionRepositoryInterface $workerSessionRepo = null
+        ?WorkerSessionRepositoryInterface $workerSessionRepo = null,
+        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null
     ) {
         $this->presenceEvents = $presenceEvents;
         $this->iotSessions    = $iotSessions;
@@ -78,6 +80,7 @@ final class IotSessionService
         $this->exitActionService = $exitActionService;
         $this->anomalyService    = $anomalyService;
         $this->workerSessionRepo = $workerSessionRepo;
+        $this->warehouseRecorder = $warehouseRecorder;
     }
 
     /**
@@ -211,6 +214,18 @@ final class IotSessionService
                     error_log('[IotSessionService] Exit evaluation failed (best-effort): ' . $e->getMessage());
                 }
             }
+
+            // F63/RF-71: warehouse recording engine (best-effort, post-commit).
+            if ($this->warehouseRecorder !== null) {
+                $warehouseEvent = self::warehouseEventFor($sensor, $value);
+                if ($warehouseEvent !== null) {
+                    try {
+                        $this->warehouseRecorder->onSignal($roomId, $warehouseEvent);
+                    } catch (\Throwable $e) {
+                        error_log('[IotSessionService] Warehouse recording failed (best-effort): ' . $e->getMessage());
+                    }
+                }
+            }
         }
 
         if ($session === null) {
@@ -265,6 +280,30 @@ final class IotSessionService
 
     // -------------------------------------------------------------------------
     // Private helpers
+
+    /**
+     * Map a sensor event to a warehouse recording signal (F63/RF-71).
+     */
+    private static function warehouseEventFor(string $sensor, string $value): ?string
+    {
+        if ($sensor === PresenceEvent::SENSOR_PROXIMITY) {
+            if ($value === PresenceEvent::VALUE_OPEN) {
+                return \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_OPEN;
+            }
+            if ($value === PresenceEvent::VALUE_CLOSED) {
+                return \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_CLOSE;
+            }
+        }
+        if ($sensor === PresenceEvent::SENSOR_PRESENCE) {
+            if ($value === PresenceEvent::VALUE_PRESENT) {
+                return \App\Domain\Warehouse\WarehouseRecordingDecision::EV_PRESENT;
+            }
+            if ($value === PresenceEvent::VALUE_ABSENT) {
+                return \App\Domain\Warehouse\WarehouseRecordingDecision::EV_ABSENT;
+            }
+        }
+        return null;
+    }
 
     /**
      * Pure mutation of the locked session snapshot for an APPLY decision.

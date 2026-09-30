@@ -131,6 +131,13 @@ else
   launch "anomaly-scanner" "php bin/anomaly-scanner.php" 5 "$LOG_DIR/anomaly-scanner.log"
 fi
 
+echo "[5b/8] Warehouse recorder (systemd — grabación del almacén, F64)..."
+if systemctl restart cerraduras-warehouse-recorder 2>/dev/null; then
+  echo "       warehouse-recorder: systemd (pid $(systemctl show -p MainPID --value cerraduras-warehouse-recorder 2>/dev/null))"
+else
+  echo "       (unit cerraduras-warehouse-recorder ausente — NO se lanza wrapper: evita duplicado)"
+fi
+
 sleep 2
 
 echo "Health checks:"

@@ -25,7 +25,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function listForRoom(int $roomId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT d.id, d.pack_id, d.kind, d.external_id, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
+            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.external_id, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
              FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND r.pack_id IS NOT NULL
@@ -39,7 +39,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findAll(): array
     {
         $stmt = $this->pdo->query(
-            'SELECT id, pack_id, kind, external_id, label, api_client_id, meta_json, battery_pct, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, external_id, label, api_client_id, meta_json, battery_pct, is_identified, identified_at
              FROM devices
              ORDER BY (pack_id IS NOT NULL) DESC, kind ASC, id ASC'
         );
@@ -49,7 +49,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findById(int $id): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, external_id, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, external_id, label, api_client_id, meta_json, is_identified, identified_at
              FROM devices WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -60,7 +60,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findForRoomKind(int $roomId, string $kind): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT d.id, d.pack_id, d.kind, d.external_id, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
+            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.external_id, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
              FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
              WHERE d.kind = :k AND r.id = :rid AND r.pack_id IS NOT NULL
@@ -74,7 +74,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByKindAndExternalId(string $kind, string $externalId): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, external_id, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, external_id, label, api_client_id, meta_json, is_identified, identified_at
              FROM devices WHERE kind = :k AND external_id = :x LIMIT 1'
         );
         $stmt->execute([':k' => $kind, ':x' => $externalId]);
@@ -85,7 +85,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByExternalId(string $externalId): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, external_id, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, external_id, label, api_client_id, meta_json, is_identified, identified_at
              FROM devices WHERE external_id = :x LIMIT 1'
         );
         $stmt->execute([':x' => $externalId]);
@@ -96,15 +96,16 @@ final class DeviceRepository implements DeviceRepositoryInterface
     /**
      * @param array<string,mixed>|null $meta
      */
-    public function insert(int $packId, string $kind, string $externalId, ?string $label, ?int $apiClientId, ?array $meta): int
+    public function insert(int $packId, string $kind, string $externalId, ?string $label, ?int $apiClientId, ?array $meta, ?string $subtype = null): int
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO devices (pack_id, kind, external_id, label, api_client_id, meta_json)
-             VALUES (:pid, :k, :x, :lbl, :ac, :m)'
+            'INSERT INTO devices (pack_id, kind, subtype, external_id, label, api_client_id, meta_json)
+             VALUES (:pid, :k, :st, :x, :lbl, :ac, :m)'
         );
         $stmt->execute([
             ':pid' => $packId,
             ':k' => $kind,
+            ':st' => $subtype,
             ':x' => $externalId,
             ':lbl' => $label,
             ':ac' => $apiClientId,
@@ -123,6 +124,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
         }
         $allowed = [
             'external_id' => ':x',
+            'subtype' => ':st',
             'label' => ':lbl',
             'api_client_id' => ':ac',
             'meta_json' => ':m',
@@ -150,7 +152,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByPackAndKind(int $packId, string $kind): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, external_id, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, external_id, label, api_client_id, meta_json, is_identified, identified_at
              FROM devices WHERE pack_id = :pid AND kind = :k'
         );
         $stmt->execute([':pid' => $packId, ':k' => $kind]);
@@ -165,7 +167,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
 
     public function patch(int $id, array $fields): void
     {
-        $allowed = ['external_id' => ':x', 'meta_json' => ':m', 'pack_id' => ':pid'];
+        $allowed = ['external_id' => ':x', 'subtype' => ':st', 'meta_json' => ':m', 'pack_id' => ':pid'];
         $sets = [];
         $params = [':id' => $id];
         foreach ($fields as $col => $value) {
@@ -297,7 +299,8 @@ final class DeviceRepository implements DeviceRepositoryInterface
             $meta,
             isset($row['battery_pct']) && $row['battery_pct'] !== null ? (int) $row['battery_pct'] : null,
             (bool) ($row['is_identified'] ?? false),
-            isset($row['identified_at']) && $row['identified_at'] !== null ? (string) $row['identified_at'] : null
+            isset($row['identified_at']) && $row['identified_at'] !== null ? (string) $row['identified_at'] : null,
+            isset($row['subtype']) && $row['subtype'] !== null ? (string) $row['subtype'] : null
         );
     }
 }
