@@ -1,0 +1,16 @@
+[Unit]
+Description=Cerraduras — go2rtc (live view del almacén, F61/RF-72)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/go2rtc -config /etc/go2rtc/go2rtc.yaml
+Restart=always
+RestartSec=3
+KillMode=control-group
+User=root
+
+[Install]
+WantedBy=multi-user.target

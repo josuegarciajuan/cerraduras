@@ -103,6 +103,7 @@ use App\Http\Controllers\WorkerQrController;
 use App\Http\Controllers\WarehouseAccessController;
 use App\Http\Controllers\WarehouseVisitController;
 use App\Http\Controllers\WarehouseRecordingController;
+use App\Http\Controllers\WarehouseCameraController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2644,6 +2645,15 @@ $router->get('/almacen-api/visits/{id}', [$warehouseVisitController, 'show']);
 $warehouseRecordingController = new WarehouseRecordingController($pdo);
 $router->get('/almacen-api/recordings/{id}/video',  [$warehouseRecordingController, 'video']);
 $router->get('/almacen-api/recordings/{id}/poster', [$warehouseRecordingController, 'poster']);
+
+// --- Routes: cámaras del almacén (F61/RF-72, público LAN) ---
+$go2rtcClient = new \App\Domain\Warehouse\Go2rtcClient((string) (Config::get('GO2RTC_BASE_URL', '') ?? ''));
+$warehouseCameraController = new WarehouseCameraController($pdo, $deviceService, $go2rtcClient);
+$router->get('/almacen-api/cameras',            [$warehouseCameraController, 'index']);
+$router->post('/almacen-api/cameras',           [$warehouseCameraController, 'create']);
+$router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'update']);
+$router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
+$router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
 
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
