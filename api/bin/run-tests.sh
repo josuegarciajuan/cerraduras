@@ -4091,6 +4091,121 @@ else
 fi
 
 # =============================================================================
+# BLOCK 44 — F60–F66: Almacén de bebidas (RF-67..RF-76)
+# Trazabilidad: RF-67..RF-76; TSK-F60-* .. TSK-F66-*
+# =============================================================================
+block "BLOCK 44 — F60–F66: Almacén de bebidas"
+
+# 44.1 Esquema y seed (BD)
+WH_TYPE_ID=$($MYSQL -sN -e "SELECT id FROM room_types WHERE code='ALMACEN_BEBIDAS' LIMIT 1" 2>/dev/null)
+WH_PACK_ID=$($MYSQL -sN -e "SELECT id FROM device_packs WHERE code='ALMACEN_BEBIDAS' LIMIT 1" 2>/dev/null)
+WH_SUBTYPE_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM devices LIKE 'subtype'" 2>/dev/null | awk '{print $1}')
+WH_CONFIRM_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM room_types LIKE 'warehouse_confirm_seconds'" 2>/dev/null | awk '{print $1}')
+WH_CR_TABLE=$($MYSQL -sN -e "SHOW TABLES LIKE 'camera_recordings'" 2>/dev/null)
+WH_OV_TABLE=$($MYSQL -sN -e "SHOW TABLES LIKE 'worker_room_overrides'" 2>/dev/null)
+
+if [ -n "$WH_TYPE_ID" ]; then
+    pass "F60: room_type ALMACEN_BEBIDAS existe (id=$WH_TYPE_ID)"
+else
+    fail "F60: room_type ALMACEN_BEBIDAS" "no existe — ejecuta: php bin/migrate.php"
+fi
+if [ -n "$WH_PACK_ID" ]; then
+    pass "F60: device_pack ALMACEN_BEBIDAS existe (id=$WH_PACK_ID)"
+else
+    fail "F60: device_pack ALMACEN_BEBIDAS" "no existe"
+fi
+[ "$WH_SUBTYPE_COL" = "subtype" ] && pass "F60: devices.subtype presente" || fail "F60: devices.subtype" "columna ausente"
+[ "$WH_CONFIRM_COL" = "warehouse_confirm_seconds" ] && pass "F60: room_types.warehouse_confirm_seconds presente" || fail "F60: room_types.warehouse_confirm_seconds" "columna ausente"
+[ -n "$WH_CR_TABLE" ] && pass "F63: tabla camera_recordings presente" || fail "F63: camera_recordings" "tabla ausente"
+[ -n "$WH_OV_TABLE" ] && pass "F62: tabla worker_room_overrides presente" || fail "F62: worker_room_overrides" "tabla ausente"
+
+if [ -n "$WH_TYPE_ID" ]; then
+    WH_X=$($MYSQL -sN -e "SELECT warehouse_confirm_seconds FROM room_types WHERE id=$WH_TYPE_ID" 2>/dev/null)
+    WH_M=$($MYSQL -sN -e "SELECT warehouse_exterior_margin_seconds FROM room_types WHERE id=$WH_TYPE_ID" 2>/dev/null)
+    if [ "$WH_X" = "40" ] && [ "$WH_M" = "5" ]; then
+        pass "F60: ventanas por defecto X=40, M=5"
+    else
+        fail "F60: ventanas por defecto" "X=$WH_X M=$WH_M (esperado 40/5)"
+    fi
+fi
+
+# 44.2 HTTP (requiere servidor)
+if [ "$SERVER_UP" = true ]; then
+    http_test GET /almacen 200 "F65: GET /almacen → 200 (panel)"
+    ALM_HTML=$(curl -s --max-time 5 "$API_BASE/almacen")
+    if echo "$ALM_HTML" | grep -qi "almac"; then
+        pass "F65: /almacen sirve la página del almacén"
+    else
+        fail "F65: /almacen contenido" "no contiene 'almac'"
+    fi
+
+    http_test GET /almacen-api/state 200 "F65: GET /almacen-api/state → 200"
+    ALM_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state")
+    if echo "$ALM_STATE" | grep -q '"retention"'; then
+        pass "F65: state incluye retention"
+    else
+        fail "F65: state.retention" "ausente: $(echo "$ALM_STATE" | head -c 200)"
+    fi
+
+    http_test GET "/almacen-api/visits" 200 "F63: GET /almacen-api/visits → 200"
+    http_test GET "/almacen-api/recordings/999999/video" 404 \
+        "F64: recording inexistente → 404"
+
+    http_test GET "/almacen-api/cameras?room_id=1" 200 "F61: GET /almacen-api/cameras → 200"
+    http_test POST "/almacen-api/cameras" 422 \
+        "F61: POST cámara con position inválida → 422" \
+        --body '{"room_id":1,"position":"SALON","external_id":"CAM-X","rtsp_url":"rtsp://x/y"}'
+    http_test POST "/almacen-api/cameras" 400 \
+        "F61: POST cámara sin rtsp_url → 400" \
+        --body '{"room_id":1,"position":"EXTERIOR","external_id":"CAM-Y"}'
+    http_test POST "/almacen-api/cameras/sync" 200 "F61: POST /almacen-api/cameras/sync → 200"
+
+    # 44.3 Permisos (RF-69): rol + excepción por empleado
+    if [ -n "$WH_TYPE_ID" ]; then
+        http_test GET "/almacen-api/access?room_type_id=$WH_TYPE_ID" 200 \
+            "F62: GET /almacen-api/access → 200"
+        http_test GET "/almacen-api/access" 400 \
+            "F62: GET /almacen-api/access sin room_type_id → 400"
+
+        # rol: permitir y restaurar (el tipo almacén no lo usa ningún otro test)
+        http_test PUT "/almacen-api/access/role/1" 200 \
+            "F62: PUT access/role allow=true → 200" \
+            --body "{\"room_type_id\":$WH_TYPE_ID,\"allow\":true}"
+        http_test PUT "/almacen-api/access/role/1" 200 \
+            "F62: PUT access/role allow=false → 200" \
+            --body "{\"room_type_id\":$WH_TYPE_ID,\"allow\":false}"
+
+        # excepción por empleado: DENY y limpieza (null)
+        http_test PUT "/almacen-api/access/worker/1" 200 \
+            "F62: PUT access/worker DENY → 200" \
+            --body "{\"room_type_id\":$WH_TYPE_ID,\"effect\":\"DENY\"}"
+        http_test PUT "/almacen-api/access/worker/1" 200 \
+            "F62: PUT access/worker effect=null (limpia) → 200" \
+            --body "{\"room_type_id\":$WH_TYPE_ID,\"effect\":null}"
+
+        WH_OV_LEFT=$($MYSQL -sN -e "SELECT COUNT(*) FROM worker_room_overrides WHERE room_type_id=$WH_TYPE_ID" 2>/dev/null)
+        if [ "$WH_OV_LEFT" = "0" ]; then
+            pass "F62: excepción de empleado limpiada"
+        else
+            fail "F62: limpieza excepción" "quedan $WH_OV_LEFT filas"
+        fi
+    fi
+
+    # 44.4 Motor de grabación (puro, sin cámara): decide() ya está en BLOCK 1.
+    WH_ENGINE_JS="$PROJECT_DIR/tests/Unit/WarehouseRecordingDecisionTest.php"
+    if [ -f "$WH_ENGINE_JS" ]; then
+        WH_ENG_OUT=$(php "$WH_ENGINE_JS" 2>&1)
+        if echo "$WH_ENG_OUT" | grep -q "0 failed"; then
+            pass "F63: motor de grabación (casos A-D) 0 failed"
+        else
+            fail "F63: motor de grabación" "$(echo "$WH_ENG_OUT" | grep -iE 'FAIL|Total' | head -3 | tr '\n' ' ')"
+        fi
+    fi
+else
+    skip "BLOCK 44 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
