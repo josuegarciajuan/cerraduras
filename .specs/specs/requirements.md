@@ -1127,3 +1127,144 @@ sin reset.
   usada por el panel de pruebas (crear/reset) y por la emisión real; sin SQL duplicado divergente.
 - **RF-66.3.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**, con
   un caso que ensucia cooldown + IoT y verifica la limpieza al crear el QR (panel y real).
+
+# Fase 60–F66: Almacén de bebidas — tipo `AlmacenBebidas`, cámaras IP y panel `/almacen`
+
+**Motivo**: se quiere controlar un almacén de bebidas con acceso por QR de empleado y evidencia
+en vídeo de cada entrada/salida. El sistema ya modela habitaciones, packs de dispositivos,
+empleados con QR propio, permisos rol→tipo de habitación, sensores de puerta/presencia y un
+pipeline IoT. Falta: un tipo de habitación de almacén, un dispositivo **cámara IP con subtipo**
+(EXTERIOR/INTERIOR), **permisos por empleado**, el **registro de visitas con sus vídeos** y un
+panel único en `/almacen`.
+
+**Decisiones aprobadas** (2026-09-30): cámaras IP estilo `reconocimientoFacial` (RTSP); directo
+con **go2rtc + WebRTC**; retención por defecto **1 día** (pruebas) / sin borrado en real;
+permisos **rol + excepción por empleado (la excepción manda)**; panel **público en LAN**;
+entrega de esta fase = **especificaciones**.
+
+## RF-67: Tipo de habitación AlmacenBebidas y pack
+- **RF-67.1**: Debe existir un tipo de habitación `ALMACEN_BEBIDAS` (código único) con nombre
+  "Almacén de bebidas", reutilizando `room_types` (misma validación de código/ventanas).
+- **RF-67.2**: El tipo define dos ventanas nuevas: `warehouse_confirm_seconds` (X, por defecto
+  **40**) y `warehouse_exterior_margin_seconds` (M, por defecto **5**), validadas de forma pura
+  (X ≥ 10 y ≤ 600; M ≥ 0 y ≤ 60).
+- **RF-67.3**: Una habitación de tipo AlmacenBebidas es una `rooms` normal (estado, `pack_id`,
+  cooldown, QR de huésped/empleado) y recibe un pack de dispositivos, sin campos especiales.
+- **RF-67.4**: Debe poder crearse un pack de almacén con `RPI`, `LOCK`, `PROXIMITY`, `PRESENCE`,
+  `SWITCH` y **2× `CAMERA`** (una EXTERIOR y una INTERIOR).
+
+## RF-68: Dispositivo cámara IP y subtipo
+- **RF-68.1**: `devices.kind` admite `CAMERA`; `Device::KIND_CAMERA` y `Device::allKinds()` lo
+  incluyen y `DeviceService::validateKind()` lo acepta.
+- **RF-68.2**: La cámara tiene **subtipo de posición** `EXTERIOR` o `INTERIOR`
+  (`devices.subtype`), que determina **en qué momento se activa**; un valor distinto se rechaza.
+- **RF-68.3**: La conexión RTSP (`rtsp://…`) y flags (`enabled`, `record_enabled`) se guardan en
+  `devices.meta_json`, editables desde el panel; **nunca en git** (las URLs contienen credenciales).
+- **RF-68.4**: Un pack puede tener más de una cámara
+  (`uniq_devices_external(kind, external_id)` lo permite).
+- **RF-68.5**: Las cámaras **no** consumen cuota Tuya ni entran en el pipeline ESP32/Tuya: no se
+  añaden a `DEVICE_KIND_ESP32`/`DEVICE_KIND_TUYA`, a los pull-kinds, a `TRACKED_KINDS`/
+  `RESYNC_KINDS` del consumer Pulsar ni al heartbeat.
+
+## RF-69: Permisos de acceso (rol + excepción por empleado)
+- **RF-69.1**: Sin excepción, la decisión es la existente `worker_role_room_types`
+  (rol→tipo de habitación: concedido / denegado).
+- **RF-69.2**: Se puede registrar una **excepción por empleado** (`worker_room_overrides`) con
+  efecto `ALLOW` o `DENY` sobre un tipo de habitación; `UNIQUE(worker_id, room_type_id)`.
+- **RF-69.3**: **La excepción del empleado manda sobre su rol**: `ALLOW` añade acceso aunque el
+  rol no lo conceda; `DENY` lo quita aunque el rol sí lo conceda.
+- **RF-69.4**: La política se aplica en la validación del QR de empleado (`WorkerQrService`)
+  **antes** de abrir la puerta; el rechazo conserva el código/motivo existente `access_denied`.
+- **RF-69.5**: El panel `/almacen` permite consultar y editar permisos de rol y de empleado.
+- **RF-69.6**: La política es pura y testeable (`WarehouseAccessPolicy`); sin excepción el
+  comportamiento es idéntico al actual (retrocompatible).
+
+## RF-70: Visitas al almacén
+- **RF-70.1**: Cada ciclo de acceso genera una `warehouse_visit` documentada con: empleado (si
+  hubo QR), disparador (`QR`/`DOOR`/`PRESENCE`), hora de QR, entrada confirmada, salida y
+  resultado (`ENTERED`/`NO_SHOW`/`ANONYMOUS`/`DENIED`).
+- **RF-70.2**: La visita agrupa sus grabaciones por cámara y por episodio
+  (`ENTRY`/`EXIT`/`PRESENCE`).
+- **RF-70.3**: Las visitas son consultables y filtrables por empleado, fecha y resultado.
+- **RF-70.4**: Un acceso denegado por permisos se registra como intento `DENIED` con motivo,
+  **sin** abrir puerta ni iniciar grabación.
+- **RF-70.5**: Una visita `NO_SHOW` (QR/door sin presencia en X) queda documentada con la
+  evidencia exterior (caso QR) o sin vídeo (caso door), según RF-71.
+
+## RF-71: Motor de grabación (casos de uso)
+**Señales**: `QR_OK`, `DOOR_OPEN`, `DOOR_CLOSE`, `PRESENT`, `ABSENT`. **Ventanas**: X =
+`warehouse_confirm_seconds` (40 s), M = `warehouse_exterior_margin_seconds` (5 s).
+- **RF-71.1**: QR válido → se inician **ambas** cámaras (episodio `ENTRY`) y arranca la ventana X
+  (sin presencia todavía).
+- **RF-71.2**: Si en X **no** hay presencia interior → se para y **descarta** la grabación
+  INTERIOR; la EXTERIOR **se conserva** (hasta cierre de puerta + M) como evidencia del intento.
+  Resultado `NO_SHOW`.
+- **RF-71.3**: Si en X **hay** presencia → la entrada se consolida (`ENTERED`) y se sigue grabando
+  hasta la salida.
+- **RF-71.4**: La puerta abre **sin** QR → se inician ambas; si en X no hay presencia se paran y
+  **descartan las dos**. Se refleja como visita (y anomalía `DoorOpenWithoutQr` ya existente).
+- **RF-71.5**: Se detecta **presencia sin grabación activa** (p. ej. puerta que quedó abierta de un
+  ciclo anterior) → se inician ambas (episodio `PRESENCE`).
+- **RF-71.6**: Tras haber habido presencia, al perderse (`ABSENT`): **INTERIOR para ya**;
+  **EXTERIOR para M segundos después**; se cierra la visita (`exited_at`).
+- **RF-71.7**: Orden por **milisegundos** (F58) y deduplicación de señales (fingerprint);
+  los eventos simulados (`/sim`, `provider=SIMULATED`) son soportados.
+- **RF-71.8**: La decisión es **pura y testeable** (`WarehouseRecordingDecision`); el servicio
+  **ignora** habitaciones cuyo tipo no sea `ALMACEN_BEBIDAS` (no afecta al flujo de huésped).
+
+## RF-72: Directo con go2rtc
+- **RF-72.1**: go2rtc se instala como servicio `systemd` y mantiene un stream por cámara a partir
+  de su `meta_json.rtsp_url`.
+- **RF-72.2**: El panel muestra el directo de ambas cámaras (EXTERIOR/INTERIOR) con indicador de
+  grabación por cámara.
+- **RF-72.3**: La sincronización de streams con go2rtc ocurre al crear/editar/borrar cámaras y en
+  el arranque; **las URLs RTSP no se escriben en logs**.
+- **RF-72.4**: El directo es **bajo demanda** (solo mientras hay panel abierto); sin espectadores
+  no se decodifica vídeo.
+
+## RF-73: Recorder y retención
+- **RF-73.1**: Un daemon `systemd` (`warehouse-recorder`) arranca/para `ffmpeg` por cámara según el
+  motor; graba MP4/H.264 en `.tmp` y **renombra al cerrar limpio** (patrón `reconocimientoFacial`).
+- **RF-73.2**: El descarte borra el parcial/fichero y marca `DISCARDED`; un error marca `FAILED`
+  con motivo; nunca se deja un `.tmp` huérfano.
+- **RF-73.3**: Retención configurable en `system_settings` (`warehouse.retention_days`, por defecto
+  **1** en pruebas; `0`/negativo = **sin borrado automático**, entorno real).
+- **RF-73.4**: Los clips se sirven con soporte **HTTP Range** (seek) y **miniatura** (poster).
+- **RF-73.5**: Todo es local; **cero cuota Tuya** y sin dependencia de la nube para grabar.
+
+## RF-74: Panel `/almacen`
+- **RF-74.1**: `GET /almacen` sirve una **página única** (una sola vista, sin secciones),
+  pública en LAN, servida por el mismo PHP (patrón de `/dashboard`).
+- **RF-74.2**: La página muestra: estado del almacén (libre/ocupado), visita activa (empleado y
+  tiempo dentro), directo de las 2 cámaras, visitas con sus vídeos de entrada/salida, permisos y
+  controles.
+- **RF-74.3**: Estado en vivo por **SSE propio** (`/almacen-api/event-stream`) con reconexión y
+  fallback a polling; nunca queda en polling permanente.
+- **RF-74.4**: Interfaz **sencilla y responsiva**; en MVP LAN **sin login**.
+- **RF-74.5**: Endpoints `/almacen-api/*` públicos con forma estable: `state`, `visits`,
+  `visits/{id}`, `recordings/{id}/video|poster`, `cameras` (CRUD), `access`, `door/open`,
+  `event-stream`.
+- **RF-74.6**: Los vídeos de una visita se ven **juntos** (entrada y salida) desde el mismo panel.
+
+## RF-75: Brainstorm — qué más ver/controlar (deseable, no bloqueante)
+Requisitos **deseables/futuros** para el mismo panel (lista ampliable):
+- **RF-75.1**: Ocupación en vivo, tiempo dentro, última entrada/salida, aforo.
+- **RF-75.2**: Métricas: visitas/día, duración media, horas punta, empleado más frecuente.
+- **RF-75.3**: Alertas: puerta abierta demasiado, presencia sin QR, cámara offline, grabación
+  fallida, retención/espacio en disco.
+- **RF-75.4**: Buscar/filtrar visitas (empleado, fecha, resultado) y exportar CSV.
+- **RF-75.5**: Miniatura (snapshot) por visita y descarga de clips.
+- **RF-75.6**: Historial de accesos denegados con motivo.
+- **RF-75.7**: Matriz de permisos rol × empleado editable.
+- **RF-75.8**: Salud de cámaras/go2rtc/recorder y uso de disco.
+- **RF-75.9**: Abrir puerta, forzar grabación y marcar incidencia.
+- **RF-75.10**: Selector de varios almacenes si hubiera más habitaciones del tipo.
+- **RF-75.11**: (Futuro) inventario de bebidas, temperatura, audio bidireccional si la cámara lo
+  permite.
+
+## RF-76: No regresión y pruebas
+- **RF-76.1**: No se alteran rutas, códigos ni campos existentes; el tipo y los permisos nuevos
+  son **retrocompatibles** (sin excepción = comportamiento actual).
+- **RF-76.2**: Tests unitarios puros (decisión de grabación, política de acceso, validación de
+  subtipo) + **BLOCK 44** del runner (HTTP/BD).
+- **RF-76.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.

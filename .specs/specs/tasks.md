@@ -2817,3 +2817,294 @@ activo hasta 09:14:08; reproducción pura `cooldown=true → ANTI_REENTRADA (INS
 | F59-03 | Panel de pruebas | RF-66.1.3 | `QrTestController.php` | BLOCK 19 |
 | F59-04 | Emisión real | RF-66.1 | `QrIssueService.php`, `index.php` | unit + runner |
 | F59-05 | Panel UI | RF-66.2.1 | `public/dashboard.html` | manual |
+
+---
+
+# Fase 60 — Tipo AlmacenBebidas, dispositivo CAMERA y pack (RF-67/68)
+
+**Motivo**: base del almacén: tipo de habitación propio, kind `CAMERA` con subtipo de posición
+(EXTERIOR/INTERIOR) y ventanas X/M del tipo.
+
+### TSK-F60-01: Specs y trazabilidad
+- **Cambio**: `requirements.md` (RF-67/68), `design.md` §24, `contracts.md` Fase 60, `tasks.md`.
+- **RF**: RF-67, RF-68.
+- **Test propio**: revisión.
+
+### TSK-F60-02: Migración `0116_camera_device_kind.sql`
+- **Cambio**: `devices.kind` ENUM + `CAMERA`; `devices.subtype VARCHAR(32) NULL AFTER kind`; índice
+  `(kind, subtype)`.
+- **RF**: RF-68.1, RF-68.2, RF-68.4.
+- **Test propio**: consulta INFORMATION_SCHEMA / runner (BLOCK 44).
+
+### TSK-F60-03: Migración `0117_roomtype_warehouse_windows.sql`
+- **Cambio**: `room_types.warehouse_confirm_seconds` (40) y `warehouse_exterior_margin_seconds` (5).
+- **RF**: RF-67.2.
+- **Test propio**: validación de rangos (unit del RoomTypeService).
+
+### TSK-F60-04: Dominio kind/subtype
+- **Cambio**: `Device.php` (`KIND_CAMERA`, `allKinds`), `DeviceService::validateKind`/
+  `validateSubtype`, whitelists de `subtype` en `DeviceRepository`/`DeviceService`/`DeviceController`.
+- **RF**: RF-68.1/68.2/68.3.
+- **Test propio**: `tests/Unit/DeviceCameraSubtypeTest.php`.
+
+### TSK-F60-05: Migración `0120_warehouse_seed.sql`
+- **Cambio**: seed tipo `ALMACEN_BEBIDAS` + pack `ALMACEN_BEBIDAS`; helper documentado (opcional)
+  para crear la habitación y asignar el pack. Sin RTSP ni secretos.
+- **RF**: RF-67.1/67.3/67.4.
+- **Test propio**: runner (tipo y pack existen).
+
+## Tabla resumen F60
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F60-01 | Specs y trazabilidad | RF-67/68 | `*.md` | revisión |
+| F60-02 | Migración kind+subtype | RF-68.1/68.2/68.4 | `migrations/0116_*.sql` | BLOCK 44 |
+| F60-03 | Migración ventanas de tipo | RF-67.2 | `migrations/0117_*.sql` | unit |
+| F60-04 | Dominio kind/subtype | RF-68 | `Device.php`, `DeviceService.php`, `DeviceRepository.php` | unit |
+| F60-05 | Seed tipo+pack | RF-67 | `migrations/0120_*.sql` | BLOCK 44 |
+
+---
+
+# Fase 61 — Gestión de cámaras y directo con go2rtc (RF-68/72)
+
+**Motivo**: poder dar de alta cámaras (RTSP) y verlas en directo.
+
+### TSK-F61-01: Instalación go2rtc + systemd
+- **Cambio**: `bin/install-go2rtc.sh`, `/etc/go2rtc/go2rtc.yaml`,
+  `deploy/systemd/cerraduras-go2rtc.service`; `GO2RTC_BASE_URL` en `.env.example`; arranque en
+  `start-all.sh`.
+- **RF**: RF-72.1.
+- **Test propio**: `systemctl is-active cerraduras-go2rtc` + `GET :1984/api`.
+
+### TSK-F61-02: Sincronización de streams
+- **Cambio**: `bin/go2rtc-sync.php` (`PUT`/`DELETE /api/streams`), nombres
+  `almacen_<room>_<position>`; sin log de URLs RTSP.
+- **RF**: RF-72.3.
+- **Test propio**: unit (construcción de nombre/opciones) + manual.
+
+### TSK-F61-03: CRUD de cámaras `/almacen-api/cameras`
+- **Cambio**: `WarehouseCameraController` (list/create/patch/delete/sync) + rutas en
+  `public/index.php`; enmascarado de `rtsp_url` en listados públicos.
+- **RF**: RF-68.3, RF-72.2, RF-74.5.
+- **Test propio**: BLOCK 44 (crear/listar/editar/borrar).
+
+### TSK-F61-04: Directo en el panel
+- **Cambio**: mosaicos EXTERIOR/INTERIOR con `live_url` (go2rtc), carga bajo demanda y destrucción
+  al cerrar; indicador de grabación.
+- **RF**: RF-72.2/72.4.
+- **Test propio**: verificación manual (aceptación).
+
+## Tabla resumen F61
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F61-01 | go2rtc + systemd | RF-72.1 | `bin/install-go2rtc.sh`, unit systemd | manual |
+| F61-02 | Sync de streams | RF-72.3 | `bin/go2rtc-sync.php` | unit + manual |
+| F61-03 | CRUD cámaras | RF-72.2 | `WarehouseCameraController.php`, `index.php` | BLOCK 44 |
+| F61-04 | Directo en panel | RF-72.2/72.4 | `public/almacen.html`, `assets/almacen.js` | manual |
+
+---
+
+# Fase 62 — Permisos rol + excepción por empleado (RF-69)
+
+**Motivo**: conceder/denegar acceso al almacén a un rol o a un empleado concreto.
+
+### TSK-F62-01: Migración `0118_worker_room_overrides.sql`
+- **Cambio**: tabla de excepciones con UNIQUE(worker_id, room_type_id).
+- **RF**: RF-69.2.
+- **Test propio**: BLOCK 44.
+
+### TSK-F62-02: `WarehouseAccessPolicy` (pura) + tests
+- **Cambio**: `src/Domain/Workers/WarehouseAccessPolicy.php`; repositorio de overrides.
+- **RF**: RF-69.1/69.3/69.6.
+- **Test propio**: `tests/Unit/WarehouseAccessPolicyTest.php`.
+
+### TSK-F62-03: Enforcement en la validación de QR
+- **Cambio**: `WorkerQrService::validate()` usa la política antes de abrir; `WorkerService`
+  delega; registro de visita `DENIED` (engancha con F63).
+- **RF**: RF-69.4, RF-70.4.
+- **Test propio**: `WorkerTest`/BLOCK 44 (rol allow + override DENY → 403).
+
+### TSK-F62-04: Endpoints y UI de permisos
+- **Cambio**: `/almacen-api/access` (GET) + `PUT .../role` + `PUT .../worker`; tabla/buscador en
+  `almacen.html`.
+- **RF**: RF-69.5, RF-74.5.
+- **Test propio**: BLOCK 44 + manual.
+
+## Tabla resumen F62
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F62-01 | Migración overrides | RF-69.2 | `migrations/0118_*.sql` | BLOCK 44 |
+| F62-02 | Política pura | RF-69.1/69.3 | `Domain/Workers/WarehouseAccessPolicy.php` | unit |
+| F62-03 | Enforcement QR | RF-69.4 | `WorkerQrService.php`, `WorkerService.php` | BLOCK 44 |
+| F62-04 | API+UI permisos | RF-69.5 | `WarehouseAccessController.php`, panel | BLOCK 44 |
+
+---
+
+# Fase 63 — Visitas y motor de grabación (RF-70/71)
+
+**Motivo**: decidir cuándo grabar cada cámara y documentar cada visita.
+
+### TSK-F63-01: Migración `0119_warehouse_visits_recordings.sql`
+- **Cambio**: `warehouse_visits`, `camera_recordings`, `warehouse_state` (+ índices).
+- **RF**: RF-70.1/70.2, RF-73.1 (soporte).
+- **Test propio**: BLOCK 44.
+
+### TSK-F63-02: `WarehouseRecordingDecision` (pura) + tests
+- **Cambio**: clase de decisión con la tabla de §27.2; acciones tipadas.
+- **RF**: RF-71.1–71.8.
+- **Test propio**: `tests/Unit/WarehouseRecordingDecisionTest.php` (casos A–D + límites).
+
+### TSK-F63-03: `WarehouseRecordingService` + enganches
+- **Cambio**: servicio transaccional (`FOR UPDATE` sobre `warehouse_state`); enganches en
+  `WorkerQrService` (`QR_OK`) e `IotSessionService` post-commit (door/presence); filtra por tipo
+  `ALMACEN_BEBIDAS`.
+- **RF**: RF-70.4/70.5, RF-71.1–71.8.
+- **Test propio**: `IotSessionServiceTest` (no-almacén intacto) + BLOCK 44 (NO_SHOW).
+
+### TSK-F63-04: Endpoints de visitas
+- **Cambio**: `/almacen-api/visits` y `/visits/{id}` con filtros y grabaciones.
+- **RF**: RF-70.3, RF-74.5/74.6.
+- **Test propio**: BLOCK 44.
+
+## Tabla resumen F63
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F63-01 | Migración visits/recordings/state | RF-70.1/70.2 | `migrations/0119_*.sql` | BLOCK 44 |
+| F63-02 | Motor puro | RF-71 | `Domain/Warehouse/WarehouseRecordingDecision.php` | unit |
+| F63-03 | Servicio + hooks | RF-70/71 | `WarehouseRecordingService.php`, `WorkerQrService.php`, `IotSessionService.php` | unit + BLOCK 44 |
+| F63-04 | Endpoints visitas | RF-70.3 | `WarehouseVisitController.php` | BLOCK 44 |
+
+---
+
+# Fase 64 — Recorder daemon y retención (RF-73)
+
+**Motivo**: materializar el vídeo con ffmpeg y no llenar el disco en pruebas.
+
+### TSK-F64-01: Daemon `warehouse-recorder`
+- **Cambio**: `bin/warehouse-recorder.php` + `deploy/systemd/cerraduras-warehouse-recorder.service`;
+  gestión en `start-all.sh`/`stop-all.sh`; reconciliación al arranque.
+- **RF**: RF-73.1/73.2.
+- **Test propio**: manual + `system-status` incluye el servicio.
+
+### TSK-F64-02: Ciclo ffmpeg
+- **Cambio**: `PENDING→RECORDING→SAVED|DISCARDED|FAILED`, `.tmp`+rename, poster JPEG, señales de
+  parada/descarte.
+- **RF**: RF-73.1/73.2.
+- **Test propio**: con fichero/stream de prueba local (sin cámara real) en BLOCK 44.
+
+### TSK-F64-03: Retención configurable
+- **Cambio**: `bin/warehouse-retention.php`; `system_settings.warehouse.retention_days` (1 pruebas;
+  0 = sin borrado).
+- **RF**: RF-73.3.
+- **Test propio**: unit/runner con ficheros viejos simulados.
+
+### TSK-F64-04: Servido de clips
+- **Cambio**: `/almacen-api/recordings/{id}/video|poster` con `Range`/`ETag`/anti-traversal.
+- **RF**: RF-73.4.
+- **Test propio**: BLOCK 44 (Range sobre MP4 de prueba).
+
+## Tabla resumen F64
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F64-01 | Daemon recorder | RF-73.1/73.2 | `bin/warehouse-recorder.php`, unit systemd | manual |
+| F64-02 | Ciclo ffmpeg | RF-73.1/73.2 | `bin/warehouse-recorder.php` | BLOCK 44 |
+| F64-03 | Retención | RF-73.3 | `bin/warehouse-retention.php` | unit |
+| F64-04 | Servido clips | RF-73.4 | `WarehouseRecordingController.php` | BLOCK 44 |
+
+---
+
+# Fase 65 — Panel `/almacen` (RF-74/75)
+
+**Motivo**: una sola vista para ver y controlar el almacén.
+
+### TSK-F65-01: Ruta + página + assets
+- **Cambio**: `GET /almacen`, `public/almacen.html`, `public/assets/almacen.js` (una vista,
+  responsiva, CSS embebido).
+- **RF**: RF-74.1/74.4.
+- **Test propio**: BLOCK 44 (`GET /almacen` 200 text/html).
+
+### TSK-F65-02: Estado + SSE
+- **Cambio**: `/almacen-api/state` + `AlmacenEventStreamController` (bypass middleware, ping 5 s,
+  `max_lifetime` 60 s); reconexión/fallback en el cliente.
+- **RF**: RF-74.2/74.3.
+- **Test propio**: manual (SSE) + BLOCK 44 (`state`).
+
+### TSK-F65-03: Visitas y reproducción
+- **Cambio**: listado con filtros y reproducción conjunta entrada/salida (2×2) con `<video>`,
+  poster y descarga.
+- **RF**: RF-70.3, RF-74.6.
+- **Test propio**: manual.
+
+### TSK-F65-04: Permisos y controles
+- **Cambio**: UI de permisos (rol/empleado) + abrir puerta + sincronizar cámaras + salud.
+- **RF**: RF-69.5, RF-74.5, RF-75.3/75.8/75.9.
+- **Test propio**: manual + BLOCK 44 (endpoints).
+
+### TSK-F65-05: Backlog RF-75 (deseables)
+- **Cambio**: registrar como backlog las mejoras (métricas, export CSV, snapshots, multi-almacén,
+  inventario/temperatura/audio). Endpoints concretos se congelarán al implementarlas.
+- **RF**: RF-75.
+- **Test propio**: n/a (documentado).
+
+## Tabla resumen F65
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F65-01 | Página /almacen | RF-74.1/74.4 | `public/almacen.html`, `assets/almacen.js`, `index.php` | BLOCK 44 |
+| F65-02 | Estado + SSE | RF-74.2/74.3 | `AlmacenEventStreamController.php` | BLOCK 44 + manual |
+| F65-03 | Visitas UI | RF-70.3/74.6 | `assets/almacen.js` | manual |
+| F65-04 | Permisos/controles UI | RF-69.5 | `assets/almacen.js`, `Warehouse*Controller.php` | BLOCK 44 |
+| F65-05 | Backlog RF-75 | RF-75 | `docs`/`tasks.md` | n/a |
+
+---
+
+# Fase 66 — Pruebas, trazabilidad y cierre (RF-76)
+
+**Motivo**: verificación acumulada y no regresión.
+
+### TSK-F66-01: Unit tests puros
+- **Cambio**: `WarehouseRecordingDecisionTest.php`, `WarehouseAccessPolicyTest.php`,
+  `DeviceCameraSubtypeTest.php`.
+- **RF**: RF-76.2.
+- **Test propio**: BLOQUE 1 del runner (autodescubierto).
+
+### TSK-F66-02: BLOCK 44 del runner
+- **Cambio**: `api/bin/run-tests.sh` nuevo bloque F60–F66 (tipo, cámaras, permisos, visita NO_SHOW,
+  `/almacen` 200, `state`, `visits`, `Range`).
+- **RF**: RF-76.2.
+- **Test propio**: el propio bloque.
+
+### TSK-F66-03: AGENTS.md, arranque y regresión
+- **Cambio**: `AGENTS.md` (tabla de fases + F60–F66), `start-all.sh` (go2rtc + recorder),
+  `stop-all.sh`; ejecutar regresión completa.
+- **RF**: RF-76.3.
+- **Test propio**: `bash bin/run-tests.sh` → 0 failures.
+
+## Tabla resumen F66
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F66-01 | Unit tests | RF-76.2 | `tests/Unit/*` | BLOQUE 1 |
+| F66-02 | BLOCK 44 | RF-76.2 | `bin/run-tests.sh` | runner |
+| F66-03 | Docs + arranque + regresión | RF-76.3 | `AGENTS.md`, `start-all.sh`, `stop-all.sh` | regresión |
+
+---
+
+## Orden de ejecución y dependencias (F60–F66)
+
+```
+F60 (tipo+cámara+pack)
+  └─> F61 (cámaras + go2rtc)
+  └─> F62 (permisos)  ─────────────┐
+  └─> F63 (visitas + motor) ───────┤
+  └─> F64 (recorder + retención) ──┴─> F65 (panel /almacen) ─> F66 (tests + cierre)
+```
+- F60 es prerequisito de todas.
+- F62 y F63 pueden solaparse; F64 depende de F63 (necesita `camera_recordings`).
+- F65 consume todo lo anterior; F66 cierra con la regresión completa.
+- **Aceptación manual** (no en runner): directo go2rtc con cámara real, grabación real por los
+  casos A–D, retención de 1 día y reproducción con seek.

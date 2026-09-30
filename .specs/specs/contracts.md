@@ -1891,3 +1891,230 @@ migraciones nuevas.
 Rutas, códigos y campos intactos; la coreografía (`ANTI_REENTRADA`), F56/F57/F58, la regla de
 salida, la luz y las anomalías no se tocan. Verificación: regresión completa del runner con el
 caso de cooldown + IoT sucios antes de crear/emitir.
+
+---
+
+# Fase 60: Tipo AlmacenBebidas, cámara IP y pack (RF-67/68)
+
+## 1. Tipo de habitación (extiende `/api/v1/room-types`)
+
+Los objetos `room_type` añaden dos campos (mismos endpoints y códigos):
+
+```json
+{
+  "id": 7, "code": "ALMACEN_BEBIDAS", "name": "Almacén de bebidas",
+  "grace_minutes": 5, "exit_presence_gap_seconds": 15, "reentry_cooldown_seconds": 20,
+  "qr_usage_window_minutes": 30, "presence_entry_window_seconds": 90, "exit_check_seconds": 40,
+  "warehouse_confirm_seconds": 40, "warehouse_exterior_margin_seconds": 5
+}
+```
+- `POST`/`PATCH` aceptan ambos campos; validación pura devuelve `400 validation_error` con
+  `field` si X ∉ [10,600] o M ∉ [0,60]. Ausentes en un tipo no-almacén (defaults del esquema).
+
+## 2. Dispositivo `CAMERA` (extiende `/api/v1/devices*`)
+
+Representación:
+```json
+{
+  "id": 91, "pack_id": 5, "kind": "CAMERA", "subtype": "EXTERIOR",
+  "external_id": "CAM-ALM-EXT", "label": "Cámara pasillo",
+  "meta": { "rtsp_url": "rtsp://user:pw@host:554/...", "enabled": true,
+            "record_enabled": true, "resolution": "1920x1080", "note": "" },
+  "online": null, "battery_pct": null
+}
+```
+- `POST /api/v1/devices/register` acepta `subtype` (obligatorio si `kind=CAMERA`); si falta o es
+  inválido → `422 validation_error` (`subtype_required` / `subtype_invalid`).
+- `PATCH /api/v1/devices/{id}` admite `subtype`, `label`, `meta_json`.
+- `Device::allKinds()` incluye `CAMERA`; el resto de endpoints de dispositivos no cambian.
+- **Privacidad**: `meta.rtsp_url` puede contener credenciales; las respuestas de listado del panel
+  público la **enmascaran** (`rtsp://***`), y solo se devuelve completa en `/almacen-api/cameras`
+  del módulo almacén (MVP LAN) o nunca en logs.
+
+## 3. Pack
+
+Sin cambios de contrato: el pack de almacén es un `device_packs` con devices `pack_id`
+(`kind=CAMERA` incluido).
+
+---
+
+# Fase 61: Gestión de cámaras y directo con go2rtc (RF-68/72)
+
+## 1. `/almacen-api/cameras`
+
+- `GET /almacen-api/cameras?room_id=N` →
+  ```json
+  { "cameras": [ { "id": 91, "position": "EXTERIOR", "label": "Cámara pasillo",
+      "enabled": true, "record_enabled": true, "online": true, "recording": false,
+      "stream": "almacen_1_EXTERIOR", "live_url": "http://92.113.151.136:1984/stream.html?src=almacen_1_EXTERIOR" } ] }
+  ```
+  `online` es `true|false|null` (null = sin verificar); `recording` refleja
+  `camera_recordings.status='RECORDING'`.
+- `POST /almacen-api/cameras`
+  Body `{ "room_id": 1, "pack_id": 5, "position": "INTERIOR", "external_id": "CAM-ALM-INT",
+  "label": "…", "rtsp_url": "rtsp://…", "enabled": true, "record_enabled": true }` → `201`
+  `{ "camera": {…} }`. `position` ∈ `EXTERIOR|INTERIOR`; `rtsp_url` obligatoria
+  (`422 validation_error`).
+- `PATCH /almacen-api/cameras/{id}` → `{ "camera": {…} }`. Tras crear/editar/borrar se invoca
+  `go2rtc-sync`; si go2rtc falla → `502 upstream_error` pero la cámara queda persistida.
+- `DELETE /almacen-api/cameras/{id}` → `200 { "ok": true }` (desactiva `enabled=0` y borra stream).
+- `POST /almacen-api/cameras/sync` → `200 { "ok": true, "streams": N }`.
+
+## 2. Directo (go2rtc)
+
+- Nombre canónico de stream `almacen_<room_id>_<position>`; `live_url` apunta a
+  `<GO2RTC_BASE>/stream.html?src=<stream>` (WebRTC/MSE). `GO2RTC_BASE` configurable en `.env`
+  (`GO2RTC_BASE_URL`, por defecto `http://<host>:1984`).
+- Si `GO2RTC_BASE_URL` no está configurada o go2rtc no responde → `live_url: null` y el panel
+  muestra "directo no disponible"; nunca rompe la página.
+
+---
+
+# Fase 62: Permisos rol + excepción por empleado (RF-69)
+
+## 1. `/almacen-api/access?room_type_id=N`
+
+```json
+{
+  "room_type": { "id": 7, "code": "ALMACEN_BEBIDAS" },
+  "roles": [ { "id": 1, "name": "Limpieza", "allowed": true } ],
+  "workers": [ { "id": 3, "name": "Ana", "role_id": 1, "role_allowed": true,
+                 "override": null, "effective": true } ]
+}
+```
+`override` ∈ `"ALLOW" | "DENY" | null`; `effective` es el resultado de la política.
+
+## 2. Modificaciones (públicas LAN)
+
+- `PUT /almacen-api/access/role/{role_id}` body `{ "room_type_id": 7, "allow": true }`
+  → `200 { "role": {…} }`. Reutiliza `assignRoomTypes`/`getRoomTypesForRole`.
+- `PUT /almacen-api/access/worker/{worker_id}` body
+  `{ "room_type_id": 7, "effect": "ALLOW" | "DENY" | null }` → `200 { "worker": {…} }`.
+  `null` borra la excepción (vuelve al rol).
+- Errores: `404 not_found` (worker/rol/tipo inexistente), `422 validation_error` (`effect` o
+  `allow` inválidos).
+
+## 3. Validación de QR de empleado (sin cambios de forma)
+
+`POST /api/v1/workers/qr/validate` mantiene su request/response. Cambia **solo** la decisión
+interna de permisos (excepción sobre rol). Rechazo por permisos: `403` con
+`{"error":"access_denied","message":"…"}` y `access_event` `DENIED` con motivo
+`access_denied`; **sin** abrir puerta ni crear grabaciones.
+
+---
+
+# Fase 63: Visitas y motor de grabación (RF-70/71)
+
+## 1. `/almacen-api/visits`
+
+`GET /almacen-api/visits?room_id=1&worker_id=&from=2026-09-30T00:00:00Z&to=…&outcome=&limit=50`
+→
+```json
+{
+  "visits": [
+    { "id": 12, "room_id": 1, "worker": { "id": 3, "name": "Ana" },
+      "entry_trigger": "QR", "outcome": "ENTERED",
+      "qr_at": "2026-09-30T10:00:00.123Z", "entered_at": "2026-09-30T10:00:40.000Z",
+      "exited_at": "2026-09-30T10:04:10.000Z",
+      "recordings": [
+        { "id": 40, "position": "EXTERIOR", "episode": "ENTRY", "status": "SAVED",
+          "started_at": "…", "stopped_at": "…", "duration_s": 42, "size_bytes": 1234567,
+          "video_url": "/almacen-api/recordings/40/video",
+          "poster_url": "/almacen-api/recordings/40/poster" },
+        { "id": 41, "position": "INTERIOR", "episode": "ENTRY", "status": "DISCARDED", "…": "…" }
+      ] }
+  ]
+}
+```
+- `outcome` ∈ `ENTERED|NO_SHOW|ANONYMOUS|DENIED`; `entry_trigger` ∈ `QR|DOOR|PRESENCE`.
+- Los registros `DISCARDED` no tienen `video_url` (o devuelve `410 gone`).
+- `GET /almacen-api/visits/{id}` → `{ "visit": {…} }`; `404 not_found` si no existe.
+
+## 2. Máquina de estados (contrato interno)
+
+Las transiciones de §27.2 del diseño no son un contrato HTTP externo; se exponen como
+`warehouse_state.state` ∈ `IDLE|QR_PENDING|RECORDING_INSIDE|EXTERIOR_ONLY|EXIT_PENDING` dentro de
+`/almacen-api/state`. Los tests unitarios cubren la tabla completa.
+
+## 3. Motivos de resultado
+
+- `NO_SHOW`: disparó pero no hubo presencia en X. En trigger `QR`, INT descartada y EXT guardada;
+  en trigger `DOOR`, ambas descartadas.
+- `DENIED`: permisos denegados; sin vídeo.
+- `ANONYMOUS`: presencia sin QR identificado.
+
+---
+
+# Fase 64: Recorder y retención (RF-73)
+
+## 1. Servido de grabaciones
+
+- `GET /almacen-api/recordings/{id}/video` → `200 video/mp4` con `Accept-Ranges: bytes`,
+  `ETag`, soporte `Range` (`206` con `Content-Range`, `416` fuera de rango, `304` si
+  `If-None-Match`). `404 not_found` si no existe o `410 gone` si `status=DISCARDED`.
+- `GET /almacen-api/recordings/{id}/poster` → `200 image/jpeg`; `404` si no hay miniatura.
+- Ruta resuelta **siempre** validada bajo `data/cameras/` (anti path-traversal) → si no, `403`.
+
+## 2. Retención (configuración)
+
+- `system_settings` clave `warehouse.retention_days` (servicio `api`, categoría `warehouse`).
+  Valor `1` en pruebas; `0`/negativo = sin borrado automático. Expuesto (solo lectura) en
+  `/almacen-api/state.retention` = `{ "days": 1, "auto": true, "disk_used_pct": 41 }`.
+
+## 3. Recorder
+
+- No expone HTTP; su contrato es la fila `camera_recordings` (`status` y transiciones
+  `PENDING→RECORDING→SAVED|DISCARDED|FAILED`) y `pid`/`stop_requested`. El daemon es el único que
+  escribe `file_path`/`size_bytes`/`poster_path`.
+
+---
+
+# Fase 65: Panel `/almacen` (RF-74/75)
+
+## 1. Página
+
+- `GET /almacen` → `200 text/html`, página única pública LAN (sin login). Si falta el HTML →
+  `404` (patrón `/dashboard`).
+
+## 2. Estado en vivo
+
+- `GET /almacen-api/state?room_id=1` →
+  ```json
+  {
+    "room": { "id": 1, "code": "ALMACEN" },
+    "warehouse": { "state": "RECORDING_INSIDE", "occupied": true,
+      "current_visit": { "id": 12, "worker": {"id":3,"name":"Ana"},
+                         "entered_at": "…", "seconds_inside": 120 },
+      "presence": "PRESENT", "door": "CLOSED" },
+    "cameras": [ { "position": "EXTERIOR", "recording": true, "online": true, "live_url": "…" } ],
+    "recordings_active": [ { "position": "INTERIOR", "episode": "ENTRY", "started_at": "…" } ],
+    "retention": { "days": 1, "auto": true, "disk_used_pct": 41 },
+    "server_ts": "2026-09-30T10:02:00.000Z"
+  }
+  ```
+- `GET /almacen-api/event-stream?room_id=1` → SSE con eventos `connected`, `state` (misma forma
+  que arriba), `ping` cada 5 s y `close` (`max_lifetime`); `retry: 3000`. Bypass de middleware
+  (patrón F46). La página reconecta y hace fallback a `state` cada 2 s.
+
+## 3. Controles
+
+- `POST /almacen-api/door/open` body `{ "room_id": 1 }` → `200 { "ok": true, "mode": "manual" }`;
+  registra `access_event` (`OPEN`, `reason='manual_almacen'`). Rechaza `409 room_busy` si ya hay
+  apertura en curso (misma guarda de LockService).
+- `RF-75` (métricas, alertas, export CSV, snapshots, salud, abrir/forzar, multi-almacén) se
+  especifican como **deseables**; sus endpoints concretos se congelarán en la fase en que se
+  implementen (no bloquean F60–F66).
+
+## 4. Forma de error común
+
+`{ "error": "<snake_case>", "message": "<texto>", "field": "<opcional>" }` con `400/403/404/409/410/422/502`.
+
+---
+
+# Fase 66: No regresión (RF-76)
+
+- Todas las rutas, códigos y campos de `/api/v1/*` y `/dashboard-api/*` existentes se mantienen.
+- Sin excepción de permiso, la validación del QR de empleado resuelve **igual** que antes.
+- El motor de grabación no actúa en habitaciones que no sean `ALMACEN_BEBIDAS`: huésped, QR de
+  huésped, `stays`, deudas, anomalías y coreografía del panel no se ven afectados.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 44** nuevo.

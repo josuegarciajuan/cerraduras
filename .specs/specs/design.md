@@ -3235,3 +3235,369 @@ solo aparece si se genera un QR dentro de los 20 s posteriores a una salida **si
 - Bloque de emisión real del runner (`POST /api/v1/qr`): mismo ensuciado → emisión → estado limpio.
 - `tests/Unit/QrIssueServiceTest.php`: espía del resetter invocado en `issue()`.
 - Regresión: `bash bin/run-tests.sh` con **0 failures**.
+
+---
+
+# 24. F60 — Tipo AlmacenBebidas, dispositivo CAMERA y pack (RF-67/68)
+
+## 24.1 Modelo de datos
+
+**Migración `0116_camera_device_kind.sql`**
+- `ALTER TABLE devices MODIFY kind ENUM('RPI','LOCK','PROXIMITY','PRESENCE','SWITCH','SCANNER','CAMERA') NOT NULL;`
+- `ALTER TABLE devices ADD COLUMN subtype VARCHAR(32) NULL AFTER kind;` (valores `EXTERIOR`/`INTERIOR`
+  para `CAMERA`; `NULL` para el resto). Índice opcional `idx_devices_kind_subtype (kind, subtype)`.
+
+**Migración `0117_roomtype_warehouse_windows.sql`**
+- `ALTER TABLE room_types ADD COLUMN warehouse_confirm_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 40;`
+- `ALTER TABLE room_types ADD COLUMN warehouse_exterior_margin_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 5;`
+
+**Migración `0120_warehouse_seed.sql`**
+- `INSERT` del tipo `ALMACEN_BEBIDAS` ("Almacén de bebidas") con X=40 / M=5.
+- `INSERT` del pack `ALMACEN_BEBIDAS` ("Pack Almacén de bebidas").
+- Opcional/entorno: crear la habitación del almacén y asignarle el pack (documentado; no fija
+  RTSP ni secretos).
+
+**Representación en código**
+- `Device.php`: `KIND_CAMERA = 'CAMERA'` y en `allKinds()`.
+- `DeviceService::validateKind()` acepta `CAMERA`; **validación de subtipo** en un método puro
+  `DeviceService::validateSubtype(kind, subtype)`: `CAMERA` exige `EXTERIOR|INTERIOR`; otros kinds
+  exigen `subtype = NULL`.
+- `DeviceRepository::insert/update/patch` incluyen `subtype` en el whitelist.
+- `meta_json` de cámara: `{ "rtsp_url": "rtsp://user:pass@host:554/Streaming/Channels/101",
+  "enabled": true, "record_enabled": true, "resolution": "1920x1080", "note": "…" }`.
+
+## 24.2 Pack y cámaras
+
+- El pack de almacén agrupa `RPI`, `LOCK`, `PROXIMITY`, `PRESENCE`, `SWITCH` y 2×`CAMERA`
+  (`subtype` EXTERIOR/INTERIOR). Las cámaras se añaden con `POST /api/v1/devices/register`
+  (`{pack_id, kind:'CAMERA', subtype, external_id, meta_json}`) o desde el panel.
+- La cámara **no** se detecta por `uniq_devices_room_kind` (esa columna ya no existe tras `0102`);
+  el único único relevante es `uniq_devices_external(kind, external_id)`, que **permite varias
+  CAMERA** por pack.
+
+## 24.3 Fuera de alcance (evitar regresiones)
+
+- Las cámaras **no** entran en `DEVICE_KIND_ESP32` / `DEVICE_KIND_TUYA`, pull-kinds de
+  `ping-all-devices`/`check-device`, heartbeat ESP32, ni en `TRACKED_KINDS`/`RESYNC_KINDS` del
+  consumer Pulsar. `device-status` las reporta como `unknown` salvo comprobación propia
+  (online por ping RTSP/go2rtc, ver §25).
+
+---
+
+# 25. F61 — Gestión de cámaras y directo con go2rtc (RF-68/72)
+
+## 25.1 Instalación de go2rtc
+
+- `bin/install-go2rtc.sh`: descarga el binario `go2rtc_linux_amd64` a `/usr/local/bin/go2rtc`
+  (idempotente; si ya existe, no descarga), crea `/etc/go2rtc/go2rtc.yaml` con:
+  ```yaml
+  api: { listen: "0.0.0.0:1984" }
+  rtsp: { listen: ":8554" }
+  webrtc: { listen: ":8555", candidates: ["<IP_LAN>:8555"] }
+  log: { level: "info" }
+  ```
+- Unidad `deploy/systemd/cerraduras-go2rtc.service` (`Restart=always`, usuario `root`).
+- **Exposición**: para el MVP el panel (mismo host, puerto 1984) embebe go2rtc; en LAN se accede a
+  `http://<IP>:1984`. Nota de diseño: si se quiere mismo origen, añadir un proxy Apache
+  (`/almacen-live/ → 127.0.0.1:1984`); no es necesario para el MVP. Las URLs RTSP **no** se loguean.
+
+## 25.2 Sincronización de streams
+
+- `bin/go2rtc-sync.php` (CLI) lee las cámaras de la BD (`kind='CAMERA' AND enabled=1`) y las
+  registra en go2rtc vía `PUT /api/streams?name=<n>&src=<rtsp>`; las que ya no existen se borran
+  (`DELETE /api/streams?src=<n>`). Nombre canónico: `almacen_<roomId>_<position>` (p. ej.
+  `almacen_1_EXTERIOR`).
+- Se invoca: al arrancar (`start-all.sh`), al crear/editar/borrar una cámara (desde el controller)
+  y por `POST /almacen-api/cameras/sync`.
+- La URL RTSP se pasa a go2rtc por API, no a fichero de configuración, para no persistir credenciales.
+
+## 25.3 Directo en el panel
+
+- Cada mosaico embebe `http://<host>:1984/stream.html?src=almacen_<room>_<position>` (WebRTC/MSE
+  de go2rtc) en un `<iframe>` **cargado bajo demanda** (solo al abrir `/almacen`); al cerrar se
+  destruye el iframe y go2rtc deja de decodificar.
+- El indicador de grabación por cámara proviene del estado del dominio (`camera_recordings` con
+  `status='RECORDING'`), no de go2rtc.
+- Verificación de disponibilidad de cámara: `GET /almacen-api/cameras` puede hacer un `onlinestate`
+  ligero (TCP a host:puerto RTSP con timeout 1 s) — **nunca** en bucle cerrado.
+
+---
+
+# 26. F62 — Política de acceso: rol + excepción por empleado (RF-69)
+
+## 26.1 Esquema
+
+**Migración `0118_worker_room_overrides.sql`**
+```sql
+CREATE TABLE worker_room_overrides (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  worker_id     INT NOT NULL,
+  room_type_id  BIGINT UNSIGNED NOT NULL,
+  effect        ENUM('ALLOW','DENY') NOT NULL,
+  created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_wro_worker_roomtype (worker_id, room_type_id),
+  CONSTRAINT fk_wro_worker    FOREIGN KEY (worker_id)    REFERENCES workers(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_wro_room_type FOREIGN KEY (room_type_id) REFERENCES room_types(id) ON DELETE CASCADE
+);
+```
+
+## 26.2 Resolución (pura y testeable)
+
+`WarehouseAccessPolicy::resolve(?overrideEffect, bool $roleAllows): bool`
+1. Si hay excepción (`ALLOW`/`DENY`) → **manda la excepción**.
+2. Si no → `$roleAllows` (consulta existente `worker_role_room_types`).
+
+Sin excepción, el resultado es **idéntico** al actual (retrocompatible, RF-69.6).
+
+## 26.3 Enforcement
+
+- `WorkerQrService::validate()` sustituye `roleRepo->canAccessRoomType(...)` por
+  `accessPolicy->canAccess(workerId, roleId, roomTypeId)`; el rechazo conserva `access_denied`
+  (403) y registra el intento `DENIED` de visita (RF-70.4) sin abrir puerta (se evalúa **antes**
+  de `LockGatewayFactory::make()`).
+- `WorkerService::canAccessRoomType()` delega en la política (mismo resultado; extensible).
+
+## 26.4 API y panel
+
+- `GET /api/v1/worker-roles/{id}` ya expone los tipos del rol; se añade
+  `GET /almacen-api/access?room_type_id=` (empleados + roles + permisos efectivos) y
+  `PUT /almacen-api/access/role/{role_id}` / `PUT /almacen-api/access/worker/{worker_id}`
+  (efecto `ALLOW`/`DENY`/`NULL` = borrar excepción).
+- Scopes existentes (`worker-roles:write`, `workers:write`) se mantienen para las rutas `/api/v1/*`.
+
+---
+
+# 27. F63 — Visitas y motor de grabación (RF-70/71)
+
+## 27.1 Esquema
+
+**Migración `0119_warehouse_visits_recordings.sql`**
+
+`warehouse_visits`
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | BIGINT UNSIGNED AI PK | |
+| room_id | BIGINT UNSIGNED NOT NULL | FK rooms |
+| worker_id | INT NULL | FK workers (NULL si no hubo QR) |
+| worker_session_id | BIGINT UNSIGNED NULL | FK worker_sessions (`0102`-era: entrada/salida empleado) |
+| entry_trigger | ENUM('QR','DOOR','PRESENCE') NOT NULL | |
+| outcome | ENUM('ENTERED','NO_SHOW','ANONYMOUS','DENIED') NOT NULL DEFAULT 'NO_SHOW' | |
+| denied_reason | VARCHAR(64) NULL | |
+| qr_at / entered_at / exited_at | DATETIME(3) NULL | |
+| created_at / updated_at | DATETIME(3) | |
+
+`camera_recordings`
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | BIGINT UNSIGNED AI PK | |
+| visit_id | BIGINT UNSIGNED NULL | FK warehouse_visits |
+| room_id | BIGINT UNSIGNED NOT NULL | FK rooms |
+| device_id | BIGINT UNSIGNED NOT NULL | FK devices (CAMERA) |
+| position | ENUM('EXTERIOR','INTERIOR') NOT NULL | copia del subtipo |
+| episode | ENUM('ENTRY','EXIT','PRESENCE') NOT NULL | |
+| trigger | ENUM('QR','DOOR','PRESENCE') NOT NULL | |
+| status | ENUM('PENDING','RECORDING','SAVED','DISCARDED','FAILED') NOT NULL DEFAULT 'PENDING' | |
+| requested_at / started_at / stopped_at | DATETIME(3) | |
+| duration_s | INT UNSIGNED NULL | |
+| file_path / poster_path | VARCHAR(255) NULL | relativos a `data/cameras/` |
+| size_bytes | BIGINT UNSIGNED NULL | |
+| pid | INT UNSIGNED NULL | proceso ffmpeg |
+| stop_requested | TINYINT(1) NOT NULL DEFAULT 0 | |
+| error | VARCHAR(255) NULL | |
+| created_at / updated_at | DATETIME(3) | |
+
+Índices: `idx_cr_visit(visit_id)`, `idx_cr_status(status)`, `idx_cr_started(started_at)`,
+`idx_wv_room_created(room_id, created_at)`, `idx_wv_worker(worker_id)`.
+
+`warehouse_state` (una fila por habitación, estado mutable del motor)
+| Columna | Tipo |
+|---|---|
+| room_id | BIGINT UNSIGNED PK (FK rooms) |
+| state | ENUM('IDLE','QR_PENDING','RECORDING_INSIDE','EXTERIOR_ONLY','EXIT_PENDING') NOT NULL DEFAULT 'IDLE' |
+| current_visit_id | BIGINT UNSIGNED NULL |
+| entry_trigger | ENUM('QR','DOOR','PRESENCE') NULL |
+| deadline_x | DATETIME(3) NULL |
+| deadline_m | DATETIME(3) NULL |
+| presence_confirmed | TINYINT(1) NOT NULL DEFAULT 0 |
+| updated_at | DATETIME(3) |
+
+## 27.2 Máquina de estados (regla pura)
+
+Estados y transiciones (X = confirm, M = margen exterior):
+
+| Estado actual | Evento | Acciones | Estado destino |
+|---|---|---|---|
+| IDLE | `QR_OK` | crear visita(QR), iniciar EXT+INT (ENTRY), `X=now+confirm` | QR_PENDING |
+| IDLE | `DOOR_OPEN` | crear visita(DOOR), iniciar EXT+INT (ENTRY), `X=now+confirm` | QR_PENDING |
+| IDLE | `PRESENT` | crear visita(PRESENCE, ANONYMOUS), iniciar EXT+INT, `presence_confirmed=1` | RECORDING_INSIDE |
+| QR_PENDING | `PRESENT` | `presence_confirmed=1`, visita→ENTERED, `entered_at=now`, anula X | RECORDING_INSIDE |
+| QR_PENDING | X expira (trigger QR) | parar+**descartar INT**; EXT sigue; visita→NO_SHOW; `M=now+M` | EXTERIOR_ONLY |
+| QR_PENDING | X expira (trigger DOOR) | parar+**descartar EXT e INT**; visita→NO_SHOW | IDLE |
+| QR_PENDING | `DOOR_CLOSE` | (no cambia: se espera X) | QR_PENDING |
+| RECORDING_INSIDE | `ABSENT` | parar INT (SAVE EXIT), `exited_at=now`, `M=now+M` | EXIT_PENDING |
+| RECORDING_INSIDE | `DOOR_CLOSE` | (no cambia; la salida la decide `ABSENT`) | RECORDING_INSIDE |
+| EXTERIOR_ONLY | `DOOR_CLOSE` | `M=now+M` | EXTERIOR_ONLY |
+| EXTERIOR_ONLY | M expira | parar EXT (SAVE) | IDLE |
+| EXIT_PENDING | M expira | parar EXT (SAVE), cerrar visita | IDLE |
+| EXIT_PENDING | `PRESENT` (reaparece) | cancela M; vuelve a grabar INT (nuevo EXIT) | RECORDING_INSIDE |
+
+- **Idempotencia/dedup**: reutiliza `event_fingerprint`/orden por ms del pipeline (`0108`, F58).
+- **Un solo escritor** por habitación: `WarehouseRecordingService` bloquea la fila
+  `warehouse_state … FOR UPDATE` y actualiza `camera_recordings` en la misma transacción; los
+  procesos ffmpeg los gestiona el daemon leyendo `PENDING`/`stop_requested`.
+- **Reaparición durante EXIT_PENDING**: la visita **no** se reabre; se registra como nuevo
+  episodio `EXIT` de la misma visita o como nueva visita `PRESENCE` (decisión: nueva visita
+  `PRESENCE` si ya pasó M, para no fusionar ciclos).
+
+## 27.3 Clase pura
+
+`WarehouseRecordingDecision` (sin BD): `decide(array $state, array $event, array $config): array`
+devuelve `[nextState, actions[], visitPatch]` donde `actions` ∈
+`{START_EXT, START_INT, STOP_EXT, STOP_INT, DISCARD_EXT, DISCARD_INT, SAVE_EXT, SAVE_INT,
+CREATE_VISIT, CONFIRM_ENTRY, CLOSE_VISIT, SET_DEADLINE_X, SET_DEADLINE_M}`.
+Testeable en `tests/Unit/WarehouseRecordingDecisionTest.php` (reemplaza la necesidad de hardware).
+
+## 27.4 Enganches (hooks)
+
+- `WorkerQrService::validate()` tras abrir y crear la `worker_session` → `onSignal(roomId,'QR_OK')`.
+- `IotSessionService::processEvent()` **post-commit** (door open/close, PRESENT/ABSENT) →
+  `onSignal(roomId, signal)`; ignora habitaciones no-`ALMACEN_BEBIDAS`.
+- El servicio no lanza procesos: solo persiste estado, visitas, grabaciones `PENDING` y marcas de
+  parada/descarte; el daemon (§28) materializa el vídeo. Así el pipeline IoT no se bloquea.
+
+---
+
+# 28. F64 — Recorder daemon y retención (RF-73)
+
+## 28.1 Daemon
+
+- `bin/warehouse-recorder.php` como servicio `cerraduras-warehouse-recorder.service`
+  (`Restart=always`, `KillMode=control-group`), bucle cada 1 s:
+  1. `PENDING` (con `enabled`/`record_enabled`) → `proc_open` ffmpeg, guardar `pid`,
+     `status=RECORDING`, `started_at`.
+  2. `RECORDING` + `stop_requested=1` → `SIGINT` al pid, `waitpid` (timeout 5 s → `SIGKILL`),
+     `status=SAVED`, `stopped_at`, `duration_s`, `size_bytes`, `poster_path`.
+  3. `RECORDING` + `DISCARD` (marca de descarte) → `SIGINT`/kill, borrar fichero/parcial,
+     `status=DISCARDED`.
+  4. Proceso muerto inesperadamente y sin parada → `status=FAILED`, `error`; borrar `.tmp`.
+  5. Reconciliación al arranque: `RECORDING` sin pid vivo → `FAILED` y limpiar `.tmp`.
+- `start-all.sh` / `stop-all.sh` lo gestionan con `systemctl` (patrón F46).
+
+## 28.2 Comando ffmpeg
+
+```
+ffmpeg -nostdin -rtsp_transport tcp -i "<rtsp_url>" -c:v copy -an \
+       -f mp4 -movflags +faststart -y "<tmp>"
+# al parar limpio: rename <tmp> -> <final> (moov finalizado)
+```
+- `-c:v copy` (sin reencode) como en `reconocimientoFacial`; si la cámara no entrega H.264,
+  fallback documentado a `-c:v libx264 -preset veryfast` (configurable en `meta_json.transcode`).
+
+## 28.3 Almacenamiento
+
+- Raíz `data/cameras/` (ignorada por git). Ruta:
+  `data/cameras/<room_id>/<YYYYMMDD>/<visit_id>_<position>_<episode>_<started_at>.mp4` +
+  `…_poster.jpg` (1 frame).
+- El daemon escribe solo bajo `data/cameras/` (validación anti path-traversal al servir).
+
+## 28.4 Retención
+
+- `bin/warehouse-retention.php` (cron diario o tick del daemon cada 1 h): borra ficheros y filas
+  `SAVED` con `stopped_at < now - retention_days`. `warehouse.retention_days` en `system_settings`
+  (**1** en pruebas; `0`/negativo = sin borrado, entorno real). El panel muestra días configurados
+  y uso de disco.
+
+---
+
+# 29. F65 — Panel `/almacen` (RF-74)
+
+## 29.1 Ruta y ficheros
+
+- `GET /almacen` → `public/almacen.html` (patrón de `/dashboard`, `public/index.php`), público LAN.
+- `public/assets/almacen.js`: controlador de la página (SSE + render + acciones). CSS embebido
+  (una sola vista, minimalista, responsiva).
+
+## 29.2 Endpoints `/almacen-api/*` (públicos LAN, sin auth)
+
+| Método | Ruta | Propósito |
+|---|---|---|
+| GET | `/almacen-api/state?room_id=` | estado almacén, visita activa, cámaras, grabaciones en curso |
+| GET | `/almacen-api/visits?room_id=&worker_id=&from=&to=&outcome=&limit=` | listado de visitas |
+| GET | `/almacen-api/visits/{id}` | detalle + grabaciones de la visita |
+| GET | `/almacen-api/recordings/{id}/video` | MP4 con `Range`/`ETag` |
+| GET | `/almacen-api/recordings/{id}/poster` | miniatura JPEG |
+| GET | `/almacen-api/cameras?room_id=` | cámaras (posición, online, grabando) |
+| POST | `/almacen-api/cameras` | crear cámara (`device_id`/`pack_id`, subtype, rtsp_url) |
+| PATCH | `/almacen-api/cameras/{id}` | editar rtsp_url/enabled/record_enabled/label |
+| DELETE | `/almacen-api/cameras/{id}` | desactivar/borrar cámara |
+| POST | `/almacen-api/cameras/sync` | re-sincronizar go2rtc |
+| GET | `/almacen-api/access?room_type_id=` | empleados + roles + permisos efectivos |
+| PUT | `/almacen-api/access/role/{role_id}` | `room_type_id` + `allow` |
+| PUT | `/almacen-api/access/worker/{worker_id}` | `room_type_id` + `effect` (`ALLOW`/`DENY`/`NULL`) |
+| POST | `/almacen-api/door/open` | apertura manual (registra `access_event`) |
+| GET | `/almacen-api/event-stream?room_id=` | SSE de estado (bypass middleware, patrón SSE existente) |
+
+- Reutiliza `/dashboard-api/rooms` y `/dashboard-api/device-status` donde aplique.
+- Forma de error uniforme: `{ "error": "<code>", "message": "<texto>" }` (estilo `ErrorHandler`).
+
+## 29.3 SSE
+
+- `AlmacenEventStreamController`: fingerprint ligero (estado + visita activa + grabaciones) cada
+  200 ms; `ping` cada 5 s; `max_lifetime` 60 s con `retry: 3000` (mismo modelo que F46).
+- La página reconecta con backoff y cae a `GET /almacen-api/state` cada 2 s si el SSE no está.
+
+## 29.4 Layout (una sola vista)
+
+1. **Cabecera**: nombre del almacén, badge estado (LIBRE/OCUPADO), visita activa (empleado + tiempo).
+2. **Directo**: 2 mosaicos EXTERIOR/INTERIOR con indicador rojo de grabación.
+3. **Visitas**: lista con filtros; al pulsar, se ven los clips de entrada y salida juntos (2×2:
+   posición × episodio) con `<video controls preload="metadata">` y poster.
+4. **Permisos**: tabla rol×tipo y buscador de empleado con toggle permitir/denegar (excepción).
+5. **Controles**: abrir puerta, sincronizar cámaras, refrescar; salud de cámaras/go2rtc/recorder.
+
+## 29.5 Servido de vídeo
+
+- `recordings/{id}/video` reutiliza la lógica de `Range`/`ETag` de `reconocimientoFacial/video.php`
+  (206, `Content-Range`, `304`), validando que la ruta resuelta esté bajo `data/cameras/`.
+- `/almacen` no requiere sesión (MVP LAN); si en el futuro se protege, se reutiliza
+  `CrmSessionMiddleware` sin cambiar los endpoints de datos.
+
+---
+
+# 30. F66 — Pruebas y trazabilidad (RF-76)
+
+## 30.1 Unit tests (puros, sin BD ni hardware)
+
+- `tests/Unit/WarehouseRecordingDecisionTest.php`: los 4 casos (A QR, B door, C presence, D exit)
+  y casos límite (X justo, M justo, `ABSENT` sin presencia previa, reaparición).
+- `tests/Unit/WarehouseAccessPolicyTest.php`: sin override = rol; `ALLOW` sobre rol DENY; `DENY`
+  sobre rol ALLOW; `NULL` = sin excepción.
+- `tests/Unit/DeviceCameraSubtypeTest.php`: `CAMERA` exige `EXTERIOR|INTERIOR`; otros kinds `NULL`.
+- `tests/Unit/warehouse-visit-format.test.js` (opcional, JS puro del panel si aplica).
+
+## 30.2 Runner (HTTP/BD)
+
+- **BLOCK 44 — F60–F66: Almacén de bebidas** en `api/bin/run-tests.sh`: tipo `ALMACEN_BEBIDAS`,
+  CRUD de cámaras (crear con subtype, listar, editar, borrar), política de acceso (rol + override
+  con `ALLOW`/`DENY`), visita `NO_SHOW` (QR sin presencia → INT descartada, EXT guardada),
+  `GET /almacen` 200, `/almacen-api/state`, `/almacen-api/visits`, servido de un MP4 simulado con
+  `Range` (fichero de prueba en `data/cameras/`).
+- Estado de BD/ficheros no esperado → `SKIP` con mensaje (patrón del runner).
+- Los tests de grabación real con cámara RTSP quedan como **aceptación manual** (no en runner).
+
+## 30.3 No regresión
+
+- Rutas, códigos y campos existentes intactos; sin override de permisos = comportamiento actual;
+  el motor ignora habitaciones no-`ALMACEN_BEBIDAS`. Regresión completa con **0 failures**.
+
+## 30.4 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-67/68 | §24 | Fase 60 | F60-* |
+| RF-68/72 | §25 | Fase 61 | F61-* |
+| RF-69 | §26 | Fase 62 | F62-* |
+| RF-70/71 | §27 | Fase 63 | F63-* |
+| RF-73 | §28 | Fase 64 | F64-* |
+| RF-74/75 | §29 | Fase 65 | F65-* |
+| RF-76 | §30 | Fase 66 | F66-* |
