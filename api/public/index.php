@@ -104,6 +104,8 @@ use App\Http\Controllers\WarehouseAccessController;
 use App\Http\Controllers\WarehouseVisitController;
 use App\Http\Controllers\WarehouseRecordingController;
 use App\Http\Controllers\WarehouseCameraController;
+use App\Http\Controllers\WarehouseStateController;
+use App\Http\Controllers\AlmacenEventStreamController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2655,6 +2657,41 @@ $router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'up
 $router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
 $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
 
+// --- Routes: estado del almacén (F65/RF-74.2, público LAN) ---
+$warehouseStateController = new WarehouseStateController($pdo, $go2rtcClient);
+$router->get('/almacen-api/state', [$warehouseStateController, 'show']);
+
+// POST /almacen-api/door/open — apertura manual desde el panel (F65/RF-74).
+$router->post(
+    '/almacen-api/door/open',
+    function (\App\Http\Request $request) use ($lockService): \App\Http\Response {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id_required']);
+        }
+        $correlationId = (string) ($request->attr('correlation_id', '') ?? '');
+        try {
+            $result = $lockService->open($roomId, 'manual_almacen', true, $correlationId);
+            return \App\Http\Response::json(200, array_merge(['ok' => true], is_array($result) ? $result : []));
+        } catch (\Throwable $e) {
+            return \App\Http\Response::json(409, ['error' => 'door_error', 'message' => $e->getMessage()]);
+        }
+    }
+);
+
+// --- Página única del almacén (F65/RF-74.1, público LAN) ---
+$router->get(
+    '/almacen',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $htmlFile = __DIR__ . '/almacen.html';
+        if (!is_file($htmlFile)) {
+            return \App\Http\Response::json(404, ['error' => 'almacen HTML not found']);
+        }
+        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+    }
+);
+
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
 $router->get('/api/v1/factory-devices', [$factoryDeviceController, 'list'], $authFactory(['audit:read']));
@@ -3063,6 +3100,13 @@ if ($requestPath === '/dashboard-api/event-stream' && ($_SERVER['REQUEST_METHOD'
         (new EventStreamController($pdo))->stream($roomId);
         // stream() calls exit() — execution ends here for SSE clients
     }
+}
+
+// --- SSE del almacén (F65/RF-74.3) — bypass middleware ---
+if ($requestPath === '/almacen-api/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    $roomId = (int) ($_GET['room_id'] ?? 0);
+    (new AlmacenEventStreamController($warehouseStateController))->stream($roomId);
+    // stream() calls exit()
 }
 
 // --- Dispatch ---
