@@ -96,6 +96,20 @@ try {
     upsertCamera($pdo, $packId, 'EXTERIOR', 'rf-puerta', 'Puerta (RF)', (string) $exteriorUrl);
     upsertCamera($pdo, $packId, 'INTERIOR', 'rf-tests', 'tests (RF)', (string) $interiorUrl);
 
+    // El tipo de almacén necesita una franja RENTABLE para que la emisión de QR
+    // (flujo de huésped que usa la batería E2E del runner, ahora sobre PROTO2) no
+    // devuelva slot_not_rentable. Idempotente; solo afecta al tipo de pruebas.
+    $hasSlot = (int) $pdo->query(
+        "SELECT COUNT(*) FROM time_slots WHERE room_type_id = {$whTypeId} AND kind = 'RENTABLE'"
+    )->fetchColumn();
+    if ($hasSlot === 0) {
+        $pdo->prepare(
+            "INSERT INTO time_slots (room_type_id, starts_at, ends_at, kind)
+             VALUES (:rt, '00:00:00', '23:59:59', 'RENTABLE')"
+        )->execute([':rt' => $whTypeId]);
+        echo "[seed]   añadida franja RENTABLE 00:00-24:00 al tipo " . WAREHOUSE_TYPE_CODE . "\n";
+    }
+
     $pdo->commit();
 } catch (\Throwable $e) {
     if ($pdo->inTransaction()) {
