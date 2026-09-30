@@ -102,6 +102,7 @@ use App\Http\Controllers\WorkerController;
 use App\Http\Controllers\WorkerQrController;
 use App\Http\Controllers\WarehouseAccessController;
 use App\Http\Controllers\WarehouseVisitController;
+use App\Http\Controllers\WarehouseRecordingController;
 use App\Http\Controllers\FactoryDeviceController;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Persistence\FactoryDeviceRepository;
@@ -2638,6 +2639,11 @@ $router->put('/almacen-api/access/worker/{id}',[$warehouseAccessController, 'set
 $warehouseVisitController = new WarehouseVisitController($pdo);
 $router->get('/almacen-api/visits',      [$warehouseVisitController, 'index']);
 $router->get('/almacen-api/visits/{id}', [$warehouseVisitController, 'show']);
+
+// --- Routes: servido de clips (F64/RF-73.4, público LAN) ---
+$warehouseRecordingController = new WarehouseRecordingController($pdo);
+$router->get('/almacen-api/recordings/{id}/video',  [$warehouseRecordingController, 'video']);
+$router->get('/almacen-api/recordings/{id}/poster', [$warehouseRecordingController, 'poster']);
 
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
