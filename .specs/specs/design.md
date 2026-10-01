@@ -3793,3 +3793,56 @@ Botón superior **"Ver en directo"** que devuelve el panel al estado actual (cro
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-79 | §33 | Fase 69 | F69-01…F69-05 |
+
+---
+
+# 34. F70 — Directo de cámaras por MJPEG (RF-80)
+
+## 34.1 Problema
+
+`WarehouseStateController` devuelve `live_url = http://host:1984/stream.html?src=…` (go2rtc) y el
+panel lo carga en un `<iframe>`. El puerto **1984 no está en ufw** (solo 8080), así que el iframe
+queda en negro. Patrón de referencia: `reconocimientoFacial/live/mjpeg-stream.js` + Apache
+`ProxyPass /reconocimientoFacial/live → 127.0.0.1:8084/live` y `<img src="../live?id=N">`.
+
+## 34.2 Servidor MJPEG (`api/bin/cameras-live.js`)
+
+- Fuente de cámaras: `GET /almacen-api/state` (para `room.id`) + `GET /almacen-api/cameras?room_id=`
+  (devuelve `rtsp_url`), refrescada cada `LIVE_REFRESH_MS` (10 s). Solo `enabled=true`.
+  Alternativa: `LIVE_ROOM_ID`.
+- `GET /live?id=<deviceId>` → `multipart/x-mixed-replace; boundary=frame`.
+- Un `ffmpeg` por cámara: `-rtsp_transport tcp -loglevel error -i <rtsp> -vf fps=<FPS>,scale=<SCALE>
+  -q:v <Q> -f mjpeg -`; fan-out a N `<res>`; se mata a los `LIVE_IDLE_MS` sin espectadores.
+- Parser puro `extractJpegFrames(buffer)` (marcadores `FFD8`/`FFD9`) exportado para test unitario;
+  el arranque del servidor solo ocurre con `require.main === module`.
+- `GET /status` → `{ok, cameras, streams, detalle}`.
+- **Nunca** loguea la URL RTSP (credenciales); solo `id` y códigos de salida.
+
+## 34.3 Configuración
+
+- `.env`: `CAMERAS_LIVE_PORT` (8086), `CAMERAS_LIVE_BASE_URL`
+  (p. ej. `https://cerraduras.josue.ink/almacen-live`), `CAMERAS_LIVE_FPS` (5),
+  `CAMERAS_LIVE_SCALE` (640:-2), `CAMERAS_LIVE_QUALITY` (6), `CAMERAS_LIVE_IDLE_MS` (5000).
+- systemd `cerraduras-cameras-live.service` (`WorkingDirectory=/root/cerraduras/api`,
+  `ExecStart=/usr/bin/node bin/cameras-live.js`, `Restart=always`).
+- Apache (`cerraduras.josue.ink`, 443): `ProxyPass /almacen-live http://127.0.0.1:8086/live`
+  (+`ProxyPassReverse`), **antes** del catch-all `/ → 8099`.
+
+## 34.4 Backend (aditivo)
+
+- `WarehouseStateController` y `WarehouseCameraController` añaden `mjpeg_url` =
+  `rtrim(CAMERAS_LIVE_BASE_URL,'/') . '?id=' . deviceId` si la variable está definida; si no,
+  `null` (el panel cae al iframe de go2rtc).
+
+## 34.5 Panel
+
+- `renderCameras()`: si `c.mjpeg_url` y `c.enabled`, pinta
+  `<img class="mjpeg" src="…">`; `onerror` → placeholder "sin señal"; si no, mantiene el iframe.
+- Al re-renderizar `#cams` (o reproducir/salir) se **reemplaza el nodo `<img>`**, lo que aborta la
+  conexión multipart (mismo criterio que RF).
+
+## 34.6 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-80 | §34 | Fase 70 | F70-01…F70-07 |

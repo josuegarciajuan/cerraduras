@@ -2233,3 +2233,36 @@ ningún campo existente cambia.
 
 - Rutas, códigos y campos existentes intactos. Verificación: `bash bin/run-tests.sh` con
   **0 failures** y **BLOCK 47** nuevo.
+
+---
+
+# Fase 70: Directo de cámaras por MJPEG (RF-80)
+
+## 1. `GET /almacen-api/state` y `GET /almacen-api/cameras`
+
+**Aditivo**: cada cámara incluye `mjpeg_url`.
+
+```json
+{
+  "id": 324,
+  "position": "EXTERIOR",
+  "enabled": true,
+  "live_url": "http://92.113.151.136:1984/stream.html?src=almacen_12_EXTERIOR",
+  "mjpeg_url": "https://cerraduras.josue.ink/almacen-live?id=324"
+}
+```
+
+- `mjpeg_url` es `null` si `CAMERAS_LIVE_BASE_URL` no está definida (compatibilidad).
+- `live_url` (go2rtc) se mantiene como fallback.
+
+## 2. Servicio interno MJPEG (no es parte de la API pública)
+
+- `GET /almacen-live?id=<deviceId>` (vía Apache → `127.0.0.1:8086/live`) →
+  `200 multipart/x-mixed-replace; boundary=frame`.
+- `GET /status` (solo local) → `{ "ok": true, "cameras": N, "streams": M }`.
+- Cámara inexistente/no habilitada → `404`; sin URL RTSP → `404`.
+
+## 3. No regresión
+
+- Rutas, códigos y campos de `/almacen-api/*` intactos; `mjpeg_url` es **aditivo**.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 48** nuevo.
