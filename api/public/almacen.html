@@ -23,6 +23,11 @@
   .cam .bar{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;font-weight:600}
   .cam iframe{width:100%;aspect-ratio:16/9;border:0;background:#000;display:block}
   .cam .ph{aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;color:var(--muted);background:#000}
+  /* F70/RF-80.5: directo MJPEG (<img>) con placeholder "sin señal". */
+  .cam .mjpeg{width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;display:block}
+  .cam .ph.live-off{display:none}
+  .cam.is-offline .mjpeg{display:none}
+  .cam.is-offline .ph.live-off{display:flex}
   .rec{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--bad)}
   .rec .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);animation:p 1.2s infinite}
   @keyframes p{50%{opacity:.25}}

@@ -84,9 +84,21 @@
     box.innerHTML = warn + cams.map(function (c) {
       var label = c.label || c.position;
       var rec = c.recording ? '<span class="rec"><span class="dot"></span>GRABANDO</span>' : '<span class="muted">—</span>';
-      var body = (c.enabled && c.live_url)
-        ? '<iframe src="' + esc(c.live_url) + '" allow="autoplay" loading="lazy"></iframe>'
-        : '<div class="ph">' + (c.enabled ? 'directo no disponible' : 'cámara desactivada') + '</div>';
+      var body;
+      if (!c.enabled) {
+        body = '<div class="ph">cámara desactivada</div>';
+      } else if (c.mjpeg_url) {
+        // F70/RF-80.5: directo MJPEG con <img>. Si falla, placeholder "sin señal".
+        body = '<img class="mjpeg" src="' + esc(c.mjpeg_url) + '" alt="Directo ' + esc(label) + '"'
+          + ' onload="this.parentNode.classList.remove(\'is-offline\')"'
+          + ' onerror="this.parentNode.classList.add(\'is-offline\')">'
+          + '<div class="ph live-off">sin señal</div>';
+      } else if (c.live_url) {
+        // Fallback (go2rtc) si no hay base MJPEG configurada.
+        body = '<iframe src="' + esc(c.live_url) + '" allow="autoplay" loading="lazy"></iframe>';
+      } else {
+        body = '<div class="ph">directo no disponible</div>';
+      }
       return '<div class="cam"><div class="bar"><span>' + esc(label) + ' <span class="pill">' + esc(c.position) + '</span></span>' + rec + '</div>' + body + '</div>';
     }).join('');
   }

@@ -1361,3 +1361,33 @@ monigote) y las cámaras en directo, **encendiendo las cámaras** si están apag
   de grabación).
 - **RF-79.6**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y un **BLOCK 47** nuevo.
+
+---
+
+# Fase 70: Directo de cámaras por MJPEG en `/almacen` (RF-80)
+
+**Motivo**: el iframe de go2rtc (`http://…:1984/stream.html`) se ve **negro** porque el puerto
+1984 **no está abierto en el firewall** (ufw) y WebRTC/MSE no es fiable. El proyecto de
+**reconocimiento facial** ya resuelve esto con un servidor **MJPEG** propio (un `ffmpeg` por
+cámara, `multipart/x-mixed-replace`) mostrado en el navegador con un simple `<img>`. Se replica
+ese enfoque en el panel `/almacen`.
+
+## RF-80: Directo de cámaras por MJPEG
+- **RF-80.1**: Un **servidor MJPEG** propio (`api/bin/cameras-live.js`) sirve cada cámara del
+  almacén como `multipart/x-mixed-replace` a partir de su RTSP, con **un único `ffmpeg` por
+  cámara compartido** entre espectadores y parada en reposo (idle).
+- **RF-80.2**: El servidor escucha en **loopback** (`127.0.0.1`, puerto configurable, por defecto
+  `8086`) y se expone al navegador por **proxy Apache** (`/almacen-live`), usando un puerto ya
+  abierto (443/80). **No** se abre ningún puerto nuevo en el firewall.
+- **RF-80.3**: El servidor se supervisa con **systemd** (`cerraduras-cameras-live.service`,
+  `Restart=always`) e integra en `start-all.sh`/`stop-all.sh`.
+- **RF-80.4**: `GET /almacen-api/state` (y `/almacen-api/cameras`) exponen **aditivamente**
+  `mjpeg_url` por cámara, construido desde `CAMERAS_LIVE_BASE_URL`.
+- **RF-80.5**: El panel `/almacen` muestra el directo con un **`<img>`** apuntando a `mjpeg_url`;
+  si una cámara no responde, muestra **"sin señal"** sin romper el resto. Si `mjpeg_url` no está
+  configurado, se conserva el iframe de go2rtc como **fallback**.
+- **RF-80.6**: La lista de cámaras del servidor MJPEG se refresca periódicamente desde la API
+  local (`/almacen-api/state` + `/almacen-api/cameras`), solo cámaras **habilitadas**; no se
+  registran credenciales RTSP en logs.
+- **RF-80.7**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y un **BLOCK 48** nuevo.

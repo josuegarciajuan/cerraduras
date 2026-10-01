@@ -215,7 +215,18 @@ final class WarehouseCameraController
             'recording' => $recording,
             'stream' => $stream,
             'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
+            'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $row['id']) : null,
         ];
+    }
+
+    /** F70/RF-80.4: URL del directo MJPEG (aditivo; null si no hay base). */
+    private function mjpegUrl(int $deviceId): ?string
+    {
+        $base = trim((string) (\App\Support\Config::get('CAMERAS_LIVE_BASE_URL', '') ?? ''));
+        if ($base === '') {
+            return null;
+        }
+        return rtrim($base, '/') . '?id=' . $deviceId;
     }
 
     private function format(Device $d, int $roomId): array
@@ -236,6 +247,7 @@ final class WarehouseCameraController
             'recording' => false,
             'stream' => Go2rtcClient::streamName($roomId, $position),
             'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
+            'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $d->id) : null,
         ];
     }
 

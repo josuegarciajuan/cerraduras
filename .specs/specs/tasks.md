@@ -3280,3 +3280,68 @@ F68-01 (specs)
 ```
 F69-01 (specs) ─> F69-02 (botón) ─> F69-03 (goLive) ─> F69-04 (encender) ─> F69-05 (runner + regresión)
 ```
+
+---
+
+# Fase 70 — Directo de cámaras por MJPEG (RF-80)
+
+**Dependencias**: F61 (cámaras/go2rtc), F69 (encendido de cámaras). Referencia:
+`reconocimientoFacial/live/mjpeg-stream.js` + Apache `ProxyPass`.
+
+## TSK-F70-01: Specs Fase 70
+- **Cambio**: `requirements.md` (RF-80), `design.md` (§34), `contracts.md`, `tasks.md`.
+- **RF**: RF-80.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F70-02: Servidor MJPEG
+- **Cambio**: nuevo `api/bin/cameras-live.js` (ffmpeg por cámara, fan-out, `/live`, `/status`,
+  parser puro `extractJpegFrames`).
+- **RF**: RF-80.1, RF-80.6.
+- **Test propio**: `api/tests/Unit/cameras-live.test.js` (Node) → 0 failed.
+
+## TSK-F70-03: systemd + arranque
+- **Cambio**: `docs/systemd/cerraduras-cameras-live.service`; `start-all.sh`/`stop-all.sh`;
+  `.env.example` (variables `CAMERAS_LIVE_*`).
+- **RF**: RF-80.3.
+- **Test propio**: BLOCK 48 (unit/systemd estáticos).
+
+## TSK-F70-04: `mjpeg_url` en la API
+- **Cambio**: `WarehouseStateController` y `WarehouseCameraController` (aditivo).
+- **RF**: RF-80.4.
+- **Test propio**: BLOCK 48 (HTTP `state.cameras[].mjpeg_url`).
+
+## TSK-F70-05: Panel con `<img>`
+- **Cambio**: `api/public/assets/almacen.js` y `almacen.html` (CSS `.mjpeg`, "sin señal",
+  fallback iframe).
+- **RF**: RF-80.5.
+- **Test propio**: BLOCK 48 (estáticos) + verificación manual.
+
+## TSK-F70-06: Apache proxy
+- **Cambio**: vhost `cerraduras.josue.ink` (443): `ProxyPass /almacen-live → 127.0.0.1:8086/live`.
+- **RF**: RF-80.2.
+- **Test propio**: `curl -I https://cerraduras.josue.ink/almacen-live` sensible a
+  `multipart/x-mixed-replace` (SKIP si no responde).
+
+## TSK-F70-07: Runner, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (BLOCK 48) + `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-80.7.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F70
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F70-01 | Specs | RF-80 | `.specs/specs/*` | revisión |
+| F70-02 | Servidor MJPEG | RF-80.1/6 | `bin/cameras-live.js` | unit Node |
+| F70-03 | systemd + arranque | RF-80.3 | `docs/systemd/*`, `start-all.sh`, `stop-all.sh`, `.env.example` | BLOCK 48 |
+| F70-04 | `mjpeg_url` | RF-80.4 | `WarehouseStateController.php`, `WarehouseCameraController.php` | BLOCK 48 |
+| F70-05 | Panel `<img>` | RF-80.5 | `almacen.html`, `assets/almacen.js` | BLOCK 48 |
+| F70-06 | Apache proxy | RF-80.2 | vhost Apache | curl |
+| F70-07 | Runner + docs + regresión | RF-80.7 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F70)
+
+```
+F70-01 (specs) ─> F70-02 (servidor MJPEG) ─> F70-03 (systemd) ─> F70-04 (mjpeg_url)
+   ─> F70-05 (panel) ─> F70-06 (Apache) ─> F70-07 (runner + regresión)
+```

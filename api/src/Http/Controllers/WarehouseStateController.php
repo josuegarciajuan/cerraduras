@@ -115,6 +115,8 @@ final class WarehouseStateController
                 'online' => null,
                 'stream' => Go2rtcClient::streamName($roomId, $position),
                 'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
+                // F70/RF-80.4: directo MJPEG (aditivo). null si no hay base configurada.
+                'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $c['id']) : null,
             ];
         }
 
@@ -179,6 +181,20 @@ final class WarehouseStateController
             'retention' => $this->retentionInfo(),
             'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ];
+    }
+
+    /**
+     * F70/RF-80.4: URL del directo MJPEG para un dispositivo cámara.
+     * Se construye desde `CAMERAS_LIVE_BASE_URL` (p. ej.
+     * `https://cerraduras.josue.ink/almacen-live`); null si no está configurada.
+     */
+    private function mjpegUrl(int $deviceId): ?string
+    {
+        $base = trim((string) (\App\Support\Config::get('CAMERAS_LIVE_BASE_URL', '') ?? ''));
+        if ($base === '') {
+            return null;
+        }
+        return rtrim($base, '/') . '?id=' . $deviceId;
     }
 
     /** @return array{days:int,auto:bool,disk_used_pct:?int} */

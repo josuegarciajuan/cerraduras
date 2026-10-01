@@ -1,0 +1,26 @@
+[Unit]
+Description=Cerraduras — servidor MJPEG de cámaras del almacén (F70/RF-80)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target cerraduras-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/cerraduras/api
+# Escucha SOLO en loopback; se expone al navegador por Apache (/almacen-live).
+Environment=CAMERAS_LIVE_HOST=127.0.0.1
+Environment=CAMERAS_LIVE_PORT=8086
+Environment=CAMERAS_LIVE_FPS=5
+Environment=CAMERAS_LIVE_SCALE=640:-2
+Environment=CAMERAS_LIVE_QUALITY=6
+Environment=CAMERAS_LIVE_IDLE_MS=5000
+ExecStart=/usr/bin/node bin/cameras-live.js
+Restart=always
+RestartSec=3
+KillMode=control-group
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
