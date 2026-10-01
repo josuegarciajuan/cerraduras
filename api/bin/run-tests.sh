@@ -4457,7 +4457,7 @@ else
 fi
 
 # 48.1 Estáticos: ficheros, systemd, arranque y panel
-for F70_ASSET in bin/cameras-live.js docs/systemd/cerraduras-cameras-live.service; do
+for F70_ASSET in bin/cameras-live.js ../docs/systemd/cerraduras-cameras-live.service; do
     if [ -f "$F70_ASSET" ]; then
         pass "F70: existe $F70_ASSET"
     else
