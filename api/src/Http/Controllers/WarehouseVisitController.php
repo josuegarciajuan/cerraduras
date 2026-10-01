@@ -139,7 +139,7 @@ final class WarehouseVisitController
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $stmt = $this->pdo->prepare(
             "SELECT id, visit_id, position, episode, trigger, status,
-                    started_at, stopped_at, duration_s, size_bytes
+                    requested_at, started_at, stopped_at, duration_s, size_bytes
              FROM camera_recordings
              WHERE visit_id IN ($placeholders)
              ORDER BY id ASC"
@@ -159,6 +159,9 @@ final class WarehouseVisitController
                 'episode' => (string) $rec['episode'],
                 'trigger' => (string) $rec['trigger'],
                 'status' => $status,
+                // F68/RF-78.7: instante de solicitud (más próximo al evento que
+                // `started_at`); origen de sincronización de la reproducción.
+                'requested_at' => $rec['requested_at'],
                 'started_at' => $rec['started_at'],
                 'stopped_at' => $rec['stopped_at'],
                 'duration_s' => $rec['duration_s'] !== null ? (int) $rec['duration_s'] : null,
