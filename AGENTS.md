@@ -137,6 +137,20 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F66 Pruebas y trazabilidad** | **BLOCK 44** | **Completado** |
 | **F67 Croquis en vivo del almacén** | **BLOCK 45** | **Completado** |
 | **F68 Reproducción de visitas** | **BLOCK 46** | **Completado** |
+| **F69 Vista en directo + encender cámaras** | **BLOCK 47** | **Completado** |
+
+### F69 — Vista en directo y encendido de cámaras (RF-79)
+
+- **Qué**: botón superior **"Ver en directo"** en `/almacen`. Cierra la reproducción (F68) y
+  muestra el **estado actual** (croquis con presencia, puerta y posición del monigote según los
+  sensores) más las cámaras en directo.
+- **Encendido**: si alguna cámara está apagada (`meta_json.enabled=false`), la enciende
+  (`PATCH /almacen-api/cameras/{id}` `{enabled:true}`) y **sincroniza go2rtc**
+  (`POST /almacen-api/cameras/sync`). **No** cambia `record_enabled`. Sin rutas nuevas.
+- **UI**: cabecera `#btn-live` (punto verde = directo, ámbar = apagadas); aviso en "Directo" con
+  acción de encender. El botón "Volver en vivo" de la banda de reproducción llama a `goLive()`.
+- **Tests**: BLOCK 47 del runner (estáticos + apagar/encender cámara y verificar `state`/`live_url`
+  restaurando el estado).
 
 ### F68 — Reproducción de visitas en `/almacen` (RF-78)
 
