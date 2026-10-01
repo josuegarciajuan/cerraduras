@@ -111,6 +111,14 @@
   .replay-body .replay-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);background:#000;font-size:12px;text-align:center;padding:8px}
   .replay-body .replay-empty[hidden]{display:none}
   .visit-play{cursor:pointer;border:1px solid var(--line);background:#262b35}
+  /* F69/RF-79: botón "Ver en directo" y aviso de cámaras apagadas. */
+  .live-btn{display:inline-flex;align-items:center;gap:7px}
+  .live-btn-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+  .live-btn.is-live .live-btn-dot{background:var(--ok);animation:p 1.6s infinite}
+  .live-btn.is-off .live-btn-dot{background:var(--warn)}
+  .cams-warn{grid-column:1/-1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+             background:#3a2b12;color:var(--warn);border:1px solid rgba(241,196,15,.35);
+             border-radius:10px;padding:8px 12px;font-size:13px}
   @media (min-width:900px){.directo-wrap{grid-template-columns:minmax(280px,330px) 1fr}}
   @media (prefers-reduced-motion: reduce){
     #croquis-door,.croquis-person,.croquis-halo,#croquis-bulb,#croquis-bulb-glow{transition:none!important;animation:none!important}
@@ -126,6 +134,9 @@
   <span id="wh-visit" class="muted"></span>
   <span style="flex:1"></span>
   <span id="wh-retention" class="muted"></span>
+  <button id="btn-live" class="ghost live-btn" onclick="Almacen.goLive()" title="Ver el estado actual y las cámaras en directo">
+    <span id="btn-live-dot" class="live-btn-dot"></span>Ver en directo
+  </button>
   <button id="btn-door" class="ghost" onclick="Almacen.openDoor()">Abrir puerta</button>
   <button id="btn-sync" class="ghost" onclick="Almacen.syncCameras()">Sincronizar cámaras</button>
 </header>
@@ -218,7 +229,7 @@
             <span class="play-title" id="play-title">Reproduciendo visita</span>
             <span class="chip dim" id="play-phase">—</span>
             <span style="flex:1"></span>
-            <button class="ghost" id="play-live" onclick="Almacen.exitPlayback()">Volver en vivo</button>
+            <button class="ghost" id="play-live" onclick="Almacen.goLive()">Volver en vivo</button>
           </div>
           <div class="play-times">
             <div class="play-clock" id="play-clock">--:--:--</div>
