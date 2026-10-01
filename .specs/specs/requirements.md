@@ -1337,3 +1337,27 @@ grabaciones. Debe ser lo más visual y entendible posible y **no crear secciones
   la línea de tiempo y resuelve el fotograma por instante sin DOM ni red.
 - **RF-78.9**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y un **BLOCK 46** nuevo.
+
+---
+
+# Fase 69: Vista en directo y encendido de cámaras en `/almacen` (RF-79)
+
+**Motivo**: al reproducir una visita o si las cámaras están apagadas, no hay una forma directa y
+visible de volver al **estado actual** de la sala. Se quiere un botón superior **"Ver en directo"**
+que muestre el croquis con el estado real de los sensores (presencia, puerta, posición del
+monigote) y las cámaras en directo, **encendiendo las cámaras** si están apagadas.
+
+## RF-79: Vista en directo y encendido de cámaras
+- **RF-79.1**: La cabecera del panel `/almacen` ofrece un botón **"Ver en directo"**.
+- **RF-79.2**: Al pulsarlo, si había una **reproducción** activa se cierra y se muestra la vista
+  en vivo: el croquis con el **estado actual** (presencia, puerta abierta/cerrada y **posición del
+  monigote según los sensores**) y las cámaras en directo.
+- **RF-79.3**: Si alguna cámara está **apagada** (`devices.meta_json.enabled = false`), el botón
+  la **enciende** (`enabled=true`) y **sincroniza go2rtc** para que el directo funcione. Reutiliza
+  `PATCH /almacen-api/cameras/{id}` y `POST /almacen-api/cameras/sync` (sin rutas nuevas).
+- **RF-79.4**: El botón refleja su estado (**en directo** / **cámaras apagadas**); si hay cámaras
+  apagadas, la sección "Directo" muestra un aviso con la acción de encender.
+- **RF-79.5**: El botón **no** altera `record_enabled` (encender el directo no cambia la política
+  de grabación).
+- **RF-79.6**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y un **BLOCK 47** nuevo.

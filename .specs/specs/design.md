@@ -3755,3 +3755,41 @@ frameAt(timeline, wallMs) -> {
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-78 | §32 | Fase 68 | F68-01…F68-06 |
+
+---
+
+# 33. F69 — Vista en directo y encendido de cámaras (RF-79)
+
+## 33.1 Objetivo
+
+Botón superior **"Ver en directo"** que devuelve el panel al estado actual (croquis con sensores
++ cámaras en directo) y **enciende las cámaras apagadas** sincronizando go2rtc.
+
+## 33.2 Comportamiento (`goLive`)
+
+1. Si hay `playback` activo → `exitPlayback()`.
+2. `ensureCamerasLive()`: para cada cámara de `state.cameras` con `enabled === false`,
+   `PATCH /almacen-api/cameras/{id}` `{ "enabled": true }`; después `POST /almacen-api/cameras/sync`.
+3. Re-render de croquis y cámaras; refresco de estado (SSE/poll).
+
+- **No** se envía `record_enabled`: la grabación no cambia de política (RF-79.5).
+- Sin rutas nuevas: se reutilizan `PATCH`/`sync` de F61.
+
+## 33.3 UI
+
+- Cabecera: botón `#btn-live` "Ver en directo" con `#btn-live-dot` (verde = directo, ámbar =
+  cámaras apagadas). `goLive()` también es el destino del botón "Volver en vivo" de la banda de
+  reproducción (F68).
+- Sección "Directo": si hay cámaras apagadas, aviso con la misma acción.
+
+## 33.4 Backend
+
+- Sin cambios de código: `WarehouseCameraController::update` (`enabled`) y `sync` ya existen.
+- Operación de datos **puntual**: encender las cámaras reales del almacén (`enabled=true`) y
+  llamar a `sync`.
+
+## 33.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-79 | §33 | Fase 69 | F69-01…F69-05 |
