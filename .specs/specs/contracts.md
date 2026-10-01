@@ -2212,3 +2212,24 @@ ningún campo existente cambia.
 
 - Rutas, códigos y campos existentes intactos. `requested_at` es **aditivo**.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 46** nuevo.
+
+---
+
+# Fase 69: Vista en directo y encendido de cámaras (RF-79)
+
+## 1. Endpoints reutilizados (sin rutas nuevas)
+
+- `PATCH /almacen-api/cameras/{id}` body `{ "enabled": true }` → `200 { "camera": { "enabled": true, "live_url": "…" } }`.
+- `POST /almacen-api/cameras/sync` → `200 { "ok": true, "streams": N }`.
+- `GET /almacen-api/state` sigue exponiendo `cameras[].{id, position, enabled, live_url}` (F66/F67).
+
+## 2. Contrato de comportamiento
+
+- "Ver en directo" **no** modifica `record_enabled`.
+- Tras encender y sincronizar, `GET /almacen-api/state` devuelve `enabled=true` y `live_url` no
+  nulo para las cámaras encendidas.
+
+## 3. No regresión
+
+- Rutas, códigos y campos existentes intactos. Verificación: `bash bin/run-tests.sh` con
+  **0 failures** y **BLOCK 47** nuevo.

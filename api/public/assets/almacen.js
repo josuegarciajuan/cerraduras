@@ -71,11 +71,17 @@
   function renderCameras() {
     var box = $('cams');
     var cams = (state && state.cameras) || [];
+    renderLiveButton(cams);
     if (!cams.length) {
       box.innerHTML = '<div class="muted">Sin cámaras configuradas para este almacén.</div>';
       return;
     }
-    box.innerHTML = cams.map(function (c) {
+    var anyOff = cams.some(function (c) { return c.enabled === false; });
+    var warn = anyOff
+      ? '<div class="cams-warn">Cámaras apagadas. Enciéndelas para ver el directo.'
+        + ' <button class="ghost" onclick="Almacen.ensureCamerasLive()">Encender cámaras</button></div>'
+      : '';
+    box.innerHTML = warn + cams.map(function (c) {
       var label = c.label || c.position;
       var rec = c.recording ? '<span class="rec"><span class="dot"></span>GRABANDO</span>' : '<span class="muted">—</span>';
       var body = (c.enabled && c.live_url)
@@ -83,6 +89,20 @@
         : '<div class="ph">' + (c.enabled ? 'directo no disponible' : 'cámara desactivada') + '</div>';
       return '<div class="cam"><div class="bar"><span>' + esc(label) + ' <span class="pill">' + esc(c.position) + '</span></span>' + rec + '</div>' + body + '</div>';
     }).join('');
+  }
+
+  // F69/RF-79: estado visual del botón "Ver en directo".
+  function renderLiveButton(cams) {
+    var btn = $('btn-live');
+    if (!btn) { return; }
+    cams = cams || (state && state.cameras) || [];
+    var anyOff = cams.some(function (c) { return c.enabled === false; });
+    btn.classList.toggle('is-live', !playback && !anyOff);
+    btn.classList.toggle('is-off', !playback && anyOff);
+    btn.classList.toggle('is-playing', !!playback);
+    btn.title = playback
+      ? 'Volver al estado actual y al directo'
+      : (anyOff ? 'Encender cámaras y ver el directo' : 'Viendo el estado actual en directo');
   }
 
   // ---- croquis (F67/RF-77) ------------------------------------------------
@@ -421,6 +441,7 @@
       };
       renderPlaybackBand(tl, visit);
       renderCamerasReplay(tl);
+      renderLiveButton();
       var master = chooseMaster(tl);
       if (master) {
         playback.master = master;
@@ -441,7 +462,7 @@
     }).catch(function (e) { toast('Reproducir: ' + e.message); });
   }
 
-  function exitPlayback() {
+  function stopPlaybackIfAny() {
     if (!playback) { return; }
     if (playback.raf) { cancelAnimationFrame(playback.raf); }
     playback.positions.forEach(function (pos) {
@@ -453,10 +474,60 @@
       }
     });
     playback = null;
-    $('play-band').hidden = true;
-    $('play-range').value = 0;
+    var band = $('play-band');
+    if (band) { band.hidden = true; }
+    var range = $('play-range');
+    if (range) { range.value = 0; }
+    renderLiveButton();
+  }
+
+  function exitPlayback() {
+    if (!playback) { return; }
+    stopPlaybackIfAny();
     renderCroquis();
     renderCameras();
+  }
+
+  /**
+   * F69/RF-79: enciende las cámaras apagadas y sincroniza go2rtc.
+   * NO toca `record_enabled` (la política de grabación no cambia).
+   */
+  function ensureCamerasLive() {
+    var cams = (state && state.cameras) || [];
+    var off = cams.filter(function (c) { return c.enabled === false; });
+    var chain = Promise.resolve();
+    if (off.length) {
+      chain = Promise.all(off.map(function (c) {
+        return api('/almacen-api/cameras/' + c.id, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true })
+        });
+      }));
+    }
+    return chain
+      .then(function () { return api('/almacen-api/cameras/sync', { method: 'POST' }); })
+      .then(function () { pollState(); return null; });
+  }
+
+  /** F69/RF-79: vuelve al estado actual (croquis de sensores + directo). */
+  function goLive() {
+    stopPlaybackIfAny();
+    var cams = (state && state.cameras) || [];
+    var anyOff = cams.some(function (c) { return c.enabled === false; });
+    renderLiveButton(cams);
+    renderCroquis();
+    renderCameras();
+    if (anyOff) {
+      toast('Encendiendo cámaras…');
+      ensureCamerasLive()
+        .then(function () { toast('Cámaras encendidas · en directo'); })
+        .catch(function (e) { toast('Cámaras: ' + e.message); });
+    } else {
+      pollState();
+      toast('En directo');
+    }
+    var band = $('play-band');
+    if (band) { band.hidden = true; }
   }
 
   function outcomeTag(o) {
@@ -638,7 +709,8 @@
     openDoor: openDoor, syncCameras: syncCameras, loadVisits: loadVisits,
     renderWorkers: renderWorkers,
     playVisit: playVisit, exitPlayback: exitPlayback, togglePlay: togglePlay,
-    setSpeed: setSpeed, seekToMs: seekToMs
+    setSpeed: setSpeed, seekToMs: seekToMs,
+    goLive: goLive, ensureCamerasLive: ensureCamerasLive
   };
 
   var range = $('play-range');

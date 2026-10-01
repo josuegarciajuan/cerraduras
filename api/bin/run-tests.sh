@@ -4359,6 +4359,81 @@ else
 fi
 
 # =============================================================================
+# BLOCK 47 — F69: Vista en directo y encendido de cámaras (RF-79)
+# Trazabilidad: RF-79.1..RF-79.6; TSK-F69-02..TSK-F69-05
+# =============================================================================
+block "BLOCK 47 — F69: Vista en directo y encendido de cámaras"
+
+# 47.0 Estáticos
+if grep -q 'id="btn-live"' public/almacen.html 2>/dev/null; then
+    pass "F69: almacen.html incluye #btn-live"
+else
+    fail "F69: almacen.html #btn-live" "ausente"
+fi
+if grep -q 'Almacen.goLive' public/almacen.html 2>/dev/null; then
+    pass "F69: botón enlazado a goLive"
+else
+    fail "F69: goLive en HTML" "ausente"
+fi
+for F69_FN in 'function goLive' 'function ensureCamerasLive'; do
+    if grep -q "$F69_FN" public/assets/almacen.js 2>/dev/null; then
+        pass "F69: almacen.js incluye '$F69_FN'"
+    else
+        fail "F69: almacen.js $F69_FN" "ausente"
+    fi
+done
+
+# 47.1 HTTP: apagar/encender una cámara y comprobar state + live_url
+if [ "$SERVER_UP" = true ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        F69_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+        F69_CAM=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F69_ROOM AND d.kind='CAMERA' ORDER BY d.id LIMIT 1" 2>/dev/null)
+        if [ -n "$F69_ROOM" ] && [ -n "$F69_CAM" ]; then
+            F69_ORIG=$($MYSQL -sN -e "SELECT COALESCE(JSON_EXTRACT(meta_json,'\$.enabled'),'true') FROM devices WHERE id=$F69_CAM" 2>/dev/null | tr -d '"')
+            # apagar
+            curl -s --max-time 5 -X PATCH "$API_BASE/almacen-api/cameras/$F69_CAM" \
+                -H 'Content-Type: application/json' -d '{"enabled":false}' >/dev/null
+            curl -s --max-time 5 -X POST "$API_BASE/almacen-api/cameras/sync" >/dev/null
+            F69_ST=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F69_ROOM")
+            F69_OFF=$(echo "$F69_ST" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d.get('cameras',[]) if x['id']==$F69_CAM];print(c[0]['enabled'] if c else 'NA')" 2>/dev/null)
+            F69_OFF_URL=$(echo "$F69_ST" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d.get('cameras',[]) if x['id']==$F69_CAM];print(c[0]['live_url'] or '' if c else 'NA')" 2>/dev/null)
+            if [ "$F69_OFF" = "False" ] && [ -z "$F69_OFF_URL" ]; then
+                pass "F69: cámara apagada → enabled=false y live_url nulo"
+            else
+                fail "F69: cámara apagada" "enabled=$F69_OFF live_url=$F69_OFF_URL"
+            fi
+            # encender (lo que hace el botón)
+            curl -s --max-time 5 -X PATCH "$API_BASE/almacen-api/cameras/$F69_CAM" \
+                -H 'Content-Type: application/json' -d '{"enabled":true}' >/dev/null
+            curl -s --max-time 5 -X POST "$API_BASE/almacen-api/cameras/sync" >/dev/null
+            F69_ST2=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F69_ROOM")
+            F69_ON=$(echo "$F69_ST2" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d.get('cameras',[]) if x['id']==$F69_CAM];print(c[0]['enabled'] if c else 'NA')" 2>/dev/null)
+            F69_ON_URL=$(echo "$F69_ST2" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d.get('cameras',[]) if x['id']==$F69_CAM];print(c[0]['live_url'] or '' if c else 'NA')" 2>/dev/null)
+            if [ "$F69_ON" = "True" ] && [ -n "$F69_ON_URL" ]; then
+                pass "F69: cámara encendida → enabled=true y live_url presente"
+            else
+                fail "F69: cámara encendida" "enabled=$F69_ON live_url=$F69_ON_URL"
+            fi
+            # restaurar estado original
+            if [ "$F69_ORIG" = "false" ]; then
+                curl -s --max-time 5 -X PATCH "$API_BASE/almacen-api/cameras/$F69_CAM" \
+                    -H 'Content-Type: application/json' -d '{"enabled":false}' >/dev/null
+                curl -s --max-time 5 -X POST "$API_BASE/almacen-api/cameras/sync" >/dev/null
+                pass "F69: estado original restaurado (apagada)"
+            else
+                pass "F69: estado original conservado (encendida)"
+            fi
+        else
+            skip "F69 HTTP" "sin sala ALMACEN_BEBIDAS o cámara"
+        fi
+    else
+        skip "F69 HTTP" "python3 no disponible para validar JSON"
+    fi
+else
+    skip "BLOCK 47 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

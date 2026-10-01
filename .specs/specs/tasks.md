@@ -3232,3 +3232,51 @@ F68-01 (specs)
   └─> F68-03 (lógica pura)
         └─> F68-04 (banda/CSS) ─> F68-05 (reproducción) ─> F68-06 (runner + regresión)
 ```
+
+---
+
+# Fase 69 — Vista en directo y encendido de cámaras (RF-79)
+
+**Dependencias**: F61 (gestión de cámaras/go2rtc), F67 (croquis en vivo) y F68 (reproducción).
+
+## TSK-F69-01: Specs Fase 69
+- **Cambio**: `requirements.md` (RF-79), `design.md` (§33), `contracts.md`, `tasks.md`.
+- **RF**: RF-79.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F69-02: Botón "Ver en directo"
+- **Cambio**: `api/public/almacen.html` — `#btn-live` en la cabecera con punto de estado y estilos.
+- **RF**: RF-79.1, RF-79.4.
+- **Test propio**: BLOCK 47 (estáticos).
+
+## TSK-F69-03: `goLive` + `ensureCamerasLive`
+- **Cambio**: `api/public/assets/almacen.js` — `goLive()` (cierra reproducción, enciende cámaras
+  apagadas, sincroniza, re-renderiza) y enganche con "Volver en vivo".
+- **RF**: RF-79.2, RF-79.3, RF-79.5.
+- **Test propio**: BLOCK 47 + verificación manual.
+
+## TSK-F69-04: Encender cámaras reales
+- **Cambio**: operación de datos (`enabled=true` + `sync`) sobre las cámaras del almacén.
+- **RF**: RF-79.3.
+- **Test propio**: `GET /almacen-api/state` con `enabled=true` y `live_url`.
+
+## TSK-F69-05: Runner, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (BLOCK 47) + `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-79.6.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F69
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F69-01 | Specs | RF-79 | `.specs/specs/*` | revisión |
+| F69-02 | Botón cabecera | RF-79.1/4 | `almacen.html` | BLOCK 47 |
+| F69-03 | `goLive`/encendido | RF-79.2/3/5 | `assets/almacen.js` | BLOCK 47 |
+| F69-04 | Encender cámaras | RF-79.3 | datos runtime | `state` |
+| F69-05 | Runner + docs + regresión | RF-79.6 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F69)
+
+```
+F69-01 (specs) ─> F69-02 (botón) ─> F69-03 (goLive) ─> F69-04 (encender) ─> F69-05 (runner + regresión)
+```
