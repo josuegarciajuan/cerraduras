@@ -8,6 +8,8 @@
   var access = null;
   var sse = null;
   var pollTimer = null;
+  // F68/RF-78: estado de reproducción de una visita (null = en vivo).
+  var playback = null;
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -112,29 +114,56 @@
     return (typeof v.seconds_inside === 'number') ? v.seconds_inside : null;
   }
 
-  function renderCroquis() {
+  var PERSON_CLASSES = ['pos-outside', 'pos-near', 'pos-qr', 'pos-crossing', 'pos-inside'];
+
+  /**
+   * Aplica un "view model" del croquis al SVG. Lo comparten el modo en vivo
+   * (F67) y la reproducción de una visita (F68).
+   */
+  function applyCroquisView(vm) {
     var svg = $('croquis-svg');
-    if (!svg || !state) { return; }
+    if (!svg) { return; }
+    for (var i = 0; i < PERSON_CLASSES.length; i++) { svg.classList.remove(PERSON_CLASSES[i]); }
+    svg.classList.add('pos-' + (vm.personPos || 'outside'));
+    svg.classList.toggle('is-open', !!vm.doorOpen);
+    svg.classList.toggle('is-occupied', !!vm.personInside);
+    svg.classList.toggle('is-outside', !vm.personInside);
+    svg.classList.toggle('is-unknown', !!vm.unknown);
+    svg.classList.toggle('is-light-on', !!vm.lightOn);
+    svg.classList.toggle('is-scanning', !!vm.scanning);
+    if (vm.chips) {
+      setChip('croquis-door-chip', vm.chips.door.text, vm.chips.door.mod);
+      setChip('croquis-presence-chip', vm.chips.presence.text, vm.chips.presence.mod);
+      setChip('croquis-light-chip', vm.chips.light.text, vm.chips.light.mod);
+    }
+    if (vm.desc != null) {
+      var desc = $('croquis-desc');
+      if (desc) { desc.textContent = vm.desc; }
+    }
+  }
+
+  function renderCroquis() {
+    if (!state) { return; }
     var wh = state.warehouse || {};
     var C = window.CroquisLogic;
     if (!C || typeof C.deriveCroquis !== 'function') { return; }
     var d = C.deriveCroquis({ occupied: !!wh.occupied, live: state.live || {} }, Date.now());
 
-    svg.classList.toggle('is-open', d.classes.open);
-    svg.classList.toggle('is-occupied', d.classes.occupied);
-    svg.classList.toggle('is-outside', d.classes.outside);
-    svg.classList.toggle('is-unknown', d.classes.unknown);
-    svg.classList.toggle('is-light-on', d.classes.lightOn);
-
-    setChip('croquis-door-chip', d.chips.door.text, d.chips.door.mod);
-    setChip('croquis-presence-chip', d.chips.presence.text, d.chips.presence.mod);
-    setChip('croquis-light-chip', d.chips.light.text, d.chips.light.mod);
+    applyCroquisView({
+      personPos: d.personInside ? 'inside' : 'outside',
+      doorOpen: d.doorOpen,
+      personInside: d.personInside,
+      unknown: d.unknown,
+      lightOn: d.classes.lightOn,
+      scanning: false,
+      chips: d.chips,
+      desc: d.desc
+    });
 
     var room = $('croquis-room');
     if (room) { room.textContent = state.room ? state.room.code : '—'; }
-    var desc = $('croquis-desc');
-    if (desc) { desc.textContent = d.desc; }
 
+    var svg = $('croquis-svg');
     (state.cameras || []).forEach(function (c) {
       var g = svg.querySelector('.croquis-cam[data-position="' + c.position + '"]');
       if (!g) { return; }
@@ -162,6 +191,274 @@
     }
   }
 
+  // ---- reproducción de visitas (F68/RF-78) --------------------------------
+  function chooseMaster(tl) {
+    var ext = null, longest = null;
+    tl.clips.forEach(function (c) {
+      if (!c.hasVideo) { return; }
+      if (!longest || c.durationMs > longest.durationMs) { longest = c; }
+      if (c.position === 'EXTERIOR' && (!ext || c.durationMs > ext.durationMs)) { ext = c; }
+    });
+    return ext || longest;
+  }
+
+  function elapsedNow() {
+    if (!playback) { return 0; }
+    if (playback.masterEl) {
+      return playback.master.startMs + playback.masterEl.currentTime * 1000;
+    }
+    return playback.baseElapsed + (playback.playing
+      ? (performance.now() - playback.basePerf) * playback.speed : 0);
+  }
+
+  function updatePlayButton() {
+    var b = $('play-toggle');
+    if (b) { b.textContent = (playback && playback.playing) ? '⏸' : '▶'; }
+  }
+
+  function updateSpeeds() {
+    var wrap = $('play-speeds');
+    if (!wrap || !playback) { return; }
+    var btns = wrap.querySelectorAll('.speed');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('on', Number(btns[i].dataset.speed) === playback.speed);
+    }
+  }
+
+  function renderPlaybackBand(tl, visit) {
+    $('play-band').hidden = false;
+    var who = visit.worker ? visit.worker.name : 'anónimo';
+    $('play-title').textContent = 'Visita #' + tl.visitId + ' · ' + who + (tl.outcomeLabel ? ' · ' + tl.outcomeLabel : '');
+    var startWall = tl.markers.length ? tl.markers[0].wall : VisitPlayback.formatClock(tl.originMs);
+    var endWall = VisitPlayback.formatClock(tl.endMs);
+    $('play-window').textContent = 'Inicio ' + startWall + ' · Salida ' + endWall
+      + (tl.hasRecordings ? '' : ' · sin grabación');
+    $('play-markers').innerHTML = tl.markers.map(function (m) {
+      var pct = tl.durationMs > 0 ? (m.ms / tl.durationMs * 100) : 0;
+      return '<button class="play-marker" style="left:' + pct.toFixed(2) + '%"'
+        + ' onclick="Almacen.seekToMs(' + Math.round(m.ms) + ')"'
+        + ' title="' + esc(m.label + ' ' + m.wall) + '">' + m.icon + ' ' + esc(m.wall) + '</button>';
+    }).join('');
+    updateSpeeds();
+    updatePlayButton();
+  }
+
+  function renderCamerasReplay(tl) {
+    var box = $('cams');
+    var cams = (state && state.cameras) || [];
+    playback.videos = {};
+    box.innerHTML = playback.positions.map(function (pos) {
+      var cam = null;
+      for (var i = 0; i < cams.length; i++) { if (cams[i].position === pos) { cam = cams[i]; break; } }
+      var label = (cam && cam.label) ? cam.label : pos;
+      var hasClip = tl.clips.some(function (c) { return c.position === pos && c.hasVideo; });
+      var body = (hasClip ? '<video class="replay-screen" muted playsinline preload="auto"></video>' : '')
+        + '<div class="replay-empty"' + (hasClip ? ' hidden' : '') + '>Sin grabación en este tramo</div>';
+      return '<div class="cam" data-pos="' + pos + '"><div class="bar"><span>' + esc(label)
+        + ' <span class="pill">' + pos + '</span></span><span class="muted">visita #' + tl.visitId + '</span></div>'
+        + '<div class="replay-body">' + body + '</div></div>';
+    }).join('');
+    playback.positions.forEach(function (pos) {
+      var v = box.querySelector('.cam[data-pos="' + pos + '"] video');
+      if (v) { playback.videos[pos] = v; }
+    });
+    var svg = $('croquis-svg');
+    if (svg) {
+      var gs = svg.querySelectorAll('.croquis-cam');
+      for (var j = 0; j < gs.length; j++) { gs[j].classList.remove('is-recording'); }
+    }
+  }
+
+  function renderPlaybackFrame(elapsedMs) {
+    if (!playback) { return; }
+    var tl = playback.timeline;
+    var f = VisitPlayback.frameAt(tl, tl.originMs + elapsedMs);
+    applyCroquisView({
+      personPos: f.personPos,
+      doorOpen: f.doorOpen,
+      personInside: f.personInside,
+      unknown: false,
+      lightOn: f.lightOn,
+      scanning: f.phase === 'scan',
+      chips: f.chips,
+      desc: f.desc
+    });
+    $('play-clock').textContent = f.wallClockLabel;
+    $('play-elapsed').textContent = f.elapsedLabel;
+    $('play-inside').textContent = f.insideLabel;
+    var ph = $('play-phase');
+    ph.textContent = f.phaseLabel;
+    ph.className = 'chip ' + (f.personInside ? 'ok' : (f.doorOpen ? 'warn' : 'dim'));
+    var range = $('play-range');
+    range.value = tl.durationMs > 0 ? Math.round(elapsedMs / tl.durationMs * 1000) : 0;
+    playback.lastFrame = f;
+  }
+
+  function syncReplayVideos(frame) {
+    if (!playback || !frame) { return; }
+    playback.positions.forEach(function (pos) {
+      var vid = playback.videos[pos];
+      if (!vid) { return; }
+      var act = frame.activeClips[pos];
+      var empty = vid.parentNode ? vid.parentNode.querySelector('.replay-empty') : null;
+      if (empty) { empty.hidden = !!(act && act.videoUrl); }
+
+      // El clip maestro marca el reloj: no se le toca `src` ni `currentTime`
+      // (solo en `seekToMs`), para no corromper la línea de tiempo.
+      if (pos === playback.masterPos) {
+        if (act && act.videoUrl) {
+          if (playback.playing) {
+            var pm = vid.play();
+            if (pm && pm.catch) { pm.catch(function () {}); }
+          } else if (!vid.paused) { vid.pause(); }
+        } else if (!vid.paused) { vid.pause(); }
+        return;
+      }
+
+      if (act && act.videoUrl) {
+        if (vid.dataset.clip !== String(act.id)) {
+          vid.dataset.clip = String(act.id);
+          vid.src = act.videoUrl;
+          try { vid.load(); } catch (e) {}
+        }
+        var target = act.localTimeMs / 1000;
+        if (Math.abs((vid.currentTime || 0) - target) > 0.4) {
+          try { vid.currentTime = target; } catch (e) {}
+        }
+        if (vid.playbackRate !== playback.speed) { vid.playbackRate = playback.speed; }
+        if (playback.playing) {
+          var p = vid.play();
+          if (p && p.catch) { p.catch(function () {}); }
+        } else if (!vid.paused) { vid.pause(); }
+      } else {
+        if (!vid.paused) { vid.pause(); }
+      }
+    });
+  }
+
+  function tick() {
+    if (!playback) { return; }
+    var tl = playback.timeline;
+    var elapsed = elapsedNow();
+    if (elapsed >= tl.durationMs) {
+      elapsed = tl.durationMs;
+      if (playback.playing) { pausePlayback(); }
+    }
+    renderPlaybackFrame(elapsed);
+    syncReplayVideos(playback.lastFrame);
+    playback.raf = requestAnimationFrame(tick);
+  }
+
+  function play() {
+    if (!playback) { return; }
+    if (playback.masterEl) {
+      var p = playback.masterEl.play();
+      if (p && p.catch) { p.catch(function () {}); }
+    } else {
+      playback.basePerf = performance.now();
+    }
+    playback.playing = true;
+    updatePlayButton();
+  }
+
+  function pausePlayback() {
+    if (!playback) { return; }
+    if (playback.masterEl) { playback.masterEl.pause(); }
+    else { playback.baseElapsed = elapsedNow(); }
+    playback.playing = false;
+    playback.positions.forEach(function (pos) {
+      var v = playback.videos[pos];
+      if (v && !v.paused) { v.pause(); }
+    });
+    updatePlayButton();
+  }
+
+  function seekToMs(ms) {
+    if (!playback) { return; }
+    var dur = playback.timeline.durationMs;
+    ms = Math.max(0, Math.min(ms, dur));
+    if (playback.masterEl) {
+      try { playback.masterEl.currentTime = (ms - playback.master.startMs) / 1000; } catch (e) {}
+    } else {
+      playback.baseElapsed = ms;
+      playback.basePerf = performance.now();
+    }
+    renderPlaybackFrame(ms);
+    syncReplayVideos(playback.lastFrame);
+  }
+
+  function setSpeed(s) {
+    if (!playback) { return; }
+    if (!playback.masterEl && playback.playing) {
+      playback.baseElapsed = elapsedNow();
+      playback.basePerf = performance.now();
+    }
+    playback.speed = s;
+    if (playback.masterEl) { playback.masterEl.playbackRate = s; }
+    playback.positions.forEach(function (pos) {
+      var v = playback.videos[pos];
+      if (v) { v.playbackRate = s; }
+    });
+    updateSpeeds();
+  }
+
+  function togglePlay() {
+    if (!playback) { return; }
+    if (playback.playing) { pausePlayback(); } else { play(); }
+  }
+
+  function playVisit(id) {
+    exitPlayback();
+    api('/almacen-api/visits/' + id).then(function (j) {
+      var visit = j.visit;
+      var tl = VisitPlayback.buildVisitTimeline(visit);
+      playback = {
+        visit: visit, timeline: tl,
+        positions: ['EXTERIOR', 'INTERIOR'], videos: {},
+        master: null, masterEl: null, masterPos: null,
+        playing: false, speed: 1, raf: 0, lastFrame: null,
+        baseElapsed: 0, basePerf: performance.now()
+      };
+      renderPlaybackBand(tl, visit);
+      renderCamerasReplay(tl);
+      var master = chooseMaster(tl);
+      if (master) {
+        playback.master = master;
+        playback.masterPos = master.position;
+        var mv = playback.videos[master.position];
+        if (mv) {
+          mv.dataset.clip = String(master.id);
+          mv.src = master.videoUrl;
+          try { mv.load(); } catch (e) {}
+          playback.masterEl = mv;
+        }
+      }
+      seekToMs(0);
+      play();
+      playback.raf = requestAnimationFrame(tick);
+      var band = $('play-band');
+      if (band && band.scrollIntoView) { band.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }).catch(function (e) { toast('Reproducir: ' + e.message); });
+  }
+
+  function exitPlayback() {
+    if (!playback) { return; }
+    if (playback.raf) { cancelAnimationFrame(playback.raf); }
+    playback.positions.forEach(function (pos) {
+      var v = playback.videos[pos];
+      if (v) {
+        if (!v.paused) { v.pause(); }
+        v.removeAttribute('src');
+        try { v.load(); } catch (e) {}
+      }
+    });
+    playback = null;
+    $('play-band').hidden = true;
+    $('play-range').value = 0;
+    renderCroquis();
+    renderCameras();
+  }
+
   function outcomeTag(o) {
     var cls = o === 'ENTERED' ? 'ok' : (o === 'NO_SHOW' ? 'noshow' : 'discard');
     return '<span class="tag ' + cls + '">' + esc(o) + '</span>';
@@ -186,11 +483,13 @@
           + '<td>' + esc(v.entry_trigger) + '</td>'
           + '<td>' + outcomeTag(v.outcome) + '</td>'
           + '<td>' + fmt(v.entered_at) + '</td>'
-          + '<td>' + fmt(v.exited_at) + '</td></tr>';
+          + '<td>' + fmt(v.exited_at) + '</td>'
+          + '<td><button class="ghost visit-play" onclick="event.stopPropagation();Almacen.playVisit('
+          + v.id + ')">▶ Reproducir</button></td></tr>';
       }).join('');
       $('visits').innerHTML =
-        '<table><thead><tr><th>Fecha</th><th>Empleado</th><th>Disparo</th><th>Resultado</th><th>Entrada</th><th>Salida</th></tr></thead><tbody>'
-        + (rows || '<tr><td colspan="6" class="muted">Sin visitas</td></tr>') + '</tbody></table>'
+        '<table><thead><tr><th>Fecha</th><th>Empleado</th><th>Disparo</th><th>Resultado</th><th>Entrada</th><th>Salida</th><th></th></tr></thead><tbody>'
+        + (rows || '<tr><td colspan="7" class="muted">Sin visitas</td></tr>') + '</tbody></table>'
         + '<div id="visit-detail"></div>';
     }).catch(function (e) { toast('Visitas: ' + e.message); });
   }
@@ -213,6 +512,7 @@
       $('visit-detail').innerHTML =
         '<h3 style="margin:16px 0 6px">Visita #' + v.id + ' · ' + esc(who) + ' ' + outcomeTag(v.outcome) + '</h3>'
         + '<div class="muted">QR: ' + fmt(v.qr_at) + ' · Entrada: ' + fmt(v.entered_at) + ' · Salida: ' + fmt(v.exited_at) + '</div>'
+        + '<div style="margin:10px 0"><button onclick="Almacen.playVisit(' + v.id + ')">▶ Reproducir visita</button></div>'
         + '<div class="clip-grid">' + (clips || '<div class="muted">Sin grabaciones</div>') + '</div>';
       $('visit-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }).catch(function (e) { toast('Visita: ' + e.message); });
@@ -292,8 +592,11 @@
     var first = state === null;
     state = s;
     renderHeader();
-    renderCroquis();
-    renderCameras();
+    // F68: en modo reproducción no se pisa el croquis ni las cámaras con el directo.
+    if (!playback) {
+      renderCroquis();
+      renderCameras();
+    }
     if (state && state.room) {
       loadAccess(false);
       if (first) { loadVisits(); }
@@ -333,15 +636,26 @@
   window.Almacen = {
     selectVisit: selectVisit, toggleRole: toggleRole, setWorker: setWorker,
     openDoor: openDoor, syncCameras: syncCameras, loadVisits: loadVisits,
-    renderWorkers: renderWorkers
+    renderWorkers: renderWorkers,
+    playVisit: playVisit, exitPlayback: exitPlayback, togglePlay: togglePlay,
+    setSpeed: setSpeed, seekToMs: seekToMs
   };
+
+  var range = $('play-range');
+  if (range) {
+    range.addEventListener('input', function () {
+      if (!playback) { return; }
+      seekToMs((Number(range.value) / 1000) * playback.timeline.durationMs);
+    });
+  }
 
   pollState();
   connectSSE();
   setInterval(function () { if (state && state.room) { loadVisits(); } }, 15000);
   // F67/RF-77: el segundero de "tiempo dentro" avanza sin recargar; solo
-  // reescribe el texto de #croquis-meta (fuera del aria-live).
+  // reescribe el texto de #croquis-meta (fuera del aria-live). En reproducción
+  // el reloj lo gobierna `tick()`.
   setInterval(function () {
-    if (state && state.warehouse && state.warehouse.occupied) { renderCroquisMeta(); }
+    if (!playback && state && state.warehouse && state.warehouse.occupied) { renderCroquisMeta(); }
   }, 1000);
 })();
