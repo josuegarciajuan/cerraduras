@@ -3678,3 +3678,80 @@ dashboard.
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-77 | §31 | Fase 67 | F67-01…F67-06 |
+
+---
+
+# 32. F68 — Reproducción de visitas en `/almacen` (RF-78)
+
+## 32.1 Objetivo y alcance
+
+Reconstruir **visualmente** una visita del almacén en el propio panel: el croquis anima al
+monigote (acercamiento, escaneo de QR, cruce, estancia dentro, salida), el reloj de la visita
+avanza y las cámaras reproducen sus clips **sincronizados**. Todo dentro de la sección existente
+**"Directo"**; sin secciones nuevas.
+
+## 32.2 Modelo de reproducción (reloj maestro)
+
+- El **clip EXTERIOR** cubre la visita completa (F63: `START_EXT` al inicio y `STOP_EXT` en el
+  cierre). Es el **reloj maestro**; si falta, se usa el clip guardado más largo; si no hay
+  vídeos, un reloj interno (`performance.now`).
+- `horaVisita(t) = origenVisita + t`; en cada fotograma se calculan: fase del monigote, puerta,
+  luz, tiempo dentro, clip activo por posición y su `currentTime` local
+  (`t − offsetDelClip`).
+- Al **buscar/scrub** o cambiar de velocidad se reposicionan el maestro y los demás clips.
+- Velocidades 1×/2×/4×/8× aplicadas con `video.playbackRate` (clips sin audio).
+
+## 32.3 Reconstrucción por hitos
+
+`visit-playback.js` (UMD puro, sin DOM) construye:
+
+```
+buildVisitTimeline(visit) -> {
+  originMs, endMs, durationMs, startWall,
+  markers: [{type:'QR'|'ENTRY'|'EXIT', atMs, label, icon}],
+  inside: {startMs, endMs} | null,
+  clips: [{id, position, episode, startMs, endMs, wallStart, wallEnd, videoUrl, posterUrl}],
+  hasRecordings
+}
+frameAt(timeline, wallMs) -> {
+  phase, personPos, doorOpen, lightOn, personInside,
+  elapsedLabel, wallClockLabel, insideSeconds,
+  chips:{door,presence,light}, activeClips:{EXTERIOR,INTERIOR}, desc
+}
+```
+
+- `clipStartMs = requested_at (preferente) || started_at`; `clipEndMs = stopped_at ||
+  clipStart + duration_s`; `originMs = min(clips, qr_at, created_at)`.
+- Fases del monigote: `approach` (→ `qr_at`), `scan` (`qr_at`), `enter` (inicio clip ENTRY →
+  `entered_at`), `inside` (`entered_at` → inicio salida), `exit` (→ `exited_at`), `after`.
+- `DOOR`/`PRESENCE` (sin `qr_at`): sin acercamiento/escaneo. `NO_SHOW` (sin `entered_at`): vuelve
+  a `after`.
+- Reutiliza `Choreography.parseTime` y la forma de `chips` de `croquis-logic.js`.
+
+## 32.4 UI
+
+- `almacen.html`: la columna derecha de "Directo" pasa a `.directo-right` = **banda de tiempo**
+  (`#play-timeline`) + `#cams`. La banda queda entre croquis y cámaras (en móvil, apilada).
+  Contiene: `#play-clock`, `#play-window` (inicio/salida), `#play-inside`, barra `#play-range`
+  con marcadores `#play-markers`, `#play-toggle`, botones de velocidad y `#play-live`.
+- SVG: se añade un **lector QR** junto a la puerta (fuera) y clases de posición del monigote
+  (`pos-outside`, `pos-qr`, `pos-crossing`, `pos-inside`) + destello de QR.
+- `almacen.js`: `applyCroquisView(vm)` reusable (vivo y reproducción); controlador
+  `playVisit/togglePlay/seek/setSpeed/exitPlayback` con `requestAnimationFrame`;
+  `renderCamerasReplay(clips)` sustituye los iframes por `<video>` y se restaura con
+  `renderCameras()`. `applyState()` no pisa croquis/cámaras si `playback` está activo.
+- Botón **▶** en cada fila de la lista de visitas y en el detalle de la visita.
+
+## 32.5 Backend
+
+- `WarehouseVisitController`: añadir `requested_at` (y `requested_at` en el `SELECT`) a cada
+  `recording` del JSON. **Aditivo**.
+- **Fix F63 (bug latente)**: `trigger` es **palabra reservada en MariaDB 10.9**; la `SELECT` del
+  panel y el `INSERT` de `WarehouseRecordingService` deben entrecomillarla (`` `trigger` ``). Sin
+  esto, `camera_recordings` nunca se poblaba y no había vídeo que reproducir.
+
+## 32.6 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-78 | §32 | Fase 68 | F68-01…F68-06 |

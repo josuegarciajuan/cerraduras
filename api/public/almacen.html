@@ -78,10 +78,43 @@
   .croquis-cam .cam-rec{transition:opacity .2s}
   .croquis-cam.is-recording .cam-rec{opacity:1;animation:p 1.2s infinite}
   .croquis-cam.is-off{opacity:.35}
+  /* F68/RF-78: lector QR y fases del monigote en reproducción. */
+  #croquis-qr-flash{transform-box:fill-box;transform-origin:center}
+  #croquis-svg.is-scanning #croquis-qr-flash{animation:qr-pulse .9s ease-in-out infinite}
+  @keyframes qr-pulse{0%,100%{opacity:.15;transform:scale(.8)}50%{opacity:.75;transform:scale(1.15)}}
+  #croquis-svg.pos-near .croquis-person{transform:translate(180px,152px);color:var(--fg)}
+  #croquis-svg.pos-qr .croquis-person{transform:translate(206px,146px);color:var(--accent)}
+  #croquis-svg.pos-crossing .croquis-person{transform:translate(160px,128px);color:var(--warn)}
+  #croquis-svg.pos-inside .croquis-person{transform:translate(160px,84px);color:var(--fg)}
+  #croquis-svg.pos-outside .croquis-person{transform:translate(160px,160px);color:var(--muted)}
+  /* F68/RF-78: banda de tiempo entre el croquis y las cámaras. */
+  .directo-right{display:flex;flex-direction:column;gap:12px;min-width:0}
+  .play-band{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .play-band[hidden]{display:none}
+  .play-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .play-title{font-weight:600}
+  .play-times{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .play-clock{font-size:26px;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+  .play-sub{display:flex;gap:14px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+  .play-inside b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .play-track{position:relative;padding:6px 0}
+  .play-track input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer;margin:0}
+  .play-markers{position:relative;height:16px;margin-top:2px}
+  .play-marker{position:absolute;transform:translateX(-50%);font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap;background:none;border:0;padding:0}
+  .play-marker:hover{color:var(--fg)}
+  .play-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .play-speeds{display:flex;gap:4px}
+  .play-speeds .speed{padding:5px 9px}
+  .play-speeds .speed.on{background:var(--accent);color:#fff}
+  .replay-body{position:relative;aspect-ratio:16/9;background:#000}
+  .replay-body .replay-screen{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
+  .replay-body .replay-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);background:#000;font-size:12px;text-align:center;padding:8px}
+  .replay-body .replay-empty[hidden]{display:none}
+  .visit-play{cursor:pointer;border:1px solid var(--line);background:#262b35}
   @media (min-width:900px){.directo-wrap{grid-template-columns:minmax(280px,330px) 1fr}}
   @media (prefers-reduced-motion: reduce){
     #croquis-door,.croquis-person,.croquis-halo,#croquis-bulb,#croquis-bulb-glow{transition:none!important;animation:none!important}
-    .live-dot,.croquis-cam.is-recording .cam-rec{animation:none!important}
+    .live-dot,.croquis-cam.is-recording .cam-rec,#croquis-svg.is-scanning #croquis-qr-flash{animation:none!important}
   }
   #toast{position:fixed;bottom:16px;right:16px;background:#262b35;border:1px solid var(--line);padding:10px 14px;border-radius:10px;display:none}
 </style>
@@ -132,6 +165,15 @@
                     stroke="var(--bad)" stroke-width="4" stroke-linecap="round"/>
             </g>
 
+            <!-- F68/RF-78: lector QR junto a la puerta (exterior). -->
+            <g id="croquis-qr" transform="translate(206,138)">
+              <circle id="croquis-qr-flash" cx="0" cy="0" r="12"
+                      fill="rgba(0,230,118,.35)" opacity="0"/>
+              <rect x="-8" y="-7" width="16" height="14" rx="3" fill="#0b0d11" stroke="var(--line)"/>
+              <rect x="-4" y="-3" width="8" height="8" fill="none" stroke="var(--muted)"/>
+            </g>
+            <text x="206" y="156" text-anchor="middle" font-size="7" fill="var(--muted)">QR</text>
+
             <circle class="croquis-halo" cx="160" cy="84" r="22"
                     fill="rgba(46,204,113,.14)" stroke="rgba(46,204,113,.35)"
                     stroke-width="1.5" opacity="0"/>
@@ -168,7 +210,42 @@
         </div>
         <div class="croquis-meta" id="croquis-meta">Sin actividad reciente</div>
       </div>
-      <div id="cams" class="cams"></div>
+
+      <div class="directo-right">
+        <!-- F68/RF-78: banda de tiempo de la reproducción (entre croquis y cámaras). -->
+        <div class="play-band" id="play-band" hidden>
+          <div class="play-head">
+            <span class="play-title" id="play-title">Reproduciendo visita</span>
+            <span class="chip dim" id="play-phase">—</span>
+            <span style="flex:1"></span>
+            <button class="ghost" id="play-live" onclick="Almacen.exitPlayback()">Volver en vivo</button>
+          </div>
+          <div class="play-times">
+            <div class="play-clock" id="play-clock">--:--:--</div>
+            <div class="play-sub">
+              <span id="play-window">—</span>
+              <span class="play-inside">Dentro: <b id="play-inside">00:00</b></span>
+            </div>
+          </div>
+          <div class="play-track">
+            <input type="range" id="play-range" min="0" max="1000" value="0" step="1"
+                   aria-label="Posición de la visita">
+            <div class="play-markers" id="play-markers"></div>
+          </div>
+          <div class="play-controls">
+            <button class="ghost" id="play-toggle" title="Reproducir/Pausar"
+                    onclick="Almacen.togglePlay()">▶</button>
+            <div class="play-speeds" id="play-speeds">
+              <button class="ghost speed" data-speed="1" onclick="Almacen.setSpeed(1)">1×</button>
+              <button class="ghost speed" data-speed="2" onclick="Almacen.setSpeed(2)">2×</button>
+              <button class="ghost speed" data-speed="4" onclick="Almacen.setSpeed(4)">4×</button>
+              <button class="ghost speed" data-speed="8" onclick="Almacen.setSpeed(8)">8×</button>
+            </div>
+            <span class="muted" style="font-size:12px" id="play-elapsed">00:00</span>
+          </div>
+        </div>
+        <div id="cams" class="cams"></div>
+      </div>
     </div>
   </section>
 
@@ -202,6 +279,7 @@
 <div id="toast"></div>
 <script src="/assets/choreography.js"></script>
 <script src="/assets/croquis-logic.js"></script>
+<script src="/assets/visit-playback.js"></script>
 <script src="/assets/almacen.js"></script>
 </body>
 </html>

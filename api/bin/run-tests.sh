@@ -4268,6 +4268,97 @@ else
 fi
 
 # =============================================================================
+# BLOCK 46 — F68: Reproducción de visitas (RF-78)
+# Trazabilidad: RF-78.1..RF-78.9; TSK-F68-02..TSK-F68-06
+# =============================================================================
+block "BLOCK 46 — F68: Reproducción de visitas"
+
+# 46.0 Lógica pura (Node; no requiere servidor)
+F68_JS="tests/Unit/visit-playback.test.js"
+if [ -f "$F68_JS" ]; then
+    F68_OUT=$(node "$F68_JS" 2>&1)
+    F68_RC=$?
+    F68_SUM=$(echo "$F68_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F68_SUM" ] && F68_SUM="exit=$F68_RC"
+    if [ "$F68_RC" -eq 0 ]; then
+        pass "F68: visit-playback ($F68_SUM)"
+    else
+        fail "F68: visit-playback" \
+            "$F68_SUM — $(echo "$F68_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F68: visit-playback" "tests/Unit/visit-playback.test.js no encontrado"
+fi
+
+# 46.1 Assets y markup (estático)
+for F68_ASSET in public/assets/visit-playback.js public/assets/almacen.js public/almacen.html; do
+    if [ -f "$F68_ASSET" ]; then
+        pass "F68: existe $F68_ASSET"
+    else
+        fail "F68: $F68_ASSET" "no encontrado"
+    fi
+done
+for F68_MARK in 'id="play-band"' 'id="play-range"' 'id="croquis-qr"' 'visit-playback.js'; do
+    if grep -q "$F68_MARK" public/almacen.html 2>/dev/null; then
+        pass "F68: almacen.html incluye $F68_MARK"
+    else
+        fail "F68: almacen.html $F68_MARK" "ausente"
+    fi
+done
+if grep -q 'playVisit' public/assets/almacen.js 2>/dev/null; then
+    pass "F68: almacen.js incluye playVisit"
+else
+    fail "F68: almacen.js playVisit" "ausente"
+fi
+# Fix F63: `trigger` es palabra reservada en MariaDB → debe ir entrecomillada.
+if grep -q '`trigger`' src/Domain/Warehouse/WarehouseRecordingService.php 2>/dev/null; then
+    pass "F68: INSERT de grabaciones entrecomilla trigger"
+else
+    fail "F68: trigger reservado (INSERT)" "sin entrecomillar"
+fi
+if grep -q '`trigger`' src/Http/Controllers/WarehouseVisitController.php 2>/dev/null; then
+    pass "F68: SELECT de grabaciones entrecomilla trigger"
+else
+    fail "F68: trigger reservado (SELECT)" "sin entrecomillar"
+fi
+
+# 46.2 HTTP: requested_at en GET /almacen-api/visits/{id} (RF-78.7)
+if [ "$SERVER_UP" = true ]; then
+    F68_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    F68_DEVICE=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F68_ROOM AND d.kind='CAMERA' ORDER BY d.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F68_ROOM" ] && [ -n "$F68_DEVICE" ]; then
+        F68_VISIT=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, qr_at, entered_at, exited_at) VALUES ($F68_ROOM, 'QR', 'ENTERED', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
+        if [ -n "$F68_VISIT" ]; then
+            $MYSQL -e "INSERT INTO camera_recordings
+                        (visit_id, room_id, device_id, position, episode, \`trigger\`, status,
+                         requested_at, started_at, stopped_at, duration_s)
+                       VALUES ($F68_VISIT, $F68_ROOM, $F68_DEVICE, 'EXTERIOR', 'ENTRY', 'QR', 'SAVED',
+                               UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 3)" 2>/dev/null
+            F68_JSON=$(curl -s --max-time 5 "$API_BASE/almacen-api/visits/$F68_VISIT")
+            if echo "$F68_JSON" | grep -q '"requested_at"'; then
+                pass "F68: visita incluye requested_at"
+            else
+                fail "F68: requested_at" "ausente: $(echo "$F68_JSON" | head -c 240)"
+            fi
+            if echo "$F68_JSON" | grep -q '"video_url"'; then
+                pass "F68: visita incluye video_url"
+            else
+                fail "F68: video_url" "ausente"
+            fi
+            # limpieza del estado sintético
+            $MYSQL -e "DELETE FROM camera_recordings WHERE visit_id=$F68_VISIT; DELETE FROM warehouse_visits WHERE id=$F68_VISIT;" 2>/dev/null
+            pass "F68: estado sintético limpiado"
+        else
+            skip "F68 HTTP" "no se pudo crear la visita sintética"
+        fi
+    else
+        skip "F68 HTTP" "sin sala ALMACEN_BEBIDAS o cámara"
+    fi
+else
+    skip "BLOCK 46 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

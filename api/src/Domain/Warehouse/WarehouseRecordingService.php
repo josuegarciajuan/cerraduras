@@ -244,8 +244,9 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         }
 
         $ins = $this->pdo->prepare(
+            // `trigger` es palabra reservada en MariaDB → entrecomillar.
             'INSERT INTO camera_recordings
-                (visit_id, room_id, device_id, position, episode, trigger, status, requested_at)
+                (visit_id, room_id, device_id, position, episode, `trigger`, status, requested_at)
              VALUES (:vid, :r, :dev, :pos, :ep, :tr, :st, :req)'
         );
         foreach ($deviceIds as $deviceId) {
