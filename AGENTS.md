@@ -136,6 +136,23 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F65 Panel `/almacen` + `/almacen-api` + SSE** | **BLOCK 44** | **Completado** |
 | **F66 Pruebas y trazabilidad** | **BLOCK 44** | **Completado** |
 | **F67 Croquis en vivo del almacén** | **BLOCK 45** | **Completado** |
+| **F68 Reproducción de visitas** | **BLOCK 46** | **Completado** |
+
+### F68 — Reproducción de visitas en `/almacen` (RF-78)
+
+- **Qué**: cada visita ofrece **"▶ Reproducir"**. El modo reproducción usa la sección
+  **"Directo"** sin secciones nuevas: el croquis anima al monigote (acercamiento, **escaneo QR**,
+  cruce, dentro, salida) y las cámaras reproducen los clips **sincronizados**. Entre croquis y
+  cámaras va una **banda de tiempo** con reloj real, inicio/salida, contador de tiempo dentro y
+  barra con marcadores.
+- **Reloj maestro**: clip **EXTERIOR** (cubre la visita); si falta, el más largo; sin vídeo, reloj
+  interno. Controles play/pausa, búsqueda y velocidades **1×/2×/4×/8×**; botón **"Volver en vivo"**.
+- **Datos**: `GET /almacen-api/visits/{id}` añade **aditivo** `requested_at` a cada `recording`
+  (origen de sincronización). **Sin rutas nuevas ni cuota Tuya.**
+- **Lógica pura**: `api/public/assets/visit-playback.js` (`buildVisitTimeline`, `frameAt`); UI en
+  `almacen.html` (banda `#play-band`, lector QR `#croquis-qr`) y `assets/almacen.js`
+  (`playVisit`, `applyCroquisView`, `renderCamerasReplay`).
+- **Tests**: `tests/Unit/visit-playback.test.js` (Node) + **BLOCK 46** del runner.
 
 ### F67 — Croquis en vivo del almacén (RF-77)
 
