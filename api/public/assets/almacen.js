@@ -83,6 +83,85 @@
     }).join('');
   }
 
+  // ---- croquis (F67/RF-77) ------------------------------------------------
+  function setChip(id, text, mod) {
+    var el = $(id);
+    if (!el) { return; }
+    el.textContent = text;
+    el.className = 'chip' + (mod ? ' ' + mod : '');
+  }
+  function fmtClock(ts) {
+    if (!ts) { return '—'; }
+    var d = new Date(String(ts).replace(' ', 'T') + (String(ts).indexOf('Z') < 0 ? 'Z' : ''));
+    return isNaN(d) ? String(ts) : d.toLocaleTimeString();
+  }
+  function fmtDur(s) {
+    if (s == null) { return '—'; }
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    var mm = (m < 10 ? '0' : '') + m, ss = (x < 10 ? '0' : '') + x;
+    return (h > 0 ? h + ':' + mm : mm) + ':' + ss;
+  }
+  function elapsedSeconds(v) {
+    if (!v) { return null; }
+    if (v.entered_at) {
+      var raw = String(v.entered_at);
+      var iso = raw.replace(' ', 'T') + (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? '' : 'Z');
+      var t = Date.parse(iso);
+      if (!isNaN(t)) { return Math.max(0, Math.floor((Date.now() - t) / 1000)); }
+    }
+    return (typeof v.seconds_inside === 'number') ? v.seconds_inside : null;
+  }
+
+  function renderCroquis() {
+    var svg = $('croquis-svg');
+    if (!svg || !state) { return; }
+    var wh = state.warehouse || {};
+    var C = window.CroquisLogic;
+    if (!C || typeof C.deriveCroquis !== 'function') { return; }
+    var d = C.deriveCroquis({ occupied: !!wh.occupied, live: state.live || {} }, Date.now());
+
+    svg.classList.toggle('is-open', d.classes.open);
+    svg.classList.toggle('is-occupied', d.classes.occupied);
+    svg.classList.toggle('is-outside', d.classes.outside);
+    svg.classList.toggle('is-unknown', d.classes.unknown);
+    svg.classList.toggle('is-light-on', d.classes.lightOn);
+
+    setChip('croquis-door-chip', d.chips.door.text, d.chips.door.mod);
+    setChip('croquis-presence-chip', d.chips.presence.text, d.chips.presence.mod);
+    setChip('croquis-light-chip', d.chips.light.text, d.chips.light.mod);
+
+    var room = $('croquis-room');
+    if (room) { room.textContent = state.room ? state.room.code : '—'; }
+    var desc = $('croquis-desc');
+    if (desc) { desc.textContent = d.desc; }
+
+    (state.cameras || []).forEach(function (c) {
+      var g = svg.querySelector('.croquis-cam[data-position="' + c.position + '"]');
+      if (!g) { return; }
+      g.style.display = '';
+      g.classList.toggle('is-recording', !!c.recording);
+      g.classList.toggle('is-off', c.enabled === false);
+    });
+
+    renderCroquisMeta();
+  }
+
+  function renderCroquisMeta() {
+    var el = $('croquis-meta');
+    if (!el || !state) { return; }
+    var wh = state.warehouse || {};
+    var live = state.live || {};
+    var v = wh.current_visit;
+    if (wh.occupied && v) {
+      var who = v.worker ? v.worker.name : 'anónimo';
+      el.textContent = 'Dentro: ' + who + ' · ' + fmtDur(elapsedSeconds(v)) + ' dentro';
+    } else if (live.last_absent_since || live.last_close_at) {
+      el.textContent = 'Última salida: ' + fmtClock(live.last_absent_since || live.last_close_at);
+    } else {
+      el.textContent = 'Sin actividad reciente';
+    }
+  }
+
   function outcomeTag(o) {
     var cls = o === 'ENTERED' ? 'ok' : (o === 'NO_SHOW' ? 'noshow' : 'discard');
     return '<span class="tag ' + cls + '">' + esc(o) + '</span>';
@@ -213,6 +292,7 @@
     var first = state === null;
     state = s;
     renderHeader();
+    renderCroquis();
     renderCameras();
     if (state && state.room) {
       loadAccess(false);
@@ -259,4 +339,9 @@
   pollState();
   connectSSE();
   setInterval(function () { if (state && state.room) { loadVisits(); } }, 15000);
+  // F67/RF-77: el segundero de "tiempo dentro" avanza sin recargar; solo
+  // reescribe el texto de #croquis-meta (fuera del aria-live).
+  setInterval(function () {
+    if (state && state.warehouse && state.warehouse.occupied) { renderCroquisMeta(); }
+  }, 1000);
 })();

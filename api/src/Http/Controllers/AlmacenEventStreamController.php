@@ -61,7 +61,14 @@ final class AlmacenEventStreamController
 
             try {
                 $snapshot = $this->state->stateArray($roomId);
-                $fp = md5(json_encode([$snapshot['warehouse'], $snapshot['cameras'], $snapshot['recordings_active']]));
+                // F67/RF-77.4: `live` (puerta/presencia/luz) entra en el fingerprint
+                // para empujar los cambios del croquis sin recargar la página.
+                $fp = md5(json_encode([
+                    $snapshot['warehouse'],
+                    $snapshot['cameras'],
+                    $snapshot['recordings_active'],
+                    $snapshot['live'] ?? null,
+                ]));
                 if ($fp !== $lastFp) {
                     $lastFp = $fp;
                     echo "event: state\n";

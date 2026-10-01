@@ -57,6 +57,7 @@ final class WarehouseStateController
             return [
                 'room' => null,
                 'warehouse' => null,
+                'live' => null,
                 'cameras' => [],
                 'recordings_active' => [],
                 'retention' => $this->retentionInfo(),
@@ -131,6 +132,40 @@ final class WarehouseStateController
             ];
         }
 
+        // F67/RF-77.3: bloque `live` aditivo para el croquis del panel. Lee el
+        // estado IoT de la sala (puerta/presencia) y el estado real del SWITCH
+        // por push (F50). Sin llamadas a Tuya: solo BD.
+        $live = [
+            'door_state' => 'UNKNOWN',
+            'presence_state' => 'UNKNOWN',
+            'switch_state' => 'UNKNOWN',
+            'last_open_at' => null,
+            'last_close_at' => null,
+            'last_absent_since' => null,
+        ];
+        $ls = $this->pdo->prepare(
+            'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since
+             FROM iot_sessions WHERE room_id = :r LIMIT 1'
+        );
+        $ls->execute([':r' => $roomId]);
+        $lsRow = $ls->fetch(PDO::FETCH_ASSOC);
+        if ($lsRow !== false) {
+            $live['door_state'] = (string) ($lsRow['door_state'] ?? 'UNKNOWN');
+            $live['presence_state'] = (string) ($lsRow['presence_state'] ?? 'UNKNOWN');
+            $live['last_open_at'] = $lsRow['last_open_at'] ?? null;
+            $live['last_close_at'] = $lsRow['last_close_at'] ?? null;
+            $live['last_absent_since'] = $lsRow['last_absent_since'] ?? null;
+        }
+        $swStmt = $this->pdo->prepare(
+            "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+             WHERE r.id = :rid AND d.kind='SWITCH' LIMIT 1"
+        );
+        $swStmt->execute([':rid' => $roomId]);
+        $swMeta = json_decode((string) ($swStmt->fetchColumn() ?: ''), true) ?: [];
+        if (isset($swMeta['switch_state']) && is_string($swMeta['switch_state']) && $swMeta['switch_state'] !== '') {
+            $live['switch_state'] = $swMeta['switch_state'];
+        }
+
         return [
             'room' => ['id' => $roomId, 'code' => (string) $room['code'], 'room_type_id' => (int) $room['room_type_id']],
             'warehouse' => [
@@ -138,6 +173,7 @@ final class WarehouseStateController
                 'occupied' => $visit !== null && ($visit['outcome'] ?? '') === 'ENTERED',
                 'current_visit' => $visit,
             ],
+            'live' => $live,
             'cameras' => $cams,
             'recordings_active' => $activeRecs,
             'retention' => $this->retentionInfo(),

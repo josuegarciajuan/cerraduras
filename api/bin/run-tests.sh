@@ -4206,6 +4206,68 @@ else
 fi
 
 # =============================================================================
+# BLOCK 45 — F67: Croquis en vivo del almacén (RF-77)
+# Trazabilidad: RF-77.1..RF-77.7; TSK-F67-02..TSK-F67-06
+# =============================================================================
+block "BLOCK 45 — F67: Croquis en vivo del almacén"
+
+# 45.0 Lógica pura (Node; no requiere servidor)
+F67_JS="tests/Unit/croquis-logic.test.js"
+if [ -f "$F67_JS" ]; then
+    F67_OUT=$(node "$F67_JS" 2>&1)
+    F67_RC=$?
+    F67_SUM=$(echo "$F67_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F67_SUM" ] && F67_SUM="exit=$F67_RC"
+    if [ "$F67_RC" -eq 0 ]; then
+        pass "F67: croquis-logic ($F67_SUM)"
+    else
+        fail "F67: croquis-logic" \
+            "$F67_SUM — $(echo "$F67_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F67: croquis-logic" "tests/Unit/croquis-logic.test.js no encontrado"
+fi
+
+# 45.1 Assets y markup del croquis (estático)
+for F67_ASSET in public/assets/croquis-logic.js public/assets/almacen.js public/almacen.html; do
+    if [ -f "$F67_ASSET" ]; then
+        pass "F67: existe $F67_ASSET"
+    else
+        fail "F67: $F67_ASSET" "no encontrado"
+    fi
+done
+if grep -q 'id="croquis-svg"' public/almacen.html 2>/dev/null; then
+    pass "F67: almacen.html incluye #croquis-svg"
+else
+    fail "F67: almacen.html #croquis-svg" "ausente"
+fi
+if grep -q 'croquis-logic.js' public/almacen.html 2>/dev/null; then
+    pass "F67: almacen.html carga croquis-logic.js"
+else
+    fail "F67: almacen.html script" "no carga croquis-logic.js"
+fi
+
+# 45.2 HTTP: bloque live en /almacen-api/state (RF-77.3)
+if [ "$SERVER_UP" = true ]; then
+    http_test GET /almacen-api/state 200 "F67: GET /almacen-api/state → 200"
+    ALM_LIVE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state")
+    if echo "$ALM_LIVE" | grep -q '"live"'; then
+        pass "F67: state incluye bloque live"
+    else
+        fail "F67: state.live" "ausente: $(echo "$ALM_LIVE" | head -c 200)"
+    fi
+    for F67_FIELD in door_state presence_state switch_state; do
+        if echo "$ALM_LIVE" | grep -q "\"$F67_FIELD\""; then
+            pass "F67: state.live.$F67_FIELD presente"
+        else
+            fail "F67: state.live.$F67_FIELD" "ausente"
+        fi
+    done
+else
+    skip "BLOCK 45 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

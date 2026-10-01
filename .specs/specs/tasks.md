@@ -3108,3 +3108,66 @@ F60 (tipo+cámara+pack)
 - F65 consume todo lo anterior; F66 cierra con la regresión completa.
 - **Aceptación manual** (no en runner): directo go2rtc con cámara real, grabación real por los
   casos A–D, retención de 1 día y reproducción con seek.
+
+---
+
+# Fase 67 — Croquis en vivo del almacén (RF-77)
+
+**Dependencias**: F65 (panel `/almacen`, `/almacen-api/state` y SSE) y F56 (`Choreography.resolveDoorOpen`).
+
+## TSK-F67-01: Specs Fase 67
+- **Cambio**: `requirements.md` (RF-77), `design.md` (§31), `contracts.md` (Fase 67),
+  `tasks.md` (esta fase).
+- **RF**: RF-77.
+- **Test propio**: revisión de trazabilidad (sin ejecución).
+
+## TSK-F67-02: Bloque `live` en el backend
+- **Cambio**: `api/src/Http/Controllers/WarehouseStateController.php` — añadir `live` (lectura de
+  `iot_sessions` + `devices.meta_json.switch_state`); `api/src/Http/Controllers/AlmacenEventStreamController.php`
+  — incluir `live` en el fingerprint.
+- **RF**: RF-77.3, RF-77.4.
+- **Test propio**: BLOCK 45 (`/almacen-api/state` contiene `"live"`).
+
+## TSK-F67-03: Lógica pura del croquis
+- **Cambio**: nuevo `api/public/assets/croquis-logic.js` (UMD, `deriveCroquis`) reutilizando
+  `Choreography.resolveDoorOpen`.
+- **RF**: RF-77.1, RF-77.2, RF-77.5.
+- **Test propio**: `api/tests/Unit/croquis-logic.test.js` (Node) → `0 failed`.
+
+## TSK-F67-04: Markup + CSS del croquis
+- **Cambio**: `api/public/almacen.html` — `.directo-wrap`, `.cam.croquis-card`, SVG, chips,
+  `#croquis-meta`, CSS nuevo y `<script src="/assets/croquis-logic.js">`.
+- **RF**: RF-77.1, RF-77.2, RF-77.6.
+- **Test propio**: BLOCK 45 (HTML contiene `croquis-svg`).
+
+## TSK-F67-05: Render en vivo
+- **Cambio**: `api/public/assets/almacen.js` — `renderCroquis()`, `renderCroquisMeta()`, helpers,
+  enganche en `applyState()` y segundero de `#croquis-meta`.
+- **RF**: RF-77.1, RF-77.2, RF-77.4.
+- **Test propio**: `croquis-logic.test.js` + verificación manual del panel.
+
+## TSK-F67-06: Runner, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (BLOCK 45), `AGENTS.md` (fila F67);
+  ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-77.7.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F67
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F67-01 | Specs | RF-77 | `.specs/specs/*` | revisión |
+| F67-02 | Bloque `live` backend | RF-77.3/4 | `WarehouseStateController.php`, `AlmacenEventStreamController.php` | BLOCK 45 |
+| F67-03 | Lógica pura | RF-77.1/2/5 | `assets/croquis-logic.js` | unit Node |
+| F67-04 | Markup + CSS | RF-77.1/2/6 | `almacen.html` | BLOCK 45 |
+| F67-05 | Render en vivo | RF-77.1/2/4 | `assets/almacen.js` | unit + manual |
+| F67-06 | Runner + docs + regresión | RF-77.7 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución y dependencias (F67)
+
+```
+F67-01 (specs)
+  └─> F67-02 (backend live)
+  └─> F67-03 (lógica pura)
+        └─> F67-04 (markup/CSS) ─> F67-05 (render) ─> F67-06 (runner + regresión)
+```

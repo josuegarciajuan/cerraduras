@@ -135,6 +135,22 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F64 Recorder (ffmpeg) + retención** | **BLOCK 44** | **Completado** |
 | **F65 Panel `/almacen` + `/almacen-api` + SSE** | **BLOCK 44** | **Completado** |
 | **F66 Pruebas y trazabilidad** | **BLOCK 44** | **Completado** |
+| **F67 Croquis en vivo del almacén** | **BLOCK 45** | **Completado** |
+
+### F67 — Croquis en vivo del almacén (RF-77)
+
+- **Qué**: croquis compacto en `/almacen` integrado en la sección **"Directo"** (sin secciones
+  nuevas), junto a las cámaras. Muestra **puerta abierta/cerrada, persona dentro/fuera, luz
+  (switch), cámaras** y **última entrada/salida**, con etiquetas de texto.
+- **Datos**: `GET /almacen-api/state` expone el bloque **aditivo** `live`
+  (`door_state`, `presence_state`, `switch_state`, `last_open_at`, `last_close_at`,
+  `last_absent_since`) leído de `iot_sessions` + `devices.meta_json.switch_state`. El SSE incluye
+  `live` en su fingerprint. **Sin nuevas rutas ni cuota Tuya.**
+- **Puerta**: regla **F56** (`Choreography.resolveDoorOpen`) con pulso anti-colapso de 1,2 s desde
+  `last_open_at`; el comando del relé no la abre.
+- **Lógica pura**: `api/public/assets/croquis-logic.js` (`deriveCroquis`), UI en
+  `api/public/almacen.html` + `assets/almacen.js` (`renderCroquis`).
+- **Tests**: `tests/Unit/croquis-logic.test.js` (Node) + **BLOCK 45** del runner.
 
 ### F60–F66 — Almacén de bebidas (RF-67..RF-76)
 
