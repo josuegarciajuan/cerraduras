@@ -1268,3 +1268,37 @@ Requisitos **deseables/futuros** para el mismo panel (lista ampliable):
 - **RF-76.2**: Tests unitarios puros (decisión de grabación, política de acceso, validación de
   subtipo) + **BLOCK 44** del runner (HTTP/BD).
 - **RF-76.3**: La regresión completa (`bash bin/run-tests.sh`) termina con **0 failures**.
+
+---
+
+# Fase 67: Croquis en vivo del almacén en `/almacen` (RF-77)
+
+**Motivo**: el panel `/almacen` muestra el directo de las cámaras, las visitas y los permisos,
+pero no hay una representación visual inmediata del estado físico de la sala. Se quiere un
+**croquis compacto y simple** (no el plano detallado del `/dashboard`) que permita ver de un
+vistazo si la puerta está abierta, si hay alguien dentro, la luz y las cámaras. Debe integrarse
+en el panel existente **sin añadir secciones nuevas**.
+
+## RF-77: Croquis en vivo del almacén
+- **RF-77.1**: El panel `/almacen` muestra un **croquis compacto en vivo**, integrado dentro de la
+  sección existente **"Directo"** (junto a las cámaras), **sin crear secciones nuevas**. El croquis
+  representa: puerta abierta/cerrada, persona dentro/fuera, luz (switch) y cámaras
+  (EXTERIOR/INTERIOR, con indicador de grabación).
+- **RF-77.2**: El croquis incluye **etiquetas de texto** (p. ej. `PUERTA ABIERTA`, `PRESENTE`,
+  `VACÍO`, `LUZ ON/OFF`) y la **última entrada/salida** (`last_open_at`/`last_close_at`), de modo
+  que el estado no dependa solo del color.
+- **RF-77.3**: `GET /almacen-api/state` expone un bloque **aditivo** `live` con
+  `door_state`, `presence_state`, `switch_state`, `last_open_at`, `last_close_at` y
+  `last_absent_since` de la sala `ALMACEN_BEBIDAS`, leídos de `iot_sessions` y del
+  `devices.meta_json.switch_state` del `SWITCH`. **No se altera ningún campo existente.**
+- **RF-77.4**: El SSE `/almacen-api/event-stream` incluye el bloque `live` en su fingerprint, de
+  modo que un cambio de puerta/presencia/luz se empuja sin recargar la página.
+- **RF-77.5**: La puerta del croquis sigue la **regla F56** (`Choreography.resolveDoorOpen`): se
+  abre **solo** con el sensor físico `PROXIMITY` (más pulso anti-colapso derivado de
+  `last_open_at`); el comando del relé **no** la abre.
+- **RF-77.6**: El croquis es **responsivo** (columna en móvil, lado a lado en escritorio) y
+  **accesible**: texto además de color, `role="img"` con `<title>/<desc>`, y respeta
+  `prefers-reduced-motion`.
+- **RF-77.7**: **No regresión**: no se alteran rutas, códigos ni campos existentes de
+  `/almacen-api/*` ni `/api/v1/*`; la regresión completa (`bash bin/run-tests.sh`) termina con
+  **0 failures** y un **BLOCK 45** nuevo.

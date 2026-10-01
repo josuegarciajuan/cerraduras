@@ -2118,3 +2118,48 @@ Las transiciones de §27.2 del diseño no son un contrato HTTP externo; se expon
 - El motor de grabación no actúa en habitaciones que no sean `ALMACEN_BEBIDAS`: huésped, QR de
   huésped, `stays`, deudas, anomalías y coreografía del panel no se ven afectados.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 44** nuevo.
+
+---
+
+# Fase 67: Croquis en vivo del almacén (RF-77)
+
+## 1. `GET /almacen-api/state?room_id=`
+
+**Aditivo** sobre la forma de Fase 65. Se añade el bloque `live`; ningún campo existente cambia.
+
+```json
+{
+  "room": { "id": 12, "code": "PROTO2", "room_type_id": 7 },
+  "warehouse": { "state": "IDLE", "occupied": false, "current_visit": null },
+  "live": {
+    "door_state": "OPEN",
+    "presence_state": "ABSENT",
+    "switch_state": "UNKNOWN",
+    "last_open_at": "2026-10-01 05:17:34.773",
+    "last_close_at": "2026-09-30 17:00:20.900",
+    "last_absent_since": "2026-09-30 15:01:32.968"
+  },
+  "cameras": [ { "id": 324, "position": "EXTERIOR", "recording": false,
+                 "enabled": true, "live_url": "…" } ],
+  "recordings_active": [],
+  "retention": { "days": 1, "auto": true, "disk_used_pct": 41 },
+  "server_ts": "2026-10-01T08:00:00Z"
+}
+```
+
+- `door_state ∈ {OPEN, CLOSED, UNKNOWN}`; `presence_state ∈ {PRESENT, ABSENT, UNKNOWN}`;
+  `switch_state ∈ {ON, OFF, UNKNOWN}`.
+- Sin fila en `iot_sessions` o sin `SWITCH`: valores `UNKNOWN` y timestamps `null`.
+- Si no hay sala `ALMACEN_BEBIDAS`, se mantiene la forma actual (`room: null`,
+  `warehouse: null`) **más** `"live": null`.
+
+## 2. `GET /almacen-api/event-stream?room_id=`
+
+- Misma forma de eventos (`connected`, `state`, `ping`, `close`); el evento `state` incluye el
+  bloque `live`. El **fingerprint** que decide emitir `state` pasa a ser
+  `md5(json_encode([warehouse, cameras, recordings_active, live]))`.
+
+## 3. No regresión
+
+- Rutas, códigos y campos existentes intactos. El bloque `live` es **aditivo**.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 45** nuevo.

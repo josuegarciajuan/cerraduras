@@ -3601,3 +3601,80 @@ ffmpeg -nostdin -rtsp_transport tcp -i "<rtsp_url>" -c:v copy -an \
 | RF-73 | §28 | Fase 64 | F64-* |
 | RF-74/75 | §29 | Fase 65 | F65-* |
 | RF-76 | §30 | Fase 66 | F66-* |
+
+---
+
+# 31. F67 — Croquis en vivo del almacén (RF-77)
+
+## 31.1 Objetivo y alcance
+
+Añadir un croquis compacto del almacén al panel `/almacen` que muestre de un vistazo **puerta,
+persona, luz y cámaras**, con etiquetas de texto y última actividad. Es una **capa de
+presentación**: no cambia la lógica de dominio, ni la de grabación, ni la coreografía del
+dashboard.
+
+## 31.2 Ubicación e integración (sin secciones nuevas)
+
+- La sección existente **"Directo"** se envuelve en `<div class="directo-wrap">`:
+  - primera tarjeta: `.cam.croquis-card` con el croquis;
+  - después, `#cams` con las tarjetas de vídeo existentes.
+- En escritorio (`min-width:900px`) la rejilla es `minmax(280px,330px) 1fr`; en móvil, columna.
+- El croquis **no** vive dentro de `#cams` para no ser destruido por `renderCameras()`
+  (que reescribe `innerHTML`).
+
+## 31.3 SVG del croquis
+
+- Un único `<svg id="croquis-svg" viewBox="0 0 320 190" role="img">` declarado una sola vez.
+  El JS **no reconstruye** el SVG: conmuta clases y textos (animación por CSS).
+- Elementos:
+  - suelo de la sala + paredes con hueco de puerta;
+  - `#croquis-door` (grupo con `transform-origin` en la bisagra) + `#croquis-door-line`;
+  - `.croquis-person` (monigote) posicionado por clase (`dentro`/`pasillo`);
+  - `.croquis-halo` (pulso de presencia);
+  - `#croquis-bulb` + `#croquis-bulb-glow` (luz);
+  - `.croquis-cam[data-position="EXTERIOR|INTERIOR"]` + `.cam-rec`.
+- Chips de texto en HTML (fuera del SVG): `#croquis-door-chip`, `#croquis-presence-chip`,
+  `#croquis-light-chip`; y `#croquis-meta` para la última entrada/salida.
+- Clases raíz que aplica el JS: `is-open`, `is-occupied`, `is-outside`, `is-unknown`,
+  `is-light-on`; por cámara: `is-recording`, `is-off`.
+
+## 31.4 Lógica pura (`api/public/assets/croquis-logic.js`)
+
+- UMD (igual patrón que `choreography.js`): `module.exports` en Node, global `CroquisLogic` en
+  el navegador.
+- `deriveCroquis(snapshot, now) → { doorOpen, personInside, door, presence, light, classes, desc }`.
+- La apertura de puerta reutiliza **`Choreography.resolveDoorOpen`** (F56) con
+  `pulseUntil = parseTime(last_open_at) + DOOR_PULSE_MS (1200)`; si `Choreography` no está
+  disponible, aplica la regla inline equivalente (`door_state === 'OPEN' || now < pulseUntil`).
+- Persona dentro = `occupied` (visita) **o** `presence === 'PRESENT'`.
+- Se carga con `<script src="/assets/croquis-logic.js">` después de `choreography.js`.
+
+## 31.5 Backend
+
+- `WarehouseStateController::stateArray()` añade `live` (aditivo):
+  - `iot_sessions` de la sala: `door_state`, `presence_state`, `last_open_at`, `last_close_at`,
+    `last_absent_since` (default `UNKNOWN`/`null`);
+  - `devices` de la sala con `kind='SWITCH'`: `meta_json.switch_state` (default `UNKNOWN`).
+- `AlmacenEventStreamController::stream()` incluye `$snapshot['live']` en el
+  `md5(json_encode([...]))` que calcula el fingerprint (línea del fingerprint actual).
+- Sin nuevas rutas; sin llamadas a Tuya (solo lecturas de BD).
+
+## 31.6 Render en `almacen.js`
+
+- `renderCroquis()` (usa `CroquisLogic.deriveCroquis`) y `renderCroquisMeta()`; helpers
+  `setChip()`, `fmtClock()`, `fmtDur()`.
+- Enganche en `applyState()` **antes** de `renderCameras()`.
+- `setInterval(1000)` que solo reescribe `#croquis-meta` (tiempo dentro) mientras haya visita.
+
+## 31.7 Responsive y accesibilidad
+
+- SVG `width:100%;height:auto`; chips con `flex-wrap`; sin scroll horizontal a 360px.
+- Doble codificación (color + texto); `<title>/<desc>` actualizados por el JS; `aria-live="polite"`
+  solo en el bloque de chips; `#croquis-meta` fuera del `aria-live`.
+- `@media (prefers-reduced-motion: reduce)` desactiva transiciones/pulsos.
+
+## 31.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-77 | §31 | Fase 67 | F67-01…F67-06 |
