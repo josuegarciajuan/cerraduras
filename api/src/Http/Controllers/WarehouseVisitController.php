@@ -138,7 +138,7 @@ final class WarehouseVisitController
         $ids = array_keys($visitsById);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $stmt = $this->pdo->prepare(
-            "SELECT id, visit_id, position, episode, trigger, status,
+            "SELECT id, visit_id, position, episode, `trigger`, status,
                     requested_at, started_at, stopped_at, duration_s, size_bytes
              FROM camera_recordings
              WHERE visit_id IN ($placeholders)

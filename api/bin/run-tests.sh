@@ -4310,6 +4310,17 @@ if grep -q 'playVisit' public/assets/almacen.js 2>/dev/null; then
 else
     fail "F68: almacen.js playVisit" "ausente"
 fi
+# Fix F63: `trigger` es palabra reservada en MariaDB → debe ir entrecomillada.
+if grep -q '`trigger`' src/Domain/Warehouse/WarehouseRecordingService.php 2>/dev/null; then
+    pass "F68: INSERT de grabaciones entrecomilla trigger"
+else
+    fail "F68: trigger reservado (INSERT)" "sin entrecomillar"
+fi
+if grep -q '`trigger`' src/Http/Controllers/WarehouseVisitController.php 2>/dev/null; then
+    pass "F68: SELECT de grabaciones entrecomilla trigger"
+else
+    fail "F68: trigger reservado (SELECT)" "sin entrecomillar"
+fi
 
 # 46.2 HTTP: requested_at en GET /almacen-api/visits/{id} (RF-78.7)
 if [ "$SERVER_UP" = true ]; then
@@ -4319,7 +4330,7 @@ if [ "$SERVER_UP" = true ]; then
         F68_VISIT=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, qr_at, entered_at, exited_at) VALUES ($F68_ROOM, 'QR', 'ENTERED', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
         if [ -n "$F68_VISIT" ]; then
             $MYSQL -e "INSERT INTO camera_recordings
-                        (visit_id, room_id, device_id, position, episode, trigger, status,
+                        (visit_id, room_id, device_id, position, episode, \`trigger\`, status,
                          requested_at, started_at, stopped_at, duration_s)
                        VALUES ($F68_VISIT, $F68_ROOM, $F68_DEVICE, 'EXTERIOR', 'ENTRY', 'QR', 'SAVED',
                                UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 3)" 2>/dev/null

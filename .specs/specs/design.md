@@ -3746,6 +3746,9 @@ frameAt(timeline, wallMs) -> {
 
 - `WarehouseVisitController`: añadir `requested_at` (y `requested_at` en el `SELECT`) a cada
   `recording` del JSON. **Aditivo**.
+- **Fix F63 (bug latente)**: `trigger` es **palabra reservada en MariaDB 10.9**; la `SELECT` del
+  panel y el `INSERT` de `WarehouseRecordingService` deben entrecomillarla (`` `trigger` ``). Sin
+  esto, `camera_recordings` nunca se poblaba y no había vídeo que reproducir.
 
 ## 32.6 Trazabilidad
 

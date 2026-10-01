@@ -153,6 +153,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `almacen.html` (banda `#play-band`, lector QR `#croquis-qr`) y `assets/almacen.js`
   (`playVisit`, `applyCroquisView`, `renderCamerasReplay`).
 - **Tests**: `tests/Unit/visit-playback.test.js` (Node) + **BLOCK 46** del runner.
+- **Fix F63 (necesario para el vídeo)**: `trigger` es **palabra reservada en MariaDB**; se
+  entrecomilla en el `INSERT` de `WarehouseRecordingService` y en la `SELECT` de
+  `WarehouseVisitController`. Sin esto `camera_recordings` nunca se poblaba (no había clips).
 
 ### F67 — Croquis en vivo del almacén (RF-77)
 
