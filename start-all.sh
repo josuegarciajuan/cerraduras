@@ -138,6 +138,16 @@ else
   echo "       (unit cerraduras-warehouse-recorder ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
+echo "[5c/8] Cámaras live MJPEG (systemd — directo del almacén, F70)..."
+# F70/RF-80: un servidor Node sirve el RTSP como MJPEG (loopback:8086) y Apache
+# lo publica en /almacen-live. Sustituye al iframe de go2rtc (puerto 1984 no
+# abierto en ufw → pantalla negra).
+if systemctl restart cerraduras-cameras-live 2>/dev/null; then
+  echo "       cameras-live: systemd (pid $(systemctl show -p MainPID --value cerraduras-cameras-live 2>/dev/null))"
+else
+  echo "       (unit cerraduras-cameras-live ausente — NO se lanza wrapper: evita duplicado)"
+fi
+
 sleep 2
 
 echo "Health checks:"
