@@ -3171,3 +3171,64 @@ F67-01 (specs)
   └─> F67-03 (lógica pura)
         └─> F67-04 (markup/CSS) ─> F67-05 (render) ─> F67-06 (runner + regresión)
 ```
+
+---
+
+# Fase 68 — Reproducción de visitas (RF-78)
+
+**Dependencias**: F63 (visitas + grabaciones), F64 (vídeo/retención), F65 (panel/`visits/{id}`) y
+F67 (croquis).
+
+## TSK-F68-01: Specs Fase 68
+- **Cambio**: `requirements.md` (RF-78), `design.md` (§32), `contracts.md` (Fase 68),
+  `tasks.md` (esta fase).
+- **RF**: RF-78.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F68-02: `requested_at` en el contrato de visitas
+- **Cambio**: `api/src/Http/Controllers/WarehouseVisitController.php` — seleccionar y exponer
+  `requested_at` en `recordings[]` (aditivo).
+- **RF**: RF-78.7.
+- **Test propio**: BLOCK 46 (`GET /almacen-api/visits/{id}` incluye `requested_at`).
+
+## TSK-F68-03: Lógica pura de la línea de tiempo
+- **Cambio**: nuevo `api/public/assets/visit-playback.js` (`buildVisitTimeline`, `frameAt`).
+- **RF**: RF-78.2, RF-78.3, RF-78.6, RF-78.8.
+- **Test propio**: `api/tests/Unit/visit-playback.test.js` (Node) → `0 failed`.
+
+## TSK-F68-04: Banda de tiempo, lector QR y CSS
+- **Cambio**: `api/public/almacen.html` — `.directo-right`, banda `#play-timeline`, marcadores,
+  lector QR en el SVG, clases de fase del monigote y CSS; carga `visit-playback.js`.
+- **RF**: RF-78.2, RF-78.3.
+- **Test propio**: BLOCK 46 (estáticos de markup).
+
+## TSK-F68-05: Controlador de reproducción y sincronía
+- **Cambio**: `api/public/assets/almacen.js` — `applyCroquisView`, `playVisit`, `togglePlay`,
+  `seek`, `setSpeed`, `exitPlayback`, `renderCamerasReplay`, botón ▶ por visita.
+- **RF**: RF-78.1, RF-78.4, RF-78.5, RF-78.6.
+- **Test propio**: `visit-playback.test.js` + verificación manual.
+
+## TSK-F68-06: Runner, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (BLOCK 46) + `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-78.9.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F68
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F68-01 | Specs | RF-78 | `.specs/specs/*` | revisión |
+| F68-02 | `requested_at` | RF-78.7 | `WarehouseVisitController.php` | BLOCK 46 |
+| F68-03 | Lógica pura | RF-78.2/3/6/8 | `assets/visit-playback.js` | unit Node |
+| F68-04 | Banda + QR + CSS | RF-78.2/3 | `almacen.html` | BLOCK 46 |
+| F68-05 | Reproducción + sync | RF-78.1/4/5/6 | `assets/almacen.js` | unit + manual |
+| F68-06 | Runner + docs + regresión | RF-78.9 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución y dependencias (F68)
+
+```
+F68-01 (specs)
+  └─> F68-02 (requested_at)
+  └─> F68-03 (lógica pura)
+        └─> F68-04 (banda/CSS) ─> F68-05 (reproducción) ─> F68-06 (runner + regresión)
+```

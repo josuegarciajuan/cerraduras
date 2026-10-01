@@ -1302,3 +1302,38 @@ en el panel existente **sin añadir secciones nuevas**.
 - **RF-77.7**: **No regresión**: no se alteran rutas, códigos ni campos existentes de
   `/almacen-api/*` ni `/api/v1/*`; la regresión completa (`bash bin/run-tests.sh`) termina con
   **0 failures** y un **BLOCK 45** nuevo.
+
+---
+
+# Fase 68: Reproducción de visitas en `/almacen` (RF-78)
+
+**Motivo**: el panel permite ver los clips de una visita, pero no **reconstruir visualmente** lo
+que ocurrió. Se quiere poder pulsar **"Reproducir visita"** y ver, sincronizado, al monigote
+del croquis escaneando el QR, cruzando la puerta, permaneciendo dentro (con el tiempo dentro
+avanzando) y saliendo, mientras el reloj de la visita avanza y las cámaras reproducen sus
+grabaciones. Debe ser lo más visual y entendible posible y **no crear secciones nuevas**.
+
+## RF-78: Reproducción de una visita
+- **RF-78.1**: Cada visita del listado ofrece una acción **"Reproducir visita"** que activa el
+  **modo reproducción** en la sección existente **"Directo"** (croquis + cámaras), sin secciones
+  nuevas.
+- **RF-78.2**: En modo reproducción, el croquis **anima al monigote** según los hitos de la
+  visita: acercamiento al lector, **escaneo del QR**, cruce de la puerta (puerta abierta),
+  **estancia dentro** (halo y luz) y salida. El croquis incorpora un **lector QR** junto a la
+  puerta.
+- **RF-78.3**: Entre el croquis y las cámaras se muestra una **banda de tiempo** con: reloj de la
+  **hora real** de la visita (`HH:MM:SS`), hora de **entrada** y **salida**, **contador de tiempo
+  dentro** y una **barra con marcadores** (QR · Entrada · Salida) navegable.
+- **RF-78.4**: Las **cámaras** (EXTERIOR/INTERIOR) reproducen en modo reproducción los clips
+  guardados de la visita, **sincronizados** con el reloj maestra. Sin grabación en un tramo se
+  muestra un aviso ("sin grabación").
+- **RF-78.5**: Controles: **play/pausa**, **búsqueda** (scrub) y **velocidades 1×/2×/4×/8×**; botón
+  **"Volver en vivo"** que restaura el panel en directo.
+- **RF-78.6**: Visitas **sin grabaciones** (p. ej. `NO_SHOW` o cámaras desactivadas) se reproducen
+  igualmente con croquis + reloj; las cámaras muestran "sin grabación".
+- **RF-78.7**: `GET /almacen-api/visits/{id}` añade **aditivamente** `requested_at` a cada
+  `recording` (origen de sincronización). No cambia ningún campo ni ruta existente.
+- **RF-78.8**: La lógica de reconstrucción es **pura y testeable** (`visit-playback.js`): construye
+  la línea de tiempo y resuelve el fotograma por instante sin DOM ni red.
+- **RF-78.9**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y un **BLOCK 46** nuevo.

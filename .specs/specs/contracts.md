@@ -2163,3 +2163,52 @@ Las transiciones de §27.2 del diseño no son un contrato HTTP externo; se expon
 
 - Rutas, códigos y campos existentes intactos. El bloque `live` es **aditivo**.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 45** nuevo.
+
+---
+
+# Fase 68: Reproducción de visitas (RF-78)
+
+## 1. `GET /almacen-api/visits/{id}`
+
+**Aditivo** sobre la forma de Fase 63/65. Cada elemento de `recordings` añade `requested_at`;
+ningún campo existente cambia.
+
+```json
+{
+  "visit": {
+    "id": 42,
+    "room_id": 12,
+    "worker": { "id": 3, "name": "Ana" },
+    "entry_trigger": "QR",
+    "outcome": "ENTERED",
+    "qr_at": "2026-10-01 09:13:48.120",
+    "entered_at": "2026-10-01 09:13:52.400",
+    "exited_at": "2026-10-01 09:18:20.900",
+    "created_at": "2026-10-01 09:13:48.120",
+    "recordings": [
+      {
+        "id": 501,
+        "position": "EXTERIOR",
+        "episode": "ENTRY",
+        "trigger": "QR",
+        "status": "SAVED",
+        "started_at": "2026-10-01 09:13:49.000",
+        "stopped_at": "2026-10-01 09:18:26.000",
+        "duration_s": 277,
+        "requested_at": "2026-10-01 09:13:48.300",
+        "video_url": "/almacen-api/recordings/501/video",
+        "poster_url": "/almacen-api/recordings/501/poster"
+      }
+    ]
+  }
+}
+```
+
+- `requested_at` (DATETIME(3)) es el instante en que el motor solicitó la grabación (más próximo
+  al evento que `started_at`); se usa como origen de sincronización.
+- Si un `recording` no tiene `requested_at`, el campo es `null` y el cliente cae a `started_at`.
+
+## 2. No regresión
+
+- Rutas, códigos y campos existentes intactos. `requested_at` es **aditivo**.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 46** nuevo.
