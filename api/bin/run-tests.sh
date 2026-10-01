@@ -4434,6 +4434,88 @@ else
 fi
 
 # =============================================================================
+# BLOCK 48 — F70: Directo de cámaras por MJPEG (RF-80)
+# Trazabilidad: RF-80.1..RF-80.7; TSK-F70-02..TSK-F70-07
+# =============================================================================
+block "BLOCK 48 — F70: Directo de cámaras por MJPEG"
+
+# 48.0 Lógica pura del parser JPEG (Node; sin servidor)
+F70_JS="tests/Unit/cameras-live.test.js"
+if [ -f "$F70_JS" ]; then
+    F70_OUT=$(node "$F70_JS" 2>&1)
+    F70_RC=$?
+    F70_SUM=$(echo "$F70_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F70_SUM" ] && F70_SUM="exit=$F70_RC"
+    if [ "$F70_RC" -eq 0 ]; then
+        pass "F70: cameras-live ($F70_SUM)"
+    else
+        fail "F70: cameras-live" \
+            "$F70_SUM — $(echo "$F70_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F70: cameras-live" "tests/Unit/cameras-live.test.js no encontrado"
+fi
+
+# 48.1 Estáticos: ficheros, systemd, arranque y panel
+for F70_ASSET in bin/cameras-live.js docs/systemd/cerraduras-cameras-live.service; do
+    if [ -f "$F70_ASSET" ]; then
+        pass "F70: existe $F70_ASSET"
+    else
+        fail "F70: $F70_ASSET" "no encontrado"
+    fi
+done
+if grep -q 'cerraduras-cameras-live' ../start-all.sh 2>/dev/null || grep -q 'cerraduras-cameras-live' start-all.sh 2>/dev/null; then
+    pass "F70: start-all referencia cameras-live"
+else
+    fail "F70: start-all cameras-live" "ausente"
+fi
+if grep -q 'cerraduras-cameras-live' ../stop-all.sh 2>/dev/null || grep -q 'cerraduras-cameras-live' stop-all.sh 2>/dev/null; then
+    pass "F70: stop-all referencia cameras-live"
+else
+    fail "F70: stop-all cameras-live" "ausente"
+fi
+if grep -q 'CAMERAS_LIVE_BASE_URL' .env.example 2>/dev/null; then
+    pass "F70: .env.example documenta CAMERAS_LIVE_BASE_URL"
+else
+    fail "F70: .env.example" "sin CAMERAS_LIVE_BASE_URL"
+fi
+if grep -q 'mjpeg' public/assets/almacen.js 2>/dev/null && grep -q 'is-offline' public/assets/almacen.js 2>/dev/null; then
+    pass "F70: panel usa <img> MJPEG con 'sin señal'"
+else
+    fail "F70: panel MJPEG" "sin <img>/offline"
+fi
+
+# 48.2 HTTP: mjpeg_url en state + servidor interno MJPEG
+if [ "$SERVER_UP" = true ]; then
+    F70_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    F70_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F70_ROOM")
+    if echo "$F70_STATE" | grep -q '"mjpeg_url"'; then
+        pass "F70: state.cameras incluye mjpeg_url"
+    else
+        fail "F70: state.cameras[].mjpeg_url" "ausente"
+    fi
+    F70_CAM=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F70_ROOM AND d.kind='CAMERA' AND COALESCE(JSON_EXTRACT(d.meta_json,'\$.enabled'),'true')='true' ORDER BY d.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F70_CAM" ]; then
+        F70_STATUS=$(curl -s --max-time 4 "http://127.0.0.1:8086/status" 2>/dev/null)
+        if echo "$F70_STATUS" | grep -q '"ok"'; then
+            pass "F70: servidor MJPEG /status operativo"
+            F70_LIVE_HDR=$(curl -s -D - -o /dev/null --max-time 5 "http://127.0.0.1:8086/live?id=$F70_CAM" 2>/dev/null | tr -d '\r')
+            if echo "$F70_LIVE_HDR" | grep -qi 'multipart/x-mixed-replace'; then
+                pass "F70: /live?id=$F70_CAM sirve MJPEG"
+            else
+                fail "F70: /live multipart" "$(echo "$F70_LIVE_HDR" | head -1)"
+            fi
+        else
+            skip "F70 MJPEG interno" "servicio cameras-live no activo"
+        fi
+    else
+        skip "F70 MJPEG" "sin cámara habilitada"
+    fi
+else
+    skip "BLOCK 48 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

@@ -138,6 +138,27 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F67 Croquis en vivo del almacén** | **BLOCK 45** | **Completado** |
 | **F68 Reproducción de visitas** | **BLOCK 46** | **Completado** |
 | **F69 Vista en directo + encender cámaras** | **BLOCK 47** | **Completado** |
+| **F70 Directo de cámaras por MJPEG** | **BLOCK 48** | **Completado** |
+
+### F70 — Directo de cámaras por MJPEG (RF-80)
+
+- **Motivo**: el `<iframe>` de go2rtc (`:1984/stream.html`) se veía **negro** porque el puerto
+  1984 no está abierto en `ufw` (y WebRTC/MSE no es fiable). Se replica el patrón del proyecto
+  **reconocimiento facial** (`live/mjpeg-stream.js`): un `<img>` que consume MJPEG.
+- **Servidor**: `api/bin/cameras-live.js` (Node) transforma el RTSP de cada cámara en
+  `multipart/x-mixed-replace` con **un solo `ffmpeg` por cámara** compartido (fan-out) y parada
+  en reposo. Escucha en **loopback `127.0.0.1:8086`**; no loguea URLs RTSP.
+- **Publicación**: **Apache** en el vhost `cerraduras.josue.ink` con
+  `ProxyPass /almacen-live → 127.0.0.1:8086/live` (puerto 443 ya abierto; **sin abrir puertos**).
+- **API**: `GET /almacen-api/state` y `/almacen-api/cameras` añaden **aditivo** `mjpeg_url`
+  (`CAMERAS_LIVE_BASE_URL?id=<device_id>`).
+- **Panel**: `renderCameras()` usa `<img class="mjpeg">` con placeholder **"sin señal"**; si no hay
+  `mjpeg_url`, mantiene el iframe de go2rtc como fallback. Sustituir el nodo aborta el MJPEG.
+- **Arranque**: `docs/systemd/cerraduras-cameras-live.service` (`Restart=always`) +
+  `start-all.sh` `[5c/8]` / `stop-all.sh`.
+- **Tests**: `tests/Unit/cameras-live.test.js` (Node) + **BLOCK 48** del runner.
+- **Nota**: la cámara INTERIOR estaba inaccesible (`172.16.51.52:554`); su tile mostrará
+  "sin señal" hasta que la cámara vuelva (no es fallo del software).
 
 ### F69 — Vista en directo y encendido de cámaras (RF-79)
 
