@@ -3402,3 +3402,55 @@ F70-01 (specs) ─> F70-02 (servidor MJPEG) ─> F70-03 (systemd) ─> F70-04 (m
 F71-01 (specs) ─> F71-02 (presencia almacén) ─> F71-03 (visita) ─> F71-04 (frescura)
    ─> F71-05 (croquis) ─> F71-06 (runner + regresión)
 ```
+
+---
+
+# Fase 72: Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+
+## TSK-F72-01: Specs
+- **Cambio**: `requirements.md` (RF-83/84, deroga RF-82.2), `design.md` (§36), `contracts.md`,
+  `tasks.md`; fila en `AGENTS.md`.
+- **RF**: RF-83, RF-84.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F72-02: Croquis con estado persistente
+- **Cambio**: `api/public/assets/croquis-logic.js` — quitar `DOOR_STALE_SECONDS`/`doorStale` del
+  chip y la descripción; la puerta muestra el último estado conocido.
+- **RF**: RF-83.1, RF-83.2, RF-83.3.
+- **Test propio**: `tests/Unit/croquis-logic.test.js` (casos F72).
+
+## TSK-F72-03: Ajuste de tests F71
+- **Cambio**: `tests/Unit/croquis-logic.test.js` — los casos de "puerta vieja" pasan a exigir
+  `PUERTA CERRADA`/`PUERTA ABIERTA`; solo sin estado → `PUERTA SIN DATOS`.
+- **RF**: RF-83.
+- **Test propio**: mismo archivo.
+
+## TSK-F72-04: Resync periódico del sensor de puerta
+- **Cambio**: `api/bin/tuya-pulsar-consumer/index.js` — `DOOR_RESYNC_MS`,
+  `periodicDoorResyncDue()`, `lastDoorResyncAt`, `resyncKnownDevices(reason, kinds)`, chequeo de
+  presupuesto y timer en `start()`.
+- **RF**: RF-84.1, RF-84.2, RF-84.3, RF-84.4.
+- **Test propio**: `tests/Unit/tuya-pulsar-consumer.test.js`.
+
+## TSK-F72-05: Runner, `.env.example`, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (**BLOCK 50**; ajustar **BLOCK 49**), `.env.example`
+  (`CONSUMER_DOOR_RESYNC_MS`), `AGENTS.md`.
+- **RF**: RF-84.5.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F72
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F72-01 | Specs | RF-83/84 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F72-02 | Croquis persistente | RF-83 | `croquis-logic.js` | unit Node |
+| F72-03 | Ajuste tests F71 | RF-83 | `croquis-logic.test.js` | unit Node |
+| F72-04 | Resync periódico | RF-84 | `tuya-pulsar-consumer/index.js` | unit Node |
+| F72-05 | Runner + env + regresión | RF-84.5 | `bin/run-tests.sh`, `.env.example`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F72)
+
+```
+F72-01 (specs) ─> F72-02 (croquis) ─> F72-03 (tests) ─> F72-04 (resync)
+   ─> F72-05 (runner + env + regresión)
+```

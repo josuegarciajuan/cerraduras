@@ -2307,3 +2307,29 @@ ningún campo existente cambia.
 - Rutas, códigos y campos existentes intactos; `door_age_seconds`/`presence_age_seconds` son
   **aditivos**. El comportamiento F48 de habitaciones de huésped no cambia.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 49** nuevo.
+
+---
+
+# Fase 72: Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+
+## 1. Contrato de comportamiento del croquis (puerta)
+
+- `door_state = OPEN` (o pulso F56 vigente) → chip **`PUERTA ABIERTA`**, independientemente de
+  `door_age_seconds`.
+- `door_state = CLOSED` → chip **`PUERTA CERRADA`**, independientemente de `door_age_seconds`.
+- `door_state` ausente/`UNKNOWN` → chip **`PUERTA SIN DATOS`**.
+- `door_age_seconds` / `presence_age_seconds` permanecen en `live` como **diagnóstico** y no
+  alteran ningún chip.
+
+## 2. Contrato interno del resync periódico (no es API pública)
+
+- Variable de entorno `CONSUMER_DOOR_RESYNC_MS` (por defecto `600000`).
+- Solo se sondea `kind = PROXIMITY` por REST (`/v1.0/iot-03/devices/{id}/status`).
+- Con `WS` no conectado, o presupuesto `tuya-quota.json` agotado, el ciclo se omite sin error.
+- El estado sondeado se reenvía a `POST /api/v1/tuya/webhook` (mismo camino que el push), por lo
+  que `presence_events.received_at` se refresca y una transición perdida se aplica.
+
+## 3. No regresión
+
+- Sin rutas nuevas ni campos eliminados; `door_age_seconds`/`presence_age_seconds` se mantienen.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 50** nuevo.

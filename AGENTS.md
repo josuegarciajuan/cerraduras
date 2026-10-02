@@ -140,6 +140,19 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F69 Vista en directo + encender cámaras** | **BLOCK 47** | **Completado** |
 | **F70 Directo de cámaras por MJPEG** | **BLOCK 48** | **Completado** |
 | **F71 Presencia real del almacén + frescura de señal** | **BLOCK 49** | **Completado** |
+| **F72 Estado persistente de puerta + resync periódico** | **BLOCK 50** | **Completado** |
+
+### F72 — Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+
+- **Motivo**: el MC400D es **edge-triggered** (solo emite al cambiar). Degradar el chip a
+  `PUERTA SIN DATOS` por antigüedad (`DOOR_STALE_SECONDS`) era incorrecto: `OPEN` sigue abierta
+  hasta que llega `CLOSED`. RF-82.2 queda **derogado**.
+- **Croquis**: el chip de puerta usa **solo** el último estado (`OPEN`→ABIERTA, `CLOSED`→CERRADA,
+  sin estado→SIN DATOS). `door_age_seconds`/`presence_age_seconds` se conservan como diagnóstico.
+- **Resync periódico**: el consumer Pulsar sondea por REST **solo PROXIMITY** cada
+  `CONSUMER_DOOR_RESYNC_MS` (10 min por defecto), con contador propio y respetando el presupuesto
+  `tuya-quota.json`; recupera transiciones perdidas (hueco real 09:19–10:20) y refresca la edad.
+- **Tests**: `croquis-logic.test.js`, `tuya-pulsar-consumer.test.js` y **BLOCK 50** del runner.
 
 ### F71 — Presencia real del almacén y frescura de señal (RF-81 / RF-82)
 
@@ -150,8 +163,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   una visita iniciada por presencia queda `ENTERED` (`A_CONFIRM_ENTRY`). Las salas de almacén **no**
   generan anomalías de huésped (A2).
 - **Frescura**: `live` expone **aditivamente** `door_age_seconds`/`presence_age_seconds` (desde
-  `presence_events.received_at`); el croquis muestra `PUERTA SIN DATOS` en vez de `CERRADA` si la
-  señal de puerta supera `DOOR_STALE_SECONDS` (300 s).
+  `presence_events.received_at`) como **diagnóstico**; el estado de puerta mostrado es el último
+  conocido (ver F72, que deroga el "sin datos" por antigüedad).
 - **Puerta física**: si el sensor MC400D reporta `CLOSED` en Tuya, el croquis lo refleja; una
   puerta abierta sin evento `OPEN` es incidencia de montaje/sensor (fuera del software).
 - **Tests**: `croquis-logic.test.js`, `IotSessionServiceTest.php`, `WarehouseRecordingDecisionTest.php`

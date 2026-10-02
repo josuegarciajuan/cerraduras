@@ -26,6 +26,8 @@ const {
   shouldResync,
   silenceExceeded,
   receiveLatencyMs,
+  periodicDoorResyncDue,
+  DOOR_RESYNC_MS,
   pongAgeMs,
 } = require(path.join(__dirname, '..', '..', 'bin', 'tuya-pulsar-consumer', 'index.js'));
 
@@ -154,6 +156,22 @@ check('pongAgeMs devuelve la antigüedad del pong y tolera ausencia',
   pongAgeMs(NOW, 0) === null &&
   pongAgeMs(NOW, null) === null &&
   pongAgeMs(NOW, 'nope') === null);
+
+// ─── F72 (RF-84): resync periódico de puerta ───────────────────────────
+check('F72 primera vez → periodicDoorResyncDue=true',
+  periodicDoorResyncDue(NOW, 0, DOOR_RESYNC_MS) === true);
+
+check('F72 intervalo cumplido → true',
+  periodicDoorResyncDue(NOW, NOW - DOOR_RESYNC_MS, DOOR_RESYNC_MS) === true);
+
+check('F72 intervalo NO cumplido → false',
+  periodicDoorResyncDue(NOW, NOW - (DOOR_RESYNC_MS - 1000), DOOR_RESYNC_MS) === false);
+
+check('F72 intervalo inválido → false (no sondea en bucle)',
+  periodicDoorResyncDue(NOW, NOW - 1000, 0) === false);
+
+check('F72 DOOR_RESYNC_MS es 10 min por defecto',
+  DOOR_RESYNC_MS === 600000);
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' tuya-pulsar-consumer: ' + passed + ' passed, ' + failed + ' failed\n');
