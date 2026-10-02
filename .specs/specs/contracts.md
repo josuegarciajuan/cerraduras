@@ -2333,3 +2333,26 @@ ningún campo existente cambia.
 
 - Sin rutas nuevas ni campos eliminados; `door_age_seconds`/`presence_age_seconds` se mantienen.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 50** nuevo.
+
+---
+
+# Fase 73: Tope de grabación en pruebas y purga del almacén (RF-85 / RF-86)
+
+## 1. Contrato interno del recorder (no es API pública)
+
+- Variable de entorno `WAREHOUSE_MAX_RECORDING_SECONDS` (entero ≥ 0; por defecto `0` = sin
+  límite).
+- Al alcanzar el tope, la fila `camera_recordings` pasa de `RECORDING` a `SAVED` con
+  `duration_s` ≤ tope + 1 tick y `file_path` final (`.mp4`), conservando el póster.
+- No se crean nuevos clips hasta que el motor emita `A_START_*`.
+
+## 2. Herramienta de mantenimiento (no es API pública)
+
+- `php bin/warehouse-purge.php --room=N` (o `--all`) → resumen
+  `recordings=<n> visits=<n> state=<n> files=<n>`.
+- Solo elimina ficheros cuya ruta real quede dentro de `data/cameras/`.
+
+## 3. No regresión
+
+- Rutas, códigos y campos de `/almacen-api/*` intactos.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 51** nuevo.

@@ -3966,3 +3966,63 @@ diagnóstico, sin efecto en la presentación.
 |---|---|---|---|
 | RF-83 | §36.1–36.2 | Fase 72 | F72-02, F72-03 |
 | RF-84 | §36.3 | Fase 72 | F72-04, F72-05 |
+
+---
+
+# 37. F73 — Tope de grabación en pruebas y purga del almacén (RF-85 / RF-86)
+
+## 37.1 Problema
+
+El motor de grabación (`WarehouseRecordingDecision`) solo emite `A_STOP_*` al cambiar de estado
+(salida de la visita, margen M agotado o descarte). Una presencia 24G que se mantiene en `PRESENT`
+deja el clip `RECORDING` indefinidamente. En pruebas eso llena el disco (observado 912 MB en 22
+clips) sin aportar valor. Hasta producción se necesita un tope duro y poder purgar la sala.
+
+## 37.2 Tope de duración en el recorder
+
+- Nueva variable de entorno `WAREHOUSE_MAX_RECORDING_SECONDS` (entero, default `0`). Se lee en el
+  daemon con `Config::getInt('WAREHOUSE_MAX_RECORDING_SECONDS', 0)`. `0` = sin límite.
+- `WarehouseRecordingService::enforceRecordingCap(int $maxSeconds): int` es el escritor único y
+  encapsula la política:
+
+  ```sql
+  UPDATE camera_recordings SET stop_requested=1
+   WHERE status='RECORDING' AND stop_requested=0
+     AND started_at IS NOT NULL
+     AND started_at <= (UTC_TIMESTAMP(3) - INTERVAL :s SECOND)
+  ```
+
+  Devuelve las filas afectadas. Con `$maxSeconds <= 0` es un no-op (no ejecuta SQL).
+- `bin/warehouse-recorder.php` llama a `enforceRecordingCap()` al inicio de cada tick (si el tope
+  es > 0). El siguiente paso del mismo tick procesa `stop_requested=1` con `stopRecording()`, que
+  finaliza el `.tmp.mp4` → `.mp4`, genera el póster y sella `duration_s`; por tanto el clip queda
+  `SAVED` (no `FAILED`). No se encadena un nuevo clip hasta que el motor vuelva a emitir
+  `A_START_*`.
+
+## 37.3 Purga total del almacén
+
+- `api/bin/warehouse-purge.php [--room=N] [--all]` (mantenimiento, no expuesto en la API):
+  1. para cada sala `ALMACEN_BEBIDAS`, marca `stop_requested=1, discard_requested=1` en
+     `PENDING`/`RECORDING` (mata el ffmpeg en el siguiente tick y no deja ficheros colgando);
+  2. borra `warehouse_state` (FK `current_visit_id`), luego `camera_recordings` y finalmente
+     `warehouse_visits`;
+  3. elimina los ficheros bajo `data/cameras/<room_id>/` resolviendo con `realpath` y verificando
+     que quedan dentro de `data/cameras/` (mismo criterio que `warehouse-retention.php`).
+- Procedimiento operativo recomendado: `systemctl stop cerraduras-warehouse-recorder`, ejecutar la
+  purga, `systemctl start cerraduras-warehouse-recorder`.
+
+## 37.4 Tests
+
+- `api/tests/Unit/WarehouseRecordingCapTest.php` (PHP puro, doble de `PDO`): `maxSeconds <= 0` no
+  ejecuta `UPDATE`; `maxSeconds > 0` ejecuta el `UPDATE` con el parámetro del tope y devuelve el
+  número de filas.
+- `api/bin/run-tests.sh`: **BLOCK 51** — inserta una fila `RECORDING` con `started_at` antiguo y
+  otra reciente, invoca el tope, comprueba que solo la antigua queda `stop_requested=1` y restaura
+  el estado.
+
+## 37.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-85 | §37.2 | Fase 73 | F73-02, F73-04 |
+| RF-86 | §37.3 | Fase 73 | F73-03, F73-04 |

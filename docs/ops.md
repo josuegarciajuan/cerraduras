@@ -98,6 +98,7 @@ Las claves API están en `api/seeds/dev_api_keys.txt`.
 | `SIMULATED_MODE` | `true`/`false` | `true` | Sensores/locks simulados |
 | `LOCK_PROVIDER` | `LOCAL`/`ESP32`/`TUYA`/`SIMULATED` | `LOCAL` | Provider de apertura de cerradura |
 | **`QR_EXP_FROM_DB`** | `true`/`false` | **`false`** | **Caducidad de QR desde BD** |
+| `WAREHOUSE_MAX_RECORDING_SECONDS` | entero ≥ 0 | `0` | Tope de duración de grabaciones del almacén; `0` = sin límite (producción). En pruebas: `60`. |
 
 > **Migración de cuenta Tuya**: ver [`docs/tuya-account-migration.md`](tuya-account-migration.md).
 

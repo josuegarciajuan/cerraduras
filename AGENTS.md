@@ -141,6 +141,23 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F70 Directo de cámaras por MJPEG** | **BLOCK 48** | **Completado** |
 | **F71 Presencia real del almacén + frescura de señal** | **BLOCK 49** | **Completado** |
 | **F72 Estado persistente de puerta + resync periódico** | **BLOCK 50** | **Completado** |
+| **F73 Tope de grabación en pruebas + purga del almacén** | **BLOCK 51** | **Completado** |
+
+### F73 — Tope de duración de grabación en pruebas y purga del almacén (RF-85 / RF-86)
+
+- **Motivo**: en pruebas (`cerraduras.duckdns.org`) los clips de `/almacen` duraban toda la
+  estancia (el motor solo para al cambiar de estado); una presencia ruidosa los alargaba y llenaba
+  el disco (observado 912 MB en 22 clips). Hasta producción se limita cada clip a **1 minuto**.
+- **Tope (RF-85)**: variable `WAREHOUSE_MAX_RECORDING_SECONDS` (por defecto `0` = sin límite).
+  `WarehouseRecordingService::enforceRecordingCap()` marca `stop_requested=1` en las filas
+  `RECORDING` con `started_at` anterior al tope; el recorder las finaliza como `SAVED` en el mismo
+  tick (renombrado + póster + `duration_s`). Un clip por episodio.
+- **Purga (RF-86)**: `php api/bin/warehouse-purge.php --room=12` (o `--all`) borra
+  `camera_recordings`, `warehouse_visits` y `warehouse_state` de la sala, y los ficheros de
+  `data/cameras/<room>/`. Parar el recorder antes para no dejar ffmpeg huérfanos.
+- **Pruebas**: `tests/Unit/WarehouseRecordingCapTest.php` (BLOCK 1) + **BLOCK 51** del runner.
+- **Pasar a producción**: `WAREHOUSE_MAX_RECORDING_SECONDS=0` en `api/.env` y reiniciar el
+  recorder.
 
 ### F72 — Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
 

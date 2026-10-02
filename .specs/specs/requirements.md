@@ -1458,3 +1458,31 @@ para recuperar transiciones perdidas.
   se recupera y `door_age_seconds` se refresca. Sin rutas nuevas ni llamadas a Tuya desde el panel.
 - **RF-84.5**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y un **BLOCK 50** nuevo.
+
+---
+
+# Fase 73: Tope de duración de grabaciones en pruebas y purga del almacén (RF-85 / RF-86)
+
+**Motivo**: en pruebas (`cerraduras.duckdns.org`) las grabaciones de `/almacen` pueden durar toda
+la estancia: el motor solo detiene al cambiar de estado y una presencia ruidosa prolonga el clip.
+Observado: 22 clips = 912 MB y subiendo. Hasta pasar a producción se limita cada grabación a 1
+minuto y se añade una purga total de la sala.
+
+## RF-85: Tope configurable de duración de grabación
+- **RF-85.1**: El recorder detiene y **finaliza como `SAVED`** toda grabación en estado
+  `RECORDING` cuya `started_at` supere `WAREHOUSE_MAX_RECORDING_SECONDS`.
+- **RF-85.2**: El tope aplica por igual a `EXTERIOR` e `INTERIOR`; cada episodio produce como
+  máximo un clip acotado (no se encadena hasta que el motor cambie de estado).
+- **RF-85.3**: `WAREHOUSE_MAX_RECORDING_SECONDS=0` o ausente = **sin límite** (valor de
+  producción). Se lee de `.env`; por defecto `0`.
+- **RF-85.4**: La finalización reutiliza el camino existente (`stop_requested` → renombrado,
+  póster y `duration_s`); los clips acotados no se marcan como `FAILED`.
+
+## RF-86: Purga total de grabaciones y visitas del almacén
+- **RF-86.1**: Existe una herramienta de mantenimiento que elimina, para una sala
+  `ALMACEN_BEBIDAS` (o todas), las filas de `camera_recordings`, `warehouse_visits` y
+  `warehouse_state`, y los ficheros bajo `data/cameras/<room_id>/`.
+- **RF-86.2**: La herramienta solo borra ficheros dentro de `data/cameras/` (anti path-traversal)
+  y detiene antes las grabaciones activas para no dejar procesos ffmpeg huérfanos.
+- **RF-86.3**: **No regresión**: no se alteran rutas, códigos ni campos de la API existente; la
+  regresión completa termina con **0 failures** y un **BLOCK 51** nuevo.
