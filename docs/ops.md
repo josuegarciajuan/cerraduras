@@ -50,27 +50,32 @@ terminan en `STOP_WAIT_SECS` (por defecto 6 s). Los patrones están acotados a
 | WS-VB6 | `http://92.113.151.136:8081/ws-vb6/v1` |
 | Simulación | `http://92.113.151.136:8080/sim/rooms/{id}/door` |
 
-## Acceso a los paneles (reverse proxy con patrón)
+## Acceso a los paneles y dominios
 
-Las tres interfaces (`/dashboard`, `/panel`, `/almacen`) se publican por
-subdominio propio detrás de `panel-gate` (`127.0.0.1:8099`), que exige el patrón
-de desbloqueo. El gate enruta por `Host`: los hosts que empiezan por
-`cerraduras.` van al backend de cerraduras (`127.0.0.1:8080`).
+| Dominio | Uso | Gate | Vhost |
+|---|---|---|---|
+| `https://cerraduras.josue.ink` | Producción | `panel-gate` (patrón) | `cerraduras.josue.ink-le-ssl.conf` |
+| `https://cerraduras.duckdns.org` | Pruebas (IP fija) | **sin gate (libre)** | `cerraduras.duckdns-le-ssl.conf` |
 
-| Dominio | Uso | Vhost |
-|---|---|---|
-| `https://cerraduras.josue.ink` | Producción | `cerraduras.josue.ink-le-ssl.conf` |
-| `https://cerraduras.duckdns.org` | Pruebas (IP fija) | `cerraduras.duckdns-le-ssl.conf` |
+**Producción (`cerraduras.josue.ink`)** pasa por `panel-gate`
+(`127.0.0.1:8099`), que exige el patrón de desbloqueo. El gate enruta por `Host`:
+los hosts que empiezan por `cerraduras.` van al backend de cerraduras
+(`127.0.0.1:8080`). Rutas máquina (`/api/v1/`, endpoints de dispositivo) y
+`/almacen-live` (MJPEG, `127.0.0.1:8086`) van directas a la API.
 
-Ambos comparten backend: rutas máquina (`/api/v1/`, endpoints de dispositivo) y
-`/almacen-live` (MJPEG, `127.0.0.1:8086`) van directas a la API; el resto pasa
-por el gate. Certificados Let's Encrypt por HTTP-01 con webroot
-`/var/www/html`; la ruta `/.well-known/acme-challenge` se excluye del proxy con
-`ProxyPass ... !`.
+**Pruebas (`cerraduras.duckdns.org`)** va **directa a la API**
+(`127.0.0.1:8080`), **sin `panel-gate`**: las interfaces son libres, sin patrón.
+`/dashboard` y `/almacen` responden sin login; `/panel` redirige a su propio
+login de CRM (`/panel/login`). `/almacen-live` sigue sirviéndose de `:8086`. HTTP
+(:80) redirige a HTTPS. **No usar este dominio en producción**: expone los
+paneles sin autenticación.
+
+Certificados Let's Encrypt por HTTP-01 con webroot `/var/www/html`; la ruta
+`/.well-known/acme-challenge` se sirve del webroot (excluida del proxy/redirect).
 
 La cookie de sesión del gate es **host-only** (`COOKIE_DOMAIN=` vacío en
 `/root/panel-gate/.env`): cada host desbloquea su propia sesión y no se comparte
-entre subdominios.
+entre subdominios. Solo afecta al dominio de producción.
 
 DuckDNS: `cerraduras.duckdns.org` → `92.113.151.136` (IP fija, sin updater).
 
