@@ -253,6 +253,31 @@ $decision = SensorEventDecision::decide($simEvent, $session, false, false, false
 if ($decision === SensorEventDecision::APPLY) pass('F48: provider SIMULATED sin contexto → apply (bypass dev/tests)');
 else fail('F48: SIMULATED debería aplicar, got ' . $decision);
 
+// ── F75 (RF-89): presencia estricta en el almacén (solo `presence`) ──────
+// `move` en almacén → no_context aunque la ventana de entrada esté activa.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, true, true, true
+);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F75: almacén + move → no_context (ignora ventana)');
+else fail('F75: move en almacén debería ser no_context, got ' . $decision);
+
+// `presence` en almacén → se aplica (señal fiable del 24G).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, false, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F75: almacén + presence → apply');
+else fail('F75: presence en almacén debería aplicar, got ' . $decision);
+
+// ABSENT en almacén → siempre apply.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'ABSENT', 'none'), $session, false, false, false, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F75: almacén + none (ABSENT) → apply');
+else fail('F75: ABSENT en almacén debería aplicar, got ' . $decision);
+
 // Helper puro.
 if (SensorEventDecision::presenceCredible('move', false, false) === false
     && SensorEventDecision::presenceCredible('move', true, false) === true

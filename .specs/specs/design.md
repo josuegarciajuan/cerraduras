@@ -4066,3 +4066,76 @@ por push** (Message Service, sin cuota); REST solo en acciones explícitas.
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-87 | §38.1–38.3 | Fase 74 | F74-01…F74-04 |
+
+---
+
+# 39. F75 — Refresco de sensores del almacén bajo demanda (RF-88/89/90)
+
+## 39.1 Problema
+
+La batería E2E (`run-tests.sh` BLOCK 42) borra `iot_sessions` y `presence_events` de PROTO2 (sala
+del almacén). Como el MC400D es edge-triggered y la puerta siguió abierta (sin nuevo `OPEN`), el
+sistema quedó en `door_state=UNKNOWN`. Sin polling periódico (F74) no hay forma de recuperar el
+estado hasta un cambio físico. Además la presencia del 24G con `move` (pasillo) pintaba monigote
+dentro sin nadie.
+
+## 39.2 Presencia estricta del almacén (RF-89)
+
+- `SensorEventDecision::decide(..., bool $warehousePresence = false)`:
+  ```php
+  if ($provider === TUYA && $sensor === PRESENCE && $value === PRESENT) {
+      if ($warehousePresence) {
+          if (strtolower((string) ($meta['tuya_raw_val'] ?? '')) !== 'presence') {
+              return self::NO_CONTEXT;   // move del 24G no es presencia fiable
+          }
+      } elseif (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
+          return self::NO_CONTEXT;
+      }
+  }
+  ```
+- `IotSessionService::processEvent()` pasa `$this->isWarehouseRoom($room)` como `$warehousePresence`.
+- `ABSENT` (`none`) se sigue aplicando siempre; el comportamiento F48 de huéspedes no cambia.
+
+## 39.3 Endpoint de refresco bajo demanda (RF-88)
+
+- `POST /almacen-api/sensors/refresh` (público LAN). Body opcional `{"room_id": N}`.
+- Resuelve la sala `ALMACEN_BEBIDAS` y su device `PROXIMITY` (via pack).
+- **Cooldown**: `ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS` (default `1800`), leído con
+  `Config::getInt`. Marca en `devices.meta_json.status_probed_at` (ISO). Si `now - status_probed_at
+  < cooldown` → `200 {ok:true, probed:false, reason:"throttled"}` sin llamar a Tuya.
+- Lectura: `tuyaPresenceApi('GET','/v1.0/iot-03/devices/{externalId}/status', null)` (respeta
+  presupuesto/backoff compartido).
+- Aplica el resultado por la ingesta: `['devId'=>externalId, 'status'=>result]` →
+  `$tuyaIngress->normalize()` → `$iotSessionService->processEvent()` (si no es `_noop`).
+- Responde con el snapshot: `{ok:true, probed:true, state: <stateArray()>}`.
+- Nunca se invoca por temporizador; solo panel/botón.
+
+## 39.4 Panel (RF-88.4)
+
+- `almacen.js`: `refreshSensors()` (POST al endpoint, aplica `state`), llamado **una vez** al inicio
+  tras `connectSSE()`; botón `#btn-refresh` en la cabecera que lo fuerza.
+- El SSE ya incluye `live` en el fingerprint: el estado refrescado se propaga solo.
+
+## 39.5 Regresión sin borrar el almacén (RF-90)
+
+- En `run-tests.sh` `_e2e_normalize`/`_e2e_cleanup`: si la sala es `ALMACEN_BEBIDAS`, no ejecutar
+  `DELETE FROM iot_sessions/presence_events`; en su lugar hacer **snapshot** de la fila
+  `iot_sessions` (door_state, presence_state, `last_*`, `last_*_event_at`, `last_*_value`) y
+  **restaurarla** con `INSERT ... ON DUPLICATE KEY UPDATE` al final de la limpieza.
+- `presence_events` no se borra para salas de almacén.
+
+## 39.6 Tests
+
+- `api/tests/Unit/SensorEventDecisionTest.php`: caso `warehousePresence=true` → `move` = `no_context`,
+  `presence` = `apply`.
+- `api/tests/Unit/IotSessionServiceTest.php`: F75 — almacén con `move` no aplica; con `presence` sí;
+  huésped sin contexto sigue descartando.
+- `api/bin/run-tests.sh`: **BLOCK 52** (estáticos + units; HTTP del refresh guardado por cooldown).
+
+## 39.7 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-88 | §39.3–39.4 | Fase 75 | F75-02, F75-03 |
+| RF-89 | §39.2 | Fase 75 | F75-02 |
+| RF-90 | §39.5 | Fase 75 | F75-04 |

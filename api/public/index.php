@@ -2680,6 +2680,117 @@ $router->post(
     }
 );
 
+// POST /almacen-api/sensors/refresh — relectura puntual bajo demanda (F75/RF-88).
+// Hace UNA lectura REST del sensor de puerta de la sala (respeta el presupuesto y
+// el backoff compartido de Tuya) y la aplica por la ingesta existente. NUNCA se
+// invoca por temporizador: solo el panel (apertura o botón "Actualizar estado").
+$router->post(
+    '/almacen-api/sensors/refresh',
+    function (\App\Http\Request $request) use ($pdo, $tuyaIngress, $iotSessionService, $warehouseStateController): \App\Http\Response {
+        $body   = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $roomId = (int) ($body['room_id'] ?? ($request->query['room_id'] ?? 0));
+
+        if ($roomId > 0) {
+            $rs = $pdo->prepare(
+                "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE r.id = :id AND rt.code = 'ALMACEN_BEBIDAS' LIMIT 1"
+            );
+            $rs->execute([':id' => $roomId]);
+            $roomId = (int) ($rs->fetchColumn() ?: 0);
+        } else {
+            $roomId = (int) ($pdo->query(
+                "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE rt.code = 'ALMACEN_BEBIDAS' ORDER BY r.id ASC LIMIT 1"
+            )->fetchColumn() ?: 0);
+        }
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(404, ['ok' => false, 'probed' => false, 'reason' => 'no_warehouse_room']);
+        }
+
+        $ds = $pdo->prepare(
+            "SELECT d.id, d.external_id, d.meta_json FROM devices d
+             JOIN rooms r ON r.pack_id = d.pack_id
+             WHERE r.id = :rid AND d.kind = 'PROXIMITY' LIMIT 1"
+        );
+        $ds->execute([':rid' => $roomId]);
+        $door = $ds->fetch(\PDO::FETCH_ASSOC);
+        if ($door === false || (string) ($door['external_id'] ?? '') === '') {
+            return \App\Http\Response::json(200, [
+                'ok' => false, 'probed' => false, 'reason' => 'no_door_sensor',
+                'state' => $warehouseStateController->stateArray($roomId),
+            ]);
+        }
+        $deviceId   = (int) $door['id'];
+        $externalId = (string) $door['external_id'];
+
+        // Cooldown por dispositivo (persistido en devices.meta_json.status_probed_at).
+        $cooldown = \App\Support\Config::getInt('ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS', 1800);
+        $meta = json_decode((string) ($door['meta_json'] ?? ''), true);
+        $meta = is_array($meta) ? $meta : [];
+        $lastAt = $meta['status_probed_at'] ?? null;
+        if ($cooldown > 0 && is_string($lastAt) && $lastAt !== '') {
+            $lastTs = strtotime($lastAt . ' UTC');
+            if ($lastTs !== false && (time() - $lastTs) < $cooldown) {
+                return \App\Http\Response::json(200, [
+                    'ok' => true, 'probed' => false, 'reason' => 'throttled',
+                    'retry_in_seconds' => max(0, $cooldown - (time() - $lastTs)),
+                    'state' => $warehouseStateController->stateArray($roomId),
+                ]);
+            }
+        }
+
+        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId) . '/status', null);
+        $http = (int) ($res['http'] ?? 0);
+        if ($http === 429) {
+            return \App\Http\Response::json(429, [
+                'ok' => false, 'probed' => false, 'reason' => 'quota',
+                'error' => $res['error'] ?? 'tuya_quota',
+                'state' => $warehouseStateController->stateArray($roomId),
+            ]);
+        }
+        if (($res['error'] ?? null) !== null || $http >= 500 || ($res['data']['success'] ?? false) !== true) {
+            return \App\Http\Response::json(502, [
+                'ok' => false, 'probed' => false, 'reason' => 'unavailable',
+                'error' => $res['error'] ?? ($res['data']['msg'] ?? 'tuya_status_failed'),
+                'state' => $warehouseStateController->stateArray($roomId),
+            ]);
+        }
+
+        // Sellar la sonda aunque la aplicación falle (best-effort).
+        $meta['status_probed_at'] = gmdate('Y-m-d\TH:i:s\Z');
+        try {
+            $pdo->prepare('UPDATE devices SET meta_json = :m WHERE id = :id')
+                ->execute([':m' => json_encode($meta, JSON_UNESCAPED_UNICODE), ':id' => $deviceId]);
+        } catch (\Throwable $e) { /* best-effort */ }
+
+        $result = ['ok' => true, 'probed' => true, 'reason' => 'ok'];
+        try {
+            $status = [];
+            foreach (($res['data']['result'] ?? []) as $dp) {
+                if (is_array($dp) && isset($dp['code'])) {
+                    $status[] = [
+                        'code'  => (string) $dp['code'],
+                        'value' => $dp['value'] ?? null,
+                        't'     => $dp['t'] ?? null,
+                    ];
+                }
+            }
+            $event = $tuyaIngress->normalize(['devId' => $externalId, 'status' => $status]);
+            if (($event['meta']['_noop'] ?? false) === true) {
+                $result['applied'] = false;
+            } else {
+                $iotSessionService->processEvent($event, 'sensor-refresh-' . $roomId);
+                $result['applied'] = true;
+            }
+        } catch (\Throwable $e) {
+            $result['applied'] = false;
+            $result['error']   = $e->getMessage();
+        }
+        $result['state'] = $warehouseStateController->stateArray($roomId);
+        return \App\Http\Response::json(200, $result);
+    }
+);
+
 // --- Página única del almacén (F65/RF-74.1, público LAN) ---
 $router->get(
     '/almacen',

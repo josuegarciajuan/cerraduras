@@ -61,13 +61,16 @@ final class SensorEventDecision
      *
      * @param array<string,mixed> $event Normalised sensor event (room_id, sensor, value, occurred_at).
      * @param bool $duplicateFingerprint True when insertOrGet() found an existing fingerprint/source id.
+     * @param bool $warehousePresence F75 (RF-89): en salas de almacén solo `tuya_raw_val=presence`
+     *        es creíble (el `move` del 24G se dispara desde el pasillo).
      */
     public static function decide(
         array $event,
         IotSession $session,
         bool $duplicateFingerprint = false,
         bool $entryWindowActive = true,
-        bool $insideNoExitCycle = true
+        bool $insideNoExitCycle = true,
+        bool $warehousePresence = false
     ): string {
         if ($duplicateFingerprint) {
             return self::DUPLICATE;
@@ -112,7 +115,14 @@ final class SensorEventDecision
             && $value === PresenceEvent::VALUE_PRESENT
         ) {
             $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
-            if (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
+            if ($warehousePresence) {
+                // F75 (RF-89): el almacén no tiene estancia/QR; la única señal
+                // fiable del 24G es `presence` (el `move` no respeta far_detection
+                // y provoca fantasmas desde el pasillo).
+                if ($raw !== 'presence') {
+                    return self::NO_CONTEXT;
+                }
+            } elseif (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
                 return self::NO_CONTEXT;
             }
         }

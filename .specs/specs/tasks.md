@@ -3548,3 +3548,47 @@ F73-01 (specs) ─> F73-02 (tope) ─> F73-03 (purga) ─> F73-04 (runner + env 
 ```
 F74-01 (specs) ─> F74-02 (consumer) ─> F74-03 (env/tests) ─> F74-04 (runner + regresión)
 ```
+
+---
+
+# Fase 75: Refresco de sensores del almacén bajo demanda (RF-88/89/90)
+
+## TSK-F75-01: Specs
+- **Cambio**: `requirements.md` (RF-88/89/90), `design.md` (§39), `contracts.md`, `tasks.md`,
+  `AGENTS.md`.
+- **RF**: RF-88, RF-89, RF-90.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F75-02: Presencia estricta del almacén
+- **Cambio**: `api/src/Domain/Presence/SensorEventDecision.php` (flag `warehousePresence`),
+  `api/src/Domain/Presence/IotSessionService.php` (pasar el flag).
+- **RF**: RF-89.
+- **Test propio**: `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`.
+
+## TSK-F75-03: Endpoint + panel de refresco
+- **Cambio**: `api/public/index.php` (ruta `POST /almacen-api/sensors/refresh` con cooldown),
+  `api/public/assets/almacen.js` (una lectura al abrir + botón), `api/public/almacen.html` (botón),
+  `api/.env.example` (`ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS`).
+- **RF**: RF-88.
+- **Test propio**: BLOCK 52 (estáticos + HTTP guardado).
+
+## TSK-F75-04: La regresión no borra el estado del almacén
+- **Cambio**: `api/bin/run-tests.sh` `_e2e_normalize`/`_e2e_cleanup` (snapshot/restore de
+  `iot_sessions`, no borrar `presence_events` en salas de almacén) + **BLOCK 52**.
+- **RF**: RF-90.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F75
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F75-01 | Specs | RF-88/89/90 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F75-02 | Presencia estricta | RF-89 | `SensorEventDecision.php`, `IotSessionService.php` | unit PHP |
+| F75-03 | Refresh + panel | RF-88 | `index.php`, `almacen.js`, `almacen.html`, `.env.example` | BLOCK 52 |
+| F75-04 | Runner sin wipe | RF-90 | `run-tests.sh` | regresión |
+
+## Orden de ejecución (F75)
+
+```
+F75-01 (specs) ─> F75-02 (presencia) ─> F75-03 (refresh+panel) ─> F75-04 (runner + regresión)
+```

@@ -143,6 +143,22 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F72 Estado persistente de puerta (resync derogado por F74)** | **BLOCK 50** | **Completado** |
 | **F73 Tope de grabación en pruebas + purga del almacén** | **BLOCK 51** | **Completado** |
 | **F74 Sin polling periódico que gaste cuota Tuya** | **BLOCK 50** | **Completado** |
+| **F75 Refresco de sensores del almacén bajo demanda** | **BLOCK 52** | **Completado** |
+
+### F75 — Refresco de sensores del almacén bajo demanda (RF-88 / RF-89 / RF-90)
+
+- **Motivo**: la puerta salía "cerrada/sin datos" estando abierta porque la batería E2E borra
+  `iot_sessions`/`presence_events` de PROTO2 (sala del almacén) y el MC400D es edge-triggered (no
+  reemite si la puerta sigue abierta). La presencia con `move` del 24G pintaba monigote sin nadie.
+- **Presencia estricta (RF-89)**: en `ALMACEN_BEBIDAS`, `PRESENT` solo es creíble con
+  `tuya_raw_val="presence"`; `move` → `no_context`. `ABSENT` siempre se aplica.
+- **Refresco bajo demanda (RF-88)**: `POST /almacen-api/sensors/refresh` hace **una** lectura REST
+  del sensor de puerta y la aplica; cooldown `ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS` (1800 s)
+  por `devices.meta_json.status_probed_at`. El panel lee **una vez** al abrirse y tiene botón
+  **"Actualizar estado"**. Sin temporizadores.
+- **Regresión (RF-90)**: `run-tests.sh` (E2E PROTO2) hace **snapshot/restore** de `iot_sessions` y
+  no borra `presence_events` de salas `ALMACEN_BEBIDAS`.
+- **Tests**: `SensorEventDecisionTest.php`, `IotSessionServiceTest.php` y **BLOCK 52** del runner.
 
 ### F73 — Tope de duración de grabación en pruebas y purga del almacén (RF-85 / RF-86)
 

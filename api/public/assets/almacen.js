@@ -692,6 +692,24 @@
       .catch(function () { /* keep trying */ });
   }
 
+  // F75/RF-88: relectura puntual de sensores (UNA llamada Tuya con cooldown en
+  // servidor). No es periódica: se invoca al abrir el panel y con el botón.
+  function refreshSensors(silent) {
+    return api('/almacen-api/sensors/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ROOM_ID ? { room_id: ROOM_ID } : {})
+    }).then(function (r) {
+      if (r && r.state) { applyState(r.state); }
+      if (!silent) {
+        if (r && r.probed) { toast('Sensores actualizados'); }
+        else if (r && r.reason === 'throttled') { toast('Lectura reciente (cooldown)'); }
+        else { toast('Sensores: ' + ((r && r.reason) || 'sin cambios')); }
+      }
+      return r;
+    }).catch(function (e) { if (!silent) { toast('Sensores: ' + e.message); } });
+  }
+
   function connectSSE() {
     var q = ROOM_ID ? ('?room_id=' + ROOM_ID) : '';
     try { sse = new EventSource('/almacen-api/event-stream' + q); }
@@ -722,7 +740,8 @@
     renderWorkers: renderWorkers,
     playVisit: playVisit, exitPlayback: exitPlayback, togglePlay: togglePlay,
     setSpeed: setSpeed, seekToMs: seekToMs,
-    goLive: goLive, ensureCamerasLive: ensureCamerasLive
+    goLive: goLive, ensureCamerasLive: ensureCamerasLive,
+    refreshSensors: refreshSensors
   };
 
   var range = $('play-range');
@@ -735,6 +754,8 @@
 
   pollState();
   connectSSE();
+  // F75/RF-88: UNA lectura de sensores al abrir el panel (cooldown en servidor).
+  refreshSensors(true);
   setInterval(function () { if (state && state.room) { loadVisits(); } }, 15000);
   // F67/RF-77: el segundero de "tiempo dentro" avanza sin recargar; solo
   // reescribe el texto de #croquis-meta (fuera del aria-live). En reproducción

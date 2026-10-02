@@ -437,13 +437,21 @@ $rtRepo->byId[6] = new RoomType(6, 'ALMACEN_BEBIDAS', 'Almacén', 5, 5, 10, 30, 
 $roomRepo->byId[10] = new Room(10, 'WH1', 6, null, Room::STATUS_OCCUPIED, true, null);
 $roomRepo->byId[11] = new Room(11, '201', 1, null, Room::STATUS_OCCUPIED, true, null);
 
-// Almacén sin estancia ni apertura reciente: el PRESENT se aplica.
+// F75 (RF-89): en el almacén un `move` del pasillo NO es presencia creíble.
 Clock::freeze(new DateTimeImmutable('2026-04-28T14:00:00Z', new DateTimeZone('UTC')));
-$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:00Z', 'f71-wh-present', 'move'), 'corr-f71-wh');
-if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
-    ok('F71: almacén sin stay/ventana → presence_state=PRESENT');
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:00Z', 'f75-wh-move', 'move'), 'corr-f75-wh-move');
+if (($iotRepo->sessions[10]->presenceState ?? null) !== IotSession::PRESENCE_PRESENT) {
+    ok('F75: almacén + move → NOT present (no_context, RF-89)');
 } else {
-    bad('F71: almacén sin stay/ventana → presence_state=PRESENT', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+    bad('F75: almacén + move → NOT present (no_context, RF-89)', 'got PRESENT');
+}
+
+// En el almacén `presence` (señal fiable) SÍ se aplica.
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:02Z', 'f75-wh-presence', 'presence'), 'corr-f75-wh-presence');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F75: almacén + presence → presence_state=PRESENT');
+} else {
+    bad('F75: almacén + presence → presence_state=PRESENT', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
 }
 
 // Huésped sin estancia ni apertura reciente: sigue descartado (F48 intacto).
