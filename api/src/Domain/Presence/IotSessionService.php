@@ -144,16 +144,21 @@ final class IotSessionService
                 // calcula para PRESENT de presencia (evita consultas en el resto).
                 $entryWindowActive = true;
                 $insideNoExitCycle = true;
+                // F75 (RF-89): en el almacén la señal fiable es `presence` (no `move`).
+                $warehousePresence = false;
                 if ($provider === PresenceEvent::PROVIDER_TUYA
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                     && $value === PresenceEvent::VALUE_PRESENT
                 ) {
-                    [$entryWindowActive, $insideNoExitCycle] =
-                        $this->presenceContext($room, $session, $now);
+                    $warehousePresence = $this->isWarehouseRoom($room);
+                    if (!$warehousePresence) {
+                        [$entryWindowActive, $insideNoExitCycle] =
+                            $this->presenceContext($room, $session, $now);
+                    }
                 }
 
                 $decision = SensorEventDecision::decide(
-                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle
+                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle, $warehousePresence
                 );
 
                 if ($decision !== SensorEventDecision::APPLY) {

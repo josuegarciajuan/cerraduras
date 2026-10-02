@@ -2378,3 +2378,40 @@ ningún campo existente cambia.
 - Sin rutas nuevas ni campos eliminados; se elimina únicamente el resync periódico interno.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 50** actualizado (la sección
   de polling periódico de Fase 72 §2 queda **derogada**).
+
+---
+
+# Fase 75: Refresco de sensores del almacén bajo demanda (RF-88/89/90)
+
+## 1. `POST /almacen-api/sensors/refresh` (nueva, aditiva)
+
+Request opcional:
+```json
+{ "room_id": 12 }
+```
+Respuestas:
+```json
+// lectura realizada
+{ "ok": true, "probed": true, "reason": "ok",
+  "state": { "room": {...}, "live": {...}, "warehouse": {...} } }
+
+// cooldown vigente (sin gastar crédito)
+{ "ok": true, "probed": false, "reason": "throttled", "state": { ... } }
+
+// cuota/backoff de Tuya o error de red
+{ "ok": false, "probed": false, "reason": "quota|unavailable", "error": "..." }
+```
+- La ruta es **pública LAN** (igual que el resto de `/almacen-api/*`), sin autenticación.
+- **Nunca** se invoca por temporizador. Cooldown por defecto 1800 s
+  (`ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS`), persistido en `devices.meta_json.status_probed_at`.
+
+## 2. Semántica de presencia del almacén (RF-89)
+
+- En `ALMACEN_BEBIDAS`, `PRESENT` solo se aplica con `tuya_raw_val="presence"`; `move` → `no_context`.
+- `ABSENT` siempre se aplica. Contrato de `GET /almacen-api/state` sin cambios (mismos campos).
+
+## 3. No regresión
+
+- `GET /almacen-api/state`, SSE y `/api/v1/*` intactos; la nueva ruta es aditiva.
+- `run-tests.sh` no borra el estado de la sala de almacén (RF-90).
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 52** nuevo.

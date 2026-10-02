@@ -3767,17 +3767,49 @@ else
     E2E_SAVE_PCS=$($MYSQL -sN -e "SELECT COALESCE(presence_check_seconds,'NULL') FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null || echo "NULL")
     E2E_AL_BEFORE=$($MYSQL -sN -e "SELECT COUNT(*) FROM access_events WHERE room_id=$E2E_ROOM AND kind='AUTO_LOCK'" 2>/dev/null || echo "0")
 
+    # F75 (RF-90): PROTO2 puede ser la sala del almacén (producción de pruebas).
+    # En ese caso la corrida NO debe destruir el estado de dominio de los sensores:
+    # se guarda la fila `iot_sessions` y se restaura al terminar, y no se borran
+    # los `presence_events` (el sensor de puerta es edge-triggered y no reemite).
+    E2E_IS_WAREHOUSE=0
+    E2E_IOT_BACKED_UP=0
+    if [ "$($MYSQL -sN -e "SELECT rt.code FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE r.id=$E2E_ROOM" 2>/dev/null)" = "ALMACEN_BEBIDAS" ]; then
+        E2E_IS_WAREHOUSE=1
+    fi
+    _e2e_backup_iot() {
+        [ "$E2E_IS_WAREHOUSE" = "1" ] || return 0
+        [ "$E2E_IOT_BACKED_UP" = "1" ] && return 0
+        $MYSQL -sN -e "CREATE TABLE IF NOT EXISTS _e2e_iot_backup LIKE iot_sessions" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM _e2e_iot_backup" 2>/dev/null || true
+        $MYSQL -sN -e "INSERT INTO _e2e_iot_backup SELECT * FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        E2E_IOT_BACKED_UP=1
+    }
+    _e2e_restore_iot() {
+        [ "$E2E_IS_WAREHOUSE" = "1" ] || return 0
+        [ "$E2E_IOT_BACKED_UP" = "1" ] || return 0
+        $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        $MYSQL -sN -e "INSERT INTO iot_sessions SELECT * FROM _e2e_iot_backup" 2>/dev/null || true
+        $MYSQL -sN -e "DROP TABLE IF EXISTS _e2e_iot_backup" 2>/dev/null || true
+        E2E_IOT_BACKED_UP=0
+    }
+
     _e2e_normalize() {
+        _e2e_backup_iot
         $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=$E2E_ROOM AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
         $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
-        $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        if [ "$E2E_IS_WAREHOUSE" != "1" ]; then
+            $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        fi
         $MYSQL -sN -e "UPDATE rooms SET pack_id=$E2E_ROOM_PACK, simulated_override=1, presence_check_seconds=5, status='FREE', cooldown_until=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
     }
     _e2e_cleanup() {
         db_exec "SELECT 1" > /dev/null 2>&1 || return 0
         $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=$E2E_ROOM AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
         $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
-        $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        if [ "$E2E_IS_WAREHOUSE" != "1" ]; then
+            $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        fi
+        _e2e_restore_iot
         if [ "$E2E_SAVE_SIM" = "NULL" ]; then
             $MYSQL -sN -e "UPDATE rooms SET simulated_override=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
         else
@@ -4713,6 +4745,47 @@ echo $s->enforceRecordingCap(60);
     pass "F73: estado sintético limpiado"
 else
     skip "BLOCK 51 DB" "sin sala ALMACEN_BEBIDAS o cámara"
+fi
+
+# =============================================================================
+# BLOCK 52 — F75: Refresco de sensores bajo demanda + presencia estricta
+# Trazabilidad: RF-88.1..88.5, RF-89.1..89.3, RF-90.1..90.2; TSK-F75-02..F75-04
+# =============================================================================
+block "BLOCK 52 — F75: Refresco de sensores del almacén (sin polling)"
+
+# 52.0 Estáticos: ruta, panel, env, presencia estricta y snapshot de tests
+for F75_MARK in \
+    "public/index.php:/almacen-api/sensors/refresh" \
+    "public/assets/almacen.js:refreshSensors" \
+    "public/almacen.html:btn-refresh" \
+    ".env.example:ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS" \
+    "src/Domain/Presence/SensorEventDecision.php:warehousePresence" \
+    "bin/run-tests.sh:_e2e_backup_iot"; do
+    F75_FILE="${F75_MARK%%:*}"
+    F75_NEEDLE="${F75_MARK#*:}"
+    if grep -q "$F75_NEEDLE" "$F75_FILE" 2>/dev/null; then
+        pass "F75: $F75_FILE define '$F75_NEEDLE'"
+    else
+        fail "F75: $F75_FILE" "falta '$F75_NEEDLE'"
+    fi
+done
+
+# 52.1 HTTP: la ruta responde con `state` (respeta el cooldown: puede no sondear)
+if [ "$SERVER_UP" = true ]; then
+    F75_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F75_ROOM" ]; then
+        F75_RES=$(curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"room_id\":$F75_ROOM}" --max-time 12 "$API_BASE/almacen-api/sensors/refresh" 2>/dev/null)
+        if echo "$F75_RES" | grep -q '"state"' && echo "$F75_RES" | grep -q '"probed"'; then
+            pass "F75: sensors/refresh responde ok con state (probed/throttled)"
+        else
+            fail "F75: sensors/refresh" "$(echo "$F75_RES" | head -c 200)"
+        fi
+    else
+        skip "BLOCK 52 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "BLOCK 52 HTTP" "servidor no disponible"
 fi
 
 # =============================================================================

@@ -1506,3 +1506,41 @@ las consultas REST quedan reservadas a acciones explícitas del operador (cargar
   a F72), que no es periódico.
 - **RF-87.4**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y el **BLOCK 50** actualizado.
+
+---
+
+# Fase 75: Refresco de sensores del almacén bajo demanda (RF-88 / RF-89 / RF-90)
+
+**Motivo**: la puerta del almacén aparecía "cerrada/sin datos" estando físicamente abierta porque la
+batería E2E (`run-tests.sh`, BLOCK 42) borra `iot_sessions` y `presence_events` de PROTO2 (la sala
+del almacén), y el sensor MC400D es edge-triggered: al seguir abierta no reemite, así que el sistema
+no puede re-aprender el estado sin una relectura. Además, la presencia del 24G se mostraba con
+`move` (movimiento del pasillo), generando monigote dentro sin nadie. Se resuelve sin ningún sondeo
+periódico: una lectura puntual al abrir el panel (con cooldown) y un botón manual, y presencia
+estricta.
+
+## RF-88: Refresco de sensores bajo demanda (sin cuota periódica)
+- **RF-88.1**: `POST /almacen-api/sensors/refresh` (público LAN, como el resto de `/almacen-api`)
+  realiza **una** lectura REST del sensor de puerta (`PROXIMITY`) de la sala y la aplica al estado
+  de dominio por la ingesta existente (`TuyaSensorIngress` + `IotSessionService`).
+- **RF-88.2**: La lectura respeta el **presupuesto/backoff** compartido de Tuya
+  (`api/run/tuya-quota.json`) y **nunca** se ejecuta por temporizador; solo por petición del panel.
+- **RF-88.3**: Existe un **cooldown** en servidor (`ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS`, por
+  defecto `1800`) por dispositivo de puerta, persistido en `devices.meta_json.status_probed_at`. Si
+  está vigente, responde `throttled` sin gastar crédito.
+- **RF-88.4**: El panel `/almacen` realiza **una** lectura al abrirse (tras conectar el SSE) y
+  ofrece un botón **"Actualizar estado"** que fuerza la lectura. La respuesta se aplica al croquis.
+- **RF-88.5**: La ruta es **aditiva**; no se alteran rutas, códigos ni campos existentes.
+
+## RF-89: Presencia estricta del almacén (solo `presence`, no `move`)
+- **RF-89.1**: En salas `ALMACEN_BEBIDAS`, un evento `PRESENT` de presencia solo es creíble si
+  `tuya_raw_val === 'presence'`; los `move` se auditan como `no_context` y **no** cambian el estado.
+- **RF-89.2**: `ABSENT` (`none`) se sigue aplicando siempre.
+- **RF-89.3**: Se mantiene el resto del comportamiento de F48 para habitaciones de huésped.
+
+## RF-90: La regresión no borra el estado del almacén
+- **RF-90.1**: `run-tests.sh` (BLOCK 42, E2E PROTO2) **no** borra `presence_events` ni
+  `iot_sessions` de una sala `ALMACEN_BEBIDAS`: guarda y restaura la fila `iot_sessions` y conserva
+  el historial de eventos.
+- **RF-90.2**: **No regresión**: la regresión completa termina con **0 failures** y un **BLOCK 52**
+  nuevo.
