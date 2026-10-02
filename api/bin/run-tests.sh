@@ -4641,6 +4641,86 @@ else
 fi
 
 # =============================================================================
+# BLOCK 51 — F73: Tope de grabación en pruebas + purga (RF-85 / RF-86)
+# Trazabilidad: RF-85.1..85.4, RF-86.1..86.3; TSK-F73-02..TSK-F73-04
+# =============================================================================
+block "BLOCK 51 — F73: Tope de grabación + purga"
+
+# 51.0 Estáticos
+if grep -q 'enforceRecordingCap' src/Domain/Warehouse/WarehouseRecordingService.php 2>/dev/null; then
+    pass "F73: servicio define enforceRecordingCap"
+else
+    fail "F73: enforceRecordingCap" "ausente en WarehouseRecordingService"
+fi
+if grep -q 'WAREHOUSE_MAX_RECORDING_SECONDS' bin/warehouse-recorder.php 2>/dev/null; then
+    pass "F73: recorder lee WAREHOUSE_MAX_RECORDING_SECONDS"
+else
+    fail "F73: recorder" "sin WAREHOUSE_MAX_RECORDING_SECONDS"
+fi
+if grep -q 'WAREHOUSE_MAX_RECORDING_SECONDS' .env.example 2>/dev/null; then
+    pass "F73: .env.example documenta el tope"
+else
+    fail "F73: .env.example" "sin WAREHOUSE_MAX_RECORDING_SECONDS"
+fi
+if [ -f bin/warehouse-purge.php ] && php -l bin/warehouse-purge.php >/dev/null 2>&1; then
+    pass "F73: bin/warehouse-purge.php presente y válido"
+else
+    fail "F73: warehouse-purge.php" "ausente o con error de sintaxis"
+fi
+
+# 51.1 Unit (auto-descubierto en BLOCK 1; se verifica su presencia)
+if [ -f tests/Unit/WarehouseRecordingCapTest.php ]; then
+    pass "F73: tests/Unit/WarehouseRecordingCapTest.php presente"
+else
+    fail "F73: unit cap" "archivo ausente"
+fi
+
+# 51.2 DB: el tope marca solo las grabaciones antiguas
+F73_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+F73_DEVICE=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F73_ROOM AND d.kind='CAMERA' ORDER BY d.id LIMIT 1" 2>/dev/null)
+if [ -n "$F73_ROOM" ] && [ -n "$F73_DEVICE" ]; then
+    # Snapshot de grabaciones reales en curso para restaurarlas tras el test.
+    F73_SNAP="$PROJECT_DIR/logs/_f73_snap.tmp"
+    $MYSQL -sN -e "SELECT CONCAT(id,':',stop_requested) FROM camera_recordings WHERE status='RECORDING'" 2>/dev/null > "$F73_SNAP"
+
+    $MYSQL -e "INSERT INTO camera_recordings
+                (visit_id, room_id, device_id, position, episode, \`trigger\`, status,
+                 requested_at, started_at, stop_requested, discard_requested, error)
+               VALUES
+                (NULL, $F73_ROOM, $F73_DEVICE, 'EXTERIOR', 'ENTRY', 'PRESENCE', 'RECORDING',
+                 UTC_TIMESTAMP(3), UTC_TIMESTAMP(3) - INTERVAL 120 SECOND, 0, 0, 'f73_cap_old'),
+                (NULL, $F73_ROOM, $F73_DEVICE, 'INTERIOR', 'ENTRY', 'PRESENCE', 'RECORDING',
+                 UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 0, 0, 'f73_cap_new')" 2>/dev/null
+
+    F73_CAP_N=$(php -r '
+require "src/Support/Autoload.php";
+App\Support\Config::load(".env");
+$pdo = App\Infrastructure\Db\PdoFactory::make();
+$s = new App\Domain\Warehouse\WarehouseRecordingService($pdo);
+echo $s->enforceRecordingCap(60);
+' 2>/dev/null)
+
+    F73_OLD=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE error='f73_cap_old' LIMIT 1" 2>/dev/null)
+    F73_NEW=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE error='f73_cap_new' LIMIT 1" 2>/dev/null)
+    [ "$F73_OLD" = "1" ] && pass "F73: clip >60s marcado stop_requested=1" || fail "F73: clip antiguo" "stop_requested=$F73_OLD (esperado 1)"
+    [ "$F73_NEW" = "0" ] && pass "F73: clip <60s intacto" || fail "F73: clip reciente" "stop_requested=$F73_NEW (esperado 0)"
+
+    $MYSQL -e "DELETE FROM camera_recordings WHERE error IN ('f73_cap_old','f73_cap_new')" 2>/dev/null
+
+    # Restaurar stop_requested de grabaciones reales que el test pudo marcar.
+    if [ -f "$F73_SNAP" ]; then
+        while IFS=: read -r rid rstop; do
+            [ -z "$rid" ] && continue
+            $MYSQL -e "UPDATE camera_recordings SET stop_requested=$rstop WHERE id=$rid AND status='RECORDING'" 2>/dev/null
+        done < "$F73_SNAP"
+    fi
+    rm -f "$F73_SNAP"
+    pass "F73: estado sintético limpiado"
+else
+    skip "BLOCK 51 DB" "sin sala ALMACEN_BEBIDAS o cámara"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
