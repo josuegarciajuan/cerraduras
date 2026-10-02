@@ -3454,3 +3454,46 @@ F71-01 (specs) ─> F71-02 (presencia almacén) ─> F71-03 (visita) ─> F71-04
 F72-01 (specs) ─> F72-02 (croquis) ─> F72-03 (tests) ─> F72-04 (resync)
    ─> F72-05 (runner + env + regresión)
 ```
+
+---
+
+# Fase 73: Tope de grabación en pruebas y purga del almacén (RF-85 / RF-86)
+
+## TSK-F73-01: Specs
+- **Cambio**: `requirements.md` (RF-85/86), `design.md` (§37), `contracts.md`, `tasks.md`,
+  `AGENTS.md`.
+- **RF**: RF-85, RF-86.
+- **Test propio**: revisión.
+
+## TSK-F73-02: Tope de duración en el servicio y el recorder
+- **Cambio**: `api/src/Domain/Warehouse/WarehouseRecordingService.php` —
+  `enforceRecordingCap(int $maxSeconds): int`; `api/bin/warehouse-recorder.php` — leer
+  `WAREHOUSE_MAX_RECORDING_SECONDS` y llamar al tope en cada tick.
+- **RF**: RF-85.1, RF-85.2, RF-85.3, RF-85.4.
+- **Test propio**: `tests/Unit/WarehouseRecordingCapTest.php`.
+
+## TSK-F73-03: Herramienta de purga
+- **Cambio**: `api/bin/warehouse-purge.php` (nuevo).
+- **RF**: RF-86.1, RF-86.2.
+- **Test propio**: BLOCK 51 (purga de sala de prueba y restauración).
+
+## TSK-F73-04: Runner, `.env.example` y regresión
+- **Cambio**: `api/bin/run-tests.sh` (**BLOCK 51**), `api/.env.example`
+  (`WAREHOUSE_MAX_RECORDING_SECONDS`), `docs/ops.md`.
+- **RF**: RF-85.3, RF-86.3.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F73
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F73-01 | Specs | RF-85/86 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F73-02 | Tope de duración | RF-85 | `WarehouseRecordingService.php`, `warehouse-recorder.php` | unit PHP |
+| F73-03 | Purga total | RF-86 | `warehouse-purge.php` | BLOCK 51 |
+| F73-04 | Runner + env + docs | RF-85.3, RF-86.3 | `run-tests.sh`, `.env.example`, `docs/ops.md` | regresión |
+
+## Orden de ejecución (F73)
+
+```
+F73-01 (specs) ─> F73-02 (tope) ─> F73-03 (purga) ─> F73-04 (runner + env + regresión)
+```
