@@ -3454,3 +3454,50 @@ F71-01 (specs) ─> F71-02 (presencia almacén) ─> F71-03 (visita) ─> F71-04
 F72-01 (specs) ─> F72-02 (croquis) ─> F72-03 (tests) ─> F72-04 (resync)
    ─> F72-05 (runner + env + regresión)
 ```
+
+> **Nota**: F72-04 (resync periódico) queda **derogado** por F73 (RF-85). El croquis persistente
+> (F72-02/F72-03) se mantiene.
+
+---
+
+# Fase 73: Sin polling periódico que consuma cuota Tuya (RF-85)
+
+## TSK-F73-01: Specs
+- **Cambio**: `requirements.md` (RF-85; RF-84 derogado), `design.md` (§37), `contracts.md`,
+  `tasks.md`; `AGENTS.md`.
+- **RF**: RF-85.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F73-02: Eliminar el resync periódico del consumer
+- **Cambio**: `api/bin/tuya-pulsar-consumer/index.js` — revertir a su forma pre-F72 (sin
+  `DOOR_RESYNC_MS`, sin helpers de cuota, sin `loadDoorResyncDevices`, sin `resyncDoorPeriodic`,
+  sin `setInterval` de sondeo). Se mantiene el resync puntual `ws-open`.
+- **RF**: RF-85.1, RF-85.2, RF-85.3.
+- **Test propio**: `tests/Unit/tuya-pulsar-consumer.test.js` (ausencia de helpers periódicos).
+
+## TSK-F73-03: Limpiar `.env.example` y tests
+- **Cambio**: `api/.env.example` (sin `CONSUMER_DOOR_RESYNC_MS`),
+  `tests/Unit/tuya-pulsar-consumer.test.js` (quitar casos F72 de periodicidad).
+- **RF**: RF-85.1.
+- **Test propio**: unit Node.
+
+## TSK-F73-04: Runner y regresión
+- **Cambio**: `api/bin/run-tests.sh` (**BLOCK 50** verifica la ausencia de resync periódico) +
+  `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-85.4.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F73
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F73-01 | Specs | RF-85 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F73-02 | Quitar resync periódico | RF-85.1/2/3 | `tuya-pulsar-consumer/index.js` | unit Node |
+| F73-03 | Limpiar env y tests | RF-85.1 | `.env.example`, `tuya-pulsar-consumer.test.js` | unit Node |
+| F73-04 | Runner + regresión | RF-85.4 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F73)
+
+```
+F73-01 (specs) ─> F73-02 (consumer) ─> F73-03 (env/tests) ─> F73-04 (runner + regresión)
+```

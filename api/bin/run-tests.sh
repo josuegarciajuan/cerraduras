@@ -4579,10 +4579,10 @@ else
 fi
 
 # =============================================================================
-# BLOCK 50 — F72: Estado persistente de puerta + resync periódico (RF-83 / RF-84)
-# Trazabilidad: RF-83.1..83.3, RF-84.1..84.5; TSK-F72-02..TSK-F72-05
+# BLOCK 50 — F72/F73: Estado persistente de puerta y SIN polling periódico Tuya
+# Trazabilidad: RF-83.1..83.3, RF-85.1..85.3; TSK-F72-02..F72-03, TSK-F73-02..F73-04
 # =============================================================================
-block "BLOCK 50 — F72: Estado persistente + resync de puerta"
+block "BLOCK 50 — F72/F73: Estado persistente de puerta (sin polling Tuya)"
 
 # 50.0 Lógica pura del croquis (persistencia de estado)
 F72_JS="tests/Unit/croquis-logic.test.js"
@@ -4601,7 +4601,7 @@ else
     fail "F72: croquis-logic" "$F72_JS no encontrado"
 fi
 
-# 50.0b Consumer: resync periódico de puerta (Node; sin servidor)
+# 50.0b Consumer: sin polling periódico de cuota Tuya (Node; sin servidor)
 F72C_JS="tests/Unit/tuya-pulsar-consumer.test.js"
 if [ -f "$F72C_JS" ]; then
     F72C_OUT=$(node "$F72C_JS" 2>&1)
@@ -4609,35 +4609,30 @@ if [ -f "$F72C_JS" ]; then
     F72C_SUM=$(echo "$F72C_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
     [ -z "$F72C_SUM" ] && F72C_SUM="exit=$F72C_RC"
     if [ "$F72C_RC" -eq 0 ]; then
-        pass "F72: tuya-pulsar-consumer ($F72C_SUM)"
+        pass "F72/F73: tuya-pulsar-consumer ($F72C_SUM)"
     else
-        fail "F72: tuya-pulsar-consumer" \
+        fail "F72/F73: tuya-pulsar-consumer" \
             "$F72C_SUM — $(echo "$F72C_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
     fi
 else
-    fail "F72: tuya-pulsar-consumer" "$F72C_JS no encontrado"
+    fail "F72/F73: tuya-pulsar-consumer" "$F72C_JS no encontrado"
 fi
 
-# 50.1 Estáticos: estado persistente y resync
+# 50.1 Estáticos: estado persistente y AUSENCIA de polling periódico Tuya
 if ! grep -q 'DOOR_STALE_SECONDS' public/assets/croquis-logic.js 2>/dev/null; then
     pass "F72: croquis NO degrada por antigüedad (sin DOOR_STALE_SECONDS)"
 else
     fail "F72: DOOR_STALE_SECONDS" "sigue presente en croquis-logic.js"
 fi
-if grep -q 'periodicDoorResyncDue' bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
-    pass "F72: consumer define periodicDoorResyncDue"
+if ! grep -qE 'periodicDoorResyncDue|DOOR_RESYNC_MS|resyncDoorPeriodic' bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
+    pass "F73: consumer SIN resync periódico que gaste cuota Tuya"
 else
-    fail "F72: periodicDoorResyncDue" "ausente"
+    fail "F73: resync periódico" "sigue presente en el consumer"
 fi
-if grep -q 'DOOR_RESYNC_MS' bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
-    pass "F72: consumer define DOOR_RESYNC_MS"
+if ! grep -q 'CONSUMER_DOOR_RESYNC_MS' .env.example 2>/dev/null; then
+    pass "F73: .env.example SIN CONSUMER_DOOR_RESYNC_MS"
 else
-    fail "F72: DOOR_RESYNC_MS" "ausente"
-fi
-if grep -q 'CONSUMER_DOOR_RESYNC_MS' .env.example 2>/dev/null; then
-    pass "F72: .env.example documenta CONSUMER_DOOR_RESYNC_MS"
-else
-    fail "F72: .env.example" "sin CONSUMER_DOOR_RESYNC_MS"
+    fail "F73: .env.example" "documenta un polling periódico"
 fi
 
 # =============================================================================

@@ -2333,3 +2333,26 @@ ningún campo existente cambia.
 
 - Sin rutas nuevas ni campos eliminados; `door_age_seconds`/`presence_age_seconds` se mantienen.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 50** nuevo.
+
+---
+
+# Fase 73: Sin polling periódico que consuma cuota Tuya (RF-85)
+
+## 1. Contrato de comportamiento
+
+- **No existe** ningún sondeo REST periódico a Tuya. El consumer no define
+  `CONSUMER_DOOR_RESYNC_MS` ni un temporizador que llame a `/devices/{id}/status`.
+- El estado de puerta/presencia entra **solo por push** y persiste como último estado conocido
+  (RF-83); no se refresca por tiempo.
+- Se conserva **únicamente** el resync puntual al (re)conectar el WS (event-driven, pre-F72).
+
+## 2. API pública
+
+- `GET /almacen-api/state` y el SSE no cambian: siguen exponiendo `live` con
+  `door_state`, `presence_state`, `switch_state`, `last_*` y `*_age_seconds` (diagnóstico).
+
+## 3. No regresión
+
+- Sin rutas nuevas ni campos eliminados; se elimina únicamente el resync periódico interno.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 50** actualizado (la sección
+  de polling periódico de Fase 72 §2 queda **derogada**).

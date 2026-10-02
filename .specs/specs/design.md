@@ -3966,3 +3966,44 @@ diagnóstico, sin efecto en la presentación.
 |---|---|---|---|
 | RF-83 | §36.1–36.2 | Fase 72 | F72-02, F72-03 |
 | RF-84 | §36.3 | Fase 72 | F72-04, F72-05 |
+
+---
+
+# 37. F73 — Sin polling periódico que consuma cuota Tuya (RF-85)
+
+## 37.1 Problema
+
+La API REST de Tuya se factura por llamada. El resync periódico de puerta (§36.3) sondeaba
+`/devices/{id}/status` cada 10 min de forma indefinida, gastando créditos sin intervención del
+usuario. Se **deroga RF-84** y se elimina ese sondeo. El diseño correcto es: **los sensores entran
+por push** (Message Service, sin cuota); REST solo en acciones explícitas.
+
+## 37.2 Eliminación en el consumer (`tuya-pulsar-consumer/index.js`)
+
+- Se eliminan: `DOOR_RESYNC_MS`, `doorResyncDeviceIds`, `lastDoorResyncAt`,
+  `loadDoorResyncDevices()`, `periodicDoorResyncDue()`, `resyncDoorPeriodic()`, los helpers de
+  `quota*` y el `setInterval` de sondeo periódico.
+- `resyncKnownDevices()` vuelve a su forma previa a F72 (solo resync puntual al `ws-open`, con
+  `shouldResync`/rate-limit). El fichero queda **idéntico** al estado pre-F72.
+- No se añade ningún temporizador que llame a `tuyaRequest(.../status)`.
+
+## 37.3 Alcance del gasto que se conserva
+
+- Push del Message Service: **sin cuota**.
+- Resync puntual al (re)conectar el WS: REST, pero **event-driven**, no periódico (se mantiene).
+- Acciones explícitas del panel/calibración y `ping-all-devices`: REST **bajo demanda** (se
+  mantienen, fuera del alcance de esta fase).
+
+## 37.4 Tests
+
+- `api/tests/Unit/tuya-pulsar-consumer.test.js`: se comprueba que el módulo **no** exporta
+  `periodicDoorResyncDue` ni `DOOR_RESYNC_MS`.
+- `api/bin/run-tests.sh`: **BLOCK 50** verifica la ausencia de resync periódico en el consumer y de
+  `CONSUMER_DOOR_RESYNC_MS` en `.env.example`, además de mantener los casos F72 de estado
+  persistente del croquis.
+
+## 37.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-85 | §37.1–37.3 | Fase 73 | F73-01…F73-04 |
