@@ -3918,3 +3918,51 @@ recibe `EV_PRESENT` (solo se le llama si el evento fue `apply`). Además el croq
 |---|---|---|---|
 | RF-81 | §35.2–35.4 | Fase 71 | F71-01…F71-05 |
 | RF-82 | §35.5–35.6 | Fase 71 | F71-01, F71-04, F71-05 |
+
+---
+
+# 36. F72 — Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+
+## 36.1 Problema y corrección de §35.6
+
+El MC400D es un contacto **edge-triggered**: solo emite al cambiar. Un umbral de frescura
+(`DOOR_STALE_SECONDS = 300`) para degradar el chip a "sin datos" es **semánticamente incorrecto**:
+una puerta `OPEN` sigue abierta hasta que llegue `CLOSED`. Se **deroga RF-82.2**: el chip de puerta
+vuelve a depender solo del último estado de dominio. `door_age_seconds` se conserva en `live` como
+diagnóstico, sin efecto en la presentación.
+
+## 36.2 Croquis (`croquis-logic.js`)
+
+- Se elimina `DOOR_STALE_SECONDS` y la variable `doorStale` de la decisión de `chips`/`desc`.
+- Regla final del chip de puerta:
+  - `doorOpen` (F56 `resolveDoorOpen`) → `PUERTA ABIERTA`;
+  - `door === 'CLOSED'` → `PUERTA CERRADA`;
+  - sin estado (`UNKNOWN`/ausente) → `PUERTA SIN DATOS`.
+- `personInside = occupied || presence === 'PRESENT'` se mantiene (F71).
+
+## 36.3 Resync REST periódico (`tuya-pulsar-consumer/index.js`)
+
+- Nueva constante `DOOR_RESYNC_MS = parseInt(process.env.CONSUMER_DOOR_RESYNC_MS || '600000', 10)`.
+- `resyncKnownDevices(reason, kinds)` gana un parámetro opcional de kinds/ids para reutilizar el
+  bucle existente. El resync periódico llama con `['PROXIMITY']`.
+- Contador `lastDoorResyncAt` **separado** de `lastResyncAt`; el helper puro
+  `periodicDoorResyncDue(now, lastDoorResyncAt, intervalMs)` decide si toca.
+- Antes de sondear, `quotaCheck()` reutiliza el contador compartido `api/run/tuya-quota.json`
+  (`TUYA_HOURLY_BUDGET`/`TUYA_DAILY_BUDGET`); si está agotado, se omite el ciclo.
+- Timer `setInterval(... DOOR_RESYNC_MS).unref()` en `start()`, solo con WS `OPEN`.
+
+## 36.4 Tests
+
+- `api/tests/Unit/croquis-logic.test.js`: `CLOSED` con edad enorme → `PUERTA CERRADA`; `OPEN` con
+  edad enorme → `PUERTA ABIERTA`; `door_state` ausente → `PUERTA SIN DATOS`.
+- `api/tests/Unit/tuya-pulsar-consumer.test.js`: `periodicDoorResyncDue` (primera vez, intervalo
+  cumplido/no cumplido).
+- `api/bin/run-tests.sh`: **BLOCK 50** (estáticos + `CONSUMER_DOOR_RESYNC_MS` en `.env.example`);
+  ajustar **BLOCK 49** (ya no exige `DOOR_STALE_SECONDS`).
+
+## 36.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-83 | §36.1–36.2 | Fase 72 | F72-02, F72-03 |
+| RF-84 | §36.3 | Fase 72 | F72-04, F72-05 |

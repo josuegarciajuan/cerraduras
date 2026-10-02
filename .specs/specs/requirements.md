@@ -1422,7 +1422,39 @@ software): el panel debe reflejarlo con honestidad y marcar la señal como no fr
   `door_age_seconds` y `presence_age_seconds`, calculados desde el último evento **recibido** por
   sensor (`presence_events.received_at`); `null` si no hay evento previo.
 - **RF-82.2**: El croquis trata la puerta como **"sin datos"** (no como `CERRADA`) cuando la edad
-  de la señal supera un umbral de frescura (`DOOR_STALE_SECONDS`).
+  de la señal supera un umbral de frescura (`DOOR_STALE_SECONDS`). *(Derogado por RF-83.2, F72.)*
 - **RF-82.3**: El SSE `/almacen-api/event-stream` incluye los nuevos campos en su fingerprint.
 - **RF-82.4**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y un **BLOCK 49** nuevo.
+
+---
+
+# Fase 72: Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+
+**Motivo**: el sensor de puerta MC400D es **edge-triggered**: solo emite al abrir/cerrar. Por eso
+un estado `OPEN` (o `CLOSED`) es la **última verdad conocida** y debe permanecer hasta que llegue el
+evento contrario; no debe caducar a "sin datos" por el mero paso del tiempo (RF-82.2 resultó
+incorrecto). Como contrapartida, si un push se pierde (hueco real observado 09:19–10:20), el estado
+se queda congelado en el valor anterior; se añade un **resync REST periódico** del sensor de puerta
+para recuperar transiciones perdidas.
+
+## RF-83: El croquis conserva el último estado de puerta conocido
+- **RF-83.1**: El chip/estado de puerta del croquis se decide **solo** por el último estado de
+  dominio: `OPEN` → `PUERTA ABIERTA` (regla F56), `CLOSED` → `PUERTA CERRADA`.
+- **RF-83.2**: El croquis muestra `PUERTA SIN DATOS` **únicamente** cuando nunca hubo estado
+  (`door_state` ausente/`UNKNOWN`). La antigüedad de la señal (`door_age_seconds`) **no** degrada
+  el chip; queda como dato de diagnóstico.
+- **RF-83.3**: El croquis de presencia no cambia: `PRESENT` pinta al monigote dentro.
+
+## RF-84: Resync REST periódico del sensor de puerta
+- **RF-84.1**: El consumer Pulsar sondea por REST (`GET /devices/{id}/status`) solo el sensor
+  **PROXIMITY** del almacén cada `CONSUMER_DOOR_RESYNC_MS` (por defecto `600000` ms = 10 min),
+  además del resync puntual al (re)conectar el WS.
+- **RF-84.2**: El contador de rate-limit del resync periódico es **independiente** del de
+  `ws-open`, para no suprimir el resync tras una reconexión.
+- **RF-84.3**: El sondeo periódico respeta el **presupuesto de cuota** compartido
+  (`api/run/tuya-quota.json`): si el presupuesto horario/diario está agotado, no sondea.
+- **RF-84.4**: El resync reenvía el estado por el webhook, de modo que un `OPEN`/`CLOSED` perdido
+  se recupera y `door_age_seconds` se refresca. Sin rutas nuevas ni llamadas a Tuya desde el panel.
+- **RF-84.5**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y un **BLOCK 50** nuevo.

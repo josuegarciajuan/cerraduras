@@ -16,7 +16,6 @@ const path = require('path');
 const {
   deriveCroquis,
   DOOR_PULSE_MS,
-  DOOR_STALE_SECONDS,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'croquis-logic.js'));
 
 let passed = 0;
@@ -115,30 +114,30 @@ check('desc: puerta abierta + persona dentro',
 check('desc: vacío sin datos de luz',
   empty.desc.indexOf('Almacén vacío') >= 0 && empty.desc.indexOf('Luz sin datos') >= 0);
 
-// ─── 11. F71 (RF-82): frescura de la señal de puerta ───────────────────
-const freshClosed = deriveCroquis(snap({
+// ─── 11. F72 (RF-83): el estado de puerta persiste ─────────────────────
+// El MC400D es edge-triggered: un CLOSED viejo sigue siendo CERRADA, y un
+// OPEN viejo sigue siendo ABIERTA, hasta que llegue el evento contrario.
+const oldClosed = deriveCroquis(snap({
   door_state: 'CLOSED',
   presence_state: 'ABSENT',
-  door_age_seconds: 5,
+  door_age_seconds: 99999,
 }), BASE);
-check('F71 puerta fresca → PUERTA CERRADA', freshClosed.chips.door.text === 'PUERTA CERRADA');
-check('F71 puerta fresca → doorStale=false', freshClosed.doorStale === false);
+check('F72 CLOSED antiguo → PUERTA CERRADA', oldClosed.chips.door.text === 'PUERTA CERRADA');
+check('F72 CLOSED antiguo → desc "Puerta cerrada"', oldClosed.desc.indexOf('Puerta cerrada') === 0);
 
-const staleClosed = deriveCroquis(snap({
-  door_state: 'CLOSED',
+const oldOpen = deriveCroquis(snap({
+  door_state: 'OPEN',
   presence_state: 'ABSENT',
-  door_age_seconds: DOOR_STALE_SECONDS + 10,
+  door_age_seconds: 99999,
 }), BASE);
-check('F71 puerta vieja → PUERTA SIN DATOS', staleClosed.chips.door.text === 'PUERTA SIN DATOS');
-check('F71 puerta vieja → doorStale=true', staleClosed.doorStale === true);
-check('F71 puerta vieja → desc "sin datos"', staleClosed.desc.indexOf('Puerta sin datos') === 0);
+check('F72 OPEN antiguo → PUERTA ABIERTA', oldOpen.chips.door.text === 'PUERTA ABIERTA');
+check('F72 OPEN antiguo → doorOpen=true', oldOpen.doorOpen === true);
 
-const staleAbsentAge = deriveCroquis(snap({
-  door_state: 'CLOSED',
+const noDoorState = deriveCroquis(snap({
   presence_state: 'ABSENT',
   door_age_seconds: null,
 }), BASE);
-check('F71 door_age null → no se marca stale', staleAbsentAge.doorStale === false);
+check('F72 sin door_state → PUERTA SIN DATOS', noDoorState.chips.door.text === 'PUERTA SIN DATOS');
 
 // ─── 12. F71 (RF-81): presencia del almacén pinta al monigote dentro ───
 const whPresence = deriveCroquis(snap({
@@ -153,7 +152,6 @@ check('F71 presencia almacén → classes.occupied=true', whPresence.classes.occ
 // ─── 13. Módulo require-safe ───────────────────────────────────────────
 check('module exports the pure croquis logic', typeof deriveCroquis === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
-check('DOOR_STALE_SECONDS definido', DOOR_STALE_SECONDS === 300);
 
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' croquis-logic: ' + passed + ' passed, ' + failed + ' failed\n');
 if (failed > 0) process.exit(1);
