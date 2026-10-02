@@ -29,4 +29,11 @@ interface WarehouseRecordingServiceInterface
     public function enforceRecordingCap(int $maxSeconds): int;
 
     public function isWarehouseRoom(int $roomId): bool;
+
+    /**
+     * F76 (RF-92): `entered_at` de la visita ENTRADA activa creada por un ciclo
+     * de puerta o QR (no por presencia). Sirve de ancla de "huésped dentro" para
+     * la credibilidad de presencia; devuelve null si no hay visita así.
+     */
+    public function activeEnteredVisitAt(int $roomId): ?string;
 }

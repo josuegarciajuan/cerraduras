@@ -1544,3 +1544,29 @@ estricta.
   el historial de eventos.
 - **RF-90.2**: **No regresión**: la regresión completa termina con **0 failures** y un **BLOCK 52**
   nuevo.
+
+---
+
+# Fase 76: Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
+
+**Motivo**: el sensor 24G reporta `presence` (no solo `move`) con el almacén vacío, y como F71/F75
+la hacían siempre creíble, creaba visitas falsas (`entry_trigger=PRESENCE`) que a su vez
+"justificaban" la presencia. Con la puerta abierta el sensor ve el pasillo por el hueco. Se ancla la
+presencia al ciclo de puerta (F48 aplicado al almacén) y se impide que la propia presencia ancle la
+estancia, **sin ningún sondeo periódico**.
+
+## RF-91: Contexto de puerta para la presencia del almacén
+- **RF-91.1**: En `ALMACEN_BEBIDAS`, un `PRESENT` (con `tuya_raw_val="presence"`) solo es creíble si
+  hay contexto de ciclo de puerta: apertura/cierre reciente dentro de `presence_entry_window_seconds`
+  (entrada en curso) **o** una visita ENTRADA con trigger `DOOR`/`QR` y sin apertura posterior
+  (huésped dentro).
+- **RF-91.2**: Con `door_state = OPEN`, la presencia **no** es creíble (el 24G puede ver el pasillo a
+  través del hueco), evitando el fantasma mientras la puerta está abierta.
+- **RF-91.3**: El flujo F48 de habitaciones de huésped no cambia.
+
+## RF-92: La presencia no ancla la estancia
+- **RF-92.1**: Para el contexto "huésped dentro" solo cuentan las visitas de almacén con
+  `entry_trigger IN ('DOOR','QR')`; una visita creada solo por presencia (`PRESENCE`) **no** ancla la
+  credibilidad (rompe la auto-justificación).
+- **RF-92.2**: **No regresión**: la regresión completa termina con **0 failures**; el **BLOCK 52**
+  se amplía con los marcadores F76.

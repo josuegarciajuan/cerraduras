@@ -3592,3 +3592,47 @@ F74-01 (specs) ─> F74-02 (consumer) ─> F74-03 (env/tests) ─> F74-04 (runne
 ```
 F75-01 (specs) ─> F75-02 (presencia) ─> F75-03 (refresh+panel) ─> F75-04 (runner + regresión)
 ```
+
+---
+
+# Fase 76: Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
+
+## TSK-F76-01: Specs
+- **Cambio**: `requirements.md` (RF-91/92), `design.md` (§40), `contracts.md`, `tasks.md`,
+  `AGENTS.md`.
+- **RF**: RF-91, RF-92.
+- **Test propio**: revisión.
+
+## TSK-F76-02: Contexto de puerta en la presencia del almacén
+- **Cambio**: `api/src/Domain/Presence/IotSessionService.php`
+  (`warehousePresenceContext()`, retirar cortocircuito F71); `SensorEventDecision.php` (exigir
+  contexto en la rama `warehousePresence`).
+- **RF**: RF-91.
+- **Test propio**: `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`.
+
+## TSK-F76-03: Ancla sin auto-justificación
+- **Cambio**: `WarehouseRecordingServiceInterface::activeEnteredVisitAt()` +
+  `WarehouseRecordingService` (solo `DOOR`/`QR`).
+- **RF**: RF-92.
+- **Test propio**: casos F76 (no requiere fakes nuevos; se cubre con el flujo de puerta).
+
+## TSK-F76-04: Runner y regresión
+- **Cambio**: `api/bin/run-tests.sh` (**BLOCK 52** con marcadores F76) + `AGENTS.md`; ejecutar
+  `bash bin/run-tests.sh`.
+- **RF**: RF-92.2.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F76
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F76-01 | Specs | RF-91/92 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F76-02 | Contexto de puerta | RF-91 | `IotSessionService.php`, `SensorEventDecision.php` | unit PHP |
+| F76-03 | Ancla sin auto-justificación | RF-92 | `WarehouseRecordingService*.php` | unit PHP |
+| F76-04 | Runner + regresión | RF-92.2 | `run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F76)
+
+```
+F76-01 (specs) ─> F76-02 (contexto) ─> F76-03 (ancla) ─> F76-04 (runner + regresión)
+```

@@ -151,7 +151,11 @@ final class IotSessionService
                     && $value === PresenceEvent::VALUE_PRESENT
                 ) {
                     $warehousePresence = $this->isWarehouseRoom($room);
-                    if (!$warehousePresence) {
+                    if ($warehousePresence) {
+                        // F76 (RF-91/92): contexto por ciclo de puerta / visita real.
+                        [$entryWindowActive, $insideNoExitCycle] =
+                            $this->warehousePresenceContext($room, $session, $now);
+                    } else {
                         [$entryWindowActive, $insideNoExitCycle] =
                             $this->presenceContext($room, $session, $now);
                     }
@@ -489,13 +493,6 @@ final class IotSessionService
      */
     private function presenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
     {
-        // F71 (RF-81.1): en el almacén la presencia del sensor 24G es la fuente
-        // de ocupación; no hay estancia ni QR que la acrediten, así que se
-        // considera siempre creíble (evita `no_context` y el monigote ausente).
-        if ($this->isWarehouseRoom($room)) {
-            return [true, true];
-        }
-
         $activeStay       = $this->stays->findActiveForRoom($room->id);
         $entryConfirmedAt = $activeStay !== null ? $activeStay->entryConfirmedAt : null;
         $lastOpenTs       = $session->lastOpenAt !== null
@@ -514,6 +511,53 @@ final class IotSessionService
             $confTs = strtotime($entryConfirmedAt . ' UTC');
             if ($confTs !== false) {
                 $insideNoExitCycle = ($lastOpenTs === null || $lastOpenTs < $confTs);
+            }
+        }
+
+        return [$entryWindowActive, $insideNoExitCycle];
+    }
+
+    /**
+     * F76 (RF-91/92): contexto de presencia para el almacén.
+     *
+     * - Con la puerta ABIERTA el 24G puede ver el pasillo a través del hueco, así
+     *   que la presencia **no** es creíble en ese instante (elimina fantasmas).
+     * - Con la puerta cerrada, la presencia es creíble durante la ventana tras el
+     *   último OPEN/CLOSE (entrada en curso) o mientras haya una visita ENTRADA
+     *   con trigger DOOR/QR y sin apertura posterior (huésped dentro). Las visitas
+     *   creadas solo por presencia NO anclan (evita auto-justificarse).
+     *
+     * @return array{0:bool,1:bool} [entryWindowActive, insideNoExitCycle]
+     */
+    private function warehousePresenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
+    {
+        if ($session->doorState === IotSession::DOOR_OPEN) {
+            return [false, false];
+        }
+
+        $entryConfirmedAt = null;
+        if ($this->warehouseRecorder !== null) {
+            try {
+                $entryConfirmedAt = $this->warehouseRecorder->activeEnteredVisitAt($room->id);
+            } catch (\Throwable $e) {
+                $entryConfirmedAt = null;
+            }
+        }
+
+        $window    = $this->resolveEntryWindowSeconds($room);
+        $nowTs     = $now->getTimestamp();
+        $lastOpen  = $session->lastOpenAt  !== null ? strtotime($session->lastOpenAt . ' UTC')  : null;
+        $lastClose = $session->lastCloseAt !== null ? strtotime($session->lastCloseAt . ' UTC') : null;
+
+        $entryWindowActive = ($entryConfirmedAt === null)
+            && (($lastOpen !== null && ($nowTs - $lastOpen) <= $window)
+                || ($lastClose !== null && ($nowTs - $lastClose) <= $window));
+
+        $insideNoExitCycle = false;
+        if ($entryConfirmedAt !== null) {
+            $confTs = strtotime($entryConfirmedAt . ' UTC');
+            if ($confTs !== false) {
+                $insideNoExitCycle = ($lastOpen === null || $lastOpen < $confTs);
             }
         }
 

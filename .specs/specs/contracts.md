@@ -2415,3 +2415,26 @@ Respuestas:
 - `GET /almacen-api/state`, SSE y `/api/v1/*` intactos; la nueva ruta es aditiva.
 - `run-tests.sh` no borra el estado de la sala de almacén (RF-90).
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 52** nuevo.
+
+---
+
+# Fase 76: Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
+
+## 1. Semántica de presencia del almacén (sin cambios de API)
+
+- `PRESENT` en `ALMACEN_BEBIDAS` solo se aplica si `tuya_raw_val="presence"` **y**:
+  - `door_state ≠ OPEN`, y
+  - hay ventana de entrada (apertura/cierre recientes) **o** una visita ENTRADA con trigger
+    `DOOR`/`QR` sin apertura posterior.
+- En caso contrario → `discard_reason="no_context"` (auditado en `presence_events`).
+- `ABSENT` se sigue aplicando siempre. `GET /almacen-api/state` no cambia de forma.
+
+## 2. Ancla de estancia
+
+- `WarehouseRecordingServiceInterface::activeEnteredVisitAt()` (interno, no API pública): solo
+  visitas `entry_trigger IN ('DOOR','QR')`; las de `PRESENCE` no anclan.
+
+## 3. No regresión
+
+- Rutas y campos intactos; el comportamiento F48 de huéspedes no cambia.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 52** amplía marcadores F76.

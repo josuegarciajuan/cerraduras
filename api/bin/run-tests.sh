@@ -4748,18 +4748,20 @@ else
 fi
 
 # =============================================================================
-# BLOCK 52 — F75: Refresco de sensores bajo demanda + presencia estricta
-# Trazabilidad: RF-88.1..88.5, RF-89.1..89.3, RF-90.1..90.2; TSK-F75-02..F75-04
+# BLOCK 52 — F75/F76: Refresco de sensores + presencia anclada al ciclo de puerta
+# Trazabilidad: RF-88..90 (F75), RF-91..92 (F76); TSK-F75-02..F75-04, TSK-F76-02..F76-04
 # =============================================================================
-block "BLOCK 52 — F75: Refresco de sensores del almacén (sin polling)"
+block "BLOCK 52 — F75/F76: Refresco de sensores del almacén (sin polling)"
 
-# 52.0 Estáticos: ruta, panel, env, presencia estricta y snapshot de tests
+# 52.0 Estáticos: ruta, panel, env, presencia con contexto y snapshot de tests
 for F75_MARK in \
     "public/index.php:/almacen-api/sensors/refresh" \
     "public/assets/almacen.js:refreshSensors" \
     "public/almacen.html:btn-refresh" \
     ".env.example:ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS" \
     "src/Domain/Presence/SensorEventDecision.php:warehousePresence" \
+    "src/Domain/Presence/IotSessionService.php:warehousePresenceContext" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:activeEnteredVisitAt" \
     "bin/run-tests.sh:_e2e_backup_iot"; do
     F75_FILE="${F75_MARK%%:*}"
     F75_NEEDLE="${F75_MARK#*:}"
