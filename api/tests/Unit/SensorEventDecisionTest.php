@@ -262,13 +262,29 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::NO_CONTEXT) pass('F75: almacén + move → no_context (ignora ventana)');
 else fail('F75: move en almacén debería ser no_context, got ' . $decision);
 
-// `presence` en almacén → se aplica (señal fiable del 24G).
+// F76: `presence` en almacén SIN contexto (puerta abierta / sin ciclo) → no_context.
 $session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
 $decision = SensorEventDecision::decide(
     presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, false, true
 );
-if ($decision === SensorEventDecision::APPLY) pass('F75: almacén + presence → apply');
-else fail('F75: presence en almacén debería aplicar, got ' . $decision);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F76: almacén + presence sin contexto de puerta → no_context');
+else fail('F76: presence sin contexto en almacén debería ser no_context, got ' . $decision);
+
+// F76: `presence` en almacén con ventana de entrada → apply.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, true, false, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F76: almacén + presence con ventana → apply');
+else fail('F76: presence con ventana en almacén debería aplicar, got ' . $decision);
+
+// F76: `presence` en almacén con visita real dentro (sin ciclo de salida) → apply.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, false, true, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F76: almacén + presence con visita dentro → apply');
+else fail('F76: presence con visita dentro debería aplicar, got ' . $decision);
 
 // ABSENT en almacén → siempre apply.
 $session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');

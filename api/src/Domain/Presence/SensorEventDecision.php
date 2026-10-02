@@ -116,10 +116,11 @@ final class SensorEventDecision
         ) {
             $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
             if ($warehousePresence) {
-                // F75 (RF-89): el almacén no tiene estancia/QR; la única señal
-                // fiable del 24G es `presence` (el `move` no respeta far_detection
-                // y provoca fantasmas desde el pasillo).
-                if ($raw !== 'presence') {
+                // F75 (RF-89): en el almacén la señal fiable del 24G es `presence`
+                // (el `move` no respeta far_detection).
+                // F76 (RF-91/92): además exige contexto de puerta/visita real; con
+                // la puerta abierta el contexto viene en false (fantasmas del hueco).
+                if ($raw !== 'presence' || !($entryWindowActive || $insideNoExitCycle)) {
                     return self::NO_CONTEXT;
                 }
             } elseif (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {

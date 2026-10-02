@@ -39,6 +39,29 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         return (bool) $stmt->fetchColumn();
     }
 
+    /**
+     * F76 (RF-92): ancla de "dentro" para la credibilidad de presencia. Solo
+     * cuentan las visitas ENTRADA con trigger de puerta o QR; una visita creada
+     * únicamente por presencia no ancla (evita que un falso positivo del 24G se
+     * auto-justifique).
+     */
+    public function activeEnteredVisitAt(int $roomId): ?string
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT v.entered_at
+             FROM warehouse_state ws
+             JOIN warehouse_visits v ON v.id = ws.current_visit_id
+             WHERE ws.room_id = :r
+               AND v.outcome = 'ENTERED'
+               AND v.entry_trigger IN ('DOOR','QR')
+               AND v.entered_at IS NOT NULL
+             LIMIT 1"
+        );
+        $stmt->execute([':r' => $roomId]);
+        $v = $stmt->fetchColumn();
+        return ($v !== false && $v !== null && $v !== '') ? (string) $v : null;
+    }
+
     public function onSignal(int $roomId, string $event, array $meta = []): void
     {
         if (!$this->isWarehouseRoom($roomId)) {

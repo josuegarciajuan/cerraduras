@@ -144,6 +144,21 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F73 Tope de grabación en pruebas + purga del almacén** | **BLOCK 51** | **Completado** |
 | **F74 Sin polling periódico que gaste cuota Tuya** | **BLOCK 50** | **Completado** |
 | **F75 Refresco de sensores del almacén bajo demanda** | **BLOCK 52** | **Completado** |
+| **F76 Presencia del almacén anclada al ciclo de puerta** | **BLOCK 52** | **Completado** |
+
+### F76 — Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
+
+- **Motivo**: el 24G reporta `presence` falso con la sala vacía; F71/F75 lo creían siempre y la
+  propia presencia creaba visitas (`entry_trigger=PRESENCE`) que se auto-justificaban. Con la puerta
+  abierta el sensor ve el pasillo por el hueco.
+- **Contexto de puerta (RF-91)**: en `ALMACEN_BEBIDAS`, `presence` solo es creíble si `door_state ≠
+  OPEN` y hay ventana de entrada (OPEN/CLOSE recientes) o una visita ENTRADA `DOOR`/`QR` sin
+  apertura posterior.
+- **Ancla sin auto-justificación (RF-92)**: `WarehouseRecordingService::activeEnteredVisitAt()` solo
+  cuenta visitas `DOOR`/`QR`; las de `PRESENCE` no anclan.
+- **Sin API nueva**: `GET /almacen-api/state` no cambia de forma; no hay sondeo periódico.
+- **Tests**: `SensorEventDecisionTest.php`, `IotSessionServiceTest.php` y **BLOCK 52** (marcadores
+  F76).
 
 ### F75 — Refresco de sensores del almacén bajo demanda (RF-88 / RF-89 / RF-90)
 

@@ -4139,3 +4139,47 @@ dentro sin nadie.
 | RF-88 | §39.3–39.4 | Fase 75 | F75-02, F75-03 |
 | RF-89 | §39.2 | Fase 75 | F75-02 |
 | RF-90 | §39.5 | Fase 75 | F75-04 |
+
+---
+
+# 40. F76 — Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
+
+## 40.1 Problema
+
+El 24G reporta `presence` falso con la sala vacía. F71/F75 lo hacían siempre creíble → se creaba una
+visita (`entry_trigger=PRESENCE`) que convertía el fantasma en estado persistente. Con la puerta
+abierta, el sensor además ve el pasillo por el hueco.
+
+## 40.2 Contexto de presencia del almacén
+
+- `IotSessionService::warehousePresenceContext()`:
+  - Si `session.doorState === DOOR_OPEN` → `[false, false]` (no creíble).
+  - Si no: `entryConfirmedAt = warehouseRecorder->activeEnteredVisitAt(room)`.
+    - `entryWindowActive` = sin visita anclada y (`last_open_at` o `last_close_at` dentro de
+      `presence_entry_window_seconds`).
+    - `insideNoExitCycle` = hay visita anclada y `last_open_at < entered_at`.
+- `SensorEventDecision::decide()` (rama `warehousePresence`): aplica solo si
+  `tuya_raw_val === 'presence'` **y** (`entryWindowActive || insideNoExitCycle`).
+- Se retira el cortocircuito `[true,true]` que F71 puso en `presenceContext()` (queda solo para
+  huéspedes).
+
+## 40.3 Ancla sin auto-justificación
+
+- `WarehouseRecordingServiceInterface::activeEnteredVisitAt(int $roomId): ?string` devuelve
+  `warehouse_visits.entered_at` de la visita ENTRADA activa con `entry_trigger IN ('DOOR','QR')`.
+- Una visita creada por `IDLE + EV_PRESENT` (trigger `PRESENCE`) **no** ancla; así un falso positivo
+  no se perpetúa.
+
+## 40.4 Tests
+
+- `SensorEventDecisionTest.php`: almacén + `presence` sin contexto → `no_context`; con ventana o
+  visita → `apply`.
+- `IotSessionServiceTest.php`: almacén con puerta OPEN + `presence` → no aplica; tras CLOSE dentro
+  de ventana → aplica.
+
+## 40.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-91 | §40.2 | Fase 76 | F76-02 |
+| RF-92 | §40.3 | Fase 76 | F76-03 |

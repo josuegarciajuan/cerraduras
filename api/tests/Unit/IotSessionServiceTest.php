@@ -437,21 +437,30 @@ $rtRepo->byId[6] = new RoomType(6, 'ALMACEN_BEBIDAS', 'Almacén', 5, 5, 10, 30, 
 $roomRepo->byId[10] = new Room(10, 'WH1', 6, null, Room::STATUS_OCCUPIED, true, null);
 $roomRepo->byId[11] = new Room(11, '201', 1, null, Room::STATUS_OCCUPIED, true, null);
 
-// F75 (RF-89): en el almacén un `move` del pasillo NO es presencia creíble.
+// F75/F76: en el almacén un `move`, o un `presence` con la puerta abierta, NO son creíbles.
 Clock::freeze(new DateTimeImmutable('2026-04-28T14:00:00Z', new DateTimeZone('UTC')));
-$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:00Z', 'f75-wh-move', 'move'), 'corr-f75-wh-move');
+$svc->processEvent(makeEvent(10, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T14:00:00Z', 'f76-wh-open'), 'corr-f76-wh-open');
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:01Z', 'f76-wh-move', 'move'), 'corr-f76-wh-move');
 if (($iotRepo->sessions[10]->presenceState ?? null) !== IotSession::PRESENCE_PRESENT) {
-    ok('F75: almacén + move → NOT present (no_context, RF-89)');
+    ok('F76: almacén + move → NOT present (no_context)');
 } else {
-    bad('F75: almacén + move → NOT present (no_context, RF-89)', 'got PRESENT');
+    bad('F76: almacén + move → NOT present (no_context)', 'got PRESENT');
 }
 
-// En el almacén `presence` (señal fiable) SÍ se aplica.
-$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:02Z', 'f75-wh-presence', 'presence'), 'corr-f75-wh-presence');
-if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
-    ok('F75: almacén + presence → presence_state=PRESENT');
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:02Z', 'f76-wh-open-presence', 'presence'), 'corr-f76-wh-open-presence');
+if (($iotRepo->sessions[10]->presenceState ?? null) !== IotSession::PRESENCE_PRESENT) {
+    ok('F76: almacén + presence con puerta ABIERTA → no_context (fantasma del hueco)');
 } else {
-    bad('F75: almacén + presence → presence_state=PRESENT', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+    bad('F76: presence con puerta abierta debería ser no_context', 'got PRESENT');
+}
+
+// Tras cerrar la puerta, la presencia dentro de la ventana SÍ se aplica.
+$svc->processEvent(makeEvent(10, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T14:00:03Z', 'f76-wh-close'), 'corr-f76-wh-close');
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:04Z', 'f76-wh-presence', 'presence'), 'corr-f76-wh-presence');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F76: almacén + presence tras cierre (ventana) → presence_state=PRESENT');
+} else {
+    bad('F76: presence tras cierre debería aplicar', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
 }
 
 // Huésped sin estancia ni apertura reciente: sigue descartado (F48 intacto).
