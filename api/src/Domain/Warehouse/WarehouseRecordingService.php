@@ -189,6 +189,31 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         return $fired;
     }
 
+    /**
+     * F73/RF-85: acota la duración de las grabaciones en curso.
+     *
+     * Marca `stop_requested=1` en toda grabación `RECORDING` cuya `started_at`
+     * supere `$maxSeconds`. El recorder finaliza esas filas como `SAVED` en el
+     * mismo tick (renombrado + póster + duration_s). Con `$maxSeconds <= 0` es
+     * un no-op (producción = sin límite).
+     *
+     * @return int número de grabaciones marcadas para parar
+     */
+    public function enforceRecordingCap(int $maxSeconds): int
+    {
+        if ($maxSeconds <= 0) {
+            return 0;
+        }
+        $stmt = $this->pdo->prepare(
+            "UPDATE camera_recordings SET stop_requested=1
+             WHERE status='RECORDING' AND stop_requested=0
+               AND started_at IS NOT NULL
+               AND started_at <= (UTC_TIMESTAMP(3) - INTERVAL :s SECOND)"
+        );
+        $stmt->execute([':s' => $maxSeconds]);
+        return $stmt->rowCount();
+    }
+
     // -- helpers ---------------------------------------------------------------
 
     /** @return array{x:int,m:int} */

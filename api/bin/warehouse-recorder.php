@@ -38,6 +38,12 @@ if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0775, true) && !is_dir($stora
 $pdo = PdoFactory::make();
 $service = new WarehouseRecordingService($pdo);
 
+// F73/RF-85: tope de duración de grabaciones (0 = sin límite).
+$maxRecordingSeconds = Config::getInt('WAREHOUSE_MAX_RECORDING_SECONDS', 0) ?? 0;
+if ($maxRecordingSeconds > 0) {
+    fwrite(STDERR, "[warehouse-recorder] recording cap active: {$maxRecordingSeconds}s\n");
+}
+
 /** @var array<int, resource> $procs recording_id => ffmpeg process resource */
 $procs = [];
 $log = static function (string $msg): void {
@@ -56,6 +62,9 @@ $log('started');
 while ($running) {
     try {
         $service->tickDeadlines();
+        // F73/RF-85: marca para parar los clips que superan el tope; el propio
+        // tick los finaliza como SAVED al procesar stop_requested.
+        $service->enforceRecordingCap($maxRecordingSeconds);
         $pdo->beginTransaction();
 
         // 1. Start pending recordings.

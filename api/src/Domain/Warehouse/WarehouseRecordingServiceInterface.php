@@ -22,5 +22,11 @@ interface WarehouseRecordingServiceInterface
      */
     public function tickDeadlines(): int;
 
+    /**
+     * F73/RF-85: cap in-progress recordings to $maxSeconds (0 = unlimited).
+     * @return int number of recordings marked to stop
+     */
+    public function enforceRecordingCap(int $maxSeconds): int;
+
     public function isWarehouseRoom(int $roomId): bool;
 }
