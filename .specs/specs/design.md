@@ -3846,3 +3846,75 @@ queda en negro. Patrón de referencia: `reconocimientoFacial/live/mjpeg-stream.j
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-80 | §34 | Fase 70 | F70-01…F70-07 |
+
+---
+
+# 35. F71 — Presencia real del almacén y frescura de señal (RF-81 / RF-82)
+
+## 35.1 Problema
+
+En `ALMACEN_BEBIDAS` no existen `stays`/QR de huésped, así que `presenceContext()` de
+`IotSessionService` devuelve `[entryWindowActive=false, insideNoExitCycle=false]` pasados los
+`presence_entry_window_seconds` (90 s). `SensorEventDecision` marca entonces todo `PRESENT` como
+`no_context` (auditado en `presence_events.discard_reason`). Efectos: `iot_sessions.presence_state`
+nunca pasa a `PRESENT`; el croquis no muestra al monigote dentro; `WarehouseRecordingDecision` no
+recibe `EV_PRESENT` (solo se le llama si el evento fue `apply`). Además el croquis no distingue
+"puerta cerrada" de "sin datos" cuando el push del sensor de puerta se interrumpe.
+
+## 35.2 Credibilidad de presencia por tipo de sala
+
+- `presenceContext(Room, IotSession, now)` gana un cortocircuito: si la sala es
+  `ALMACEN_BEBIDAS` (vía `roomType.code`), devuelve `[true, true]`. Así `presenceCredible()`
+  acepta `move`/`presence` como `PRESENT`.
+- `ABSENT` (`none`) ya se aplica siempre, por lo que no requiere cambio.
+- Detección encapsulada en un helper privado `isWarehouseRoom(Room): bool` que resuelve el tipo con
+  `$this->roomTypes->findById($room->roomTypeId)`.
+- La lógica pura `SensorEventDecision` **no cambia** (sigue siendo genérica y testeable); el tipo
+  de sala se resuelve en el servicio.
+
+## 35.3 Efectos de huésped en salas de almacén
+
+- `anomalyService->detectAndPersist()` se **omite** para salas `ALMACEN_BEBIDAS` (evita A2
+  `presence_without_stay` y ruido). `exitActionService->executeIfPending()` ya es no-op sin stay.
+- La luz (`switchService->turnOn` en `DOOR_OPEN`) se mantiene (comportamiento deseado).
+
+## 35.4 Coherencia de la visita iniciada por presencia
+
+- `WarehouseRecordingDecision::decide(IDLE, EV_PRESENT)` pasa a devolver
+  `[A_CREATE_VISIT, A_CONFIRM_ENTRY, A_START_EXT, A_START_INT]` (antes sin `A_CONFIRM_ENTRY`),
+  de modo que la visita creada por presencia queda `outcome=ENTERED` y `warehouse.occupied=true`.
+- Se actualiza el test C de `WarehouseRecordingDecisionTest.php` acorde.
+
+## 35.5 Frescura de señal (`live`)
+
+- `WarehouseStateController::stateArray()` añade a `live`:
+  `door_age_seconds` y `presence_age_seconds` (`null` si no hay evento). Se calculan con una única
+  consulta `SELECT sensor, MAX(received_at) AS last FROM presence_events WHERE room_id=:r GROUP BY
+  sensor` y `age = now - last`.
+- El SSE ya incluye `live` en el fingerprint, por lo que la frescura se empuja sin cambios.
+
+## 35.6 Croquis (`croquis-logic.js` / `almacen.js`)
+
+- `deriveCroquis(snapshot, now)` acepta `live.door_age_seconds`. Con `DOOR_STALE_SECONDS` (por
+  defecto 300), si `door_age_seconds > umbral` la puerta se presenta como `unknown` ("PUERTA SIN
+  DATOS") en lugar de `CERRADA`, y `classes.unknown` se activa.
+- `personInside = occupied || presence === 'PRESENT'` se mantiene (RF-81.2).
+- `almacen.js` pasa `state.live` completo a `deriveCroquis` (ya lo hace) y no requiere más cambios
+  salvo el nuevo chip.
+
+## 35.7 Tests
+
+- `api/tests/Unit/croquis-logic.test.js`: puerta fresca cerrada → `CERRADA`; puerta con
+  `door_age_seconds` alto → `SIN DATOS`; `presence_state=PRESENT` → `personInside`.
+- `api/tests/Unit/IotSessionServiceTest.php`: sala almacén aplica `PRESENT` sin stay; sala huésped
+  sigue `no_context`.
+- `api/tests/Unit/WarehouseRecordingDecisionTest.php`: IDLE + PRESENT incluye `A_CONFIRM_ENTRY`.
+- `api/bin/run-tests.sh`: **BLOCK 49** (HTTP/DB) — publica un `PRESENT` de almacén y verifica
+  `live.presence_state=PRESENT` y la presencia de `*_age_seconds`; restaura el estado.
+
+## 35.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-81 | §35.2–35.4 | Fase 71 | F71-01…F71-05 |
+| RF-82 | §35.5–35.6 | Fase 71 | F71-01, F71-04, F71-05 |

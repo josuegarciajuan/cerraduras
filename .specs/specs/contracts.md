@@ -2266,3 +2266,44 @@ ningún campo existente cambia.
 
 - Rutas, códigos y campos de `/almacen-api/*` intactos; `mjpeg_url` es **aditivo**.
 - Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 48** nuevo.
+
+---
+
+# Fase 71: Presencia real del almacén y frescura de señal (RF-81 / RF-82)
+
+## 1. `GET /almacen-api/state` — bloque `live` (aditivo)
+
+```json
+{
+  "live": {
+    "door_state": "CLOSED",
+    "presence_state": "PRESENT",
+    "switch_state": "ON",
+    "last_open_at": "2026-10-02 09:10:37.900",
+    "last_close_at": "2026-10-02 09:11:21.092",
+    "last_absent_since": null,
+    "door_age_seconds": 321,
+    "presence_age_seconds": 3
+  }
+}
+```
+
+- `door_age_seconds` / `presence_age_seconds`: entero ≥ 0 = segundos desde el último evento
+  **recibido** de ese sensor (`presence_events.received_at`); `null` si nunca hubo evento.
+- No se elimina ni renombra ningún campo previo. `server_ts` sigue siendo el ancla temporal.
+
+## 2. Comportamiento de dominio
+
+- Para salas `ALMACEN_BEBIDAS`, un `PRESENT` de `PRESENCE` (TUYA) se aplica a
+  `iot_sessions.presence_state` sin exigir estancia ni ventana de entrada.
+- `GET /almacen-api/state` refleja `warehouse.occupied=true` y `live.presence_state="PRESENT"`
+  mientras el sensor detecta presencia.
+- `POST /api/v1/presence/events` (sensor=PRESENCE, value=PRESENT) sobre una sala de almacén
+  devuelve `accepted=true` y `derived_state.presence_state="PRESENT"` (antes `ABSENT` con
+  `discard_reason=no_context`).
+
+## 3. No regresión
+
+- Rutas, códigos y campos existentes intactos; `door_age_seconds`/`presence_age_seconds` son
+  **aditivos**. El comportamiento F48 de habitaciones de huésped no cambia.
+- Verificación: `bash bin/run-tests.sh` con **0 failures** y **BLOCK 49** nuevo.

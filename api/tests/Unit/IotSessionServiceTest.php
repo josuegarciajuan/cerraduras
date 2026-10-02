@@ -422,6 +422,38 @@ $svc->processEvent(makeEvent(4, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::V
 if ($stayOpen->entryConfirmedAt === null) ok('F42: PRESENT con puerta abierta NO consolida (umbral)');
 else bad('F42: PRESENT con puerta abierta NO consolida', "got {$stayOpen->entryConfirmedAt}");
 
+// ============================================================================
+// F71 (RF-81): presencia real del almacén siempre creíble
+// ============================================================================
+echo "\nF71 · presencia real del almacén (RF-81)\n";
+
+function makeTuyaPresence(int $roomId, string $value, string $occurredAt, string $srcId, string $raw): array {
+    return ['room_id'=>$roomId,'sensor'=>PresenceEvent::SENSOR_PRESENCE,'value'=>$value,
+            'provider'=>'TUYA','occurred_at'=>$occurredAt,'source_event_id'=>$srcId,
+            'meta'=>['tuya_raw_val'=>$raw]];
+}
+
+$rtRepo->byId[6] = new RoomType(6, 'ALMACEN_BEBIDAS', 'Almacén', 5, 5, 10, 30, 90, 40, 40, 5);
+$roomRepo->byId[10] = new Room(10, 'WH1', 6, null, Room::STATUS_OCCUPIED, true, null);
+$roomRepo->byId[11] = new Room(11, '201', 1, null, Room::STATUS_OCCUPIED, true, null);
+
+// Almacén sin estancia ni apertura reciente: el PRESENT se aplica.
+Clock::freeze(new DateTimeImmutable('2026-04-28T14:00:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:00Z', 'f71-wh-present', 'move'), 'corr-f71-wh');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F71: almacén sin stay/ventana → presence_state=PRESENT');
+} else {
+    bad('F71: almacén sin stay/ventana → presence_state=PRESENT', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+
+// Huésped sin estancia ni apertura reciente: sigue descartado (F48 intacto).
+$svc->processEvent(makeTuyaPresence(11, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:01Z', 'f71-guest-present', 'move'), 'corr-f71-guest');
+if (($iotRepo->sessions[11]->presenceState ?? null) !== IotSession::PRESENCE_PRESENT) {
+    ok('F71: huésped sin contexto → PRESENT descartado (F48 intacto)');
+} else {
+    bad('F71: huésped sin contexto → PRESENT descartado (F48 intacto)', 'got PRESENT');
+}
+
 Clock::unfreeze();
 
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";

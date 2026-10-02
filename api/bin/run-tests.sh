@@ -4516,6 +4516,73 @@ else
 fi
 
 # =============================================================================
+# BLOCK 49 — F71: Presencia real del almacén + frescura (RF-81 / RF-82)
+# Trazabilidad: RF-81.1..81.5, RF-82.1..82.4; TSK-F71-02..TSK-F71-06
+# =============================================================================
+block "BLOCK 49 — F71: Presencia real del almacén + frescura"
+
+# 49.0 Lógica pura del croquis con frescura (Node; sin servidor)
+F71_JS="tests/Unit/croquis-logic.test.js"
+if [ -f "$F71_JS" ]; then
+    F71_OUT=$(node "$F71_JS" 2>&1)
+    F71_RC=$?
+    F71_SUM=$(echo "$F71_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F71_SUM" ] && F71_SUM="exit=$F71_RC"
+    if [ "$F71_RC" -eq 0 ]; then
+        pass "F71: croquis-logic ($F71_SUM)"
+    else
+        fail "F71: croquis-logic" \
+            "$F71_SUM — $(echo "$F71_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F71: croquis-logic" "$F71_JS no encontrado"
+fi
+
+# 49.1 Estáticos: marcadores de la implementación
+if grep -q 'DOOR_STALE_SECONDS' public/assets/croquis-logic.js 2>/dev/null; then
+    pass "F71: croquis-logic define DOOR_STALE_SECONDS"
+else
+    fail "F71: DOOR_STALE_SECONDS" "ausente"
+fi
+if grep -q 'WAREHOUSE_TYPE_CODE' src/Domain/Presence/IotSessionService.php 2>/dev/null; then
+    pass "F71: IotSessionService define el tipo de almacén"
+else
+    fail "F71: WAREHOUSE_TYPE_CODE" "ausente"
+fi
+if grep -q 'door_age_seconds' src/Http/Controllers/WarehouseStateController.php 2>/dev/null; then
+    pass "F71: WarehouseStateController expone door_age_seconds"
+else
+    fail "F71: door_age_seconds" "ausente en el controlador"
+fi
+if grep -q 'A_CONFIRM_ENTRY' src/Domain/Warehouse/WarehouseRecordingDecision.php 2>/dev/null; then
+    pass "F71: WarehouseRecordingDecision confirma visita por presencia"
+else
+    fail "F71: A_CONFIRM_ENTRY" "ausente"
+fi
+
+# 49.2 HTTP aditivo: live expone las edades de señal (RF-82.1)
+if [ "$SERVER_UP" = true ]; then
+    F71_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F71_ROOM" ]; then
+        F71_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F71_ROOM")
+        if echo "$F71_STATE" | grep -q '"door_age_seconds"'; then
+            pass "F71: state.live incluye door_age_seconds"
+        else
+            fail "F71: state.live[door_age_seconds]" "ausente"
+        fi
+        if echo "$F71_STATE" | grep -q '"presence_age_seconds"'; then
+            pass "F71: state.live incluye presence_age_seconds"
+        else
+            fail "F71: state.live[presence_age_seconds]" "ausente"
+        fi
+    else
+        skip "BLOCK 49 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "BLOCK 49 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

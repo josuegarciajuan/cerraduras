@@ -1391,3 +1391,38 @@ ese enfoque en el panel `/almacen`.
   registran credenciales RTSP en logs.
 - **RF-80.7**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
   completa termina con **0 failures** y un **BLOCK 48** nuevo.
+
+---
+
+# Fase 71: Presencia real del almacén y frescura de señal (RF-81 / RF-82)
+
+**Motivo**: en la sala `ALMACEN_BEBIDAS` (PROTO2) el croquis del panel `/almacen` no muestra al
+monigote dentro aunque el sensor de presencia 24G sí detecta gente. Los eventos `PRESENT` llegan
+por push, pero la credibilidad F48 (`no_context`) los descarta porque la sala no tiene `stays`/QR;
+`iot_sessions.presence_state` queda en `ABSENT`. Además, cuando el sensor de puerta deja de
+empujar, el croquis afirma `PUERTA CERRADA` con datos antiguos en lugar de indicar "sin datos".
+La puerta física reporta CERRADA en Tuya (incidencia de montaje/sensor, fuera de alcance del
+software): el panel debe reflejarlo con honestidad y marcar la señal como no fresca.
+
+## RF-81: Presencia real del almacén
+- **RF-81.1**: Los eventos `PRESENT` del sensor `PRESENCE` (provider TUYA) en salas
+  `ALMACEN_BEBIDAS` son **siempre creíbles**: no se les aplica el filtro de contexto F48
+  (`entryWindowActive`/`insideNoExitCycle`) pensado para habitaciones con estancia.
+- **RF-81.2**: El croquis muestra al **monigote dentro** cuando `presence_state = PRESENT`, aunque
+  no exista una visita de almacén (QR/puerta) activa.
+- **RF-81.3**: Los eventos de presencia se propagan al motor de grabación
+  (`WarehouseRecordingDecision`: `EV_PRESENT`/`EV_ABSENT`), de modo que un ciclo iniciado por
+  presencia es posible.
+- **RF-81.4**: En salas `ALMACEN_BEBIDAS` **no** se generan anomalías de huésped (p. ej. A2
+  `presence_without_stay`) por la presencia normal del almacén.
+- **RF-81.5**: El comportamiento F48 de las habitaciones de huésped **no cambia**.
+
+## RF-82: Frescura de la señal en el croquis
+- **RF-82.1**: `GET /almacen-api/state` expone **aditivamente** en `live`
+  `door_age_seconds` y `presence_age_seconds`, calculados desde el último evento **recibido** por
+  sensor (`presence_events.received_at`); `null` si no hay evento previo.
+- **RF-82.2**: El croquis trata la puerta como **"sin datos"** (no como `CERRADA`) cuando la edad
+  de la señal supera un umbral de frescura (`DOOR_STALE_SECONDS`).
+- **RF-82.3**: El SSE `/almacen-api/event-stream` incluye los nuevos campos en su fingerprint.
+- **RF-82.4**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y un **BLOCK 49** nuevo.
