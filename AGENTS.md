@@ -140,8 +140,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F69 Vista en directo + encender cámaras** | **BLOCK 47** | **Completado** |
 | **F70 Directo de cámaras por MJPEG** | **BLOCK 48** | **Completado** |
 | **F71 Presencia real del almacén + frescura de señal** | **BLOCK 49** | **Completado** |
-| **F72 Estado persistente de puerta + resync periódico** | **BLOCK 50** | **Completado** |
+| **F72 Estado persistente de puerta (resync derogado por F74)** | **BLOCK 50** | **Completado** |
 | **F73 Tope de grabación en pruebas + purga del almacén** | **BLOCK 51** | **Completado** |
+| **F74 Sin polling periódico que gaste cuota Tuya** | **BLOCK 50** | **Completado** |
 
 ### F73 — Tope de duración de grabación en pruebas y purga del almacén (RF-85 / RF-86)
 
@@ -158,18 +159,27 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Pruebas**: `tests/Unit/WarehouseRecordingCapTest.php` (BLOCK 1) + **BLOCK 51** del runner.
 - **Pasar a producción**: `WAREHOUSE_MAX_RECORDING_SECONDS=0` en `api/.env` y reiniciar el
   recorder.
+### F74 — Sin polling periódico que consuma cuota Tuya (RF-87)
 
-### F72 — Estado persistente de la puerta y resync periódico (RF-83 / RF-84)
+- **Motivo**: la API REST de Tuya se factura por llamada. El resync periódico de puerta de F72
+  gastaba créditos de forma continua. Se **elimina** y se deja el estado de sensores **solo por
+  push** (Message Service, sin cuota). RF-84 queda **derogado**.
+- **Consumer**: `tuya-pulsar-consumer/index.js` vuelve a su forma pre-F72 (sin `DOOR_RESYNC_MS`,
+  sin `loadDoorResyncDevices`, sin `resyncDoorPeriodic`, sin helpers de cuota ni `setInterval` de
+  sondeo). Se mantiene **solo** el resync puntual al (re)conectar el WS (event-driven, no periódico).
+- **Croquis**: sin cambios (F72 mantiene el estado persistente de puerta).
+- **Tests**: `tuya-pulsar-consumer.test.js` verifica la **ausencia** de helpers periódicos;
+  **BLOCK 50** comprueba que no hay resync periódico en el consumer ni en `.env.example`.
+
+### F72 — Estado persistente de la puerta (RF-83)  *(resync periódico derogado por F74)*
 
 - **Motivo**: el MC400D es **edge-triggered** (solo emite al cambiar). Degradar el chip a
   `PUERTA SIN DATOS` por antigüedad (`DOOR_STALE_SECONDS`) era incorrecto: `OPEN` sigue abierta
   hasta que llega `CLOSED`. RF-82.2 queda **derogado**.
 - **Croquis**: el chip de puerta usa **solo** el último estado (`OPEN`→ABIERTA, `CLOSED`→CERRADA,
   sin estado→SIN DATOS). `door_age_seconds`/`presence_age_seconds` se conservan como diagnóstico.
-- **Resync periódico**: el consumer Pulsar sondea por REST **solo PROXIMITY** cada
-  `CONSUMER_DOOR_RESYNC_MS` (10 min por defecto), con contador propio y respetando el presupuesto
-  `tuya-quota.json`; recupera transiciones perdidas (hueco real 09:19–10:20) y refresca la edad.
-- **Tests**: `croquis-logic.test.js`, `tuya-pulsar-consumer.test.js` y **BLOCK 50** del runner.
+- **Resync periódico**: **eliminado** en F74 (RF-87) por consumo de cuota Tuya.
+- **Tests**: `croquis-logic.test.js` y **BLOCK 50** del runner.
 
 ### F71 — Presencia real del almacén y frescura de señal (RF-81 / RF-82)
 

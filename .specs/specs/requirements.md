@@ -1446,7 +1446,7 @@ para recuperar transiciones perdidas.
   el chip; queda como dato de diagnóstico.
 - **RF-83.3**: El croquis de presencia no cambia: `PRESENT` pinta al monigote dentro.
 
-## RF-84: Resync REST periódico del sensor de puerta
+## RF-84: Resync REST periódico del sensor de puerta  *(DEROGADO por RF-87, F74)*
 - **RF-84.1**: El consumer Pulsar sondea por REST (`GET /devices/{id}/status`) solo el sensor
   **PROXIMITY** del almacén cada `CONSUMER_DOOR_RESYNC_MS` (por defecto `600000` ms = 10 min),
   además del resync puntual al (re)conectar el WS.
@@ -1486,3 +1486,23 @@ minuto y se añade una purga total de la sala.
   y detiene antes las grabaciones activas para no dejar procesos ffmpeg huérfanos.
 - **RF-86.3**: **No regresión**: no se alteran rutas, códigos ni campos de la API existente; la
   regresión completa termina con **0 failures** y un **BLOCK 51** nuevo.
+---
+
+# Fase 74: Sin polling periódico que consuma cuota Tuya (RF-87)
+
+**Motivo**: la cuenta de Tuya se factura por llamadas a la API. Cualquier sondeo REST **periódico**
+(el resync de puerta de RF-84) gasta créditos de forma continua sin que el usuario lo controle. La
+recepción de sensores debe depender **solo de los push del Message Service de Tuya** (sin cuota);
+las consultas REST quedan reservadas a acciones explícitas del operador (cargar el panel, pulsar
+"Comprobar dispositivos", calibración) y, como máximo, al resync puntual que ya existía al
+(re)conectar el WS. Se elimina el resync periódico introducido en F72.
+
+## RF-87: Sin polling periódico de cuota Tuya
+- **RF-87.1**: Ningún proceso consulta la API REST de Tuya mediante un temporizador (`setInterval`)
+  que consuma cuota. Se elimina el resync periódico del sensor de puerta.
+- **RF-87.2**: El estado de puerta y presencia llega por **push** (consumer Pulsar → webhook) y se
+  conserva como último estado conocido (RF-83). No se refresca por sondeo temporal.
+- **RF-87.3**: Se mantiene **solo** el resync puntual al (re)conectar el WS (comportamiento previo
+  a F72), que no es periódico.
+- **RF-87.4**: **No regresión**: no se alteran rutas, códigos ni campos existentes; la regresión
+  completa termina con **0 failures** y el **BLOCK 50** actualizado.

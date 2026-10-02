@@ -4019,10 +4019,50 @@ clips) sin aportar valor. Hasta producción se necesita un tope duro y poder pur
 - `api/bin/run-tests.sh`: **BLOCK 51** — inserta una fila `RECORDING` con `started_at` antiguo y
   otra reciente, invoca el tope, comprueba que solo la antigua queda `stop_requested=1` y restaura
   el estado.
-
 ## 37.5 Trazabilidad
 
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-85 | §37.2 | Fase 73 | F73-02, F73-04 |
 | RF-86 | §37.3 | Fase 73 | F73-03, F73-04 |
+
+---
+
+# 38. F74 — Sin polling periódico que consuma cuota Tuya (RF-87)
+
+## 38.1 Problema
+
+La API REST de Tuya se factura por llamada. El resync periódico de puerta (§36.3) sondeaba
+`/devices/{id}/status` cada 10 min de forma indefinida, gastando créditos sin intervención del
+usuario. Se **deroga RF-84** y se elimina ese sondeo. El diseño correcto es: **los sensores entran
+por push** (Message Service, sin cuota); REST solo en acciones explícitas.
+
+## 38.2 Eliminación en el consumer (`tuya-pulsar-consumer/index.js`)
+
+- Se eliminan: `DOOR_RESYNC_MS`, `doorResyncDeviceIds`, `lastDoorResyncAt`,
+  `loadDoorResyncDevices()`, `periodicDoorResyncDue()`, `resyncDoorPeriodic()`, los helpers de
+  `quota*` y el `setInterval` de sondeo periódico.
+- `resyncKnownDevices()` vuelve a su forma previa a F72 (solo resync puntual al `ws-open`, con
+  `shouldResync`/rate-limit). El fichero queda **idéntico** al estado pre-F72.
+- No se añade ningún temporizador que llame a `tuyaRequest(.../status)`.
+
+## 38.3 Alcance del gasto que se conserva
+
+- Push del Message Service: **sin cuota**.
+- Resync puntual al (re)conectar el WS: REST, pero **event-driven**, no periódico (se mantiene).
+- Acciones explícitas del panel/calibración y `ping-all-devices`: REST **bajo demanda** (se
+  mantienen, fuera del alcance de esta fase).
+
+## 38.4 Tests
+
+- `api/tests/Unit/tuya-pulsar-consumer.test.js`: se comprueba que el módulo **no** exporta
+  `periodicDoorResyncDue` ni `DOOR_RESYNC_MS`.
+- `api/bin/run-tests.sh`: **BLOCK 50** verifica la ausencia de resync periódico en el consumer y de
+  `CONSUMER_DOOR_RESYNC_MS` en `.env.example`, además de mantener los casos F72 de estado
+  persistente del croquis.
+
+## 38.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-87 | §38.1–38.3 | Fase 74 | F74-01…F74-04 |

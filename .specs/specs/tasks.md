@@ -3483,6 +3483,8 @@ F72-01 (specs) ─> F72-02 (croquis) ─> F72-03 (tests) ─> F72-04 (resync)
 - **RF**: RF-85.3, RF-86.3.
 - **Test propio**: regresión completa → `0 failures`.
 
+---
+
 ## Tabla resumen F73
 
 | Tarea | Descripción | RF | Archivos | Test |
@@ -3496,4 +3498,53 @@ F72-01 (specs) ─> F72-02 (croquis) ─> F72-03 (tests) ─> F72-04 (resync)
 
 ```
 F73-01 (specs) ─> F73-02 (tope) ─> F73-03 (purga) ─> F73-04 (runner + env + regresión)
+```
+
+---
+
+# Fase 74: Sin polling periódico que consuma cuota Tuya (RF-87)
+
+> **Nota**: F72-04 (resync periódico) queda **derogado** por RF-87 (F74). El croquis persistente
+> (F72-02/F72-03) se mantiene.
+
+## TSK-F74-01: Specs
+- **Cambio**: `requirements.md` (RF-87; RF-84 derogado), `design.md` (§38), `contracts.md`,
+  `tasks.md`; `AGENTS.md`.
+- **RF**: RF-87.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F74-02: Eliminar el resync periódico del consumer
+- **Cambio**: `api/bin/tuya-pulsar-consumer/index.js` — revertir a su forma pre-F72 (sin
+  `DOOR_RESYNC_MS`, sin helpers de cuota, sin `loadDoorResyncDevices`, sin `resyncDoorPeriodic`,
+  sin `setInterval` de sondeo). Se mantiene el resync puntual `ws-open`.
+- **RF**: RF-87.1, RF-87.2, RF-87.3.
+- **Test propio**: `tests/Unit/tuya-pulsar-consumer.test.js` (ausencia de helpers periódicos).
+
+## TSK-F74-03: Limpiar `.env.example` y tests
+- **Cambio**: `api/.env.example` (sin `CONSUMER_DOOR_RESYNC_MS`),
+  `tests/Unit/tuya-pulsar-consumer.test.js` (quitar casos F72 de periodicidad).
+- **RF**: RF-87.1.
+- **Test propio**: unit Node.
+
+## TSK-F74-04: Runner y regresión
+- **Cambio**: `api/bin/run-tests.sh` (**BLOCK 50** verifica la ausencia de resync periódico) +
+  `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-87.4.
+- **Test propio**: regresión completa → `0 failures`.
+
+# Fase 74: Sin polling periódico que consuma cuota Tuya (RF-87)
+
+## Tabla resumen F74
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F74-01 | Specs | RF-87 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F74-02 | Quitar resync periódico | RF-87.1/2/3 | `tuya-pulsar-consumer/index.js` | unit Node |
+| F74-03 | Limpiar env y tests | RF-87.1 | `.env.example`, `tuya-pulsar-consumer.test.js` | unit Node |
+| F74-04 | Runner + regresión | RF-87.4 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F74)
+
+```
+F74-01 (specs) ─> F74-02 (consumer) ─> F74-03 (env/tests) ─> F74-04 (runner + regresión)
 ```

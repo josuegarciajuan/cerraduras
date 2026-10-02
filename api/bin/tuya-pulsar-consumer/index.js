@@ -79,24 +79,13 @@ const RECONNECT_BASE_MS = 1000;          // F47: base de reconexión (antes 5000
 // abría huecos donde se perdían eventos de puerta (Bug 5). 15 min sigue forzando
 // la reconexión de un socket realmente zombie sin castigar el reposo legítimo.
 const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '900000', 10);
-// F72 (RF-84): resync REST periódico SOLO del sensor de puerta (edge-triggered:
-// solo emite al cambiar). Recupera transiciones perdidas si un push no llega.
-// Por defecto 10 min; 6 llamadas/h por puerta, muy por debajo del presupuesto.
-const DOOR_RESYNC_MS = parseInt(process.env.CONSUMER_DOOR_RESYNC_MS || '600000', 10);
-// F72 (RF-84.3): presupuesto de cuota compartido con poller/PHP (mismo fichero).
-const TUYA_HOURLY_BUDGET = parseInt(process.env.TUYA_HOURLY_BUDGET || '150', 10);
-const TUYA_DAILY_BUDGET  = parseInt(process.env.TUYA_DAILY_BUDGET  || '1000', 10);
 
 /** @type {string[]} */
 let knownDeviceIds = [];
 // F50: lista reconciliada de devices a sondear por REST (sin SWITCH).
 /** @type {string[]} */
 let resyncDeviceIds = [];
-// F72 (RF-84): solo los PROXIMITY, para el sondeo periódico de la puerta.
-/** @type {string[]} */
-let doorResyncDeviceIds = [];
 let lastResyncAt = 0;
-let lastDoorResyncAt = 0;
 
 // ─── F47: estado de salud del consumer (RF-54) ────────────────────────
 let currentWs = null;        // WS activo (para el watchdog)
@@ -113,8 +102,6 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const STATUS_FILE = path.join(__dirname, '..', '..', 'run', 'pulsar-consumer-status.json');
-// F72 (RF-84.3): contador compartido de cuota Tuya (poller + app PHP + consumer).
-const QUOTA_FILE = path.join(__dirname, '..', '..', 'run', 'tuya-quota.json');
 
 // ─── F47: helpers puros (exportados para tests, RF-54) ────────────────
 
@@ -129,16 +116,6 @@ function shouldResync(now, disconnectedAtMs, lastResyncAtMs, minIntervalMs, real
   const gap = disconnectedAtMs > 0 ? now - disconnectedAtMs : 0;
   if (gap >= realGapMs) return true;
   return (now - lastResyncAtMs) >= minIntervalMs;
-}
-
-/**
- * F72 (RF-84.2): ¿toca el resync periódico de puerta? Contador independiente
- * del de `ws-open` para no suprimir el sondeo tras una reconexión.
- */
-function periodicDoorResyncDue(now, lastAtMs, intervalMs) {
-  if (!lastAtMs) return true;             // primera vez → siempre
-  if (!(intervalMs > 0)) return false;
-  return (now - lastAtMs) >= intervalMs;
 }
 
 /** Pure: ¿el WS lleva demasiado tiempo mudo con devices rastreados? */
@@ -182,57 +159,6 @@ function writeStatus(connected) {
       updated_at: new Date(now).toISOString(),
     }) + '\n');
   } catch (e) { /* best-effort */ }
-}
-
-// ─── F72 (RF-84.3): presupuesto de cuota Tuya compartido ──────────────
-// Mismo fichero/contrato que el poller (`api/run/tuya-quota.json`). El resync
-// periódico NO sondea si el presupuesto horario/diario está agotado o hay
-// backoff activo (evita repetir el agotamiento de cuota de F46+).
-function quotaSlots(now) {
-  const d = new Date(now || Date.now());
-  return { day: d.toISOString().slice(0, 10), hour: d.toISOString().slice(0, 13) };
-}
-
-function quotaRead() {
-  try {
-    const q = JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf8'));
-    if (q && typeof q === 'object') return q;
-  } catch (e) { /* missing/corrupt → defaults */ }
-  return { day: null, hour: null, callsDay: 0, callsHour: 0, backoffUntil: 0 };
-}
-
-function quotaWrite(q) {
-  try {
-    fs.mkdirSync(path.dirname(QUOTA_FILE), { recursive: true });
-    const tmp = QUOTA_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(q));
-    fs.renameSync(tmp, QUOTA_FILE);
-  } catch (e) { /* best-effort */ }
-}
-
-function quotaCheck(now) {
-  const nowSec = Math.floor((now || Date.now()) / 1000);
-  const { day, hour } = quotaSlots(now);
-  let q = quotaRead();
-  if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
-  if (q.hour !== hour) { q.hour = hour; q.callsHour = 0; }
-  const bo = Number(q.backoffUntil) || 0;
-  const boSec = bo > 1e12 ? Math.round(bo / 1000) : bo; // tolera ms legados
-  if (boSec > nowSec) return { ok: false, reason: 'backoff', q };
-  if ((q.callsDay || 0) >= TUYA_DAILY_BUDGET) return { ok: false, reason: 'daily_budget', q };
-  if ((q.callsHour || 0) >= TUYA_HOURLY_BUDGET) return { ok: false, reason: 'hourly_budget', q };
-  return { ok: true, q };
-}
-
-function quotaBump(now) {
-  const { day, hour } = quotaSlots(now);
-  let q = quotaRead();
-  if (q.day !== day) q = { day, hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
-  if (q.hour !== hour) { q.hour = hour; q.callsHour = 0; }
-  q.callsDay = (q.callsDay || 0) + 1;
-  q.callsHour = (q.callsHour || 0) + 1;
-  quotaWrite(q);
-  return q;
 }
 
 // `ws` / `crypto-js` se cargan de forma perezosa: requerir este módulo desde los
@@ -293,12 +219,6 @@ function loadKnownDevices() {
 function loadResyncDevices() {
   const ids = queryDeviceIds(RESYNC_KINDS);
   return ids !== null ? ids : resyncDeviceIds; // conserva la lista previa si la BD falla
-}
-
-/** F72 (RF-84.1): external_id de los sensores PROXIMITY (solo puerta). */
-function loadDoorResyncDevices() {
-  const ids = queryDeviceIds(['PROXIMITY']);
-  return ids !== null ? ids : doorResyncDeviceIds; // conserva la lista previa si la BD falla
 }
 
 /** Pure: ¿el devId pertenece a la lista rastreada? */
@@ -374,47 +294,28 @@ function buildStatusPayload(devId, result) {
 }
 
 /**
- * Resync REST de una lista de devices.
- * - `opts.rateLimit` (RF-50.3): aplica `shouldResync` + actualiza `lastResyncAt`
- *   (camino del resync al (re)conectar el WS).
- * - `opts.quota` (F72/RF-84.3): respeta el presupuesto compartido y cuenta cada
- *   sonda `/status` (camino del resync periódico de puerta).
- *
- * @param {string} reason
- * @param {string[]} ids
- * @param {{rateLimit?:boolean, quota?:boolean}} [opts]
+ * Resync puntual (RF-50.3): una sonda REST por device rastreado tras (re)conectar
+ * el WS, para corregir transiciones perdidas en el hueco de reconexión. Rate-limited
+ * para no consumir cuota en reconnects frecuentes.
  */
-async function resyncDevices(reason, ids, opts) {
-  const list = ids || [];
-  if (list.length === 0) return;
+async function resyncKnownDevices(reason) {
+  // F50: solo RESYNC_KINDS (PROXIMITY/PRESENCE); el SWITCH nunca se sondea.
+  if (resyncDeviceIds.length === 0) return;
   const now = Date.now();
-
-  if (opts && opts.rateLimit) {
-    if (!shouldResync(now, disconnectedAt, lastResyncAt, RESYNC_MIN_INTERVAL_MS, REAL_GAP_MS)) {
-      console.log('[RESYNC] omitido (hueco reciente + rate-limit activo)');
-      return;
-    }
-    lastResyncAt = now;
+  if (!shouldResync(now, disconnectedAt, lastResyncAt, RESYNC_MIN_INTERVAL_MS, REAL_GAP_MS)) {
+    console.log('[RESYNC] omitido (hueco reciente + rate-limit activo)');
+    return;
   }
-
-  if (opts && opts.quota) {
-    const budget = quotaCheck(now);
-    if (!budget.ok) {
-      console.log(`[RESYNC] (${reason}) omitido (presupuesto Tuya: ${budget.reason})`);
-      return;
-    }
-  }
-
+  lastResyncAt = now;
   resyncCount++;
-  console.log(`[RESYNC] (${reason}) sondeando ${list.length} device(s)...`);
+  console.log(`[RESYNC] (${reason}) sondeando ${resyncDeviceIds.length} device(s)...`);
   let token;
   try { token = await getTuyaToken(); } catch (e) {
     console.error(`[RESYNC] token fail: ${e.message}`);
     return;
   }
-  for (const devId of list) {
+  for (const devId of resyncDeviceIds) {
     try {
-      if (opts && opts.quota) quotaBump(Date.now());
       const body = await tuyaRequest('GET', `/v1.0/iot-03/devices/${devId}/status`, '', token);
       if (!body || body.success !== true) continue;
       const payload = buildStatusPayload(devId, body.result);
@@ -423,24 +324,6 @@ async function resyncDevices(reason, ids, opts) {
       console.error(`[RESYNC] ${devId}: ${e.message}`);
     }
   }
-}
-
-/**
- * Resync puntual (RF-50.3): una sonda REST por device rastreado tras (re)conectar
- * el WS, para corregir transiciones perdidas en el hueco de reconexión. Rate-limited
- * para no consumir cuota en reconnects frecuentes.
- */
-async function resyncKnownDevices(reason) {
-  // F50: solo RESYNC_KINDS (PROXIMITY/PRESENCE); el SWITCH nunca se sondea.
-  return resyncDevices(reason, resyncDeviceIds, { rateLimit: true });
-}
-
-/**
- * F72 (RF-84.1): resync REST periódico SOLO del sensor de puerta, con contador
- * de rate-limit propio y presupuesto de cuota. Recupera transiciones perdidas.
- */
-async function resyncDoorPeriodic() {
-  return resyncDevices('periodic', doorResyncDeviceIds, { quota: true });
 }
 
 // ─── Tuya Auth: build password (same as SDK utils.ts) ─────────────────
@@ -749,27 +632,20 @@ function start() {
   // RF-50.1: resolver devices desde BD y reconciliar periódicamente.
   knownDeviceIds = loadKnownDevices();
   resyncDeviceIds = loadResyncDevices();
-  doorResyncDeviceIds = loadDoorResyncDevices();
   console.log(`  Devices: ${knownDeviceIds.length ? knownDeviceIds.join(', ') : '(ninguno)'}`);
   console.log(`  Resync REST (sin SWITCH): ${resyncDeviceIds.length ? resyncDeviceIds.join(', ') : '(ninguno)'}`);
-  console.log(`  Resync puerta periódico: ${doorResyncDeviceIds.length ? doorResyncDeviceIds.join(', ') : '(ninguno)'} cada ${DOOR_RESYNC_MS / 1000}s`);
   console.log('');
 
   setInterval(() => {
     const before = knownDeviceIds.join(',');
     const beforeResync = resyncDeviceIds.join(',');
-    const beforeDoor = doorResyncDeviceIds.join(',');
     knownDeviceIds = loadKnownDevices();
     resyncDeviceIds = loadResyncDevices();
-    doorResyncDeviceIds = loadDoorResyncDevices();
     if (knownDeviceIds.join(',') !== before) {
       console.log(`[DB] 🔁 devices actualizados: ${knownDeviceIds.length ? knownDeviceIds.join(', ') : '(ninguno)'}`);
     }
     if (resyncDeviceIds.join(',') !== beforeResync) {
       console.log(`[DB] 🔁 devices de resync actualizados: ${resyncDeviceIds.length ? resyncDeviceIds.join(', ') : '(ninguno)'}`);
-    }
-    if (doorResyncDeviceIds.join(',') !== beforeDoor) {
-      console.log(`[DB] 🔁 devices de resync de puerta actualizados: ${doorResyncDeviceIds.length ? doorResyncDeviceIds.join(', ') : '(ninguno)'}`);
     }
   }, RECONCILE_MS).unref();
 
@@ -785,17 +661,6 @@ function start() {
       try { currentWs.terminate(); } catch (e) { /* close programa la reconexión */ }
     }
   }, 15000).unref();
-
-  // F72 (RF-84): resync REST periódico de la puerta para recuperar transiciones
-  // perdidas (edge-triggered). Tick cada 60 s; solo sondea cuando se cumple el
-  // intervalo configurado. Contador propio (lastDoorResyncAt).
-  setInterval(() => {
-    if (!currentWs || !WebSocket || currentWs.readyState !== WebSocket.OPEN) return;
-    const now = Date.now();
-    if (!periodicDoorResyncDue(now, lastDoorResyncAt, DOOR_RESYNC_MS)) return;
-    lastDoorResyncAt = now;
-    resyncDoorPeriodic().catch((e) => console.error(`[RESYNC] periodic: ${e.message}`));
-  }, 60000).unref();
 
   connect();
 }
@@ -820,7 +685,4 @@ module.exports = {
   receiveLatencyMs,
   // F50: observabilidad del pong (no decide reconexión).
   pongAgeMs,
-  // F72 (RF-84): resync periódico de puerta.
-  periodicDoorResyncDue,
-  DOOR_RESYNC_MS,
 };

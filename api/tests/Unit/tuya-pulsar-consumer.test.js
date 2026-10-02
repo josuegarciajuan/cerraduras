@@ -16,6 +16,7 @@
 
 const path = require('path');
 
+const consumerModule = require(path.join(__dirname, '..', '..', 'bin', 'tuya-pulsar-consumer', 'index.js'));
 const {
   parseDeviceIds,
   isKnownDevice,
@@ -26,10 +27,8 @@ const {
   shouldResync,
   silenceExceeded,
   receiveLatencyMs,
-  periodicDoorResyncDue,
-  DOOR_RESYNC_MS,
   pongAgeMs,
-} = require(path.join(__dirname, '..', '..', 'bin', 'tuya-pulsar-consumer', 'index.js'));
+} = consumerModule;
 
 let passed = 0;
 let failed = 0;
@@ -157,21 +156,13 @@ check('pongAgeMs devuelve la antigüedad del pong y tolera ausencia',
   pongAgeMs(NOW, null) === null &&
   pongAgeMs(NOW, 'nope') === null);
 
-// ─── F72 (RF-84): resync periódico de puerta ───────────────────────────
-check('F72 primera vez → periodicDoorResyncDue=true',
-  periodicDoorResyncDue(NOW, 0, DOOR_RESYNC_MS) === true);
-
-check('F72 intervalo cumplido → true',
-  periodicDoorResyncDue(NOW, NOW - DOOR_RESYNC_MS, DOOR_RESYNC_MS) === true);
-
-check('F72 intervalo NO cumplido → false',
-  periodicDoorResyncDue(NOW, NOW - (DOOR_RESYNC_MS - 1000), DOOR_RESYNC_MS) === false);
-
-check('F72 intervalo inválido → false (no sondea en bucle)',
-  periodicDoorResyncDue(NOW, NOW - 1000, 0) === false);
-
-check('F72 DOOR_RESYNC_MS es 10 min por defecto',
-  DOOR_RESYNC_MS === 600000);
+// ─── F74 (RF-87): sin polling periódico que consuma cuota Tuya ─────────
+// El consumo REST solo ocurre en el resync puntual al (re)conectar el WS
+// (event-driven), nunca por un temporizador. Se verifica que el módulo no
+// exporta ningún helper de resync periódico.
+check('F74 no existe un helper de resync periódico de puerta',
+  typeof consumerModule.periodicDoorResyncDue === 'undefined' &&
+  typeof consumerModule.DOOR_RESYNC_MS === 'undefined');
 
 // ─── Summary ───────────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' tuya-pulsar-consumer: ' + passed + ' passed, ' + failed + ' failed\n');
