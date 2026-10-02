@@ -78,8 +78,12 @@ final class WarehouseRecordingDecision
                             self::A_CREATE_VISIT, self::A_START_EXT, self::A_START_INT, self::A_SET_DEADLINE_X,
                         ]);
                     case self::EV_PRESENT:
+                        // F71 (RF-81.3): una entrada detectada solo por presencia
+                        // también confirma la visita (outcome ENTERED), no solo
+                        // la crea. Antes quedaba NO_SHOW contradiciendo
+                        // presence_confirmed=true.
                         return self::out(self::STATE_RECORDING_INSIDE, 'PRESENCE', true, [
-                            self::A_CREATE_VISIT, self::A_START_EXT, self::A_START_INT,
+                            self::A_CREATE_VISIT, self::A_CONFIRM_ENTRY, self::A_START_EXT, self::A_START_INT,
                         ]);
                 }
                 break;

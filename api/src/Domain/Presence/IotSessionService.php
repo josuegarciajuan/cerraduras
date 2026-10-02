@@ -38,6 +38,13 @@ final class IotSessionService
     /** Deadlock / lock-wait retry budget (design.md §1.4). */
     private const MAX_TX_RETRIES = 3;
 
+    /**
+     * F71 (RF-81): tipo de sala del almacén. En estas salas la presencia del
+     * sensor es la única señal de ocupación (no hay stays/QR de huésped), así
+     * que F48 no debe descartarla como `no_context`.
+     */
+    private const WAREHOUSE_TYPE_CODE = 'ALMACEN_BEBIDAS';
+
     private PresenceEventRepositoryInterface $presenceEvents;
 
     private IotSessionRepositoryInterface    $iotSessions;
@@ -192,7 +199,9 @@ final class IotSessionService
                 }
             }
 
-            if ($this->anomalyService !== null) {
+            // F71 (RF-81.4): el almacén no tiene estancia de huésped; detectar
+            // anomalías como A2 (presencia sin stay) generaría ruido constante.
+            if ($this->anomalyService !== null && !$this->isWarehouseRoom($room)) {
                 try {
                     $triggerEvent = new PresenceEvent(
                         0, $roomId, $sensor, $value, $provider,
@@ -475,6 +484,13 @@ final class IotSessionService
      */
     private function presenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
     {
+        // F71 (RF-81.1): en el almacén la presencia del sensor 24G es la fuente
+        // de ocupación; no hay estancia ni QR que la acrediten, así que se
+        // considera siempre creíble (evita `no_context` y el monigote ausente).
+        if ($this->isWarehouseRoom($room)) {
+            return [true, true];
+        }
+
         $activeStay       = $this->stays->findActiveForRoom($room->id);
         $entryConfirmedAt = $activeStay !== null ? $activeStay->entryConfirmedAt : null;
         $lastOpenTs       = $session->lastOpenAt !== null
@@ -497,6 +513,18 @@ final class IotSessionService
         }
 
         return [$entryWindowActive, $insideNoExitCycle];
+    }
+
+    /**
+     * F71 (RF-81.1/81.4): ¿es la sala un almacén de bebidas? Se resuelve por
+     * el código del tipo (`ALMACEN_BEBIDAS`), sin consultas extra más allá del
+     * repositorio de tipos ya inyectado.
+     */
+    private function isWarehouseRoom(Room $room): bool
+    {
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        return $roomType instanceof RoomType
+            && $roomType->code === self::WAREHOUSE_TYPE_CODE;
     }
 
     private function resolveEntryWindowSeconds(Room $room): int

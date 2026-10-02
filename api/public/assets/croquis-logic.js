@@ -28,6 +28,12 @@
   /** Duración del pulso anti-colapso tras un OPEN real (ms). Igual que el panel. */
   var DOOR_PULSE_MS = 1200;
 
+  /**
+   * F71 (RF-82.2): si la última señal de puerta supera esta antigüedad (s), el
+   * croquis muestra "sin datos" en vez de afirmar "CERRADA".
+   */
+  var DOOR_STALE_SECONDS = 300;
+
   /** Parseo tolerante (ISO/Z/naive UTC/epoch ms) → ms. 0 si no es válido. */
   function parseTime(v) {
     if (Choreography && typeof Choreography.parseTime === 'function') {
@@ -80,9 +86,15 @@
     var personInside = occupied || presence === 'PRESENT';
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
 
+    // F71 (RF-82.2): antigüedad de la señal de puerta. `null` = desconocida.
+    var doorAgeSeconds = (typeof live.door_age_seconds === 'number'
+      && isFinite(live.door_age_seconds) && live.door_age_seconds >= 0)
+      ? live.door_age_seconds : null;
+    var doorStale = doorAgeSeconds !== null && doorAgeSeconds > DOOR_STALE_SECONDS;
+
     var doorChip = doorOpen ? chip('PUERTA ABIERTA', 'ok')
-      : door === 'CLOSED' ? chip('PUERTA CERRADA', 'dim')
-      : chip('PUERTA —', 'dim');
+      : (door === 'CLOSED' && !doorStale) ? chip('PUERTA CERRADA', 'dim')
+      : chip('PUERTA SIN DATOS', 'dim');
 
     var presenceChip;
     if (occupied) {
@@ -100,7 +112,7 @@
       : chip('LUZ —', 'dim');
 
     var doorText = doorOpen ? 'Puerta abierta'
-      : door === 'CLOSED' ? 'Puerta cerrada'
+      : (door === 'CLOSED' && !doorStale) ? 'Puerta cerrada'
       : 'Puerta sin datos';
     var desc = doorText + '. ' + (personInside ? 'Persona dentro' : 'Almacén vacío')
       + '. Luz ' + (light === 'ON' ? 'encendida' : light === 'OFF' ? 'apagada' : 'sin datos') + '.';
@@ -112,12 +124,14 @@
       occupied: occupied,
       personInside: personInside,
       doorOpen: doorOpen,
+      doorStale: doorStale,
       unknown: unknown,
       classes: {
         open: doorOpen,
         occupied: personInside,
         outside: !personInside,
         unknown: unknown,
+        doorStale: doorStale,
         lightOn: light === 'ON'
       },
       chips: { door: doorChip, presence: presenceChip, light: lightChip },
@@ -129,6 +143,7 @@
     deriveCroquis: deriveCroquis,
     parseTime: parseTime,
     resolveDoor: resolveDoor,
-    DOOR_PULSE_MS: DOOR_PULSE_MS
+    DOOR_PULSE_MS: DOOR_PULSE_MS,
+    DOOR_STALE_SECONDS: DOOR_STALE_SECONDS
   };
 });

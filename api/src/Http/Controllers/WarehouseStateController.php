@@ -144,6 +144,10 @@ final class WarehouseStateController
             'last_open_at' => null,
             'last_close_at' => null,
             'last_absent_since' => null,
+            // F71 (RF-82.1): frescura de la señal (segundos desde el último
+            // evento recibido por sensor). null si nunca hubo evento.
+            'door_age_seconds' => null,
+            'presence_age_seconds' => null,
         ];
         $ls = $this->pdo->prepare(
             'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since
@@ -157,6 +161,30 @@ final class WarehouseStateController
             $live['last_open_at'] = $lsRow['last_open_at'] ?? null;
             $live['last_close_at'] = $lsRow['last_close_at'] ?? null;
             $live['last_absent_since'] = $lsRow['last_absent_since'] ?? null;
+        }
+        // F71 (RF-82.1): edad de la señal por sensor desde el último evento
+        // RECIBIDO (incluye no-ops), no solo desde el último aplicado.
+        $ageStmt = $this->pdo->prepare(
+            'SELECT sensor, MAX(received_at) AS last_received
+             FROM presence_events WHERE room_id = :r GROUP BY sensor'
+        );
+        $ageStmt->execute([':r' => $roomId]);
+        $nowTs = time();
+        foreach ($ageStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $ageRow) {
+            $last = $ageRow['last_received'] ?? null;
+            if ($last === null || $last === '') {
+                continue;
+            }
+            $ts = strtotime((string) $last . ' UTC');
+            if ($ts === false) {
+                continue;
+            }
+            $age = max(0, $nowTs - $ts);
+            if (($ageRow['sensor'] ?? '') === 'PROXIMITY') {
+                $live['door_age_seconds'] = $age;
+            } elseif (($ageRow['sensor'] ?? '') === 'PRESENCE') {
+                $live['presence_age_seconds'] = $age;
+            }
         }
         $swStmt = $this->pdo->prepare(
             "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id

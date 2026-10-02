@@ -3345,3 +3345,60 @@ F69-01 (specs) ─> F69-02 (botón) ─> F69-03 (goLive) ─> F69-04 (encender) 
 F70-01 (specs) ─> F70-02 (servidor MJPEG) ─> F70-03 (systemd) ─> F70-04 (mjpeg_url)
    ─> F70-05 (panel) ─> F70-06 (Apache) ─> F70-07 (runner + regresión)
 ```
+
+---
+
+# Fase 71: Presencia real del almacén y frescura de señal (RF-81 / RF-82)
+
+## TSK-F71-01: Specs
+- **Cambio**: `requirements.md` (RF-81/82), `design.md` (§35), `contracts.md` (Fase 71),
+  `tasks.md`; fila en `AGENTS.md`.
+- **RF**: RF-81, RF-82.
+- **Test propio**: revisión de trazabilidad.
+
+## TSK-F71-02: Credibilidad de presencia del almacén
+- **Cambio**: `api/src/Domain/Presence/IotSessionService.php` — `presenceContext()` con
+  cortocircuito `isWarehouseRoom()`; omitir `anomalyService` en salas de almacén.
+- **RF**: RF-81.1, RF-81.2, RF-81.3, RF-81.4, RF-81.5.
+- **Test propio**: casos F71 en `IotSessionServiceTest.php`.
+
+## TSK-F71-03: Visita por presencia confirmada
+- **Cambio**: `api/src/Domain/Warehouse/WarehouseRecordingDecision.php` — `IDLE + EV_PRESENT`
+  añade `A_CONFIRM_ENTRY`.
+- **RF**: RF-81.3.
+- **Test propio**: `WarehouseRecordingDecisionTest.php` (test C).
+
+## TSK-F71-04: Frescura en `live`
+- **Cambio**: `api/src/Http/Controllers/WarehouseStateController.php` —
+  `door_age_seconds`/`presence_age_seconds` aditivos.
+- **RF**: RF-82.1, RF-82.3.
+- **Test propio**: BLOCK 49 (HTTP `state.live.*_age_seconds`).
+
+## TSK-F71-05: Croquis con "sin datos"
+- **Cambio**: `api/public/assets/croquis-logic.js` (`DOOR_STALE_SECONDS`, chip "PUERTA SIN
+  DATOS"); `api/public/assets/almacen.js` si procede.
+- **RF**: RF-82.2.
+- **Test propio**: `croquis-logic.test.js`.
+
+## TSK-F71-06: Runner, AGENTS.md y regresión
+- **Cambio**: `api/bin/run-tests.sh` (BLOCK 49) + `AGENTS.md`; ejecutar `bash bin/run-tests.sh`.
+- **RF**: RF-82.4.
+- **Test propio**: regresión completa → `0 failures`.
+
+## Tabla resumen F71
+
+| Tarea | Descripción | RF | Archivos | Test |
+|-------|-------------|----|----------|------|
+| F71-01 | Specs | RF-81/82 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F71-02 | Presencia almacén | RF-81 | `IotSessionService.php` | unit PHP |
+| F71-03 | Visita por presencia | RF-81.3 | `WarehouseRecordingDecision.php` | unit PHP |
+| F71-04 | Frescura `live` | RF-82.1/3 | `WarehouseStateController.php` | BLOCK 49 |
+| F71-05 | Croquis sin datos | RF-82.2 | `croquis-logic.js`, `almacen.js` | unit Node |
+| F71-06 | Runner + regresión | RF-82.4 | `bin/run-tests.sh`, `AGENTS.md` | regresión |
+
+## Orden de ejecución (F71)
+
+```
+F71-01 (specs) ─> F71-02 (presencia almacén) ─> F71-03 (visita) ─> F71-04 (frescura)
+   ─> F71-05 (croquis) ─> F71-06 (runner + regresión)
+```

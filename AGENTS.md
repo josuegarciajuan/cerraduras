@@ -139,6 +139,23 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F68 Reproducción de visitas** | **BLOCK 46** | **Completado** |
 | **F69 Vista en directo + encender cámaras** | **BLOCK 47** | **Completado** |
 | **F70 Directo de cámaras por MJPEG** | **BLOCK 48** | **Completado** |
+| **F71 Presencia real del almacén + frescura de señal** | **BLOCK 49** | **Completado** |
+
+### F71 — Presencia real del almacén y frescura de señal (RF-81 / RF-82)
+
+- **Presencia**: en `ALMACEN_BEBIDAS` los `PRESENT` del sensor 24G son **siempre creíbles**
+  (`IotSessionService::presenceContext()` cortocircuita por tipo de sala); antes F48 los descartaba
+  como `no_context` (sin `stays`) y `presence_state` quedaba en `ABSENT`, así que el monigote del
+  croquis nunca aparecía dentro. Ahora se propaga a `WarehouseRecordingDecision` (`EV_PRESENT`) y
+  una visita iniciada por presencia queda `ENTERED` (`A_CONFIRM_ENTRY`). Las salas de almacén **no**
+  generan anomalías de huésped (A2).
+- **Frescura**: `live` expone **aditivamente** `door_age_seconds`/`presence_age_seconds` (desde
+  `presence_events.received_at`); el croquis muestra `PUERTA SIN DATOS` en vez de `CERRADA` si la
+  señal de puerta supera `DOOR_STALE_SECONDS` (300 s).
+- **Puerta física**: si el sensor MC400D reporta `CLOSED` en Tuya, el croquis lo refleja; una
+  puerta abierta sin evento `OPEN` es incidencia de montaje/sensor (fuera del software).
+- **Tests**: `croquis-logic.test.js`, `IotSessionServiceTest.php`, `WarehouseRecordingDecisionTest.php`
+  y **BLOCK 49** del runner.
 
 ### F70 — Directo de cámaras por MJPEG (RF-80)
 

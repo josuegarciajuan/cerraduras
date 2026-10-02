@@ -135,8 +135,8 @@ if ($r['state'] === D::STATE_IDLE
 // ── Caso C: presencia sin QR / puerta ya abierta ─────────────────────────
 $r = D::decide(st(D::STATE_IDLE), D::EV_PRESENT);
 if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['entry_trigger'] === 'PRESENCE'
-    && hasAll($r['actions'], [D::A_CREATE_VISIT, D::A_START_EXT, D::A_START_INT])) {
-    pass('C: IDLE + PRESENT → RECORDING_INSIDE (trigger PRESENCE)');
+    && hasAll($r['actions'], [D::A_CREATE_VISIT, D::A_CONFIRM_ENTRY, D::A_START_EXT, D::A_START_INT])) {
+    pass('C: IDLE + PRESENT → RECORDING_INSIDE (visita confirmada ENTERED, F71)');
 } else {
     fail('C: IDLE + PRESENT inesperado: ' . json_encode($r));
 }
