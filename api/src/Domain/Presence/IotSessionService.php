@@ -239,7 +239,13 @@ final class IotSessionService
                 $warehouseEvent = self::warehouseEventFor($sensor, $value);
                 if ($warehouseEvent !== null) {
                     try {
-                        $this->warehouseRecorder->onSignal($roomId, $warehouseEvent);
+                        // F79 (RF-102.1/102.2): se entrega el provider y el origen
+                        // de la señal para que el motor del almacén no cree visitas
+                        // desde eventos simulados ni desde el resync REST.
+                        $this->warehouseRecorder->onSignal($roomId, $warehouseEvent, [
+                            'provider' => $provider,
+                            'source'   => is_array($meta) ? (string) ($meta['source'] ?? 'real') : 'real',
+                        ]);
                     } catch (\Throwable $e) {
                         error_log('[IotSessionService] Warehouse recording failed (best-effort): ' . $e->getMessage());
                     }

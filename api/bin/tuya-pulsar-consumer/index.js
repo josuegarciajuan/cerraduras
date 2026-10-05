@@ -406,7 +406,13 @@ async function resyncKnownDevices(reason) {
       const body = await tuyaRequest('GET', `/v1.0/iot-03/devices/${devId}/status`, '', token);
       if (!body || body.success !== true) continue;
       const payload = buildStatusPayload(devId, body.result);
-      if (payload) await forwardToApi(payload);
+      if (payload) {
+        // F79 (RF-102.2): marcar el reenvío del resync. Es una reconciliación
+        // de estado, NO una transición física: el motor del almacén no debe
+        // crear visitas con él (venía creando fantasmas al reconectar).
+        payload._source = 'resync';
+        await forwardToApi(payload);
+      }
     } catch (e) {
       console.error(`[RESYNC] ${devId}: ${e.message}`);
     }

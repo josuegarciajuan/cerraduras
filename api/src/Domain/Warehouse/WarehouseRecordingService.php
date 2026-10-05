@@ -64,6 +64,17 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
 
     public function onSignal(int $roomId, string $event, array $meta = []): void
     {
+        // F79 (RF-102.1/102.2): el motor solo reacciona a ciclos reales. Las
+        // señales simuladas (`/sim/*`, provider=SIMULATED) y los reenvíos del
+        // resync REST (`meta.source='resync'`) son reconciliación de estado, no
+        // transiciones físicas: no deben crear visitas ni grabaciones. El estado
+        // IoT (`iot_sessions`) se sigue actualizando en IotSessionService.
+        $provider = strtoupper((string) ($meta['provider'] ?? ''));
+        $origin   = strtolower((string) ($meta['source'] ?? ''));
+        if ($provider === 'SIMULATED' || $origin === 'resync' || $origin === 'sim') {
+            return;
+        }
+
         if (!$this->isWarehouseRoom($roomId)) {
             return;
         }

@@ -4287,11 +4287,57 @@ continuo.
 |---|---|---|---|
 | RF-101 | §42.1–42.4 | §5 (`system-status`, 5 claves) | F78-01…F78-06 |
 
+## 43. F79 — Visitas fantasma del almacén (RF-102)
+
+### 43.1 Contexto y evidencia
+
+El 2026-10-05 el listado de `/almacen` mostraba 4 visitas; solo la de las 12:44:39 (local)
+era real. Las otras tres se originaron así:
+
+- **Visita 78 (10:07:04 UTC, DOOR/NO_SHOW)**: creada por el propio runner de tests
+  (`run-tests.sh` BLOCK 17) al inyectar un `POST /api/v1/tuya/webhook` con el **device real**
+  `bf4c7e7d2cef28cea2nkwk` (sensor de puerta de la sala del almacén) y
+  `doorcontact_state=true`. El payload crudo (sin `dataId`/`productKey`) está en
+  `logs/systemd.log`. No había cleanup.
+- **Visita 79 (10:08:01 UTC, PRESENCE/ENTERED)**: creada por el BLOCK 42 (F54), que ejecuta el
+  ciclo completo del huésped con `/sim/rooms/12/*` sobre la sala del almacén. El cleanup
+  (`_e2e_cleanup`) cerraba `stays` y borraba `iot_sessions`, pero no `warehouse_visits`,
+  `camera_recordings` ni `warehouse_state`.
+- **Visita 81 (10:24:20 UTC, DOOR/NO_SHOW)**: push real de Tuya
+  (`doorcontact_state=true`, con `dataId`/`productKey`) sin presencia interior (solo `move`,
+  rechazado por F76). El motor RF-71.4 la documenta como `NO_SHOW` y descarta ambos clips.
+- **Patrón sistémico**: el MC400D reemite `doorcontact_state=true` cada ~15 min
+  (`systemd.log` 07:44…09:46) y el resync REST del consumer reenvía el estado cacheado de
+  Tuya al reconectar. Cualquier re-reporte aplicado mientras el estado local es `CLOSED`
+  se convertía en una transición y generaba visita.
+
+### 43.2 Diseño de la corrección
+
+1. **Motor (RF-102.1/102.2)**: el motor del almacén solo reacciona a ciclos reales. Se añade
+   `meta.source` (propagado por `TuyaSensorIngress` desde `_source` del payload) y se usa
+   `provider`. `WarehouseRecordingService::onSignal` retorna sin efecto si
+   `provider=SIMULATED` o `source=resync`. El estado IoT sigue intacto.
+2. **Runner (RF-102.4)**: BLOCK 17 usa un device sintético; BLOCK 42 hace
+   snapshot/restore de las tablas del almacén (baseline `MAX(id)` + copia de
+   `warehouse_state`) y purga clips; S12 verifica que no quedan visitas nuevas.
+3. **Panel (RF-102.3)**: `/almacen-api/visits` excluye por defecto
+   `outcome='NO_SHOW' AND entry_trigger='DOOR'`; `include_no_show=1` los muestra.
+4. **Datos (RF-102.5)**: purga puntual de 78/79/81 y sus clips.
+
+### 43.3 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-102.1/102.2 | §43.2.1 | §1 (`meta.source`) | F79-02 |
+| RF-102.3 | §43.2.3 | §1 (`visits`, `include_no_show`) | F79-03 |
+| RF-102.4 | §43.2.2 | — | F79-01 |
+| RF-102.5 | §43.2.4 | — | F79-04 |
+
 ---
 
 # 44. F80 — Presencia del almacén en tiempo real (RF-103)
 
-## 43.1 Problema
+## 44.1 Problema
 
 El motor `WarehouseRecordingDecision` ya acepta QR, puerta **o** presencia como disparador de visita
 (RF-71.5: `IDLE + EV_PRESENT → RECORDING_INSIDE`, `entry_trigger=PRESENCE`, `A_CREATE_VISIT` +
@@ -4303,26 +4349,26 @@ El motor `WarehouseRecordingDecision` ya acepta QR, puerta **o** presencia como 
 - El croquis (`deriveCroquis`) pinta solo el estado final (`occupied || presence_state==='PRESENT'`)
   y nunca las fases de acercamiento/cruce → "no se mueve".
 
-## 43.2 Presencia siempre creíble en el almacén (restaura F71)
+## 44.2 Presencia siempre creíble en el almacén (restaura F71)
 
-- En `SOLO ALMACEN` **no** se calcula contexto de puerta/visita: `IotSessionService` deja de invocar
-  `warehousePresenceContext()`. `SensorEventDecision::decide()` (rama `warehousePresence`) pasa a
-  devolver `APPLY` para todo `PRESENT` de provider TUYA (`presence` y `move`). `ABSENT`/`none` sigue
-  aplicándose siempre.
+- En `ALMACEN_BEBIDAS` **no** se calcula contexto de puerta/visita: `IotSessionService`
+  `warehousePresenceContext()` pasa a devolver siempre credibilidad. `SensorEventDecision::decide()`
+  (rama `warehousePresence`) pasa a devolver `APPLY` para todo `PRESENT` de provider TUYA
+  (`presence` y `move`). `ABSENT`/`none` sigue aplicándose siempre.
 - Efecto: `iot_sessions.presence_state=PRESENT` al instante → post-commit `EV_PRESENT` →
   `WarehouseRecordingService::onSignal()` crea la visita (`PRESENCE`) y arranca ambas cámaras.
 - `WarehouseRecordingService::activeEnteredVisitAt()` incluye `PRESENCE` como ancla (la visita por
   presencia es real); deja de ser un vetador de credibilidad.
 - Sin cambios en F48 (huéspedes): `presenceContext()` y su comportamiento quedan intactos.
 
-## 43.3 Contrato del croquis en vivo (aditivo)
+## 44.3 Contrato del croquis en vivo (aditivo)
 
 - `WarehouseStateController::stateArray()` añade `live.recent_presence` (últimos eventos aplicados:
   `sensor`, `value`, `occurred_at`), leídos de `presence_events`.
 - `AlmacenEventStreamController` ya incluye `live` en el fingerprint → empuja el cambio sin tocar el
   stream.
 
-## 43.4 Fases del monigote (lógica pura)
+## 44.4 Fases del monigote (lógica pura)
 
 `croquis-logic.js::deriveCroquis(snapshot, now)` amplía su retorno con `phase`:
 
@@ -4335,23 +4381,23 @@ El motor `WarehouseRecordingDecision` ya acepta QR, puerta **o** presencia como 
   pura (recibe `recent_presence`, no toca red ni DOM). `almacen.js::renderCroquis` aplica la clase
   `pos-<phase>` (CSS ya presente en `almacen.html`).
 
-## 43.5 Derogaciones y alcance
+## 44.5 Derogaciones y alcance
 
 - **Deroga**: RF-91.2 (presencia no creíble con puerta `OPEN`) y RF-92.1 (la presencia no ancla).
 - **Vigente**: RF-88 (refresco bajo demanda), RF-91.3 (F48 de huéspedes), RF-101 (prohibido el poller).
 - **No se toca** `/dashboard` ni su pipeline.
 
-## 43.6 Riesgos
+## 44.6 Riesgos
 
 - Al aceptar `move` y puerta abierta pueden reaparecer fantasmas del pasillo (motivo original de F76).
   Se mitiga con `ABSENT` (que limpia el estado), `far_detection` del 24G y sin sondeo/cuota. Decisión
   explícita del operador por el requisito de los 3 disparadores.
 
-## 43.7 Trazabilidad
+## 44.7 Trazabilidad
 
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
-| RF-103.1–102.2 | §44.1–43.2 | §6 | F80-01, F80-02 |
+| RF-103.1–103.2 | §44.1–44.2 | §6 | F80-01, F80-02 |
 | RF-103.3 | §44.3 | §6 | F80-03 |
 | RF-103.4 | §44.4 | §6 | F80-04 |
-| RF-103.5–102.7 | §44.5 | §6 | F80-05 |
+| RF-103.5–103.7 | §44.5 | §6 | F80-05 |

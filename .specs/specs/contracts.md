@@ -2020,6 +2020,16 @@ interna de permisos (excepción sobre rol). Rechazo por permisos: `403` con
 - `outcome` ∈ `ENTERED|NO_SHOW|ANONYMOUS|DENIED`; `entry_trigger` ∈ `QR|DOOR|PRESENCE`.
 - Los registros `DISCARDED` no tienen `video_url` (o devuelve `410 gone`).
 - `GET /almacen-api/visits/{id}` → `{ "visit": {…} }`; `404 not_found` si no existe.
+- **F79 (RF-102.3)**: por defecto se **excluyen** los intentos sin entrada
+  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`). `include_no_show=1` los incluye; un
+  `outcome=NO_SHOW` explícito también los muestra. Los `NO_SHOW` con `QR` siempre se listan.
+
+## 1b. Origen de las señales del motor (F79, RF-102.1/102.2)
+
+El motor del almacén ignora las señales que no son un ciclo real. El ingress Tuya propaga
+`meta.source` (campo interno `_source` del payload; p.ej. `resync`) y el provider
+(`TUYA|SIMULATED`). `WarehouseRecordingService::onSignal` no tiene efecto con
+`provider=SIMULATED` o `source=resync`. No cambia la forma pública de ningún endpoint.
 
 ## 2. Máquina de estados (contrato interno)
 
