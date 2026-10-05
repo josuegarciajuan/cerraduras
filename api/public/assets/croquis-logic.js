@@ -116,8 +116,14 @@
       presenceChip = chip('SIN DATOS', 'dim');
     }
 
+    // F77.7: sin estado real por push, se muestra el último comando como "?"
+    // (nunca se enciende el foco del croquis con una estimación).
+    var lightInferred = (light === 'UNKNOWN'
+      && (live.switch_state_inferred === 'ON' || live.switch_state_inferred === 'OFF'))
+      ? live.switch_state_inferred : null;
     var lightChip = light === 'ON' ? chip('LUZ ON', 'warn')
       : light === 'OFF' ? chip('LUZ OFF', 'dim')
+      : lightInferred ? chip('LUZ ' + lightInferred + '?', 'dim')
       : chip('LUZ —', 'dim');
 
     var doorText = staleOpen ? 'Estado de puerta no fiable (sensor sin datos)'

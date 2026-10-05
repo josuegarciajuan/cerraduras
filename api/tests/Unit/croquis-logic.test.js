@@ -107,6 +107,13 @@ check('switch ON → classes.lightOn=true', lightOn.classes.lightOn === true);
 check('switch OFF → chip LUZ OFF dim', lightOff.chips.light.text === 'LUZ OFF' && lightOff.chips.light.mod === 'dim');
 check('switch UNKNOWN → chip LUZ —', lightUnknown.chips.light.text === 'LUZ —');
 
+// F77.7: sin estado real, el último comando se muestra como estimación (?) sin
+// encender el foco del croquis.
+const lightInferred = deriveCroquis(snap({ switch_state: 'UNKNOWN', switch_state_inferred: 'ON' }), BASE);
+check('F77.7 switch inferido ON → chip LUZ ON? dim',
+  lightInferred.chips.light.text === 'LUZ ON?' && lightInferred.chips.light.mod === 'dim');
+check('F77.7 switch inferido no enciende el foco', lightInferred.classes.lightOn === false);
+
 // ─── 10. Descripción accesible ─────────────────────────────────────────
 const openInside = deriveCroquis(snap({ door_state: 'OPEN', presence_state: 'PRESENT' }, true), BASE);
 check('desc: puerta abierta + persona dentro',

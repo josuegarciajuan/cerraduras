@@ -10,6 +10,8 @@
   var pollTimer = null;
   // F68/RF-78: estado de reproducción de una visita (null = en vivo).
   var playback = null;
+  // F77.8: visita con el detalle abierto, para no perderlo al refrescar la lista.
+  var selectedVisitId = null;
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -587,11 +589,14 @@
         '<table><thead><tr><th>Fecha</th><th>Empleado</th><th>Disparo</th><th>Resultado</th><th>Entrada</th><th>Salida</th><th></th></tr></thead><tbody>'
         + (rows || '<tr><td colspan="7" class="muted">Sin visitas</td></tr>') + '</tbody></table>'
         + '<div id="visit-detail"></div>';
+      // F77.8: el refresco periódico (15 s) ya no cierra el detalle abierto.
+      if (selectedVisitId != null) { selectVisit(selectedVisitId, true); }
     }).catch(function (e) { toast('Visitas: ' + e.message); });
   }
 
-  function selectVisit(id) {
+  function selectVisit(id, silent) {
     api('/almacen-api/visits/' + id).then(function (j) {
+      selectedVisitId = id;
       var v = j.visit;
       var recs = v.recordings || [];
       var clips = recs.map(function (r) {
@@ -610,8 +615,13 @@
         + '<div class="muted">QR: ' + fmt(v.qr_at) + ' · Entrada: ' + fmt(v.entered_at) + ' · Salida: ' + fmt(v.exited_at) + '</div>'
         + '<div style="margin:10px 0"><button onclick="Almacen.playVisit(' + v.id + ')">▶ Reproducir visita</button></div>'
         + '<div class="clip-grid">' + (clips || '<div class="muted">Sin grabaciones</div>') + '</div>';
-      $('visit-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }).catch(function (e) { toast('Visita: ' + e.message); });
+      if (!silent) {
+        $('visit-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }).catch(function (e) {
+      if (silent && selectedVisitId === id) { selectedVisitId = null; }
+      toast('Visita: ' + e.message);
+    });
   }
 
   function loadAccess(force) {

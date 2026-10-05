@@ -152,6 +152,9 @@ final class WarehouseStateController
             'presence_age_seconds' => null,
             'door_stale_seconds' => $staleSeconds,
             'door_stale' => true,
+            // F77.7: estado de luz INFERIDO del último comando (no es estado real
+            // por push; se etiqueta distinto para no confundir).
+            'switch_state_inferred' => null,
         ];
         $ls = $this->pdo->prepare(
             'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
@@ -183,6 +186,13 @@ final class WarehouseStateController
         $swMeta = json_decode((string) ($swStmt->fetchColumn() ?: ''), true) ?: [];
         if (isset($swMeta['switch_state']) && is_string($swMeta['switch_state']) && $swMeta['switch_state'] !== '') {
             $live['switch_state'] = $swMeta['switch_state'];
+        } else {
+            // F77.7: sin push del SWITCH (regla de mensajes Tuya pendiente), se
+            // ofrece el último comando conocido como estimación honesta.
+            $cmd = strtoupper((string) ($swMeta['last_command'] ?? ''));
+            if ($cmd === 'ON' || $cmd === 'OFF') {
+                $live['switch_state_inferred'] = $cmd;
+            }
         }
 
         return [
