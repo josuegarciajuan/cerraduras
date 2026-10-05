@@ -4999,6 +4999,72 @@ else
 fi
 
 # =============================================================================
+# BLOCK 55 — F82: Listado de visitas con presencia (RF-105)
+# Trazabilidad: RF-105.1..105.4; TSK-F82-01..F82-02
+# =============================================================================
+block "BLOCK 55 — F82: Listado de visitas con presencia"
+
+# 55.0 Estáticos: el controlador ya no oculta PRESENCE por defecto, pero
+# mantiene el filtro NO_SHOW DOOR-only y la palanca include_no_show.
+F82_CTRL="$PROJECT_DIR/src/Http/Controllers/WarehouseVisitController.php"
+if grep -q "entry_trigger <> 'PRESENCE'" "$F82_CTRL" 2>/dev/null; then
+    fail "F82: visits ya no oculta PRESENCE por defecto" \
+        "aún contiene entry_trigger <> 'PRESENCE'"
+else
+    pass "F82: visits ya no oculta PRESENCE por defecto"
+fi
+if grep -Fq "NOT (v.outcome = 'NO_SHOW' AND v.entry_trigger = 'DOOR')" "$F82_CTRL" 2>/dev/null; then
+    pass "F82: visits mantiene el filtro NO_SHOW DOOR-only"
+else
+    fail "F82: visits filtro NO_SHOW DOOR-only" "ausente"
+fi
+if grep -q "include_no_show" "$F82_CTRL" 2>/dev/null; then
+    pass "F82: visits mantiene include_no_show"
+else
+    fail "F82: visits include_no_show" "ausente"
+fi
+if grep -q "F82" "$F82_CTRL" 2>/dev/null; then
+    pass "F82: visits incluye el marcador F82"
+else
+    fail "F82: visits marcador F82" "ausente"
+fi
+
+# 55.1 HTTP/DB: una visita sintética con entry_trigger='PRESENCE' aparece por
+# defecto en GET /almacen-api/visits (sin include_no_show).
+if [ "$SERVER_UP" = true ]; then
+    F82_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F82_ROOM" ]; then
+        F82_VISIT=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, entered_at) VALUES ($F82_ROOM, 'PRESENCE', 'ENTERED', UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
+        if [ -n "$F82_VISIT" ]; then
+            F82_JSON=$(curl -s --max-time 5 "$API_BASE/almacen-api/visits?room_id=$F82_ROOM&limit=200")
+            F82_PRESENT=$(echo "$F82_JSON" | python3 -c \
+                "import sys,json; d=json.load(sys.stdin); print('yes' if any(int(v.get('id',0))==$F82_VISIT for v in d.get('visits',[])) else 'no')" \
+                2>/dev/null || echo "parse_error")
+            if [ "$F82_PRESENT" = "yes" ]; then
+                pass "F82: visita PRESENCE aparece por defecto en /almacen-api/visits"
+            else
+                fail "F82: visita PRESENCE en listado" \
+                    "present=$F82_PRESENT id=$F82_VISIT body=$(echo "$F82_JSON" | head -c 240)"
+            fi
+            # Cleanup garantizado del estado sintético (incluido si el parse falla).
+            $MYSQL -e "DELETE FROM camera_recordings WHERE visit_id=$F82_VISIT; DELETE FROM warehouse_visits WHERE id=$F82_VISIT;" 2>/dev/null
+            F82_LEFT=$($MYSQL -sN -e "SELECT COUNT(*) FROM warehouse_visits WHERE id=$F82_VISIT" 2>/dev/null || echo 1)
+            if [ "$F82_LEFT" = "0" ]; then
+                pass "F82: estado sintético limpiado"
+            else
+                fail "F82: limpieza visita sintética" "quedan $F82_LEFT filas"
+            fi
+        else
+            skip "F82 HTTP" "no se pudo crear la visita sintética"
+        fi
+    else
+        skip "F82 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "F82 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
