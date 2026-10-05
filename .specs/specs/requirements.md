@@ -1714,3 +1714,24 @@ esperar. El cierre con presencia interior no debe cortar la grabación.
   sin presencia en `QR_PENDING` sigue esperando X). Solo cambia `RECORDING_INSIDE`.
 - **RF-104.8**: **No regresión**: la regresión completa termina con **0 failures** y el runner
   incorpora los marcadores F81.
+
+---
+
+# Fase 82: Listado de visitas del almacén con presencia (RF-105)
+
+**Motivo**: F80/RF-103 convirtió la detección de presencia en un disparador válido de visita del
+almacén (`entry_trigger='PRESENCE'`, con inicio y fin reales según F81/RF-104), pero el listado de
+`/almacen` seguía ocultándolas por defecto (F79/RF-102.3). El listado debe reflejar la realidad del
+almacén y mostrar esas visitas sin parámetros. Se mantiene la ocultación de los intentos sin entrada.
+
+## RF-105: Listado de visitas del almacén
+- **RF-105.1**: `GET /almacen-api/visits` **muestra por defecto** las visitas con
+  `entry_trigger='PRESENCE'` (creadas por detección de presencia), sin necesidad de parámetros.
+- **RF-105.2**: se **mantiene** la ocultación por defecto de los intentos sin entrada
+  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`), visibles con `include_no_show=1`.
+- **RF-105.3**: **sin cambio de forma** del contrato (mismos endpoints, campos y tipos); solo cambia
+  el conjunto devuelto por defecto.
+- **RF-105.4**: **sin cuota Tuya** (RF-101 intacto) y **no regresión** (runner con 0 failures y
+  marcadores F82).
+- **Nota**: **revisa parcialmente RF-102.3**, que ocultaba por defecto las visitas disparadas solo por
+  `PRESENCE`.

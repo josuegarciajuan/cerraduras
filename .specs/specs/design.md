@@ -4463,3 +4463,36 @@ aspecto de "medio afuera". La función sigue siendo pura (no toca red ni DOM).
 | RF-104.2–104.4 | §45.1–45.2 | §F81.2 | F81-01, F81-02 |
 | RF-104.5 | §45.3 | §F81.3 | F81-03 |
 | RF-104.6–104.8 | §45.4 | §F81.4 | F81-04 |
+
+---
+
+# 46. F82 — Listado de visitas del almacén con presencia (RF-105)
+
+## 46.1 Filtro del listado
+
+En `WarehouseVisitController::index()` el filtro por defecto pasa a ser **solo**
+`NOT (outcome='NO_SHOW' AND entry_trigger='DOOR')`; desaparece la condición adicional
+`entry_trigger <> 'PRESENCE'` que introdujo F79/RF-102.3. El parámetro `include_no_show=1` y el
+filtro explícito `outcome=…` conservan su comportamiento actual.
+
+## 46.2 Motivo
+
+Coherencia con F80/RF-103 (la detección de presencia es un disparador válido de visita) y con
+F81/RF-104 (la visita iniciada por presencia tiene inicio y fin reales). El listado de `/almacen`
+debe reflejar las visitas que el motor realmente crea, sin exigir un parámetro.
+
+## 46.3 Alcance
+
+- **No se toca** el motor (`WarehouseRecordingDecision`, `WarehouseRecordingService`), el croquis
+  (`croquis-logic.js`) ni la grabación/recorder.
+- **Sin cuota Tuya**: solo cambia una consulta local a BD (RF-101 intacto).
+- Revisa parcialmente RF-102.3 (ocultación por defecto de las visitas solo-`PRESENCE`).
+
+## 46.4 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-105.1 | §46.1–46.2 | §F82.1 | TSK-F82-01, TSK-F82-02 |
+| RF-105.2 | §46.1 | §F82.1 | TSK-F82-01, TSK-F82-02 |
+| RF-105.3 | §46.1 | §F82.1 | TSK-F82-01 |
+| RF-105.4 | §46.3 | §F82.2–82.3 | TSK-F82-02 |

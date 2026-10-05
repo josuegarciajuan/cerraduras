@@ -2025,6 +2025,7 @@ interna de permisos (excepción sobre rol). Rechazo por permisos: `403` con
   (radar; F80/RF-103 las mantiene para el croquis en vivo, no para el listado).
   `include_no_show=1` las incluye; un `outcome=NO_SHOW` explícito también muestra los intentos.
   Los `NO_SHOW` con `QR` siempre se listan.
+- **Revisado por F82/RF-105**: las visitas solo-`PRESENCE` ya no se ocultan por defecto.
 
 ## 1b. Origen de las señales del motor (F79, RF-102.1/102.2)
 
@@ -2519,3 +2520,27 @@ Respuestas:
 
 - Sin rutas nuevas ni campos eliminados; `QR_PENDING` intacto.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; BLOCK del runner con marcadores F81.
+
+---
+
+# Fase 82: Listado de visitas del almacén con presencia (RF-105)
+
+## 1. `GET /almacen-api/visits` — cambio de comportamiento por defecto
+
+- **Breaking intencional** (único consumidor el panel interno de `/almacen`): las visitas con
+  `entry_trigger='PRESENCE'` se listan **por defecto**, sin parámetros.
+- Se mantiene la exclusión por defecto de los intentos sin entrada
+  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`). `include_no_show=1` sigue incluyéndolos; un
+  `outcome=NO_SHOW` explícito también los muestra.
+- **Forma del JSON sin cambios**: `visits[]` conserva los mismos campos y tipos que las fases
+  anteriores. Solo cambia el conjunto devuelto por defecto.
+
+## 2. Sin cuota Tuya
+
+- El listado se resuelve con consultas locales a BD; no se añade ninguna llamada a la API de Tuya
+  (hereda RF-101).
+
+## 3. No regresión
+
+- Sin rutas nuevas ni campos eliminados.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; BLOCK del runner con marcadores F82.

@@ -3834,3 +3834,41 @@ F81-01 (motor) ─> F81-02 (enganche) ─> F81-03 (croquis) ─> F81-04 (runner 
 - [ ] F81-02 elección según `presence_state`
 - [ ] F81-03 croquis `inside`
 - [ ] F81-04 BLOCK del runner + regresión
+
+---
+
+# Fase 82: Listado de visitas del almacén con presencia (RF-105)
+
+## TSK-F82-01: Mostrar por defecto las visitas disparadas por presencia
+- **Trazabilidad**: RF-105.1, RF-105.2, RF-105.3.
+- **Archivo(s)**: `api/src/Http/Controllers/WarehouseVisitController.php`.
+- **Pasos**:
+  - [ ] En `index()`, eliminar la exclusión por defecto de `entry_trigger='PRESENCE'` del filtro
+        (la consulta por defecto queda como `NOT (outcome='NO_SHOW' AND entry_trigger='DOOR')`).
+  - [ ] Mantener `include_no_show=1` y el filtro explícito `outcome=…` con su comportamiento actual
+        (los `NO_SHOW` con `DOOR` siguen ocultos por defecto).
+  - [ ] No alterar la forma del JSON (`visits[]` con los mismos campos y tipos).
+- **Verificación**: `php -l api/src/Http/Controllers/WarehouseVisitController.php` y BLOCK del
+  runner con marcadores F82.
+
+## TSK-F82-02: Regresión del runner con marcadores F82
+- **Trazabilidad**: RF-105.4.
+- **Archivo(s)**: `api/bin/run-tests.sh`.
+- **Pasos**:
+  - [ ] Ampliar BLOCK(s) del runner con casos F82: una visita `entry_trigger='PRESENCE'` aparece en
+        `GET /almacen-api/visits` sin parámetros; un `NO_SHOW` con `DOOR` sigue oculto por defecto y
+        visible con `include_no_show=1`.
+  - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
+  - [ ] Ejecutar la regresión completa.
+- **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
+
+## Orden de ejecución (F82)
+
+```
+F82-01 (filtro del listado) ─> F82-02 (BLOCK del runner + regresión)
+```
+
+## Estado de ejecución (F82)
+
+- [ ] F82-01 eliminar exclusión por defecto de PRESENCE en el listado
+- [ ] F82-02 BLOCK del runner con marcadores F82 + regresión

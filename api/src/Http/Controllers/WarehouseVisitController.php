@@ -45,17 +45,13 @@ final class WarehouseVisitController
             $where[] = 'v.outcome = :outcome';
             $params[':outcome'] = $outcome;
         }
-        // F79 (RF-102.3): por defecto solo se listan accesos verificados. Se
-        // ocultan:
-        //   - los intentos sin entrada (`NO_SHOW` con trigger `DOOR`), sin vídeo;
-        //   - las visitas disparadas solo por `PRESENCE` (radar 24G). F80/RF-103
-        //     las mantiene para el croquis en vivo (creación al instante), pero
-        //     no son un acceso verificado y el listado las oculta.
-        // Se ven con `include_no_show=1` o filtrando explícitamente `outcome=…`.
+        // F79 (RF-102.3) revisado por F82/RF-105: por defecto solo se ocultan los
+        // intentos sin entrada (NO_SHOW con trigger DOOR). Las visitas disparadas
+        // por PRESENCE ya se listan por defecto (F80/F81 las hacen un ciclo real).
+        // include_no_show=1 o un outcome explícito los muestran.
         $includeNoShow = (string) ($request->query['include_no_show'] ?? '') === '1';
         if (!$includeNoShow && $outcome === '') {
             $where[] = "NOT (v.outcome = 'NO_SHOW' AND v.entry_trigger = 'DOOR')";
-            $where[] = "v.entry_trigger <> 'PRESENCE'";
         }
         $from = (string) ($request->query['from'] ?? '');
         if ($from !== '') {
