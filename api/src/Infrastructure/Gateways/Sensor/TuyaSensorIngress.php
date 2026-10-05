@@ -276,6 +276,10 @@ final class TuyaSensorIngress implements SensorIngressInterface
                     // (orden por ocurrencia); el fingerprint lógico sigue
                     // floors a segundo para la idempotencia de reenvíos.
                     'tuya_t'       => $t,
+                    // F79 (RF-102.2): origen de la señal. El consumer marca los
+                    // reenvíos del resync REST con `_source='resync'`; el motor
+                    // del almacén los ignora (reconciliación, no transición).
+                    'source'       => (string) ($raw['_source'] ?? 'real'),
                 ],
             ];
         }

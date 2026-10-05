@@ -45,6 +45,14 @@ final class WarehouseVisitController
             $where[] = 'v.outcome = :outcome';
             $params[':outcome'] = $outcome;
         }
+        // F79 (RF-102.3): por defecto se ocultan los intentos sin entrada
+        // (`NO_SHOW` con trigger `DOOR`), que no generan vídeo y se percibían
+        // como "visitas fantasma". Se ven con `include_no_show=1` o filtrando
+        // explícitamente `outcome=NO_SHOW` (los `NO_SHOW` con QR sí se listan).
+        $includeNoShow = (string) ($request->query['include_no_show'] ?? '') === '1';
+        if (!$includeNoShow && $outcome === '') {
+            $where[] = "NOT (v.outcome = 'NO_SHOW' AND v.entry_trigger = 'DOOR')";
+        }
         $from = (string) ($request->query['from'] ?? '');
         if ($from !== '') {
             $where[] = 'v.created_at >= :from';

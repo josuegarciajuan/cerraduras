@@ -1213,13 +1213,21 @@ $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
     $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
 
 # F20: Tuya webhook (no auth — Tuya Cloud doesn't use our API keys)
+# F79 (RF-102.4): device SINTÉTICO (sin pack/sala). Antes se usaba el device real
+# de la puerta del almacén (bf4c7e7d…) y cada corrida creaba una visita fantasma
+# en `/almacen`. Sintético + roomless → 202 `room_not_found`, sin efectos.
+F20_DOOR_DEV="synth-f20-door-$(date +%s)"
+F20_PRES_DEV="synth-f20-pres-$(date +%s)"
+$MYSQL -sN -e "INSERT INTO devices (kind,external_id) VALUES ('PROXIMITY','$F20_DOOR_DEV'),('PRESENCE','$F20_PRES_DEV')" 2>/dev/null || true
 http_test POST /api/v1/tuya/webhook 202 \
     "POST /tuya/webhook (PROXIMITY, no auth) → 202" \
-    --body '{"devId":"bf4c7e7d2cef28cea2nkwk","status":[{"code":"doorcontact_state","value":true,"t":'"$(date +%s)"'000}]}'
+    --body '{"devId":"'"$F20_DOOR_DEV"'","status":[{"code":"doorcontact_state","value":true,"t":'"$(date +%s)"'000}]}'
 
 http_test POST /api/v1/tuya/webhook 202 \
     "POST /tuya/webhook (PRESENCE, no auth) → 202" \
-    --body '{"devId":"bf98d27d79685e38a2wbda","status":[{"code":"presence_state","value":"presence","t":'"$(date +%s)"'000}]}'
+    --body '{"devId":"'"$F20_PRES_DEV"'","status":[{"code":"presence_state","value":"presence","t":'"$(date +%s)"'000}]}'
+
+$MYSQL -sN -e "DELETE FROM devices WHERE external_id IN ('$F20_DOOR_DEV','$F20_PRES_DEV')" 2>/dev/null || true
 
 # F21: Public endpoints (no auth)
     http_test GET /dashboard 200 \
@@ -3773,6 +3781,11 @@ else
     # los `presence_events` (el sensor de puerta es edge-triggered y no reemite).
     E2E_IS_WAREHOUSE=0
     E2E_IOT_BACKED_UP=0
+    # F79 (RF-102.4): snapshot del dominio del almacén para no dejar visitas
+    # fantasma. Baseline = MAX(id); se restauran visitas/grabaciones/estado.
+    E2E_WH_BACKED_UP=0
+    E2E_WH_VISIT_MAX=0
+    E2E_WH_REC_MAX=0
     if [ "$($MYSQL -sN -e "SELECT rt.code FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE r.id=$E2E_ROOM" 2>/dev/null)" = "ALMACEN_BEBIDAS" ]; then
         E2E_IS_WAREHOUSE=1
     fi
@@ -3792,13 +3805,46 @@ else
         $MYSQL -sN -e "DROP TABLE IF EXISTS _e2e_iot_backup" 2>/dev/null || true
         E2E_IOT_BACKED_UP=0
     }
+    _e2e_backup_warehouse() {
+        [ "$E2E_IS_WAREHOUSE" = "1" ] || return 0
+        [ "$E2E_WH_BACKED_UP" = "1" ] && return 0
+        E2E_WH_VISIT_MAX=$($MYSQL -sN -e "SELECT COALESCE(MAX(id),0) FROM warehouse_visits WHERE room_id=$E2E_ROOM" 2>/dev/null || echo 0)
+        E2E_WH_REC_MAX=$($MYSQL -sN -e "SELECT COALESCE(MAX(id),0) FROM camera_recordings WHERE room_id=$E2E_ROOM" 2>/dev/null || echo 0)
+        : "${E2E_WH_VISIT_MAX:=0}"
+        : "${E2E_WH_REC_MAX:=0}"
+        $MYSQL -sN -e "CREATE TABLE IF NOT EXISTS _e2e_wh_state_backup LIKE warehouse_state" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM _e2e_wh_state_backup" 2>/dev/null || true
+        $MYSQL -sN -e "INSERT INTO _e2e_wh_state_backup SELECT * FROM warehouse_state WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        E2E_WH_BACKED_UP=1
+    }
+    _e2e_restore_warehouse() {
+        [ "$E2E_IS_WAREHOUSE" = "1" ] || return 0
+        [ "$E2E_WH_BACKED_UP" = "1" ] || return 0
+        # Borrar clips generados durante la corrida (solo rutas bajo data/cameras/).
+        $MYSQL -sN -e "SELECT file_path FROM camera_recordings WHERE room_id=$E2E_ROOM AND id > ${E2E_WH_REC_MAX:-0} AND file_path IS NOT NULL" 2>/dev/null | while IFS= read -r _f; do
+            [ -z "$_f" ] && continue
+            case "$_f" in
+                *data/cameras/*) rm -f "$PROJECT_DIR/data/cameras/${_f#*data/cameras/}" 2>/dev/null || true ;;
+            esac
+        done
+        $MYSQL -sN -e "DELETE FROM camera_recordings WHERE room_id=$E2E_ROOM AND id > ${E2E_WH_REC_MAX:-0}" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM warehouse_visits WHERE room_id=$E2E_ROOM AND id > ${E2E_WH_VISIT_MAX:-0}" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM warehouse_state WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        $MYSQL -sN -e "INSERT INTO warehouse_state SELECT * FROM _e2e_wh_state_backup" 2>/dev/null || true
+        $MYSQL -sN -e "DROP TABLE IF EXISTS _e2e_wh_state_backup" 2>/dev/null || true
+        E2E_WH_BACKED_UP=0
+    }
 
     _e2e_normalize() {
         _e2e_backup_iot
+        _e2e_backup_warehouse
         $MYSQL -sN -e "UPDATE stays SET status='CLOSED', closed_at=UTC_TIMESTAMP(3) WHERE room_id=$E2E_ROOM AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
         $MYSQL -sN -e "DELETE FROM iot_sessions WHERE room_id=$E2E_ROOM" 2>/dev/null || true
         if [ "$E2E_IS_WAREHOUSE" != "1" ]; then
             $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
+        else
+            # F79: arrancar el motor del almacén en IDLE durante la corrida.
+            $MYSQL -sN -e "DELETE FROM warehouse_state WHERE room_id=$E2E_ROOM" 2>/dev/null || true
         fi
         $MYSQL -sN -e "UPDATE rooms SET pack_id=$E2E_ROOM_PACK, simulated_override=1, presence_check_seconds=5, status='FREE', cooldown_until=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
     }
@@ -3810,6 +3856,7 @@ else
             $MYSQL -sN -e "DELETE FROM presence_events WHERE room_id=$E2E_ROOM" 2>/dev/null || true
         fi
         _e2e_restore_iot
+        _e2e_restore_warehouse
         if [ "$E2E_SAVE_SIM" = "NULL" ]; then
             $MYSQL -sN -e "UPDATE rooms SET simulated_override=NULL WHERE id=$E2E_ROOM" 2>/dev/null || true
         else
@@ -4013,6 +4060,15 @@ print('%s|%s|%s'%(bool(d.get('exit_deadline')),i.get('presence_state'),i.get('do
             pass "S12: PROTO2 restaurada (FREE, sin stays/iot/presence)"
         else
             fail "S12: PROTO2 restaurada" "got status=$E2E_FINAL_ST"
+        fi
+    fi
+    # F79 (RF-102.4): la suite no debe dejar visitas fantasma del almacén.
+    if [ "$E2E_IS_WAREHOUSE" = "1" ]; then
+        E2E_WH_LEFT=$($MYSQL -sN -e "SELECT COUNT(*) FROM warehouse_visits WHERE room_id=$E2E_ROOM AND id > ${E2E_WH_VISIT_MAX:-0}" 2>/dev/null || echo "ERR")
+        if [ "$E2E_WH_LEFT" = "0" ]; then
+            pass "S12: sin visitas fantasma del almacén tras la corrida (F79)"
+        else
+            fail "S12: visitas fantasma del almacén (F79)" "quedan=$E2E_WH_LEFT baseline=$E2E_WH_VISIT_MAX"
         fi
     fi
 fi
@@ -4232,6 +4288,29 @@ if [ "$SERVER_UP" = true ]; then
         else
             fail "F63: motor de grabación" "$(echo "$WH_ENG_OUT" | grep -iE 'FAIL|Total' | head -3 | tr '\n' ' ')"
         fi
+    fi
+
+    # 44.5 F79 (RF-102.1/102.2): el motor ignora SIMULATED/resync; el consumer
+    # marca el resync y el ingress lo propaga a meta.source.
+    if grep -q "origin === 'resync'" "$PROJECT_DIR/src/Domain/Warehouse/WarehouseRecordingService.php" 2>/dev/null \
+       && grep -q "SIMULATED" "$PROJECT_DIR/src/Domain/Warehouse/WarehouseRecordingService.php" 2>/dev/null; then
+        pass "F79: motor ignora SIMULATED/resync (guard presente)"
+    else
+        fail "F79: guard motor SIMULATED/resync" "ausente en WarehouseRecordingService"
+    fi
+    if grep -q "_source = 'resync'\|_source = \"resync\"" "$PROJECT_DIR/bin/tuya-pulsar-consumer/index.js" 2>/dev/null; then
+        pass "F79: consumer marca resync (_source)"
+    else
+        fail "F79: consumer marca resync" "ausente en tuya-pulsar-consumer/index.js"
+    fi
+
+    # 44.6 F79 (RF-102.3): visits oculta NO_SHOW DOOR-only por defecto.
+    http_test GET '/almacen-api/visits' 200 "F79: GET /almacen-api/visits (default) → 200"
+    http_test GET '/almacen-api/visits?include_no_show=1' 200 "F79: GET /almacen-api/visits?include_no_show=1 → 200"
+    if grep -q "include_no_show" "$PROJECT_DIR/src/Http/Controllers/WarehouseVisitController.php" 2>/dev/null; then
+        pass "F79: visits filtro include_no_show presente"
+    else
+        fail "F79: visits filtro" "include_no_show ausente"
     fi
 else
     skip "BLOCK 44 HTTP" "servidor no disponible"
