@@ -72,13 +72,20 @@ const RECONCILE_MS = 60000;              // re-resolver devices cada 60 s
 const RESYNC_MIN_INTERVAL_MS = 20000;    // rate-limit del resync REST (parpadeos)
 const REAL_GAP_MS = 10000;               // F47: hueco que justifica resync inmediato
 const RECONNECT_BASE_MS = 1000;          // F47: base de reconexión (antes 5000)
-// F47/F50 (RF-54.3): watchdog de silencio (configurable). Por defecto 15 min:
-// el ping proactivo cada 30 s ya detecta sockets muertos, así que el silencio en
-// reposo es NORMAL (packs solo-puerta no emiten nada periódicamente). Un backstop
-// corto (180 s) reconectaba el WS en reposo sin motivo (churn ~9k cierres) y
-// abría huecos donde se perdían eventos de puerta (Bug 5). 15 min sigue forzando
-// la reconexión de un socket realmente zombie sin castigar el reposo legítimo.
+// F47/F50 (RF-54.3): watchdog de silencio (configurable). Por defecto 15 min.
+// F77.4: la liveness incluye PONG (respuesta al ping proactivo de 30 s), no solo
+// mensajes de dominio. Un socket sano en reposo (pack solo-puerta) responde pong
+// y NO debe reconectarse; reconectar cada 15 min disparaba un resync REST a Tuya
+// (~192 llamadas/día) que además reinyectaba estado cacheado. Solo se reconecta
+// si no hay ni mensajes NI pongs en SILENCE_MS (socket realmente zombie).
 const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '900000', 10);
+
+// F77.4: presupuesto de cuota Tuya COMPARTIDO con la API/poller (mismo fichero
+// que `tuyaPresenceApi()` y `tuya-presence-poller.js`). El resync puntual REST
+// consume cuota IoT Core: se contabiliza y respeta backoff/budgets.
+const QUOTA_FILE = __dirname + '/../../run/tuya-quota.json';
+const TUYA_HOURLY_BUDGET = parseInt(process.env.TUYA_HOURLY_BUDGET || '150', 10);
+const TUYA_DAILY_BUDGET = parseInt(process.env.TUYA_DAILY_BUDGET || '1000', 10);
 
 /** @type {string[]} */
 let knownDeviceIds = [];
@@ -118,11 +125,76 @@ function shouldResync(now, disconnectedAtMs, lastResyncAtMs, minIntervalMs, real
   return (now - lastResyncAtMs) >= minIntervalMs;
 }
 
-/** Pure: ¿el WS lleva demasiado tiempo mudo con devices rastreados? */
-function silenceExceeded(now, lastMsgAt, knownCount, silenceMs) {
+/**
+ * Pure (F77.4): ¿el WS lleva demasiado tiempo SIN señal de vida con devices
+ * rastreados? Se considera vivo si hubo MENSAJE de dominio o PONG reciente
+ * (respuesta al ping proactivo), porque el silencio en reposo es normal.
+ */
+function silenceExceeded(now, lastMsgAt, lastPongAt, knownCount, silenceMs) {
   if (!knownCount || knownCount <= 0) return false;
-  if (!lastMsgAt) return false;
-  return (now - lastMsgAt) > silenceMs;
+  const last = Math.max(Number(lastMsgAt) || 0, Number(lastPongAt) || 0);
+  if (!last) return false;
+  return (now - last) > silenceMs;
+}
+
+/** Pure (F77.4): ventana UTC (día/hora) de un instante en ms. */
+function quotaWindow(nowMs) {
+  const d = new Date(Number(nowMs) || Date.now());
+  return { day: d.toISOString().slice(0, 10), hour: d.toISOString().slice(0, 13) };
+}
+
+/**
+ * Pure (F77.4): normaliza el fichero de cuota a la ventana actual y decide si
+ * cabe una llamada REST más. `backoffUntil` legado en ms → segundos.
+ * @returns {{ok:boolean, reason:string, q:object}}
+ */
+function quotaDecision(q, nowMs, hourlyBudget, dailyBudget) {
+  const w = quotaWindow(nowMs);
+  let cur = (q && typeof q === 'object') ? Object.assign({}, q) : {};
+  if (cur.day !== w.day) cur = { day: w.day, hour: w.hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+  if (cur.hour !== w.hour) { cur.hour = w.hour; cur.callsHour = 0; }
+  let backoff = Number(cur.backoffUntil) || 0;
+  if (backoff > 1e12) backoff = Math.round(backoff / 1000);
+  if (backoff > Math.floor(nowMs / 1000)) return { ok: false, reason: 'backoff', q: cur };
+  if ((Number(cur.callsDay) || 0) >= dailyBudget) return { ok: false, reason: 'daily_budget', q: cur };
+  if ((Number(cur.callsHour) || 0) >= hourlyBudget) return { ok: false, reason: 'hourly_budget', q: cur };
+  return { ok: true, reason: 'ok', q: cur };
+}
+
+/** Pure (F77.4): contabiliza una llamada REST en la ventana actual. */
+function quotaBump(q, nowMs) {
+  const w = quotaWindow(nowMs);
+  let cur = (q && typeof q === 'object') ? Object.assign({}, q) : {};
+  if (cur.day !== w.day) cur = { day: w.day, hour: w.hour, callsDay: 0, callsHour: 0, backoffUntil: 0 };
+  if (cur.hour !== w.hour) { cur.hour = w.hour; cur.callsHour = 0; }
+  cur.callsDay = (Number(cur.callsDay) || 0) + 1;
+  cur.callsHour = (Number(cur.callsHour) || 0) + 1;
+  return cur;
+}
+
+/** Lee el fichero de cuota compartido (best-effort). */
+function readQuota() {
+  try { return JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf8')); } catch (e) { return {}; }
+}
+
+/** Escribe el fichero de cuota compartido de forma atómica (best-effort). */
+function writeQuota(q) {
+  try {
+    const dir = path.dirname(QUOTA_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = QUOTA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(q));
+    fs.renameSync(tmp, QUOTA_FILE);
+  } catch (e) { /* best-effort: nunca romper el consumer */ }
+}
+
+/** Reserva una llamada REST si el presupuesto compartido lo permite. */
+function reserveQuota() {
+  const now = Date.now();
+  const dec = quotaDecision(readQuota(), now, TUYA_HOURLY_BUDGET, TUYA_DAILY_BUDGET);
+  if (!dec.ok) return dec;
+  writeQuota(quotaBump(dec.q, now));
+  return { ok: true, reason: 'ok', q: dec.q };
 }
 
 /** Pure: latencia de recepción (ms) respecto al sello del dispositivo. */
@@ -307,15 +379,29 @@ async function resyncKnownDevices(reason) {
     return;
   }
   lastResyncAt = now;
-  resyncCount++;
   console.log(`[RESYNC] (${reason}) sondeando ${resyncDeviceIds.length} device(s)...`);
   let token;
-  try { token = await getTuyaToken(); } catch (e) {
+  try {
+    // F77.4: el token también es una llamada REST a Tuya → cuenta y respeta budget.
+    const gate0 = reserveQuota();
+    if (!gate0.ok) {
+      console.log(`[RESYNC] omitido por presupuesto Tuya (${gate0.reason})`);
+      return;
+    }
+    token = await getTuyaToken();
+  } catch (e) {
     console.error(`[RESYNC] token fail: ${e.message}`);
     return;
   }
+  resyncCount++;
   for (const devId of resyncDeviceIds) {
     try {
+      // F77.4: no sondear si el presupuesto compartido está agotado.
+      const gate = reserveQuota();
+      if (!gate.ok) {
+        console.log(`[RESYNC] presupuesto Tuya agotado (${gate.reason}) — fin del resync`);
+        break;
+      }
       const body = await tuyaRequest('GET', `/v1.0/iot-03/devices/${devId}/status`, '', token);
       if (!body || body.success !== true) continue;
       const payload = buildStatusPayload(devId, body.result);
@@ -656,8 +742,9 @@ function start() {
   writeStatus(false);
   setInterval(() => {
     if (!currentWs || !WebSocket || currentWs.readyState !== WebSocket.OPEN) return;
-    if (silenceExceeded(Date.now(), lastMessageAt, knownDeviceIds.length, SILENCE_MS)) {
-      console.error(`[WS] ⚠ silencio > ${Math.round(SILENCE_MS / 1000)}s con devices rastreados — reconectando`);
+    // F77.4: solo reconectar si no hay ni mensaje NI pong reciente (socket zombie).
+    if (silenceExceeded(Date.now(), lastMessageAt, lastPongAt, knownDeviceIds.length, SILENCE_MS)) {
+      console.error(`[WS] ⚠ sin señal de vida (msg/pong) > ${Math.round(SILENCE_MS / 1000)}s con devices rastreados — reconectando`);
       try { currentWs.terminate(); } catch (e) { /* close programa la reconexión */ }
     }
   }, 15000).unref();
@@ -685,4 +772,8 @@ module.exports = {
   receiveLatencyMs,
   // F50: observabilidad del pong (no decide reconexión).
   pongAgeMs,
+  // F77.4: presupuesto de cuota compartido (helpers puros).
+  quotaWindow,
+  quotaDecision,
+  quotaBump,
 };
