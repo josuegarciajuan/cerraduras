@@ -519,67 +519,31 @@ final class IotSessionService
     }
 
     /**
-     * F76 (RF-91/92) + F77.5: contexto de presencia para el almacén.
+     * F80 (RF-103.1, restaura F71/RF-81): contexto de presencia para el almacén.
      *
-     * - Con la puerta ABIERTA **y el sensor fresco**, el 24G puede ver el pasillo
-     *   a través del hueco: la presencia **no** es creíble (elimina fantasmas).
-     * - F77.5: si el sensor de puerta está mudo o su último evento aplicado supera
-     *   `DOOR_STALE_SECONDS`, el estado (p. ej. un OPEN cacheado) **no** se usa para
-     *   vetar la presencia: se recupera el comportamiento F71 para no dejar el
-     *   sistema ciego ante un fallo del sensor.
-     * - Con la puerta cerrada y fresca, la presencia es creíble durante la ventana
-     *   tras el último OPEN/CLOSE o mientras haya una visita ENTRADA con trigger
-     *   DOOR/QR sin apertura posterior.
+     * El requisito del panel es que una visita pueda empezar al **detectar presencia**,
+     * aunque la puerta se quede abierta a propósito (entrar/salir/volver). Por eso la
+     * presencia del 24G es creíble **al instante**: no se veta por `door_state=OPEN` ni
+     * se exige un ciclo de puerta previo. Deroga el veto de F76 (RF-91.2/RF-92.1).
+     *
+     * `activeEnteredVisitAt()` (que ya incluye las visitas por `PRESENCE`) se conserva
+     * como ancla informativa de "dentro"; ya no decide credibilidad.
      *
      * @return array{0:bool,1:bool} [entryWindowActive, insideNoExitCycle]
      */
     private function warehousePresenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
     {
-        $nowTs      = $now->getTimestamp();
-        $staleAfter = (int) (Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300);
-        if ($staleAfter <= 0) {
-            $staleAfter = 300;
-        }
-        $lastDoorTs = $session->lastDoorEventAt !== null
-            ? strtotime($session->lastDoorEventAt . ' UTC')
-            : false;
-        $doorFresh = $lastDoorTs !== false && ($nowTs - $lastDoorTs) <= $staleAfter;
-
-        if ($session->doorState === IotSession::DOOR_OPEN && $doorFresh) {
-            return [false, false];
-        }
-
-        // Sensor de puerta sin datos fiables → no vetar presencia (F71).
-        if ($session->doorState === IotSession::DOOR_UNKNOWN || !$doorFresh) {
-            return [true, false];
-        }
-
-        $entryConfirmedAt = null;
+        $insideNoExitCycle = false;
         if ($this->warehouseRecorder !== null) {
             try {
-                $entryConfirmedAt = $this->warehouseRecorder->activeEnteredVisitAt($room->id);
+                $insideNoExitCycle = $this->warehouseRecorder->activeEnteredVisitAt($room->id) !== null;
             } catch (\Throwable $e) {
-                $entryConfirmedAt = null;
+                $insideNoExitCycle = false;
             }
         }
-
-        $window    = $this->resolveEntryWindowSeconds($room);
-        $lastOpen  = $session->lastOpenAt  !== null ? strtotime($session->lastOpenAt . ' UTC')  : null;
-        $lastClose = $session->lastCloseAt !== null ? strtotime($session->lastCloseAt . ' UTC') : null;
-
-        $entryWindowActive = ($entryConfirmedAt === null)
-            && (($lastOpen !== null && ($nowTs - $lastOpen) <= $window)
-                || ($lastClose !== null && ($nowTs - $lastClose) <= $window));
-
-        $insideNoExitCycle = false;
-        if ($entryConfirmedAt !== null) {
-            $confTs = strtotime($entryConfirmedAt . ' UTC');
-            if ($confTs !== false) {
-                $insideNoExitCycle = ($lastOpen === null || $lastOpen < $confTs);
-            }
-        }
-
-        return [$entryWindowActive, $insideNoExitCycle];
+        // La ventana de entrada está siempre activa en el almacén: cualquier `PRESENT`
+        // (`presence` o `move`) se aplica de inmediato.
+        return [true, $insideNoExitCycle];
     }
 
     /**

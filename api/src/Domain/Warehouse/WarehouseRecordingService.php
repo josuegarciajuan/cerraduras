@@ -40,10 +40,10 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
     }
 
     /**
-     * F76 (RF-92): ancla de "dentro" para la credibilidad de presencia. Solo
-     * cuentan las visitas ENTRADA con trigger de puerta o QR; una visita creada
-     * únicamente por presencia no ancla (evita que un falso positivo del 24G se
-     * auto-justifique).
+     * F80 (RF-103.2): ancla de "dentro" del almacén. Cuenta cualquier visita ENTRADA
+     * activa (`DOOR`, `QR` o `PRESENCE`): una visita iniciada por presencia es real y
+     * debe anclar. F80 ya **no** usa el ancla para vetar presencia (deroga el veto de
+     * F76/RF-92.1); se conserva como contexto informativo.
      */
     public function activeEnteredVisitAt(int $roomId): ?string
     {
@@ -53,7 +53,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
              JOIN warehouse_visits v ON v.id = ws.current_visit_id
              WHERE ws.room_id = :r
                AND v.outcome = 'ENTERED'
-               AND v.entry_trigger IN ('DOOR','QR')
+               AND v.entry_trigger IN ('DOOR','QR','PRESENCE')
                AND v.entered_at IS NOT NULL
              LIMIT 1"
         );

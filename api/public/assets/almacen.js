@@ -195,7 +195,9 @@
     var d = C.deriveCroquis({ occupied: !!wh.occupied, live: state.live || {} }, Date.now());
 
     applyCroquisView({
-      personPos: d.personInside ? 'inside' : 'outside',
+      // F80/RF-103.4: fase en vivo (outside/near/crossing/inside) para que el
+      // monigote se mueva como en el dashboard operativo.
+      personPos: d.phase || (d.personInside ? 'inside' : 'outside'),
       doorOpen: d.doorOpen,
       personInside: d.personInside,
       unknown: d.unknown,

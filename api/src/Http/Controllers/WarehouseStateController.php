@@ -155,6 +155,10 @@ final class WarehouseStateController
             // F77.7: estado de luz INFERIDO del último comando (no es estado real
             // por push; se etiqueta distinto para no confundir).
             'switch_state_inferred' => null,
+            // F80/RF-103.3: últimos eventos de presencia APLICADOS, para que el
+            // croquis anime el monigote por fases en vivo (mismo enfoque que el
+            // dashboard operativo). Aditivo: no cambia la forma de los campos previos.
+            'recent_presence' => [],
         ];
         $ls = $this->pdo->prepare(
             'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
@@ -193,6 +197,24 @@ final class WarehouseStateController
             if ($cmd === 'ON' || $cmd === 'OFF') {
                 $live['switch_state_inferred'] = $cmd;
             }
+        }
+
+        // F80/RF-103.3: últimos eventos de presencia aplicados (auditoría F41/F44
+        // marca `applied=1`). Alimenta las fases del monigote en el croquis.
+        $rp = $this->pdo->prepare(
+            "SELECT sensor, value, occurred_at
+             FROM presence_events
+             WHERE room_id = :r AND applied = 1
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT 10"
+        );
+        $rp->execute([':r' => $roomId]);
+        foreach ($rp->fetchAll(PDO::FETCH_ASSOC) ?: [] as $e) {
+            $live['recent_presence'][] = [
+                'sensor'      => (string) $e['sensor'],
+                'value'       => (string) $e['value'],
+                'occurred_at' => (string) $e['occurred_at'],
+            ];
         }
 
         return [

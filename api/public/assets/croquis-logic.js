@@ -28,6 +28,11 @@
   /** Duración del pulso anti-colapso tras un OPEN real (ms). Igual que el panel. */
   var DOOR_PULSE_MS = 1200;
 
+  /** F80/RF-103.4: ventana (ms) para considerar reciente un PRESENT/ABSENT. */
+  var LIVE_PRESENCE_WINDOW_MS = 10000;
+  /** F80/RF-103.4: ventana (ms) tras un OPEN para la fase "cerca". */
+  var DOOR_NEAR_WINDOW_MS = 6000;
+
   /** Parseo tolerante (ISO/Z/naive UTC/epoch ms) → ms. 0 si no es válido. */
   function parseTime(v) {
     if (Choreography && typeof Choreography.parseTime === 'function') {
@@ -65,11 +70,29 @@
   }
 
   /**
+   * F80/RF-103.4: instante (ms) del último evento de presencia aplicado con un
+   * `value` dado ('PRESENT'|'ABSENT'); 0 si no hay. `recent_presence` viene del
+   * bloque `live` de `/almacen-api/state` (aditivo, solo eventos aplicados).
+   */
+  function lastPresenceEventMs(recent, value) {
+    var best = 0;
+    if (!recent || !recent.length) return best;
+    for (var i = 0; i < recent.length; i++) {
+      var e = recent[i] || {};
+      if (String(e.sensor) !== 'PRESENCE') continue;
+      if (value && String(e.value) !== value) continue;
+      var t = parseTime(e.occurred_at);
+      if (t > best) best = t;
+    }
+    return best;
+  }
+
+  /**
    * @param {object} snapshot
    * @param {number} now epoch ms
    * @returns {{door:string,presence:string,light:string,occupied:boolean,
    *            personInside:boolean,doorOpen:boolean,unknown:boolean,
-   *            classes:object,chips:object,desc:string}}
+   *            phase:string,classes:object,chips:object,desc:string}}
    */
   function deriveCroquis(snapshot, now) {
     var s = snapshot || {};
@@ -96,6 +119,24 @@
 
     var personInside = occupied || presence === 'PRESENT';
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
+
+    // F80/RF-103.4: fase en vivo del monigote, para que el croquis se mueva
+    // (acercamiento → cruce → dentro → fuera) igual que el dashboard operativo.
+    // Se deriva de la puerta + presencia + eventos de presencia APLICADOS recientes.
+    var recentPresentMs = lastPresenceEventMs(live.recent_presence, 'PRESENT');
+    var recentOpen = lastOpenMs > 0 && (nowMs - lastOpenMs) <= DOOR_NEAR_WINDOW_MS;
+    var recentPresent = recentPresentMs > 0 && (nowMs - recentPresentMs) <= LIVE_PRESENCE_WINDOW_MS;
+    var phase;
+    if (personInside) {
+      // Con la puerta aún abierta y presencia, el monigote está cruzando.
+      phase = doorOpen ? 'crossing' : 'inside';
+    } else if (doorOpen || recentOpen) {
+      phase = (presence === 'PRESENT' || recentPresent) ? 'crossing' : 'near';
+    } else if (recentPresent) {
+      phase = 'inside';
+    } else {
+      phase = 'outside';
+    }
 
     // F72 (RF-83) + F77.5: el último estado persiste hasta el evento contrario,
     // salvo que el servidor lo marque como STALE (entonces "SIN DATOS").
@@ -141,6 +182,8 @@
       personInside: personInside,
       doorOpen: doorOpen,
       unknown: unknown,
+      // F80/RF-103.4: 'outside' | 'near' | 'qr' | 'crossing' | 'inside'.
+      phase: phase,
       classes: {
         open: doorOpen,
         occupied: personInside,
