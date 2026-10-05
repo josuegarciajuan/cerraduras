@@ -4807,14 +4807,20 @@ if [ -n "$F73_ROOM" ] && [ -n "$F73_DEVICE" ]; then
     F73_SNAP="$PROJECT_DIR/logs/_f73_snap.tmp"
     $MYSQL -sN -e "SELECT CONCAT(id,':',stop_requested) FROM camera_recordings WHERE status='RECORDING'" 2>/dev/null > "$F73_SNAP"
 
-    $MYSQL -e "INSERT INTO camera_recordings
+    # F79: se anclan por id (no por `error`). El recorder vivo reconcilia estas
+    # filas y sobreescribe `error`; consultar por id evita la carrera que hacía
+    # fallar F73 de forma intermitente.
+    F73_ID0=$($MYSQL -sN -e "INSERT INTO camera_recordings
                 (visit_id, room_id, device_id, position, episode, \`trigger\`, status,
                  requested_at, started_at, stop_requested, discard_requested, error)
                VALUES
                 (NULL, $F73_ROOM, $F73_DEVICE, 'EXTERIOR', 'ENTRY', 'PRESENCE', 'RECORDING',
                  UTC_TIMESTAMP(3), UTC_TIMESTAMP(3) - INTERVAL 120 SECOND, 0, 0, 'f73_cap_old'),
                 (NULL, $F73_ROOM, $F73_DEVICE, 'INTERIOR', 'ENTRY', 'PRESENCE', 'RECORDING',
-                 UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 0, 0, 'f73_cap_new')" 2>/dev/null
+                 UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 0, 0, 'f73_cap_new'); SELECT LAST_INSERT_ID();" 2>/dev/null)
+    F73_ID0=$(echo "$F73_ID0" | tr -dc '0-9')
+    F73_ID_OLD=$F73_ID0
+    F73_ID_NEW=$((F73_ID0 + 1))
 
     F73_CAP_N=$(php -r '
 require "src/Support/Autoload.php";
@@ -4824,12 +4830,16 @@ $s = new App\Domain\Warehouse\WarehouseRecordingService($pdo);
 echo $s->enforceRecordingCap(60);
 ' 2>/dev/null)
 
-    F73_OLD=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE error='f73_cap_old' LIMIT 1" 2>/dev/null)
-    F73_NEW=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE error='f73_cap_new' LIMIT 1" 2>/dev/null)
-    [ "$F73_OLD" = "1" ] && pass "F73: clip >60s marcado stop_requested=1" || fail "F73: clip antiguo" "stop_requested=$F73_OLD (esperado 1)"
-    [ "$F73_NEW" = "0" ] && pass "F73: clip <60s intacto" || fail "F73: clip reciente" "stop_requested=$F73_NEW (esperado 0)"
+    if [ -z "$F73_ID0" ]; then
+        fail "F73: insert sintético" "no se pudo insertar el clip de prueba"
+    else
+        F73_OLD=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE id=$F73_ID_OLD LIMIT 1" 2>/dev/null)
+        F73_NEW=$($MYSQL -sN -e "SELECT stop_requested FROM camera_recordings WHERE id=$F73_ID_NEW LIMIT 1" 2>/dev/null)
+        [ "$F73_OLD" = "1" ] && pass "F73: clip >60s marcado stop_requested=1" || fail "F73: clip antiguo" "stop_requested=$F73_OLD (esperado 1)"
+        [ "$F73_NEW" = "0" ] && pass "F73: clip <60s intacto" || fail "F73: clip reciente" "stop_requested=$F73_NEW (esperado 0)"
 
-    $MYSQL -e "DELETE FROM camera_recordings WHERE error IN ('f73_cap_old','f73_cap_new')" 2>/dev/null
+        $MYSQL -e "DELETE FROM camera_recordings WHERE id IN ($F73_ID_OLD,$F73_ID_NEW)" 2>/dev/null
+    fi
 
     # Restaurar stop_requested de grabaciones reales que el test pudo marcar.
     if [ -f "$F73_SNAP" ]; then
