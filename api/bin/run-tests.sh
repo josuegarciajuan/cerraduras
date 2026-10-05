@@ -5065,6 +5065,122 @@ else
 fi
 
 # =============================================================================
+# BLOCK 56 — F83: Presencia fiel en el panel del almacén (RF-106)
+# Trazabilidad: RF-106.1..106.6; TSK-F83-01..F83-05
+# =============================================================================
+block "BLOCK 56 — F83: Presencia fiel en el panel del almacén"
+
+# 56.0 Estáticos: el contrato expone presencia fiel y estado de salida aditivo.
+F83_CTRL="$PROJECT_DIR/src/Http/Controllers/WarehouseStateController.php"
+for F83_MARK in "F83" "presence_active" "exiting"; do
+    if grep -q "$F83_MARK" "$F83_CTRL" 2>/dev/null; then
+        pass "F83: WarehouseStateController define '$F83_MARK'"
+    else
+        fail "F83: WarehouseStateController" "falta '$F83_MARK'"
+    fi
+done
+
+# 56.1 Migración: el margen exterior de ALMACEN_BEBIDAS pasa a 10 s (si hay BD).
+F83_MARGIN=$($MYSQL -sN -e "SELECT warehouse_exterior_margin_seconds FROM room_types WHERE code='ALMACEN_BEBIDAS'" 2>/dev/null)
+if [ "$F83_MARGIN" = "10" ]; then
+    pass "F83: margen exterior ALMACEN_BEBIDAS = 10 s"
+elif [ -z "$F83_MARGIN" ]; then
+    skip "F83: margen exterior ALMACEN_BEBIDAS" "sin BD/sala"
+else
+    fail "F83: margen exterior ALMACEN_BEBIDAS" "esperado 10, obtenido '$F83_MARGIN'"
+fi
+
+# 56.2 Lógica pura del croquis (Node; reutiliza el patrón de BLOCK 55).
+F83_JS="tests/Unit/croquis-logic.test.js"
+if [ -f "$F83_JS" ]; then
+    F83_OUT=$(node "$F83_JS" 2>&1)
+    F83_RC=$?
+    F83_SUM=$(echo "$F83_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F83_SUM" ] && F83_SUM="exit=$F83_RC"
+    if [ "$F83_RC" -eq 0 ]; then
+        pass "F83: croquis-logic ($F83_SUM)"
+    else
+        fail "F83: croquis-logic" \
+            "$F83_SUM — $(echo "$F83_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F83: croquis-logic" "$F83_JS no encontrado"
+fi
+
+# 56.3 HTTP/DB: reproduce el bug (visita ENTERED enlazada + radar ABSENT) y
+# verifica que `occupied` pasa a false, `exiting` a true y `presence_active` false.
+if [ "$SERVER_UP" = true ]; then
+    F83_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F83_ROOM" ]; then
+        F83_LS_EXISTS=$($MYSQL -sN -e "SELECT COUNT(*) FROM iot_sessions WHERE room_id=$F83_ROOM" 2>/dev/null || echo 0)
+        if [ "$F83_LS_EXISTS" != "0" ]; then
+            # Snapshot de warehouse_state e iot_sessions.presence_state.
+            F83_WS_EXISTS=$($MYSQL -sN -e "SELECT COUNT(*) FROM warehouse_state WHERE room_id=$F83_ROOM" 2>/dev/null || echo 0)
+            F83_WS_STATE=$($MYSQL -sN -e "SELECT COALESCE(state,'IDLE') FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_WS_VISIT=$($MYSQL -sN -e "SELECT COALESCE(current_visit_id,'NULL') FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_WS_TRIG=$($MYSQL -sN -e "SELECT COALESCE(entry_trigger,'NULL') FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_WS_DX=$($MYSQL -sN -e "SELECT COALESCE(deadline_x,'NULL') FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_WS_DM=$($MYSQL -sN -e "SELECT COALESCE(deadline_m,'NULL') FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_WS_CONF=$($MYSQL -sN -e "SELECT COALESCE(presence_confirmed,0) FROM warehouse_state WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+            F83_LS_PRESENCE=$($MYSQL -sN -e "SELECT COALESCE(presence_state,'UNKNOWN') FROM iot_sessions WHERE room_id=$F83_ROOM LIMIT 1" 2>/dev/null)
+
+            # Estado sintético: visita ENTERED sin salida + EXIT_PENDING + ABSENT.
+            F83_VISIT=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, entered_at) VALUES ($F83_ROOM,'DOOR','ENTERED',UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
+            if [ -n "$F83_VISIT" ]; then
+                $MYSQL -e "INSERT INTO warehouse_state (room_id, state, current_visit_id) VALUES ($F83_ROOM,'EXIT_PENDING',$F83_VISIT) ON DUPLICATE KEY UPDATE state='EXIT_PENDING', current_visit_id=$F83_VISIT;" 2>/dev/null
+                $MYSQL -e "UPDATE iot_sessions SET presence_state='ABSENT' WHERE room_id=$F83_ROOM;" 2>/dev/null
+
+                F83_BODY=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F83_ROOM" 2>/dev/null)
+                F83_CHK=$(printf '%s' "$F83_BODY" | python3 -c "import sys, json
+try:
+    d = json.load(sys.stdin)
+    w = d.get('warehouse') or {}
+    l = d.get('live') or {}
+    ok = (w.get('occupied') is False and w.get('exiting') is True and l.get('presence_active') is False)
+    print('ok' if ok else 'bad: occupied=' + str(w.get('occupied')) + ' exiting=' + str(w.get('exiting')) + ' presence_active=' + str(l.get('presence_active')))
+except Exception:
+    print('parse_error')" 2>/dev/null || echo "parse_error")
+                if [ "$F83_CHK" = "ok" ]; then
+                    pass "F83: ABSENT manda sobre visita (occupied=false, exiting=true)"
+                else
+                    fail "F83: ocupación fiel al radar" \
+                        "chk=$F83_CHK body=$(echo "$F83_BODY" | head -c 300)"
+                fi
+
+                # Cleanup SIEMPRE (no depende del parse): restaura estado y borra la visita.
+                if [ "$F83_WS_EXISTS" != "0" ]; then
+                    F83_DX_SQL="NULL"; [ "$F83_WS_DX" != "NULL" ] && F83_DX_SQL="'$F83_WS_DX'"
+                    F83_DM_SQL="NULL"; [ "$F83_WS_DM" != "NULL" ] && F83_DM_SQL="'$F83_WS_DM'"
+                    F83_TRIG_SQL="NULL"; [ "$F83_WS_TRIG" != "NULL" ] && F83_TRIG_SQL="'$F83_WS_TRIG'"
+                    F83_VISIT_SQL="NULL"; [ "$F83_WS_VISIT" != "NULL" ] && F83_VISIT_SQL="$F83_WS_VISIT"
+                    $MYSQL -e "UPDATE warehouse_state SET state='$F83_WS_STATE', current_visit_id=$F83_VISIT_SQL, entry_trigger=$F83_TRIG_SQL, deadline_x=$F83_DX_SQL, deadline_m=$F83_DM_SQL, presence_confirmed=$F83_WS_CONF WHERE room_id=$F83_ROOM;" 2>/dev/null
+                else
+                    $MYSQL -e "DELETE FROM warehouse_state WHERE room_id=$F83_ROOM;" 2>/dev/null
+                fi
+                $MYSQL -e "UPDATE iot_sessions SET presence_state='$F83_LS_PRESENCE' WHERE room_id=$F83_ROOM;" 2>/dev/null
+                $MYSQL -e "DELETE FROM camera_recordings WHERE visit_id=$F83_VISIT; DELETE FROM warehouse_visits WHERE id=$F83_VISIT;" 2>/dev/null
+
+                F83_LEFT_V=$($MYSQL -sN -e "SELECT COUNT(*) FROM warehouse_visits WHERE id=$F83_VISIT" 2>/dev/null || echo 1)
+                F83_LEFT_C=$($MYSQL -sN -e "SELECT COUNT(*) FROM camera_recordings WHERE visit_id=$F83_VISIT" 2>/dev/null || echo 1)
+                if [ "$F83_LEFT_V" = "0" ] && [ "$F83_LEFT_C" = "0" ]; then
+                    pass "F83: estado sintético limpiado"
+                else
+                    fail "F83: limpieza estado sintético" "visitas=$F83_LEFT_V clips=$F83_LEFT_C"
+                fi
+            else
+                skip "F83 HTTP" "no se pudo crear la visita sintética"
+            fi
+        else
+            skip "F83 HTTP" "sin fila iot_sessions para la sala"
+        fi
+    else
+        skip "F83 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "F83 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

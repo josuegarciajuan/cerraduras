@@ -47,9 +47,14 @@
       return;
     }
     $('wh-name').textContent = 'Almacén ' + state.room.code;
+    // F83/RF-106: el badge refleja el estado real del almacén; la salida en
+    // curso (EXIT_PENDING / visita ya cerrada) es "SALIENDO", no "LIBRE".
     if (wh && wh.occupied) {
       badge.className = 'badge occ';
       badge.textContent = 'OCUPADO';
+    } else if (wh && wh.exiting) {
+      badge.className = 'badge occ';
+      badge.textContent = 'SALIENDO';
     } else if (wh && wh.state !== 'IDLE') {
       badge.className = 'badge occ';
       badge.textContent = wh.state;
@@ -228,9 +233,14 @@
     var wh = state.warehouse || {};
     var live = state.live || {};
     var v = wh.current_visit;
-    if (wh.occupied && v) {
+    // F83/RF-106.3: "Dentro" SOLO si el radar afirma presencia y hay visita
+    // enlazada; el fallback por `occupied` ya no se anuncia como presencia.
+    if (live.presence_state === 'PRESENT' && v) {
       var who = v.worker ? v.worker.name : 'anónimo';
       el.textContent = 'Dentro: ' + who + ' · ' + fmtDur(elapsedSeconds(v)) + ' dentro';
+    } else if (wh.exiting) {
+      var exitAt = (v && v.exited_at) || live.last_absent_since;
+      el.textContent = 'Salida: ' + fmtClock(exitAt) + ' · finalizando grabación exterior';
     } else if (live.last_absent_since || live.last_close_at) {
       el.textContent = 'Última salida: ' + fmtClock(live.last_absent_since || live.last_close_at);
     } else {
@@ -786,6 +796,9 @@
   // reescribe el texto de #croquis-meta (fuera del aria-live). En reproducción
   // el reloj lo gobierna `tick()`.
   setInterval(function () {
-    if (!playback && state && state.warehouse && state.warehouse.occupied) { renderCroquisMeta(); }
+    // F83/RF-106: refresca también durante la salida (`exiting`), no solo con
+    // el almacén ocupado, para que "Salida: <hora>" y su reloj estén vivos.
+    if (!playback && state && state.warehouse
+        && (state.warehouse.occupied || state.warehouse.exiting)) { renderCroquisMeta(); }
   }, 1000);
 })();

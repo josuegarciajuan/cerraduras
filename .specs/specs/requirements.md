@@ -1735,3 +1735,37 @@ almacén y mostrar esas visitas sin parámetros. Se mantiene la ocultación de l
   marcadores F82).
 - **Nota**: **revisa parcialmente RF-102.3**, que ocultaba por defecto las visitas disparadas solo por
   `PRESENCE`.
+
+---
+
+# Fase 83: Presencia fiel en el panel del almacén (RF-106)
+
+**Motivo**: en `/almacen` el croquis mostraba `PRESENTE` mientras existía una visita enlazada, aunque
+el radar ya hubiera reportado `ABSENT`. Evidencia (visita 94, 2026-10-05): `ABSENT` aplicado
+14:14:16.247 con la puerta abierta; la visita registró salida 14:14:16.596 y paró la cámara INTERIOR
+14:14:17.289; la puerta cerró 14:14:18.942; la cámara EXTERIOR paró 14:14:22.723 (margen). El backend
+actuó bien; el defecto era la **representación del panel**: `warehouse.occupied` significaba "visita
+activa", no "presencia real", y el croquis dejaba que `occupied`/`recent_presence` taparan un `ABSENT`
+confirmado. Revisa parcialmente RF-103.4 y RF-104.5.
+
+## RF-106: Presencia fiel en el panel del almacén
+- **RF-106.1**: `ABSENT` manda sobre la visita histórica, sobre `occupied` y sobre cualquier evento
+  `PRESENT` anterior. Con `presence_state=ABSENT` el croquis representa al monigote **fuera**, aunque
+  exista una visita activa/enlazada o la puerta siga abierta.
+- **RF-106.2**: Fidelidad al radar: `PRESENT` → dentro; `ABSENT` → fuera; `UNKNOWN` → chip
+  **"SIN DATOS"** y nunca se afirma presencia. Con `UNKNOWN` **y** una visita activa confirmada sin
+  salida se permite, como **fallback**, mostrar el muñeco dentro **atenuado** (indicador "SIN DATOS"),
+  sin afirmar PRESENCIA. `UNKNOWN` no es del radar: es "sin datos" (nunca llegó evento o se limpió); no
+  significa ausencia.
+- **RF-106.3**: `ABSENT` cierra la visita, para la cámara INTERIOR al instante y programa la parada de
+  la EXTERIOR tras el margen `M` (**10 s** en `ALMACEN_BEBIDAS`) para registrar cómo se va el individuo.
+- **RF-106.4**: el cierre de puerta con presencia interior **no** termina la visita (se mantiene
+  F81/RF-104.4).
+- **RF-106.5**: `warehouse.occupied` pasa a significar **presencia real** (`PRESENT`→`true` /
+  `ABSENT`→`false` / `UNKNOWN`→visita activa sin salida). Es un **cambio de semántica de contrato**; el
+  único consumidor es el panel `/almacen`.
+- **RF-106.6**: **sin cuota Tuya** (RF-101 intacto) y **no regresión**: la regresión completa termina
+  con **0 failures** y marcadores F83 (**BLOCK 56**).
+- **Nota**: revisa parcialmente **RF-103.4** (la fase ya no se recoloca a `inside` por un `PRESENT`
+  anterior) y **RF-104.5** (el fallback `UNKNOWN`+visita activa se muestra atenuado, nunca como
+  presencia afirmada).
