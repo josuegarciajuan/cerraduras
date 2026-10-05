@@ -176,6 +176,32 @@ check('anónima: dentro desde t=0', phaseAt(tlAnon, 1000) === 'inside');
 check('anónima: sale al final', phaseAt(tlAnon, 298000) === 'exit');
 check('anónima: personInside a 1s', frameAt(tlAnon, tlAnon.originMs + 1000, 0).personInside === true);
 
+// ─── 6b. F77.2: estancia larga con clip corto (tope de grabación) ───────
+// El clip INTERIOR dura 60 s pero la estancia 55 min: el monigote debe
+// permanecer DENTRO (no "Saliendo") hasta el final real.
+const longVisit = {
+  id: 46, entry_trigger: 'PRESENCE', outcome: 'ENTERED',
+  qr_at: null,
+  entered_at: '2026-10-01 13:00:00.000',
+  exited_at: '2026-10-01 13:55:00.000',
+  created_at: '2026-10-01 13:00:00.000',
+  recordings: [
+    { id: 801, position: 'INTERIOR', episode: 'ENTRY', trigger: 'PRESENCE', status: 'SAVED',
+      requested_at: '2026-10-01 13:00:00.000', started_at: '2026-10-01 13:00:00.200',
+      stopped_at: '2026-10-01 13:01:00.000', duration_s: 60,
+      video_url: '/almacen-api/recordings/801/video', poster_url: null },
+  ],
+};
+const tlLong = buildVisitTimeline(longVisit);
+check('F77.2 estancia larga: dentro a los 10 min', phaseAt(tlLong, 600000) === 'inside');
+check('F77.2 estancia larga: cruce solo al final', phaseAt(tlLong, 3299000) === 'exit');
+check('F77.2 estancia larga: personInside a los 10 min',
+  frameAt(tlLong, tlLong.originMs + 600000, 0).personInside === true);
+check('F77.2 estancia larga: sin vídeo a los 10 min (clip de 60 s)',
+  frameAt(tlLong, tlLong.originMs + 600000, 0).activeClips.INTERIOR === null);
+check('F77.2 estancia larga: crossOut cerca del fin de estancia',
+  tlLong.crossOutMs === tlLong.inside.endMs - 2500);
+
 // ─── 7. Sin grabaciones ────────────────────────────────────────────────
 const tlEmpty = buildVisitTimeline({
   id: 45, entry_trigger: 'QR', outcome: 'ENTERED',

@@ -169,18 +169,25 @@
     }
     var crossInMs = firstEntry ? firstEntry.startMs : (qrMs ? clamp(qrMs - originMs, 0, durationMs) : 0);
 
-    // Inicio de la salida = clip EXIT; si no, fin del clip INTERIOR; si no, exited_at.
-    var exitClip = null, interiorClip = null;
+    // F77.2: inicio de la salida. El fin del clip INTERIOR ya NO se usa como
+    // ancla: con el tope de grabación (p. ej. 60 s en pruebas) termina mucho
+    // antes que la estancia y el monigote quedaba "Saliendo" durante el resto.
+    // Se ancla a `exited_at` (autoridad del backend) reservando CROSS_MS para el
+    // cruce; un clip EXIT explícito sigue teniendo prioridad.
+    var exitClip = null;
     for (var m = 0; m < clips.length; m++) {
       if (clips[m].episode === 'EXIT' && !exitClip) exitClip = clips[m];
-      if (clips[m].position === 'INTERIOR' && clips[m].episode === 'ENTRY') interiorClip = clips[m];
     }
-    var crossOutMs = exitClip ? exitClip.startMs
-      : (interiorClip ? interiorClip.endMs
-      : (exitedMs ? clamp(exitedMs - originMs, 0, durationMs) : null));
+    var crossOutMs = null;
+    if (exitClip) {
+      crossOutMs = exitClip.startMs;
+    } else if (inside) {
+      var exitAt = exitedMs ? clamp(exitedMs - originMs, 0, durationMs) : inside.endMs;
+      crossOutMs = Math.max(inside.startMs, Math.min(exitAt, inside.endMs) - CROSS_MS);
+    }
     // Garantiza una ventana visible de "saliendo" dentro de la estancia.
     if (inside) {
-      if (crossOutMs == null || crossOutMs >= inside.endMs) {
+      if (crossOutMs == null) {
         crossOutMs = Math.max(inside.startMs, inside.endMs - CROSS_MS);
       }
       crossOutMs = clamp(crossOutMs, inside.startMs, inside.endMs);
