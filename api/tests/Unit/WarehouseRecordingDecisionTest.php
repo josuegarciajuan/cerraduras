@@ -132,11 +132,13 @@ if ($r['state'] === D::STATE_IDLE
     fail('B: QR_PENDING(DOOR) + X_EXPIRED inesperado: ' . json_encode($r));
 }
 
-// ── Caso C: presencia sin QR / puerta ya abierta ─────────────────────────
+// ── Caso C: presencia en IDLE NO crea visita (F79/RF-102.6) ───────────────
+// Deroga RF-71.5/RF-81.3: el radar 24G da falsos positivos; la puerta/QR es
+// la verdad de entrada. La presencia solo consolida un ciclo ya abierto.
 $r = D::decide(st(D::STATE_IDLE), D::EV_PRESENT);
-if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['entry_trigger'] === 'PRESENCE'
-    && hasAll($r['actions'], [D::A_CREATE_VISIT, D::A_CONFIRM_ENTRY, D::A_START_EXT, D::A_START_INT])) {
-    pass('C: IDLE + PRESENT → RECORDING_INSIDE (visita confirmada ENTERED, F71)');
+if ($r['state'] === D::STATE_IDLE && $r['actions'] === []
+    && hasNone($r['actions'], [D::A_CREATE_VISIT])) {
+    pass('C: IDLE + PRESENT → sin visita (F79; el radar no crea)');
 } else {
     fail('C: IDLE + PRESENT inesperado: ' . json_encode($r));
 }

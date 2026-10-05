@@ -1643,5 +1643,10 @@ estancia, **sin ningún sondeo periódico**.
   - BLOCK 42 (F54) hace snapshot/restore de `warehouse_visits`, `camera_recordings` y
     `warehouse_state` de la sala del almacén y purga los clips generados; si la suite deja
     visitas nuevas, el runner falla.
-- **RF-102.5**: Se purgan las visitas fantasma existentes (78/79/81) y sus clips, dejando solo
+- **RF-102.5**: Se purgan las visitas fantasma existentes (78/79/81/83) y sus clips, dejando solo
   las visitas reales.
+- **RF-102.6**: En `ALMACEN_BEBIDAS`, una señal `PRESENT` del radar **sin** ciclo de puerta
+  (`DOOR_OPEN`/`QR_OK`) **no crea visita**: la puerta/QR es la verdad de entrada. La presencia
+  sigue consolidando un ciclo ya abierto (`QR_PENDING`, `EXTERIOR_ONLY`, `EXIT_PENDING`). Deroga
+  RF-71.5/RF-81.3 para el almacén (el 24G produce falsos positivos que generaban visitas
+  `PRESENCE`). El resto del pipeline de presencia (`iot_sessions`) no cambia.

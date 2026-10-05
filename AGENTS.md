@@ -180,7 +180,10 @@ hasta el momento (regresión completa). Debe ejecutarse:
   visitas nuevas.
 - **Panel (RF-102.3)**: `/almacen-api/visits` oculta por defecto `NO_SHOW` DOOR-only;
   `include_no_show=1` los muestra.
-- **Datos (RF-102.5)**: purgadas las visitas fantasma 78/79/81 y sus clips.
+- **Presencia sin puerta (RF-102.6)**: `WarehouseRecordingDecision` ya no crea visita con
+  `IDLE + PRESENT`; la presencia solo consolida un ciclo de puerta/QR abierto. Deroga
+  RF-71.5/RF-81.3 para el almacén (el 24G generaba visitas `PRESENCE` fantasma).
+- **Datos (RF-102.5)**: purgadas las visitas fantasma 78/79/81/83 y sus clips.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 42/44, marcadores F79) + regresión completa.
 
 ### F78 — Eliminación total del poller de presencia (RF-101)

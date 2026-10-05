@@ -4674,9 +4674,21 @@ else
     fail "F71: door_age_seconds" "ausente en el controlador"
 fi
 if grep -q 'A_CONFIRM_ENTRY' src/Domain/Warehouse/WarehouseRecordingDecision.php 2>/dev/null; then
-    pass "F71: WarehouseRecordingDecision confirma visita por presencia"
+    pass "F71: WarehouseRecordingDecision consolida entrada por presencia en ciclo abierto"
 else
     fail "F71: A_CONFIRM_ENTRY" "ausente"
+fi
+# F79 (RF-102.6): IDLE + PRESENT no crea visita.
+if grep -q 'EV_PRESENT' src/Domain/Warehouse/WarehouseRecordingDecision.php 2>/dev/null \
+   && ! php -r '
+require "src/Support/Autoload.php";
+$r = App\Domain\Warehouse\WarehouseRecordingDecision::decide(
+    ["state" => "IDLE", "entry_trigger" => null, "presence_confirmed" => false], "PRESENT");
+exit($r["state"] === "IDLE" && $r["actions"] === [] ? 0 : 1);
+' 2>/dev/null; then
+    pass "F79: IDLE + PRESENT no crea visita (radar no genera fantasmas)"
+else
+    fail "F79: IDLE + PRESENT" "sigue creando visita"
 fi
 
 # 49.2 HTTP aditivo: live expone las edades de señal (RF-82.1)

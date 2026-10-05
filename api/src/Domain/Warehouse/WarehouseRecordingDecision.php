@@ -78,13 +78,14 @@ final class WarehouseRecordingDecision
                             self::A_CREATE_VISIT, self::A_START_EXT, self::A_START_INT, self::A_SET_DEADLINE_X,
                         ]);
                     case self::EV_PRESENT:
-                        // F71 (RF-81.3): una entrada detectada solo por presencia
-                        // también confirma la visita (outcome ENTERED), no solo
-                        // la crea. Antes quedaba NO_SHOW contradiciendo
-                        // presence_confirmed=true.
-                        return self::out(self::STATE_RECORDING_INSIDE, 'PRESENCE', true, [
-                            self::A_CREATE_VISIT, self::A_CONFIRM_ENTRY, self::A_START_EXT, self::A_START_INT,
-                        ]);
+                        // F79 (RF-102.6): una presencia SIN ciclo de puerta/QR no
+                        // crea visita. El radar 24G da falsos positivos y la
+                        // puerta/QR es la verdad de entrada. La presencia sigue
+                        // consolidando un ciclo ya abierto (QR_PENDING,
+                        // EXTERIOR_ONLY, EXIT_PENDING) y una puerta abierta ya
+                        // crea la visita con EV_DOOR_OPEN. Deroga RF-71.5/RF-81.3
+                        // para el almacén (evita visitas fantasma por radar).
+                        break;
                 }
                 break;
 

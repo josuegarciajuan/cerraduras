@@ -4322,7 +4322,12 @@ era real. Las otras tres se originaron así:
    `warehouse_state`) y purga clips; S12 verifica que no quedan visitas nuevas.
 3. **Panel (RF-102.3)**: `/almacen-api/visits` excluye por defecto
    `outcome='NO_SHOW' AND entry_trigger='DOOR'`; `include_no_show=1` los muestra.
-4. **Datos (RF-102.5)**: purga puntual de 78/79/81 y sus clips.
+4. **Datos (RF-102.5)**: purga puntual de las visitas fantasma (78/79/81/83) y sus clips.
+5. **Presencia sin puerta (RF-102.6)**: `WarehouseRecordingDecision` deja de crear visita con
+   `IDLE + EV_PRESENT`. El radar 24G produce falsos positivos; la puerta/QR es la verdad de
+   entrada. La presencia sigue confirmando/retomando un ciclo abierto (QR_PENDING → INTERIOR,
+   EXTERIOR_ONLY → INTERIOR, EXIT_PENDING → INTERIOR). Deroga RF-71.5/RF-81.3 para el almacén.
+   `iot_sessions` no cambia.
 
 ### 43.3 Trazabilidad
 
