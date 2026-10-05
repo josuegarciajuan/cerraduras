@@ -2480,3 +2480,42 @@ Respuestas:
 - Sin rutas nuevas ni eliminación de campos; `/dashboard` intacto.
 - Sin sondeo periódico de Tuya (RF-101).
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 53** nuevo.
+
+---
+
+# Fase 81: Cierre de visita del almacén (RF-104)
+
+## 1. API pública: sin cambios
+
+- **No se añaden ni modifican endpoints**.
+- `GET /almacen-api/state` mantiene su forma: `live.presence_state` sigue siendo la autoridad del
+  croquis. No cambian `door_state`, `presence_state`, `switch_state`, `last_*` ni los campos
+  aditivos de fases anteriores.
+
+## 2. Contrato de comportamiento del motor (interno)
+
+- **Inicio** (cualquiera de los 3 disparadores):
+  - `QR_OK` o `DOOR_OPEN` → `QR_PENDING` (`CREATE_VISIT`, arrancan EXT+INT, `X`).
+  - `PRESENT` → `RECORDING_INSIDE` (`CREATE_VISIT`, `CONFIRM_ENTRY`, arrancan EXT+INT).
+- **Fin** (desde `RECORDING_INSIDE`):
+  - `ABSENT` → `STOP_INT`, `MARK_EXIT`, `SET_DEADLINE_M` → `EXIT_PENDING`.
+  - `DOOR_CLOSE_ABSENT` (cierre con `presence_state ≠ PRESENT`) → idéntico → `EXIT_PENDING`.
+  - `DOOR_CLOSE` (cierre con `presence_state = PRESENT`) → no-op → `RECORDING_INSIDE`.
+- El clip EXTERIOR continúa durante el margen `M` de `EXIT_PENDING`; `M_EXPIRED` cierra la visita
+  (contrato de Fase 63 sin cambios).
+
+## 3. Croquis (lógica pura, sin API nueva)
+
+- `deriveCroquis` devuelve `phase='inside'` si hay presencia (`PRESENT`/`occupied`),
+  independientemente de `door_state`; `near` si solo hay puerta abierta; `outside` por defecto.
+- El panel consume el bloque `live` ya existente; no requiere campos nuevos.
+
+## 4. Sin cuota Tuya
+
+- El cierre se decide con la sesión IoT mutada por push; no se añade ninguna llamada a la API de
+  Tuya (hereda RF-101).
+
+## 5. No regresión
+
+- Sin rutas nuevas ni campos eliminados; `QR_PENDING` intacto.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; BLOCK del runner con marcadores F81.

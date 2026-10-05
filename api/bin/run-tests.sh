@@ -4950,6 +4950,55 @@ else
 fi
 
 # =============================================================================
+# BLOCK 54 — F81: Cierre de visita del almacén (RF-104)
+# Trazabilidad: RF-104.1..104.6; TSK-F81-01..F81-04
+# =============================================================================
+block "BLOCK 54 — F81: Cierre de visita del almacén"
+
+# 54.0 Estáticos: evento DOOR_CLOSE_ABSENT y su cableado en el pipeline IoT.
+for F81_MARK in \
+    "src/Domain/Warehouse/WarehouseRecordingDecision.php:EV_DOOR_CLOSE_ABSENT" \
+    "src/Domain/Presence/IotSessionService.php:DOOR_CLOSE_ABSENT" \
+    "src/Domain/Presence/IotSessionService.php:F81"; do
+    F81_FILE="${F81_MARK%%:*}"
+    F81_NEEDLE="${F81_MARK#*:}"
+    if grep -q "$F81_NEEDLE" "$F81_FILE" 2>/dev/null; then
+        pass "F81: $F81_FILE define '$F81_NEEDLE'"
+    else
+        fail "F81: $F81_FILE" "falta '$F81_NEEDLE'"
+    fi
+done
+
+# 54.1 UI del croquis (tolerante: otro agente añade los marcadores F81).
+if grep -q 'F81' public/assets/croquis-logic.js 2>/dev/null; then
+    pass "F81: croquis-logic.js incluye marcadores F81"
+else
+    fail "F81: croquis-logic.js" "sin marcadores F81"
+fi
+if grep -q 'pos-inside' public/almacen.html 2>/dev/null; then
+    pass "F81: almacen.html define la posición pos-inside"
+else
+    fail "F81: almacen.html pos-inside" "ausente"
+fi
+
+# 54.2 Lógica pura del croquis (Node; reutiliza el runner ya existente).
+F81_JS="tests/Unit/croquis-logic.test.js"
+if [ -f "$F81_JS" ]; then
+    F81_OUT=$(node "$F81_JS" 2>&1)
+    F81_RC=$?
+    F81_SUM=$(echo "$F81_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F81_SUM" ] && F81_SUM="exit=$F81_RC"
+    if [ "$F81_RC" -eq 0 ]; then
+        pass "F81: croquis-logic ($F81_SUM)"
+    else
+        fail "F81: croquis-logic" \
+            "$F81_SUM — $(echo "$F81_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F81: croquis-logic" "$F81_JS no encontrado"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

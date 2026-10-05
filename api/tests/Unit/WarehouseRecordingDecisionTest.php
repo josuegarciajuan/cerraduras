@@ -166,6 +166,37 @@ if ($r['state'] === D::STATE_QR_PENDING && $r['actions'] === []) {
     fail('no-op: QR_PENDING + DOOR_CLOSE inesperado: ' . json_encode($r));
 }
 
+// ── F81 (RF-104): cierre de puerta SIN presencia interior termina la visita ──
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'QR', true), D::EV_DOOR_CLOSE_ABSENT);
+if ($r['state'] === D::STATE_EXIT_PENDING
+    && hasAll($r['actions'], [D::A_STOP_INT, D::A_MARK_EXIT, D::A_SET_DEADLINE_M])
+    && hasNone($r['actions'], [D::A_DISCARD_INT])) {
+    pass('F81: RECORDING_INSIDE + DOOR_CLOSE_ABSENT → EXIT_PENDING (para INT, marca salida, deadline M)');
+} else {
+    fail('F81: RECORDING_INSIDE + DOOR_CLOSE_ABSENT inesperado: ' . json_encode($r));
+}
+
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'QR', true), D::EV_DOOR_CLOSE);
+if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['actions'] === []) {
+    pass('F81: RECORDING_INSIDE + DOOR_CLOSE → sigue grabando (presencia interior)');
+} else {
+    fail('F81: RECORDING_INSIDE + DOOR_CLOSE inesperado: ' . json_encode($r));
+}
+
+$r = D::decide(st(D::STATE_QR_PENDING, 'QR'), D::EV_DOOR_CLOSE_ABSENT);
+if ($r['state'] === D::STATE_QR_PENDING && $r['actions'] === []) {
+    pass('F81: QR_PENDING + DOOR_CLOSE_ABSENT → no-op (no toca la ventana X)');
+} else {
+    fail('F81: QR_PENDING + DOOR_CLOSE_ABSENT inesperado: ' . json_encode($r));
+}
+
+$r = D::decide(st(D::STATE_IDLE), D::EV_DOOR_CLOSE_ABSENT);
+if ($r['state'] === D::STATE_IDLE && $r['actions'] === []) {
+    pass('F81: IDLE + DOOR_CLOSE_ABSENT → no-op');
+} else {
+    fail('F81: IDLE + DOOR_CLOSE_ABSENT inesperado: ' . json_encode($r));
+}
+
 echo "\n" . str_repeat("=", 60) . "\n";
 echo "Results: {$passed} passed, {$failed} failed\n";
 exit($failed > 0 ? 1 : 0);

@@ -180,8 +180,19 @@ check('F77.5 OPEN fresco → PUERTA ABIERTA', freshOpen.doorOpen === true && fre
 check('F80 vacío → phase outside', empty.phase === 'outside');
 check('F80 puerta abierta sin presencia → phase near', open.phase === 'near');
 
+// F81 (RF-104.5): puerta abierta, sin presencia y sin eventos recientes → sigue "near".
+const openAbsent = deriveCroquis(snap({
+  door_state: 'OPEN',
+  presence_state: 'ABSENT',
+  last_open_at: '2026-10-01 07:00:00.000',
+  recent_presence: [],
+}), BASE);
+check('F81 puerta abierta + presencia ABSENT sin eventos recientes → phase near', openAbsent.phase === 'near');
+
+// F81 (RF-104.5): presencia detectada ⇒ monigote dentro aunque la puerta esté abierta
+// (ya no se queda "medio afuera" en la línea de puerta).
 const crossing = deriveCroquis(snap({ door_state: 'OPEN', presence_state: 'PRESENT' }, false), BASE);
-check('F80 puerta abierta + presencia → phase crossing', crossing.phase === 'crossing');
+check('F81 puerta abierta + presencia → phase inside', crossing.phase === 'inside');
 check('F80 presencia estable (puerta cerrada) → phase inside', whPresence.phase === 'inside');
 
 const recentNear = deriveCroquis(snap({

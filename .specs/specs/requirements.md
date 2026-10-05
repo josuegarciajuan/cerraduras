@@ -1680,3 +1680,37 @@ monigote por fases, tomando como muestra el dashboard operativo (`/dashboard`, s
   la regresión completa termina con **0 failures** y un **BLOCK 53** nuevo.
 - **RF-103.7**: Se **derogan** RF-91.2 (veto de presencia con puerta `OPEN`) y RF-92.1 (la presencia no
   ancla la estancia); RF-91.1/RF-91.3, RF-88 (refresco bajo demanda) y RF-101 quedan vigentes.
+
+---
+
+# Fase 81: Cierre de visita del almacén (RF-104)
+
+**Motivo**: con la puerta abierta y el radar marcando presencia interior, al salir la visita y la
+grabación no terminaban hasta que se cerraba la puerta. El operador puede salir y dejar la puerta
+abierta a propósito; la salida debe finalizar la visita cuando el radar deja de detectar presencia,
+y el cierre de puerta sin presencia debe iniciar la verificación de salida (`EXIT_PENDING`) sin
+esperar. El cierre con presencia interior no debe cortar la grabación.
+
+## RF-104: Cierre de visita del almacén
+- **RF-104.1**: El **inicio** de visita del almacén funciona con **cualquiera de los 3 disparadores**:
+  lectura de QR (`QR_OK`), apertura de puerta (`DOOR_OPEN`) o detección de presencia (`PRESENT`), con
+  el comportamiento actual del motor (`QR_PENDING` para QR/puerta; `RECORDING_INSIDE` para presencia).
+- **RF-104.2**: En `RECORDING_INSIDE`, la **ausencia del radar** (`ABSENT`) termina la fase interior
+  **aunque la puerta siga abierta**: para la cámara interior (`STOP_INT`), marca la salida
+  (`MARK_EXIT`) y fija el margen exterior (`SET_DEADLINE_M`) → `EXIT_PENDING`.
+- **RF-104.3**: En `RECORDING_INSIDE`, el **cierre de puerta sin presencia interior**
+  (`presence_state ≠ PRESENT`) inicia la verificación de salida exactamente igual que `ABSENT`
+  (`STOP_INT`, `MARK_EXIT`, `SET_DEADLINE_M`) → `EXIT_PENDING`; el clip exterior continúa hasta agotar
+  su margen `M`.
+- **RF-104.4**: El **cierre de puerta con presencia interior** (`presence_state = PRESENT`) **no**
+  termina la visita ni la grabación: es un no-op y la visita permanece en `RECORDING_INSIDE`.
+- **RF-104.5**: El croquis sitúa al **monigote dentro de la habitación** en cuanto se detecta presencia
+  (`presence_state=PRESENT`/`occupied`), con la puerta abierta o cerrada; la puerta abierta sin
+  presencia se representa como `near`, no como "medio afuera". Deroga **parcialmente RF-103.4**: la
+  fase `crossing` deja de usarse en vivo (se conserva solo en la reproducción de visitas, F68).
+- **RF-104.6**: **Sin cuota Tuya**: el cierre de visita se decide con el estado de la sesión IoT ya
+  mutada por push; no se introduce ningún sondeo periódico ni llamada bajo demanda (hereda RF-101).
+- **RF-104.7**: **Alcance**: `QR_PENDING` no cambia (la ventana de llegada X sigue igual; un cierre
+  sin presencia en `QR_PENDING` sigue esperando X). Solo cambia `RECORDING_INSIDE`.
+- **RF-104.8**: **No regresión**: la regresión completa termina con **0 failures** y el runner
+  incorpora los marcadores F81.

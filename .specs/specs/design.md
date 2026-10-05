@@ -4402,3 +4402,64 @@ El motor `WarehouseRecordingDecision` ya acepta QR, puerta **o** presencia como 
 | RF-103.3 | §44.3 | §6 | F80-03 |
 | RF-103.4 | §44.4 | §6 | F80-04 |
 | RF-103.5–103.7 | §44.5 | §6 | F80-05 |
+
+---
+
+# 45. F81 — Cierre de visita del almacén (RF-104)
+
+## 45.1 Motor: evento interno `DOOR_CLOSE_ABSENT`
+
+`WarehouseRecordingDecision` añade la constante `EV_DOOR_CLOSE_ABSENT = 'DOOR_CLOSE_ABSENT'`. En
+`STATE_RECORDING_INSIDE` se trata **igual que `ABSENT`**: parar la cámara interior, marcar la salida
+y fijar el margen exterior → `EXIT_PENDING`. `EV_DOOR_CLOSE` (cierre con presencia interior) sigue
+siendo **no-op** en `RECORDING_INSIDE`. El evento no toca `QR_PENDING`: un cierre sin presencia en
+esa fase sigue esperando X.
+
+Fila nueva en la tabla de transiciones (§27.2):
+
+| Estado actual | Evento | Acciones | Estado destino |
+|---|---|---|---|
+| RECORDING_INSIDE | `DOOR_CLOSE_ABSENT` | parar INT (SAVE EXIT), `exited_at=now`, `M=now+M` | EXIT_PENDING |
+
+La fila existente `RECORDING_INSIDE + DOOR_CLOSE → (no cambia)` se mantiene para el cierre con
+presencia interior.
+
+## 45.2 Enganche: `IotSessionService::processEvent()` (post-commit)
+
+En el bloque post-commit del motor del almacén (F63/RF-71), al mapear una señal `PROXIMITY=CLOSED` se
+consulta el `presence_state` de la sesión IoT **ya mutada** (la decisión se aplicó antes del commit):
+
+- `presence_state === ABSENT` → se entrega `EV_DOOR_CLOSE_ABSENT` (salida sin presencia interior).
+- En cualquier otro caso → se entrega `EV_DOOR_CLOSE` (comportamiento actual; con `PRESENT` es no-op
+  en `RECORDING_INSIDE`).
+
+Se mantienen los filtros F79 (provider `SIMULATED` y `source` `resync`/`sim` se ignoran en el motor).
+No hay rutas nuevas, ni temporizadores, ni llamadas a Tuya.
+
+## 45.3 Croquis: fase `inside` con presencia
+
+`croquis-logic.js::deriveCroquis` prioriza la presencia sobre la apertura de puerta:
+
+- con `presence_state=PRESENT` u `occupied` → fase `inside` (aunque `door_state=OPEN`);
+- puerta abierta sin presencia → fase `near`;
+- sin puerta ni presencia → `outside`.
+
+La fase `inside` se pinta más al interior de la habitación (clase CSS `pos-inside`), evitando el
+aspecto de "medio afuera". La función sigue siendo pura (no toca red ni DOM).
+
+## 45.4 Alcance y derogaciones
+
+- **Sin cambios** en `QR_PENDING`: la ventana X y el no-op de `DOOR_CLOSE` se mantienen.
+- **Derogado**: el no-op de `DOOR_CLOSE` en `RECORDING_INSIDE` **solo cuando no hay presencia
+  interior** (pasa a `DOOR_CLOSE_ABSENT`); con presencia sigue siendo no-op.
+- **Vigente**: RF-101 (prohibido el poller), RF-103 (presencia siempre creíble en el almacén) y F79.
+- **No se toca** `/dashboard` ni la semántica F48 de habitaciones de huésped.
+
+## 45.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-104.1 | §45.1–45.2 | §F81.2 | F81-01, F81-02 |
+| RF-104.2–104.4 | §45.1–45.2 | §F81.2 | F81-01, F81-02 |
+| RF-104.5 | §45.3 | §F81.3 | F81-03 |
+| RF-104.6–104.8 | §45.4 | §F81.4 | F81-04 |

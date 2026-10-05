@@ -120,18 +120,19 @@
     var personInside = occupied || presence === 'PRESENT';
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
 
-    // F80/RF-103.4: fase en vivo del monigote, para que el croquis se mueva
-    // (acercamiento → cruce → dentro → fuera) igual que el dashboard operativo.
-    // Se deriva de la puerta + presencia + eventos de presencia APLICADOS recientes.
+    // F80/RF-103.4: fase en vivo del monigote (acercamiento → dentro → fuera).
+    // F81/RF-104.5: ya no hay "crossing" en vivo; el cruce es solo de la
+    // reproducción de visitas (F68). Se deriva de la puerta + presencia +
+    // eventos de presencia APLICADOS recientes.
     var recentPresentMs = lastPresenceEventMs(live.recent_presence, 'PRESENT');
     var recentOpen = lastOpenMs > 0 && (nowMs - lastOpenMs) <= DOOR_NEAR_WINDOW_MS;
     var recentPresent = recentPresentMs > 0 && (nowMs - recentPresentMs) <= LIVE_PRESENCE_WINDOW_MS;
     var phase;
     if (personInside) {
-      // Con la puerta aún abierta y presencia, el monigote está cruzando.
-      phase = doorOpen ? 'crossing' : 'inside';
+      // F81 (RF-104.5): presencia detectada ⇒ monigote dentro, no medio afuera.
+      phase = 'inside';
     } else if (doorOpen || recentOpen) {
-      phase = (presence === 'PRESENT' || recentPresent) ? 'crossing' : 'near';
+      phase = 'near';
     } else if (recentPresent) {
       phase = 'inside';
     } else {
@@ -182,7 +183,9 @@
       personInside: personInside,
       doorOpen: doorOpen,
       unknown: unknown,
-      // F80/RF-103.4: 'outside' | 'near' | 'qr' | 'crossing' | 'inside'.
+      // F80/RF-103.4: 'outside' | 'near' | 'inside'. F81/RF-104.5: 'crossing'
+      // y 'qr' quedan reservados a la reproducción de visitas (F68), no al modo
+      // en vivo (presencia ⇒ 'inside').
       phase: phase,
       classes: {
         open: doorOpen,
