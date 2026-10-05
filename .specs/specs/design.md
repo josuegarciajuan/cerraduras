@@ -4321,7 +4321,8 @@ era real. Las otras tres se originaron así:
    snapshot/restore de las tablas del almacén (baseline `MAX(id)` + copia de
    `warehouse_state`) y purga clips; S12 verifica que no quedan visitas nuevas.
 3. **Panel (RF-102.3)**: `/almacen-api/visits` excluye por defecto
-   `outcome='NO_SHOW' AND entry_trigger='DOOR'`; `include_no_show=1` los muestra.
+   `outcome='NO_SHOW' AND entry_trigger='DOOR'` y las visitas solo-`PRESENCE`; `include_no_show=1`
+   los muestra. La creación de visitas por presencia se mantiene (F80/RF-103) para el croquis.
 4. **Datos (RF-102.5)**: purga puntual de 78/79/81 y sus clips.
 
 ### 43.3 Trazabilidad

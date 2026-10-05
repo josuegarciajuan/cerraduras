@@ -179,7 +179,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `warehouse_visits`/`camera_recordings`/`warehouse_state` y purga clips; S12 falla si quedan
   visitas nuevas.
 - **Panel (RF-102.3)**: `/almacen-api/visits` oculta por defecto `NO_SHOW` DOOR-only;
-  `include_no_show=1` los muestra.
+  `include_no_show=1` los muestra. También se ocultan por defecto las visitas creadas solo por
+  `PRESENCE` (F80/RF-103 las mantiene para el croquis en vivo, no para el listado).
 - **Datos (RF-102.5)**: purgadas las visitas fantasma 78/79/81 y sus clips.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 42/44, marcadores F79) + regresión completa.
 
