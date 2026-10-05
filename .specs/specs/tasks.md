@@ -3705,3 +3705,34 @@ F78-00 (specs) ─> F78-01/02 (borrado) ─> F78-03 (arranque) ─> F78-04 (cont
 - [ ] F78-04 contrato 5 workers
 - [ ] F78-05 runner (BLOCK 35)
 - [ ] F78-06 docs/runbooks
+
+---
+
+## Fase 79 — Visitas fantasma del almacén (RF-102)
+
+**Objetivo**: que el listado de `/almacen` solo contenga visitas reales. El motor no crea
+visitas desde señales simuladas ni desde reenvíos de estado (resync); el runner no contamina
+la sala/dispositivo de producción; el panel oculta los intentos sin entrada.
+
+| Tarea | Descripción | RF | Archivos | Verificación |
+|-------|-------------|----|----------|--------------|
+| F79-00 | Specs F79 | RF-102 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F79-01 | Runner sin contaminar producción | RF-102.4 | `api/bin/run-tests.sh` (BLOCK 17, BLOCK 42) | BLOCK 42 S12 |
+| F79-02 | Motor ignora SIMULATED/resync | RF-102.1/102.2 | `WarehouseRecordingService.php`, `IotSessionService.php`, `TuyaSensorIngress.php`, `tuya-pulsar-consumer/index.js` | unit PHP + JS |
+| F79-03 | Visits oculta NO_SHOW DOOR por defecto | RF-102.3 | `WarehouseVisitController.php` | BLOCK 44 |
+| F79-04 | Purga de fantasmas 78/79/81 | RF-102.5 | datos (`warehouse-purge`) | listado `/almacen` |
+
+## Orden de ejecución (F79)
+
+```
+F79-00 (specs) ─> F79-01 (runner) ─> F79-02 (motor) ─> F79-03 (panel) ─> F79-04 (purga)
+              ─> regresión completa
+```
+
+## Estado de ejecución (F79)
+
+- [ ] F79-00 specs
+- [ ] F79-01 runner
+- [ ] F79-02 motor
+- [ ] F79-03 panel
+- [ ] F79-04 purga

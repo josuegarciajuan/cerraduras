@@ -4286,3 +4286,49 @@ continuo.
 | RF | Diseño | Contrato | Tareas |
 |---|---|---|---|
 | RF-101 | §42.1–42.4 | §5 (`system-status`, 5 claves) | F78-01…F78-06 |
+
+## 43. F79 — Visitas fantasma del almacén (RF-102)
+
+### 43.1 Contexto y evidencia
+
+El 2026-10-05 el listado de `/almacen` mostraba 4 visitas; solo la de las 12:44:39 (local)
+era real. Las otras tres se originaron así:
+
+- **Visita 78 (10:07:04 UTC, DOOR/NO_SHOW)**: creada por el propio runner de tests
+  (`run-tests.sh` BLOCK 17) al inyectar un `POST /api/v1/tuya/webhook` con el **device real**
+  `bf4c7e7d2cef28cea2nkwk` (sensor de puerta de la sala del almacén) y
+  `doorcontact_state=true`. El payload crudo (sin `dataId`/`productKey`) está en
+  `logs/systemd.log`. No había cleanup.
+- **Visita 79 (10:08:01 UTC, PRESENCE/ENTERED)**: creada por el BLOCK 42 (F54), que ejecuta el
+  ciclo completo del huésped con `/sim/rooms/12/*` sobre la sala del almacén. El cleanup
+  (`_e2e_cleanup`) cerraba `stays` y borraba `iot_sessions`, pero no `warehouse_visits`,
+  `camera_recordings` ni `warehouse_state`.
+- **Visita 81 (10:24:20 UTC, DOOR/NO_SHOW)**: push real de Tuya
+  (`doorcontact_state=true`, con `dataId`/`productKey`) sin presencia interior (solo `move`,
+  rechazado por F76). El motor RF-71.4 la documenta como `NO_SHOW` y descarta ambos clips.
+- **Patrón sistémico**: el MC400D reemite `doorcontact_state=true` cada ~15 min
+  (`systemd.log` 07:44…09:46) y el resync REST del consumer reenvía el estado cacheado de
+  Tuya al reconectar. Cualquier re-reporte aplicado mientras el estado local es `CLOSED`
+  se convertía en una transición y generaba visita.
+
+### 43.2 Diseño de la corrección
+
+1. **Motor (RF-102.1/102.2)**: el motor del almacén solo reacciona a ciclos reales. Se añade
+   `meta.source` (propagado por `TuyaSensorIngress` desde `_source` del payload) y se usa
+   `provider`. `WarehouseRecordingService::onSignal` retorna sin efecto si
+   `provider=SIMULATED` o `source=resync`. El estado IoT sigue intacto.
+2. **Runner (RF-102.4)**: BLOCK 17 usa un device sintético; BLOCK 42 hace
+   snapshot/restore de las tablas del almacén (baseline `MAX(id)` + copia de
+   `warehouse_state`) y purga clips; S12 verifica que no quedan visitas nuevas.
+3. **Panel (RF-102.3)**: `/almacen-api/visits` excluye por defecto
+   `outcome='NO_SHOW' AND entry_trigger='DOOR'`; `include_no_show=1` los muestra.
+4. **Datos (RF-102.5)**: purga puntual de 78/79/81 y sus clips.
+
+### 43.3 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-102.1/102.2 | §43.2.1 | §1 (`meta.source`) | F79-02 |
+| RF-102.3 | §43.2.3 | §1 (`visits`, `include_no_show`) | F79-03 |
+| RF-102.4 | §43.2.2 | — | F79-01 |
+| RF-102.5 | §43.2.4 | — | F79-04 |

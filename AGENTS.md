@@ -163,6 +163,25 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F76 Presencia del almacén anclada al ciclo de puerta** | **BLOCK 52** | **Completado** |
 | **F77 Correcciones del panel `/almacen`** | **unit + BLOCK 46/50/51** | **Completado** |
 | **F78 Eliminación total del poller de presencia** | **BLOCK 35** | **Completado** |
+| **F79 Visitas fantasma del almacén** | **BLOCK 42/44** | **Completado** |
+
+### F79 — Visitas fantasma del almacén (RF-102)
+
+- **Motivo**: el listado de `/almacen` mostraba visitas que nunca ocurrieron. Origen
+  (2026-10-05): el runner de tests inyectaba un webhook con el **device real** de la puerta
+  (BLOCK 17) y ejecutaba el ciclo simulado en la sala del almacén (BLOCK 42) sin limpiar las
+  tablas del almacén; además, los re-reportes de estado del sensor (heartbeat ~15 min) y el
+  resync REST del consumer se aplicaban como transiciones y creaban visitas `NO_SHOW`.
+- **Motor (RF-102.1/102.2)**: `WarehouseRecordingService::onSignal` no tiene efecto con
+  `provider=SIMULATED` ni con `meta.source='resync'`. El consumer marca el resync (`_source`),
+  el ingress lo propaga a `meta.source` y `IotSessionService` lo entrega al motor.
+- **Runner (RF-102.4)**: BLOCK 17 usa un device sintético; BLOCK 42 hace snapshot/restore de
+  `warehouse_visits`/`camera_recordings`/`warehouse_state` y purga clips; S12 falla si quedan
+  visitas nuevas.
+- **Panel (RF-102.3)**: `/almacen-api/visits` oculta por defecto `NO_SHOW` DOOR-only;
+  `include_no_show=1` los muestra.
+- **Datos (RF-102.5)**: purgadas las visitas fantasma 78/79/81 y sus clips.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 42/44, marcadores F79) + regresión completa.
 
 ### F78 — Eliminación total del poller de presencia (RF-101)
 

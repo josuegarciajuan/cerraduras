@@ -1622,3 +1622,26 @@ estancia, **sin ningún sondeo periódico**.
   legacy `cerraduras-presence-poller` habilitado.
 - **RF-101.5**: Si un sensor no entrega por push, la solución documentada es ampliar la regla de
   mensajes de Tuya (`design.md` §13.9), nunca reintroducir un poller.
+
+## RF-102 (F79): Visitas fantasma del almacén
+- **RF-102.1**: El motor de grabación del almacén (`WarehouseRecordingService::onSignal`) **NO**
+  crea ni modifica visitas ni grabaciones a partir de señales que no sean un ciclo real:
+  - eventos con `provider=SIMULATED` (inyecciones `/sim/*` y panel de pruebas), y
+  - eventos reenviados por el **resync REST** del consumer Pulsar al (re)conectar
+    (`meta.source='resync'`).
+  El estado IoT (`iot_sessions`) sí se sigue actualizando; solo se evita el efecto sobre
+  `warehouse_visits`/`camera_recordings`/`warehouse_state`.
+- **RF-102.2**: El resync del consumer marca los payloads reenviados con `_source='resync'`; el
+  ingress Tuya lo propaga a `meta.source` y `IotSessionService` lo entrega al motor del almacén.
+- **RF-102.3**: `GET /almacen-api/visits` **oculta por defecto** los intentos sin entrada
+  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`), que no tienen vídeo (RF-70.5/71.4). Se pueden
+  listar con `include_no_show=1` o filtrando `outcome=NO_SHOW`. Los `NO_SHOW` con `QR`
+  (con evidencia exterior) se mantienen visibles.
+- **RF-102.4**: El runner de tests (`api/bin/run-tests.sh`) **no contamina** la sala/dispositivo
+  de producción:
+  - BLOCK 17 usa un device **sintético** para el webhook (nunca `bf4c7e7d2cef28cea2nkwk`).
+  - BLOCK 42 (F54) hace snapshot/restore de `warehouse_visits`, `camera_recordings` y
+    `warehouse_state` de la sala del almacén y purga los clips generados; si la suite deja
+    visitas nuevas, el runner falla.
+- **RF-102.5**: Se purgan las visitas fantasma existentes (78/79/81) y sus clips, dejando solo
+  las visitas reales.
