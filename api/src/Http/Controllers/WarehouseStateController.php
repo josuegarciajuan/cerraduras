@@ -204,7 +204,7 @@ final class WarehouseStateController
         $rp = $this->pdo->prepare(
             "SELECT sensor, value, occurred_at
              FROM presence_events
-             WHERE room_id = :r AND applied = 1
+             WHERE room_id = :r AND applied = 1 AND sensor = 'PRESENCE'
              ORDER BY occurred_at DESC, id DESC
              LIMIT 10"
         );
