@@ -2438,3 +2438,12 @@ Respuestas:
 
 - Rutas y campos intactos; el comportamiento F48 de huéspedes no cambia.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 52** amplía marcadores F76.
+
+## 4. Fase 77 (panel /almacen): cambios aditivos
+
+- `GET /almacen-api/state` → bloque `live` añade `door_stale` (bool) y `door_stale_seconds` (int);
+  `switch_state_inferred` (`"ON"|"OFF"|null`). No cambia la forma de los campos existentes.
+- `door_age_seconds`/`presence_age_seconds` cambian de fuente (último evento **aplicado**), más honesta.
+- `GET /almacen-api/recordings/{id}/video|poster`: sirve el fichero resolviendo desde `api/` (200).
+- `api/run/tuya-quota.json` pasa a ser escrito también por el resync REST del consumer Pulsar.
+- Sin rutas nuevas ni eliminación de campos.

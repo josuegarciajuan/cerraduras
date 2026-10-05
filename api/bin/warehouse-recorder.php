@@ -98,6 +98,36 @@ while ($running) {
             }
         }
 
+        // 3b. F77.6: matar ffmpeg gestionados cuyo registro ya NO existe en la BD
+        // (p. ej. tras una purga F73 que borra las filas mientras grababan). Sin
+        // esto, el proceso seguía escribiendo a un fichero borrado e inmóvil,
+        // reteniendo GB de disco hasta reiniciar el recorder.
+        if ($procs !== []) {
+            $liveIds = [];
+            foreach ($pdo->query(
+                "SELECT id FROM camera_recordings WHERE status IN ('PENDING','RECORDING')"
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [] as $liveId) {
+                $liveIds[(int) $liveId] = true;
+            }
+            foreach (array_keys($procs) as $managedId) {
+                if (isset($liveIds[$managedId])) {
+                    continue;
+                }
+                $proc = $procs[$managedId];
+                if (is_resource($proc)) {
+                    @proc_terminate($proc, 2);
+                    usleep(200_000);
+                    $st = proc_get_status($proc);
+                    if (is_array($st) && ($st['running'] ?? false)) {
+                        @proc_terminate($proc, 9);
+                    }
+                    @proc_close($proc);
+                }
+                unset($procs[$managedId]);
+                $log("recording {$managedId}: abortado (registro ya no existe en BD)");
+            }
+        }
+
         $pdo->commit();
     } catch (\Throwable $e) {
         if ($pdo->inTransaction()) {

@@ -25,7 +25,10 @@ final class WarehouseRecordingController
     public function __construct(PDO $pdo, ?string $storageRoot = null)
     {
         $this->pdo = $pdo;
-        $this->storageRoot = $storageRoot ?? (dirname(__DIR__, 2) . '/data/cameras');
+        // F77.1: la raíz de la API es `api/` (3 niveles desde src/Http/Controllers).
+        // Antes era `dirname(__DIR__, 2)` = `api/src`, así que `resolveSafe()` armaba
+        // `api/src/data/...`, realpath fallaba y TODOS los clips devolvían 404.
+        $this->storageRoot = $storageRoot ?? (dirname(__DIR__, 3) . '/data/cameras');
     }
 
     public function video(Request $request): Response
@@ -76,7 +79,9 @@ final class WarehouseRecordingController
         if ($rel === '') {
             return null;
         }
-        $api = dirname(__DIR__, 2);
+        // F77.1: `api/` (no `api/src/`) es la base de las rutas relativas guardadas
+        // por el recorder (`data/cameras/...`).
+        $api = dirname(__DIR__, 3);
         $abs = $rel[0] === '/' ? $rel : $api . '/' . $rel;
         $real = realpath($abs);
         $root = realpath($this->storageRoot);

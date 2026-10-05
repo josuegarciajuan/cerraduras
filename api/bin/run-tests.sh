@@ -4342,6 +4342,18 @@ if grep -q 'playVisit' public/assets/almacen.js 2>/dev/null; then
 else
     fail "F68: almacen.js playVisit" "ausente"
 fi
+# F77.3: el directo no debe recrearse en cada push SSE.
+if grep -q "dataset.mode === 'live'" public/assets/almacen.js 2>/dev/null; then
+    pass "F77.3: renderCameras evita recrear el MJPEG sin cambios"
+else
+    fail "F77.3: renderCameras sin diff" "no se encontro dataset.mode === 'live'"
+fi
+# F77.8: el detalle de visita no debe perderse en el refresco periodico.
+if grep -q 'selectedVisitId' public/assets/almacen.js 2>/dev/null; then
+    pass "F77.8: detalle de visita preservado en el refresco"
+else
+    fail "F77.8: selectedVisitId" "ausente"
+fi
 # Fix F63: `trigger` es palabra reservada en MariaDB → debe ir entrecomillada.
 if grep -q '`trigger`' src/Domain/Warehouse/WarehouseRecordingService.php 2>/dev/null; then
     pass "F68: INSERT de grabaciones entrecomilla trigger"
@@ -4693,6 +4705,12 @@ if [ -f bin/warehouse-purge.php ] && php -l bin/warehouse-purge.php >/dev/null 2
     pass "F73: bin/warehouse-purge.php presente y válido"
 else
     fail "F73: warehouse-purge.php" "ausente o con error de sintaxis"
+fi
+# F77.6: el recorder debe abortar ffmpeg cuyo registro ya no existe (purga segura).
+if grep -q "registro ya no existe en BD" bin/warehouse-recorder.php 2>/dev/null; then
+    pass "F77.6: recorder aborta grabaciones huerfanas"
+else
+    fail "F77.6: recorder sin abort de huerfanos" "ausente"
 fi
 
 # 51.1 Unit (auto-descubierto en BLOCK 1; se verifica su presencia)

@@ -107,6 +107,13 @@ check('switch ON → classes.lightOn=true', lightOn.classes.lightOn === true);
 check('switch OFF → chip LUZ OFF dim', lightOff.chips.light.text === 'LUZ OFF' && lightOff.chips.light.mod === 'dim');
 check('switch UNKNOWN → chip LUZ —', lightUnknown.chips.light.text === 'LUZ —');
 
+// F77.7: sin estado real, el último comando se muestra como estimación (?) sin
+// encender el foco del croquis.
+const lightInferred = deriveCroquis(snap({ switch_state: 'UNKNOWN', switch_state_inferred: 'ON' }), BASE);
+check('F77.7 switch inferido ON → chip LUZ ON? dim',
+  lightInferred.chips.light.text === 'LUZ ON?' && lightInferred.chips.light.mod === 'dim');
+check('F77.7 switch inferido no enciende el foco', lightInferred.classes.lightOn === false);
+
 // ─── 10. Descripción accesible ─────────────────────────────────────────
 const openInside = deriveCroquis(snap({ door_state: 'OPEN', presence_state: 'PRESENT' }, true), BASE);
 check('desc: puerta abierta + persona dentro',
@@ -149,7 +156,27 @@ const whPresence = deriveCroquis(snap({
 check('F71 presencia almacén → personInside=true', whPresence.personInside === true);
 check('F71 presencia almacén → classes.occupied=true', whPresence.classes.occupied === true);
 
-// ─── 13. Módulo require-safe ───────────────────────────────────────────
+// ─── 13. F77.5: estado de puerta viejo → SIN DATOS, no "abierta" ───────
+const staleOpen = deriveCroquis(snap({
+  door_state: 'OPEN', presence_state: 'ABSENT', door_stale: true, door_age_seconds: 600,
+}), BASE);
+check('F77.5 OPEN stale → doorOpen=false', staleOpen.doorOpen === false);
+check('F77.5 OPEN stale → chip PUERTA SIN DATOS (warn)',
+  staleOpen.chips.door.text.indexOf('PUERTA SIN DATOS') === 0 && staleOpen.chips.door.mod === 'warn');
+check('F77.5 OPEN stale → desc "no fiable"', staleOpen.desc.indexOf('no fiable') >= 0);
+
+const staleClosed = deriveCroquis(snap({
+  door_state: 'CLOSED', presence_state: 'ABSENT', door_stale: true, door_age_seconds: 600,
+}), BASE);
+check('F77.5 CLOSED stale → PUERTA CERRADA (edge-triggered legítimo)',
+  staleClosed.chips.door.text === 'PUERTA CERRADA' && staleClosed.doorOpen === false);
+
+const freshOpen = deriveCroquis(snap({
+  door_state: 'OPEN', presence_state: 'ABSENT', door_stale: false, door_age_seconds: 3,
+}), BASE);
+check('F77.5 OPEN fresco → PUERTA ABIERTA', freshOpen.doorOpen === true && freshOpen.chips.door.text === 'PUERTA ABIERTA');
+
+// ─── 14. Módulo require-safe ───────────────────────────────────────────
 check('module exports the pure croquis logic', typeof deriveCroquis === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
 
