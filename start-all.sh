@@ -108,16 +108,21 @@ else
   echo "       (unit cerraduras-pulsar-consumer ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
-echo "[4/8] Tuya Presence Poller manager (systemd — instancia única)..."
-# F46: el poller de presencia pasa a systemd (Restart=always). Antes era un
-# wrapper setsid sin supervisión: si moría, la presencia dejaba de muestrearse
-# en silencio (el panel "no detectaba" al huésped).
-if systemctl restart cerraduras-presence-poller 2>/dev/null; then
-  echo "       presence-poller: systemd (pid $(systemctl show -p MainPID --value cerraduras-presence-poller 2>/dev/null))"
-else
-  echo "       (unit cerraduras-presence-poller ausente — wrapper de respaldo)"
-  launch "presence-poller-manager" "bash bin/presence-poller-manager.sh" 60 "$LOG_DIR/presence-poller.log"
+echo "[4/8] Guardia anti-poller Tuya (F78 — prohibido pollear en continuo)..."
+# F78 (RF-101): NO existe ningún poller de Tuya en el proyecto. La presencia
+# llega por push (consumer Pulsar, sin cuota) y los sensores del almacén se
+# refrescan bajo demanda. Este paso es una guardia activa: si detecta un poller
+# vivo o el unit legacy habilitado, lo neutraliza y avisa en voz alta.
+POLLER_PROCS="$(pgrep -f 'tuya-presence-poller\.js' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$POLLER_PROCS" != "0" ]; then
+  echo "       ⚠ F78: $POLLER_PROCS proceso(s) tuya-presence-poller.js detectado(s) — matando (prohibido)"
+  pkill -f 'tuya-presence-poller\.js' 2>/dev/null || true
 fi
+if systemctl is-enabled cerraduras-presence-poller >/dev/null 2>&1; then
+  echo "       ⚠ F78: unit legacy cerraduras-presence-poller sigue habilitado — deshabilitando"
+  systemctl disable --now cerraduras-presence-poller >/dev/null 2>&1 || true
+fi
+echo "       sin poller de nube: push (Pulsar) + sondas bajo demanda OK"
 
 echo "[5/8] Workers de fondo (systemd: exit-scan, overstay-scan, outbox-worker, anomaly-scanner)..."
 if systemctl restart cerraduras-worker@exit-scan cerraduras-worker@overstay-scan \

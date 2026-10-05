@@ -10,8 +10,9 @@ Esto levanta:
 - **API** en `0.0.0.0:8080` → `https://<api-host>/api/v1/health`
 - **WS-VB6** en `0.0.0.0:8081` → `http://92.113.151.136:8081/ws-vb6/v1/health`
 - **Workers** de fondo (instancia única): `exit-scan`, `overstay-scan`,
-  `outbox-worker`, `anomaly-scanner`, `presence-poller-manager`,
-  `tuya-pulsar-consumer`.
+  `outbox-worker`, `anomaly-scanner`, `tuya-pulsar-consumer`.
+  (F78/RF-101: **no existe poller de Tuya**; la presencia llega por push del
+  consumer Pulsar y los sensores se refrescan bajo demanda.)
 
 `start-all.sh` ejecuta primero una parada determinista, de modo que es
 **idempotente**: dos ejecuciones seguidas dejan exactamente una instancia por

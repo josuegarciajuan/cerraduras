@@ -122,7 +122,6 @@ Reglas:
 | Calibración de presencia | `/dashboard-api/presence-calibrate/*` |
 | Sonda de dispositivos | `/dashboard-api/ping-all-devices` |
 | Batería | `/dashboard-api/battery-refresh` |
-| Poller de presencia (nube) | `api/bin/tuya-presence-poller.js` |
 | Consumer Pulsar (push) | `api/bin/tuya-pulsar-consumer/index.js` |
 | Créditos/cuota | `GET /dashboard-api/tuya-quota` |
 
@@ -229,7 +228,7 @@ Notas:
 8. **(Código)** actualizar `api/.env`, `devices.external_id` + `meta_json`
    (`product_id`, `dp_caps`, `presence_source`, calibración) y el checklist §6.
    Nada de `.env` en git.
-9. **Reiniciar** `cerraduras-pulsar-consumer.service` y los pollers; verificar:
+9. **Reiniciar** `cerraduras-pulsar-consumer.service` (F78: no hay pollers); verificar:
    - `api/run/pulsar-consumer-status.json` → `connected:true` y `last_msg_at`
      nuevo.
    - `[MSG]` de los nuevos `devId` en `api/logs/pulsar-consumer.log`.
@@ -240,8 +239,8 @@ Sugerencia de reinicio (ajustar si el orquestador ya gestiona las units):
 
 ```bash
 systemctl restart cerraduras-pulsar-consumer.service
-systemctl restart cerraduras-presence-poller.service
 bash /root/cerraduras/start-all.sh
+# F78/RF-101: NO existe `cerraduras-presence-poller.service` (eliminado).
 ```
 
 ---

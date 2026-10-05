@@ -2417,10 +2417,11 @@ Messaging rules — Production Environment (ENABLED)
    - Si el dispositivo es **IoT Core** (protocolo 1000) y no llegan sus mensajes, añadir su
      tipo a `BizCode IN …` (p. ej. `devicePropertyMessage`); el consumer ya soporta
      `bizData`/`properties`.
-3. (Opcional) Si el sensor debe **reportar por push**, marcar
-   `devices.meta_json.presence_source='push'` (migración `0111`) para que
-   `presence-poller-manager.sh` **no** lance su poller de nube: tiempo real por push, sin cuota
-   IoT Core. La puerta no se ve afectada.
+3. **Presencia = push, siempre** (F78/RF-101). Ya **no** existe poller de nube:
+   la ampliación de la regla de mensajes (paso 2) es lo único necesario. El flag
+   histórico `devices.meta_json.presence_source` (`push`/`disabled`) se conserva
+   solo como documentación; **no** arranca ningún proceso. Nunca reintroducir un
+   poller continuo de Tuya.
 4. Verificar en `api/logs/pulsar-consumer.log` que aparece el `devId` del nuevo sensor y en
    `/live` que el estado (puerta/presencia) se actualiza al mover el sensor.
 
@@ -2432,19 +2433,19 @@ incluidos). El consumer solo reenvía devices presentes en `devices` (kind PROXI
 a más devices NO consume cuota de API. El 24G reporta además `illuminance_value`/`man_state`,
 que el ingress ignora en silencio (`INFO_DPS`).
 
-**Valores de `devices.meta_json.presence_source` (fuente de verdad del modo de presencia):**
+**Valores de `devices.meta_json.presence_source` (F78: solo informativo, ya no arranca nada):**
 
-| Valor | Significado | Poller de nube | Consumer Pulsar | Sondas Tuya | Calibración |
-|-------|-------------|:---:|---|:---:|:---:|
-| ausente / `NULL` | Modo **poll** (histórico) | ✅ (sí) | ✅ | ✅ | ✅ |
-| `push` | Llega en tiempo real por el consumer (regla de mensajes de Tuya ampliada) | ❌ | ✅ | ✅ | ✅ |
-| `disabled` | **Apagado fuerte** (no se usa; se conserva para el futuro) | ❌ | ❌ | ❌ | ❌ |
+| Valor | Significado | Consumer Pulsar | Sondas Tuya | Calibración |
+|-------|-------------|:---:|:---:|:---:|
+| ausente / `NULL` | Sin marcar (se sigue tratando como presencia normal) | ✅ | ✅ bajo demanda | ✅ |
+| `push` | Llega en tiempo real por el consumer (regla de mensajes Tuya ampliada) | ✅ | ✅ bajo demanda | ✅ |
+| `disabled` | **Apagado fuerte** (no se usa; se conserva para el futuro) | ❌ | ❌ | ❌ |
 
-`disabled` hace que `presence-poller-manager.sh` no lance poller, que el consumer no lo rastree,
-que `probeTuyaOnlineOnce()` no lo sondee y que `resolvePresenceDeviceForRoom()` lo ignore (la
-calibración responde "sin sensor"). **Cero cuota y cero procesos.** Ejemplo:
-`ZY-M100 bf98d27d…` (banco de pruebas, migración `0112`). Para reactivarlo: quitar el flag
-(`presence_source=NULL`) y reiniciar `cerraduras-presence-poller`.
+**F78/RF-101**: ya **no existe poller de nube** en ningún caso. El flag `presence_source`
+**no** lanza ningún proceso; la presencia entra por push (o queda apagada con `disabled`).
+`disabled` además hace que el consumer no lo rastree, que `probeTuyaOnlineOnce()` no lo sondee
+y que `resolvePresenceDeviceForRoom()` lo ignore (la calibración responde "sin sensor").
+Ejemplo: `ZY-M100 bf98d27d…` (banco de pruebas, migración `0112`).
 
 **Unidad de `backoffUntil` (guardia de cuota, F46++):** en `api/run/tuya-quota.json`,
 `backoffUntil` se guarda **en segundos epoch** (misma unidad en el poller Node y en PHP).
@@ -4227,3 +4228,61 @@ detalle en el refresco de 15 s.
 | RF-97 | §41.5 | §4 | F77-05 |
 | RF-98 | §41.6 | §4 | F77-06 |
 | RF-99/100 | §41.7 | §4 | F77-07 |
+
+---
+
+# 42. F78 — Eliminación total del poller de presencia (RF-101)
+
+## 42.1 Requisito inquebrantable
+
+**Prohibido el sondeo continuo/automático de la API REST de Tuya.** La cuota de IoT Core se
+factura por llamada y un poller de fondo la agota en horas (incidente 2026-09-17: ~1.400
+llamadas/hora por una puerta atascada). Por eso **no debe existir ningún proceso que sondee
+Tuya en bucle**: ni en `start-all.sh`, ni en systemd, ni en cron, ni en diagnósticos manuales
+que se dejen corriendo.
+
+Fuentes de estado **permitidas** (ninguna es sondeo continuo):
+
+1. **Push** del Message Service (consumer `tuya-pulsar-consumer`): sin cuota IoT Core.
+2. **Sondas REST bajo demanda** (panel, calibración, `ping-all-devices`,
+   `/almacen-api/sensors/refresh`): solo ante acción explícita y con el presupuesto compartido
+   `api/run/tuya-quota.json`.
+3. **Resync puntual** al (re)conectar el WS del consumer: event-driven, no periódico.
+
+## 42.2 Qué se elimina (deroga el poller de F44/F46)
+
+Se eliminan por completo (código + arranque + contrato + tests):
+
+- `api/bin/tuya-presence-poller.js` (poller Node gated).
+- `api/bin/presence-poller-manager.sh` (supervisor multi-sensor).
+- `api/bin/wrapper-poller.sh` (wrapper de respaldo).
+- Diagnósticos de sondeo continuo `api/bin/tuya-presence-listen.js` y
+  `api/bin/tuya-presence-sensor-read.php`.
+- Tests `api/tests/Unit/presence-poller-gate.test.js` y
+  `api/tests/Unit/presence-poller-manager.test.js`.
+- Unit systemd `cerraduras-presence-poller.service` (instalado en el servidor).
+
+`GET /dashboard-api/system-status` pasa de **6 a 5** workers (se retira
+`presence-poller-manager`). `HealthController` deja de comprobar `presence-poller`. El flag
+`devices.meta_json.presence_source` queda **derogado como disparador de procesos**.
+
+## 42.3 Guardia anti-regresión
+
+- `start-all.sh` ([4/8], guardia anti-poller): **mata** cualquier
+  `tuya-presence-poller.js` vivo y **deshabilita** el unit legacy si reapareciera.
+- `api/bin/run-tests.sh` (BLOCK 35, marcadores F78): falla si existe un proceso
+  `tuya-presence-poller.js`, si reaparecen los scripts o si el unit legacy vuelve a estar
+  habilitado. Es la regresión que impide reintroducir el poller en silencio.
+- `stop-all.sh`, `smoke-test.sh`, `watchdog.sh` y `worker-loop.sh` ya no conocen poller.
+
+## 42.4 Alternativa para sensores sin push
+
+Si un sensor Tuya no llega por push, la solución es **ampliar la regla de mensajes** de Tuya
+(§13.9: añadir su `device id` a la regla `statusReport`), **nunca** reintroducir un poller
+continuo.
+
+## 42.5 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-101 | §42.1–42.4 | §5 (`system-status`, 5 claves) | F78-01…F78-06 |

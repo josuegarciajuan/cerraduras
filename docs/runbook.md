@@ -55,14 +55,14 @@ mysql -u cerraduras_user -p'f83bdcfaf5fece29e91f968a' cerraduras_db -e "SELECT C
 ### Recuperación (automática)
 - El circuit breaker se cierra solo tras 60s de pausa
 - Pulsar consumer tiene backoff exponencial y `while true` (nunca se rinde)
-- Presence poller tiene backoff de cuota de 10 min cuando Tuya reporta "quota exhausted"
+- F78/RF-101: **no hay poller de Tuya**. No existe backoff de poller que gestionar;
+  la cuota se protege con el presupuesto compartido de las sondas bajo demanda.
 
 ### Recuperación (manual — reinicio completo Tuya)
 ```bash
 pkill -f 'tuya-pulsar-consumer'
-pkill -f 'tuya-presence-poller'
-# El wrapper while true de start-all.sh los reinicia automáticamente
-# Si usas systemd: systemctl restart cerraduras-workers
+# Si usas systemd: systemctl restart cerraduras-pulsar-consumer
+# NO existe `tuya-presence-poller`: prohibido reintroducirlo (F78/RF-101).
 ```
 
 ### Verificar conectividad Tuya

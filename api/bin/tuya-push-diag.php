@@ -226,4 +226,5 @@ echo "    4. Esperar 2-5 minutos\n";
 echo "    5. Volver a ejecutar este script\n";
 echo "\nSi algún binding devolvió success:\n";
 echo "  → Pulsar debería empezar a recibir mensajes en ~2 min.\n";
-echo "  → Ejecuta: node api/bin/tuya-presence-listen.js\n";
+echo "  → Verifica con: tail -f api/logs/pulsar-consumer.log\n";
+echo "  → F78: NO existe poller (prohibido); la presencia es push (Pulsar).\n";

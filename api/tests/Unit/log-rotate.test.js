@@ -20,7 +20,6 @@ const { spawnSync } = require('child_process');
 
 const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'log-rotate.sh');
 const MB = 1024 * 1024;
-const OLD_LITERAL = '⚠ no hay dispositivos PRESENCE en la BD';
 
 let passed = 0;
 let failed = 0;
@@ -106,9 +105,6 @@ try {
   check('KEEP_DAYS no entero aborta con exit 2', badDays.status === 2);
   check('KEEP_DAYS no entero emite mensaje claro',
     /KEEP_DAYS debe ser un entero/.test(badDays.stderr));
-
-  // ─── 6. Guardia: no debe contener el literal del manager de pollers ─────
-  check('el script no arrastra el literal ajeno de presence-poller', !src.includes(OLD_LITERAL));
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

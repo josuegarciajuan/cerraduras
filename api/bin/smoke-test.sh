@@ -57,9 +57,9 @@ else red "CRM Panel → HTTP $DASH_CODE" "¿panel/login.html existe?"; fi
 # 7. Workers — supervisados por systemd (F46). Se consulta el unit, no el proceso:
 #    los workers de tick largo (overstay 60s, outbox 30s) pasan la mayor parte del
 #    tiempo en `sleep` y pgrep los reportaba como caídos (falso negativo).
-#    Nota: no hay unidad `tuya-presence-poller` por diseño (F44/F46 — sensores
-#    con presence_source='push'/'disabled' no lanzan poller de nube).
-WORKER_UNITS="cerraduras-worker@exit-scan cerraduras-worker@overstay-scan cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner cerraduras-pulsar-consumer cerraduras-presence-poller"
+#    Nota (F78/RF-101): NO existe ningún poller de Tuya. La presencia llega por
+#    push (consumer Pulsar) y los sensores se refrescan bajo demanda.
+WORKER_UNITS="cerraduras-worker@exit-scan cerraduras-worker@overstay-scan cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner cerraduras-pulsar-consumer"
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cerraduras-api 2>/dev/null; then
   for u in $WORKER_UNITS; do
     if systemctl is-active --quiet "$u" 2>/dev/null; then green "Unit: $u → active"
@@ -67,7 +67,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cerradura
   done
 else
   # Fallback sin systemd: comprobar procesos (los de tick largo pueden estar en sleep)
-  for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker" "presence-poller-manager"; do
+  for w in "php.*bin/exit-scan" "php.*bin/overstay-scan" "php.*bin/anomaly-scanner" "php.*bin/outbox-worker"; do
     label=$(echo "$w" | sed 's/.*bin\///')
     if pgrep -f "$w" >/dev/null 2>&1; then green "Worker: $label → running"
     else red "Worker: $label → stopped" "¿start-all.sh ejecutado?"; fi

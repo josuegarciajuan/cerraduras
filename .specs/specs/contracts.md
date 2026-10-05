@@ -1251,8 +1251,10 @@ Respuesta `200`, objeto `{clave: worker}` con las claves exactas:
 | `overstay-scan` | `bin/overstay-scan.php` | 1 |
 | `outbox-worker` | `bin/outbox-worker.php` | 1 |
 | `anomaly-scanner` | `bin/anomaly-scanner.php` | 1 |
-| `presence-poller-manager` | `bin/presence-poller-manager.sh` | 1 |
 | `pulsar-consumer` | `tuya-pulsar-consumer` | 1 |
+
+> **F78/RF-101**: `presence-poller-manager` fue **eliminado**. No existe ningún
+> poller de Tuya; la presencia llega por push (Pulsar). El esquema tiene **5** claves.
 
 Cada entrada:
 
@@ -1308,16 +1310,6 @@ Cada entrada:
     "expected": 1,
     "instances": 1,
     "pids": [12348],
-    "healthy": true,
-    "degraded": false
-  },
-  "presence-poller-manager": {
-    "label": "Gestor Poller Presencia",
-    "online": true,
-    "pid": 12349,
-    "expected": 1,
-    "instances": 1,
-    "pids": [12349],
     "healthy": true,
     "degraded": false
   },
@@ -1437,11 +1429,10 @@ Los siguientes contratos **no cambian** con la Fase 41:
 Se adoptan las resoluciones del usuario. Las siguientes diferencias con lo redactado en
 `design.md` §7/§8 quedan documentadas (no bloquean):
 
-1. **Claves de `system-status`**: `design.md` §7.2 proponía `tuya-presence-poller` y
-   `tuya-pulsar-consumer`. La resolución fija `presence-poller-manager` y `pulsar-consumer`
-   (además de añadir `outbox-worker` y `anomaly-scanner`). Este contrato usa las claves de la
-   resolución. Si se necesita compatibilidad estricta de claves con consumidores antiguos,
-   puede añadirse un alias temporal, pero no forma parte de este contrato.
+1. **Claves de `system-status`**: la resolución original fijaba `presence-poller-manager` y
+   `pulsar-consumer` (además de `outbox-worker` y `anomaly-scanner`). **F78/RF-101 elimina
+   `presence-poller-manager`**: no hay poller de Tuya, así que el contrato queda con 5 claves
+   (`exit-scan`, `overstay-scan`, `outbox-worker`, `anomaly-scanner`, `pulsar-consumer`).
 2. **`healthy`**: `design.md` §7.2 definía `healthy = online ∧ instances == 1`. La resolución
    define `healthy = instances === expected` (con `expected = 1`). Se adopta la resolución;
    en la práctica coinciden salvo por la interpretación de `online`.

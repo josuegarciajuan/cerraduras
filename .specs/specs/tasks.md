@@ -3671,3 +3671,37 @@ F77-00 (specs) ─> F77-05 (consumer) ─> F77-01 (clips) ─> F77-02 (puerta)
 - [x] F77-06 recorder aborta huérfanos
 - [x] F77-07 luz inferida + detalle persistente
 - [ ] F77-08 regresión completa (`run-tests.sh`)
+
+---
+
+## Fase 78 — Eliminación total del poller de presencia (RF-101)
+
+**Objetivo**: garantizar que **no existe ningún poller** que sondee la API REST de Tuya en
+continuo. La presencia es solo push (Pulsar) + sondas bajo demanda. Deroga el poller de F44/F46.
+
+| Tarea | Descripción | RF | Archivos | Verificación |
+|-------|-------------|----|----------|--------------|
+| F78-00 | Specs F78 + regla inquebrantable | RF-101 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F78-01 | Borrar poller + manager + wrapper + diagnósticos continuos | RF-101 | `api/bin/{tuya-presence-poller.js,presence-poller-manager.sh,wrapper-poller.sh,tuya-presence-listen.js,tuya-presence-sensor-read.php}` | ausencia de ficheros |
+| F78-02 | Borrar tests JS del poller | RF-101 | `api/tests/Unit/presence-poller-*.test.js` | `run-tests.sh` |
+| F78-03 | Arranque/parada sin poller + guardia | RF-101 | `start-all.sh`, `stop-all.sh`, `smoke-test.sh`, `watchdog.sh`, `worker-loop.sh`, `docs/systemd/cerraduras-workers.service` | `bash -n` |
+| F78-04 | Contrato `system-status` con 5 workers | RF-101 | `api/public/index.php`, `HealthController.php`, `contracts.md` | BLOCK 33 |
+| F78-05 | Guardia anti-regresión en el runner | RF-101 | `run-tests.sh` (BLOCK 35) | marcadores F78 |
+| F78-06 | Docs/runbooks sin referencias al poller | RF-101 | `docs/ops.md`, `docs/runbook.md`, `docs/tuya-account-migration.md`, `design.md` | revisión |
+
+## Orden de ejecución (F78)
+
+```
+F78-00 (specs) ─> F78-01/02 (borrado) ─> F78-03 (arranque) ─> F78-04 (contrato)
+              ─> F78-05 (runner) ─> F78-06 (docs) ─> regresión completa
+```
+
+## Estado de ejecución (F78)
+
+- [ ] F78-00 specs
+- [ ] F78-01 borrado scripts
+- [ ] F78-02 borrado tests
+- [ ] F78-03 arranque/parada/guardia
+- [ ] F78-04 contrato 5 workers
+- [ ] F78-05 runner (BLOCK 35)
+- [ ] F78-06 docs/runbooks

@@ -1,5 +1,21 @@
 Este proyecto sigue metodología Spec Driven Development.
 
+## ⛔ Regla inquebrantable — NUNCA pollear Tuya en continuo
+
+**No debe existir NINGÚN proceso que sondee en bucle la API REST de Tuya.** La cuota de
+IoT Core se factura por llamada; un poller de fondo la agota en horas (incidente 2026-09-17:
+~1.400 llamadas/hora por una puerta atascada). Esto incluye `start-all.sh`, systemd, cron,
+workers y diagnósticos manuales que se dejen corriendo.
+
+- La presencia llega **por push** (consumer `tuya-pulsar-consumer`, sin cuota).
+- Las sondas REST son **solo bajo demanda** (acción explícita del usuario) y con el
+  presupuesto compartido `api/run/tuya-quota.json`.
+- Prohibido reintroducir `tuya-presence-poller.js`, `presence-poller-manager.sh`, el unit
+  `cerraduras-presence-poller` o cualquier `setInterval`/`while` que llame a Tuya.
+- Si un sensor no llega por push, se amplía la **regla de mensajes** de Tuya, no se añade poller.
+- Regresión automática: BLOCK 35 del runner (marcadores F78) y guardia en `start-all.sh`.
+- Detalle e histórico: `design.md` §42 (F78 / RF-101).
+
 ## Flujo obligatorio
 - No escribir código de negocio hasta que requirements, design, contracts y tasks estén aprobados.
 - Trabajar siempre en este orden:
@@ -146,6 +162,21 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F75 Refresco de sensores del almacén bajo demanda** | **BLOCK 52** | **Completado** |
 | **F76 Presencia del almacén anclada al ciclo de puerta** | **BLOCK 52** | **Completado** |
 | **F77 Correcciones del panel `/almacen`** | **unit + BLOCK 46/50/51** | **Completado** |
+| **F78 Eliminación total del poller de presencia** | **BLOCK 35** | **Completado** |
+
+### F78 — Eliminación total del poller de presencia (RF-101)
+
+- **Motivo**: quedaba vivo un supervisor legacy de F44 (`presence-poller-manager.sh` +
+  `tuya-presence-poller.js`) que podía arrancar pollers de nube si un sensor `PRESENCE` no
+  llevaba el flag `presence_source=push/disabled`. Violaba la regla de NO gastar cuota Tuya.
+- **Eliminado por completo**: `tuya-presence-poller.js`, `presence-poller-manager.sh`,
+  `wrapper-poller.sh`, diagnósticos continuos `tuya-presence-listen.js` y
+  `tuya-presence-sensor-read.php`, sus tests JS, y el unit `cerraduras-presence-poller`.
+- **Contrato**: `system-status` pasa de 6 a **5** workers; `HealthController` ya no comprueba
+  `presence-poller`. La presencia es **solo** push (Pulsar) + sondas bajo demanda.
+- **Guardia**: `start-all.sh` [4/8] mata cualquier `tuya-presence-poller.js` y deshabilita el
+  unit legacy; BLOCK 35 del runner falla si reaparecen scripts/procesos/unit.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 35, marcadores F78) + regresión completa.
 
 ### F77 — Correcciones del panel `/almacen` (RF-93..RF-100)
 
@@ -457,6 +488,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `tests/Unit/tuya-pulsar-consumer.test.js` (invocados con `node`, sin cuota).
 
 ### F44 — Tiempo real de sensores y presencia bajo demanda (RF-50/51/52)
+> **F78/RF-101 (posterior)**: el poller de presencia descrito en esta sección fue **eliminado
+> por completo**. La presencia es solo push (Pulsar) + sondas bajo demanda. Ver F78 arriba.
 
 - **Consumer Pulsar, dueño único**: vive bajo `cerraduras-pulsar-consumer.service`. `start-all.sh`
   solo lo reinicia con `systemctl`; `stop-all.sh` lo detiene con `systemctl stop` (no lo mata por
@@ -478,6 +511,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `tests/Unit/presence-poller-gate.test.js` (invocados con `node`), y `tests/Unit/TuyaPresenceMoveTest.php`.
 
 ### F44+ — Salida fiable y prueba de paseo (RF-51.1.6 / RF-52.4)
+> **F78/RF-101 (posterior)**: el poller de presencia descrito aquí fue **eliminado**. Ver F78.
 
 - **Bug corregido (RF-51.1.6)**: al cerrarse la puerta tras un ciclo de salida acreditado
   (apertura posterior a `entry_confirmed_at` + cierre posterior) el gate del poller **ya no para**
@@ -495,6 +529,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `tests/Unit/cal-walktest.test.js` (BLOCK 35.0b).
 
 ### F46 — Supervisión systemd de workers y latencia SSE
+> **F78/RF-101 (posterior)**: la supervisión systemd del poller de presencia descrita aquí
+> quedó **derogada**; no existe ningún poller ni su unit. El resto (SSE, pool, workers) sigue.
 
 - **Causa raíz (SSE)**: el servidor PHP built-in **no detecta la desconexión del cliente**
   (`connection_aborted()` no se activa); cada SSE muerto retenía un worker hasta `max_lifetime`.
