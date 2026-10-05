@@ -31,9 +31,9 @@ interface WarehouseRecordingServiceInterface
     public function isWarehouseRoom(int $roomId): bool;
 
     /**
-     * F76 (RF-92): `entered_at` de la visita ENTRADA activa creada por un ciclo
-     * de puerta o QR (no por presencia). Sirve de ancla de "huésped dentro" para
-     * la credibilidad de presencia; devuelve null si no hay visita así.
+     * F80 (RF-103.2): `entered_at` de la visita ENTRADA activa del almacén, creada
+     * por QR, puerta **o presencia**. Ancla informativa de "dentro"; F80 ya no la usa
+     * para vetar presencia (deroga F76/RF-92.1). Devuelve null si no hay visita así.
      */
     public function activeEnteredVisitAt(int $roomId): ?string;
 }

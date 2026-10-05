@@ -1623,6 +1623,10 @@ estancia, **sin ningún sondeo periódico**.
 - **RF-101.5**: Si un sensor no entrega por push, la solución documentada es ampliar la regla de
   mensajes de Tuya (`design.md` §13.9), nunca reintroducir un poller.
 
+---
+
+# Fase 79: Visitas fantasma del almacén (RF-102)
+
 ## RF-102 (F79): Visitas fantasma del almacén
 - **RF-102.1**: El motor de grabación del almacén (`WarehouseRecordingService::onSignal`) **NO**
   crea ni modifica visitas ni grabaciones a partir de señales que no sean un ciclo real:
@@ -1645,3 +1649,34 @@ estancia, **sin ningún sondeo periódico**.
     visitas nuevas, el runner falla.
 - **RF-102.5**: Se purgan las visitas fantasma existentes (78/79/81) y sus clips, dejando solo
   las visitas reales.
+
+---
+
+# Fase 80: Presencia del almacén en tiempo real (RF-103)
+
+**Motivo**: el croquis de `/almacen` no refleja la presencia al instante. El motor de grabación ya
+acepta QR, puerta o **presencia** como disparadores de visita (RF-71), pero F75/F76 descartan el
+`PRESENT` del 24G antes de llegar al motor (con la puerta abierta o sin ciclo de puerta previo) y el
+croquis solo pinta el estado final. Requisito del panel: una visita puede empezar al escanear QR, al
+abrir la puerta (pueden entrar sin escanear) **o directamente al detectar presencia**, y la puerta
+puede quedar abierta a propósito (salir y volver). Se restaura la inmediatez de F71 y se representa el
+monigote por fases, tomando como muestra el dashboard operativo (`/dashboard`, sin modificarlo).
+
+## RF-103: Presencia del almacén en tiempo real
+- **RF-103.1**: En `ALMACEN_BEBIDAS`, todo `PRESENT` del sensor `PRESENCE` (provider TUYA, valores
+  crudos `presence` **o** `move`) es **creíble al instante**: no se aplica el filtro de contexto F48 ni
+  el veto de puerta de F76. `ABSENT` (`none`) se aplica siempre (limpia el estado).
+- **RF-103.2**: Un `PRESENT` sin ciclo de puerta inicia una visita de almacén
+  (`entry_trigger=PRESENCE`, `outcome=ENTERED`) y arranca ambas cámaras
+  (`WarehouseRecordingDecision`), también con la puerta abierta (RF-71.5).
+- **RF-103.3**: `GET /almacen-api/state` expone **aditivamente** en `live.recent_presence` los últimos
+  eventos de presencia **aplicados** (`sensor`, `value`, `occurred_at`); el SSE lo incluye en su
+  fingerprint.
+- **RF-103.4**: El croquis de `/almacen` refleja la presencia al instante y anima el monigote por
+  fases en vivo (`near`, `qr`, `crossing`, `inside`, `outside`), usando `live` + `recent_presence` y
+  reutilizando `Choreography.resolveDoorOpen`. La lógica de fases es pura y testeable.
+- **RF-103.5**: La representación del dashboard operativo (`/dashboard`) **no se modifica**.
+- **RF-103.6**: **No regresión / sin cuota**: no se introduce ningún sondeo periódico de Tuya (RF-101);
+  la regresión completa termina con **0 failures** y un **BLOCK 53** nuevo.
+- **RF-103.7**: Se **derogan** RF-91.2 (veto de presencia con puerta `OPEN`) y RF-92.1 (la presencia no
+  ancla la estancia); RF-91.1/RF-91.3, RF-88 (refresco bajo demanda) y RF-101 quedan vigentes.

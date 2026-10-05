@@ -2448,3 +2448,33 @@ Respuestas:
 - `GET /almacen-api/recordings/{id}/video|poster`: sirve el fichero resolviendo desde `api/` (200).
 - `api/run/tuya-quota.json` pasa a ser escrito también por el resync REST del consumer Pulsar.
 - Sin rutas nuevas ni eliminación de campos.
+
+---
+
+# Fase 80: Presencia del almacén en tiempo real (RF-103)
+
+## 1. Semántica de presencia del almacén (sin cambios de forma de API)
+
+- En `ALMACEN_BEBIDAS` todo `PRESENT` de provider TUYA (`tuya_raw_val` `presence` **o** `move`) se
+  aplica (`iot_sessions.presence_state=PRESENT`); no hay veto por puerta `OPEN` ni exigencia de ciclo
+  de puerta. `ABSENT` (`none`) se aplica siempre.
+- `GET /dashboard-api/event-stream` (panel de huéspedes) y la credibilidad F48 de habitaciones **no
+  cambian**.
+- Deroga la semántica de Fase 76 (RF-91.2/RF-92.1).
+
+## 2. `GET /almacen-api/state` — bloque `live` (aditivo)
+
+- Añade `live.recent_presence`: lista de los últimos eventos de presencia **aplicados** con
+  `{ sensor: "PRESENCE", value: "PRESENT"|"ABSENT", occurred_at: "<MySQL UTC>" }` (máx. 10, más
+  reciente primero); `[]` si no hay.
+- Campos existentes (`door_state`, `presence_state`, `switch_state`, `last_open_at`, `last_close_at`,
+  `last_absent_since`, `door_age_seconds`, `presence_age_seconds`, `door_stale_seconds`, `door_stale`,
+  `switch_state_inferred`) no cambian de forma.
+- El evento SSE `state` de `/almacen-api/event-stream` incluye `live.recent_presence` y lo considera
+  en su fingerprint.
+
+## 3. No regresión
+
+- Sin rutas nuevas ni eliminación de campos; `/dashboard` intacto.
+- Sin sondeo periódico de Tuya (RF-101).
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 53** nuevo.

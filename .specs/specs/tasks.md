@@ -3736,3 +3736,34 @@ F79-00 (specs) ─> F79-01 (runner) ─> F79-02 (motor) ─> F79-03 (panel) ─>
 - [ ] F79-02 motor
 - [ ] F79-03 panel
 - [ ] F79-04 purga
+
+---
+
+# Fase 80 — Presencia del almacén en tiempo real (RF-103)
+
+## Tareas
+
+| ID | Descripción | RF | Archivos | Verificación |
+|----|-------------|----|----------|--------------|
+| F80-00 | Specs F80 (requirements/design/contracts/tasks) | RF-103 | `.specs/specs/*` | revisión |
+| F80-01 | Presencia del almacén siempre creíble (`presence`+`move`), sin veto de puerta | RF-103.1 | `src/Domain/Presence/SensorEventDecision.php`, `src/Domain/Presence/IotSessionService.php` | BLOCK 1 |
+| F80-02 | Ancla de visita por presencia + visita/disparo sin ciclo de puerta | RF-103.2 | `src/Domain/Warehouse/WarehouseRecordingService.php` | BLOCK 1 |
+| F80-03 | `live.recent_presence` aditivo en `/almacen-api/state` + SSE | RF-103.3 | `src/Http/Controllers/WarehouseStateController.php` | BLOCK 53 |
+| F80-04 | Fases en vivo del croquis (`near`/`crossing`/`inside`/`outside`) | RF-103.4 | `public/assets/croquis-logic.js`, `public/assets/almacen.js` | `croquis-logic.test.js` |
+| F80-05 | Tests F80 + BLOCK 53 + regresión | RF-103.6 | `tests/Unit/*`, `bin/run-tests.sh`, `AGENTS.md` | `bash bin/run-tests.sh` |
+
+## Orden de ejecución (F80)
+
+```
+F80-00 (specs) ─> F80-01/02 (backend presencia) ─> F80-03 (contrato live)
+              ─> F80-04 (croquis) ─> F80-05 (tests + BLOCK 53) ─> regresión completa
+```
+
+## Estado de ejecución (F80)
+
+- [ ] F80-00 specs
+- [ ] F80-01 presencia siempre creíble
+- [ ] F80-02 ancla por presencia
+- [ ] F80-03 `live.recent_presence`
+- [ ] F80-04 fases del croquis
+- [ ] F80-05 tests + BLOCK 53

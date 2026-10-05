@@ -4898,6 +4898,58 @@ else
 fi
 
 # =============================================================================
+# BLOCK 53 — F80: Presencia del almacén en tiempo real (RF-103)
+# Trazabilidad: RF-103.1..102.6; TSK-F80-01..F80-05
+# =============================================================================
+block "BLOCK 53 — F80: Presencia del almacén en tiempo real"
+
+# 53.0 Estáticos: presencia siempre creíble, contrato live y fases del croquis.
+for F80_MARK in \
+    "src/Domain/Presence/SensorEventDecision.php:F80" \
+    "src/Domain/Presence/IotSessionService.php:F80" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:PRESENCE" \
+    "src/Http/Controllers/WarehouseStateController.php:recent_presence" \
+    "public/assets/croquis-logic.js:phase" \
+    "public/assets/almacen.js:d.phase"; do
+    F80_FILE="${F80_MARK%%:*}"
+    F80_NEEDLE="${F80_MARK#*:}"
+    if grep -q "$F80_NEEDLE" "$F80_FILE" 2>/dev/null; then
+        pass "F80: $F80_FILE define '$F80_NEEDLE'"
+    else
+        fail "F80: $F80_FILE" "falta '$F80_NEEDLE'"
+    fi
+done
+
+# 53.1 Guardia: el veto de puerta de F76 fue eliminado de SensorEventDecision.
+if grep -qF '!($entryWindowActive || $insideNoExitCycle)' "src/Domain/Presence/SensorEventDecision.php" 2>/dev/null; then
+    fail "F80: veto F76 sigue en SensorEventDecision" "aparece (!entryWindowActive || insideNoExitCycle)"
+else
+    pass "F80: veto de puerta de F76 eliminado (presencia creíble al instante)"
+fi
+
+# 53.2 HTTP: /almacen-api/state expone live.recent_presence (array) — contrato aditivo.
+if [ "$SERVER_UP" = true ]; then
+    F80_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F80_ROOM" ]; then
+        F80_STATE=$(curl -s --max-time 10 "$API_BASE/almacen-api/state?room_id=$F80_ROOM" 2>/dev/null)
+        if echo "$F80_STATE" | grep -q '"recent_presence":\['; then
+            pass "F80: state.live.recent_presence expuesto (array)"
+        else
+            fail "F80: state.live.recent_presence" "$(echo "$F80_STATE" | head -c 200)"
+        fi
+        if echo "$F80_STATE" | grep -q '"presence_state"'; then
+            pass "F80: state.live.presence_state intacto"
+        else
+            fail "F80: state.live.presence_state" "no presente"
+        fi
+    else
+        skip "BLOCK 53 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "BLOCK 53 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

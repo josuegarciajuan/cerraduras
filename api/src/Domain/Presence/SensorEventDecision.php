@@ -61,8 +61,8 @@ final class SensorEventDecision
      *
      * @param array<string,mixed> $event Normalised sensor event (room_id, sensor, value, occurred_at).
      * @param bool $duplicateFingerprint True when insertOrGet() found an existing fingerprint/source id.
-     * @param bool $warehousePresence F75 (RF-89): en salas de almacén solo `tuya_raw_val=presence`
-     *        es creíble (el `move` del 24G se dispara desde el pasillo).
+     * @param bool $warehousePresence F80 (RF-103.1): en salas de almacén la presencia es creíble al
+     *        instante (F71 restaurado); se aceptan `presence` y `move` y no hay veto por puerta.
      */
     public static function decide(
         array $event,
@@ -116,14 +116,14 @@ final class SensorEventDecision
         ) {
             $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
             if ($warehousePresence) {
-                // F75 (RF-89): en el almacén la señal fiable del 24G es `presence`
-                // (el `move` no respeta far_detection).
-                // F76 (RF-91/92): además exige contexto de puerta/visita real; con
-                // la puerta abierta el contexto viene en false (fantasmas del hueco).
-                if ($raw !== 'presence' || !($entryWindowActive || $insideNoExitCycle)) {
-                    return self::NO_CONTEXT;
-                }
-            } elseif (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
+                // F80 (RF-103.1, restaura F71/RF-81): en el almacén la presencia es
+                // creíble AL INSTANTE. Se aceptan `presence` y `move`; no se veta por
+                // puerta abierta ni se exige ciclo de puerta. El requisito del panel es
+                // que una visita pueda empezar al detectar presencia (con la puerta
+                // abierta a propósito, entrando/saliendo). ABSENT (`none`) siempre aplica.
+                return self::APPLY;
+            }
+            if (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
                 return self::NO_CONTEXT;
             }
         }

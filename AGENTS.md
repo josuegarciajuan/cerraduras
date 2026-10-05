@@ -160,10 +160,27 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F73 Tope de grabación en pruebas + purga del almacén** | **BLOCK 51** | **Completado** |
 | **F74 Sin polling periódico que gaste cuota Tuya** | **BLOCK 50** | **Completado** |
 | **F75 Refresco de sensores del almacén bajo demanda** | **BLOCK 52** | **Completado** |
-| **F76 Presencia del almacén anclada al ciclo de puerta** | **BLOCK 52** | **Completado** |
+| **F76 Presencia del almacén anclada al ciclo de puerta** *(veto derogado por F80)* | **BLOCK 52** | **Completado** |
 | **F77 Correcciones del panel `/almacen`** | **unit + BLOCK 46/50/51** | **Completado** |
 | **F78 Eliminación total del poller de presencia** | **BLOCK 35** | **Completado** |
 | **F79 Visitas fantasma del almacén** | **BLOCK 42/44** | **Completado** |
+| **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
+
+### F80 — Presencia del almacén en tiempo real (RF-103)
+
+- **Motivo**: el croquis de `/almacen` no reflejaba la presencia al instante. F75/F76 descartaban el
+  `PRESENT` del 24G (puerta abierta o sin ciclo de puerta) antes de llegar al motor y el croquis solo
+  pintaba el estado final. Requisito del panel: la visita puede empezar por QR, por apertura de puerta
+  **o al detectar presencia**, y la puerta puede quedar abierta a propósito (entrar/salir/volver).
+- **Presencia (RF-103.1/103.2)**: en `ALMACEN_BEBIDAS` todo `PRESENT` de provider TUYA (`presence` y
+  `move`) se aplica al instante (sin F48 ni veto de puerta). Un `PRESENT` sin ciclo crea visita
+  (`entry_trigger=PRESENCE`, `ENTERED`) y arranca ambas cámaras. `ABSENT` limpia. Deroga RF-91.2/RF-92.1.
+- **Contrato (RF-103.3)**: `GET /almacen-api/state.live.recent_presence` (aditivo, últimos aplicados);
+  el SSE lo empuja en su fingerprint.
+- **Croquis (RF-103.4)**: `deriveCroquis` añade `phase` (`outside`/`near`/`crossing`/`inside`) y
+  `almacen.js` anima el monigote; la muestra es `/dashboard` (sin modificar).
+- **Sin cuota**: sin poller Tuya; solo push + refresco bajo demanda (RF-101 intacto).
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 53, marcadores F80) + unit `croquis-logic.test.js`.
 
 ### F79 — Visitas fantasma del almacén (RF-102)
 

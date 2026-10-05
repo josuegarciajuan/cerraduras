@@ -176,7 +176,36 @@ const freshOpen = deriveCroquis(snap({
 }), BASE);
 check('F77.5 OPEN fresco → PUERTA ABIERTA', freshOpen.doorOpen === true && freshOpen.chips.door.text === 'PUERTA ABIERTA');
 
-// ─── 14. Módulo require-safe ───────────────────────────────────────────
+// ─── 14. F80 (RF-103.4): fases en vivo del monigote ────────────────────
+check('F80 vacío → phase outside', empty.phase === 'outside');
+check('F80 puerta abierta sin presencia → phase near', open.phase === 'near');
+
+const crossing = deriveCroquis(snap({ door_state: 'OPEN', presence_state: 'PRESENT' }, false), BASE);
+check('F80 puerta abierta + presencia → phase crossing', crossing.phase === 'crossing');
+check('F80 presencia estable (puerta cerrada) → phase inside', whPresence.phase === 'inside');
+
+const recentNear = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'ABSENT',
+  last_open_at: '2026-10-01 07:59:58.000',
+}), BASE);
+check('F80 apertura reciente sin presencia → phase near', recentNear.phase === 'near');
+
+const recentEvt = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'ABSENT',
+  recent_presence: [{ sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:59:56.000' }],
+}), BASE);
+check('F80 PRESENT reciente aplicado → phase inside', recentEvt.phase === 'inside');
+
+const staleEvt = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'ABSENT',
+  recent_presence: [{ sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:30:00.000' }],
+}), BASE);
+check('F80 PRESENT antiguo → phase outside', staleEvt.phase === 'outside');
+
+// ─── 15. Módulo require-safe ───────────────────────────────────────────
 check('module exports the pure croquis logic', typeof deriveCroquis === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
 

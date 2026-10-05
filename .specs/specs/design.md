@@ -4332,3 +4332,72 @@ era real. Las otras tres se originaron así:
 | RF-102.3 | §43.2.3 | §1 (`visits`, `include_no_show`) | F79-03 |
 | RF-102.4 | §43.2.2 | — | F79-01 |
 | RF-102.5 | §43.2.4 | — | F79-04 |
+
+---
+
+# 44. F80 — Presencia del almacén en tiempo real (RF-103)
+
+## 44.1 Problema
+
+El motor `WarehouseRecordingDecision` ya acepta QR, puerta **o** presencia como disparador de visita
+(RF-71.5: `IDLE + EV_PRESENT → RECORDING_INSIDE`, `entry_trigger=PRESENCE`, `A_CREATE_VISIT` +
+`A_CONFIRM_ENTRY`). El bloqueo está **antes** del motor:
+
+- `SensorEventDecision::decide()` descarta el `PRESENT` del almacén con `no_context` cuando la puerta
+  está `OPEN` o no hay ciclo de puerta reciente (F76, `warehousePresenceContext`), y además F75 exige
+  `tuya_raw_val="presence"` (rechaza `move`). El `EV_PRESENT` nunca llega a `onSignal()`.
+- El croquis (`deriveCroquis`) pinta solo el estado final (`occupied || presence_state==='PRESENT'`)
+  y nunca las fases de acercamiento/cruce → "no se mueve".
+
+## 44.2 Presencia siempre creíble en el almacén (restaura F71)
+
+- En `ALMACEN_BEBIDAS` **no** se calcula contexto de puerta/visita: `IotSessionService`
+  `warehousePresenceContext()` pasa a devolver siempre credibilidad. `SensorEventDecision::decide()`
+  (rama `warehousePresence`) pasa a devolver `APPLY` para todo `PRESENT` de provider TUYA
+  (`presence` y `move`). `ABSENT`/`none` sigue aplicándose siempre.
+- Efecto: `iot_sessions.presence_state=PRESENT` al instante → post-commit `EV_PRESENT` →
+  `WarehouseRecordingService::onSignal()` crea la visita (`PRESENCE`) y arranca ambas cámaras.
+- `WarehouseRecordingService::activeEnteredVisitAt()` incluye `PRESENCE` como ancla (la visita por
+  presencia es real); deja de ser un vetador de credibilidad.
+- Sin cambios en F48 (huéspedes): `presenceContext()` y su comportamiento quedan intactos.
+
+## 44.3 Contrato del croquis en vivo (aditivo)
+
+- `WarehouseStateController::stateArray()` añade `live.recent_presence` (últimos eventos aplicados:
+  `sensor`, `value`, `occurred_at`), leídos de `presence_events`.
+- `AlmacenEventStreamController` ya incluye `live` en el fingerprint → empuja el cambio sin tocar el
+  stream.
+
+## 44.4 Fases del monigote (lógica pura)
+
+`croquis-logic.js::deriveCroquis(snapshot, now)` amplía su retorno con `phase`:
+
+- `qr`: `live.scanning`/evento QR reciente (solo en reproducción; en vivo no hay QR).
+- `crossing`: `doorOpen` y hay PRESENT reciente (< ventana) o `presence_state=PRESENT`.
+- `inside`: `occupied` o `presence_state=PRESENT` estable.
+- `near`: `doorOpen`/apertura reciente sin presencia confirmada.
+- `outside`: por defecto.
+- Reutiliza `Choreography.resolveDoorOpen` (ya cargado en `almacen.html`); la función sigue siendo
+  pura (recibe `recent_presence`, no toca red ni DOM). `almacen.js::renderCroquis` aplica la clase
+  `pos-<phase>` (CSS ya presente en `almacen.html`).
+
+## 44.5 Derogaciones y alcance
+
+- **Deroga**: RF-91.2 (presencia no creíble con puerta `OPEN`) y RF-92.1 (la presencia no ancla).
+- **Vigente**: RF-88 (refresco bajo demanda), RF-91.3 (F48 de huéspedes), RF-101 (prohibido el poller).
+- **No se toca** `/dashboard` ni su pipeline.
+
+## 44.6 Riesgos
+
+- Al aceptar `move` y puerta abierta pueden reaparecer fantasmas del pasillo (motivo original de F76).
+  Se mitiga con `ABSENT` (que limpia el estado), `far_detection` del 24G y sin sondeo/cuota. Decisión
+  explícita del operador por el requisito de los 3 disparadores.
+
+## 44.7 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-103.1–103.2 | §44.1–44.2 | §6 | F80-01, F80-02 |
+| RF-103.3 | §44.3 | §6 | F80-03 |
+| RF-103.4 | §44.4 | §6 | F80-04 |
+| RF-103.5–103.7 | §44.5 | §6 | F80-05 |
