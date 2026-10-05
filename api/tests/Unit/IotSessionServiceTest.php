@@ -32,6 +32,7 @@ use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
+use App\Domain\Warehouse\WarehouseRecordingServiceInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayInterface;
 use App\Support\Clock;
 
@@ -185,6 +186,26 @@ final class FakeAccessEventRepoF8 implements AccessEventRepositoryInterface
     }
 }
 
+/**
+ * F81 (RF-104): espía mínimo del motor de grabación del almacén. Solo registra
+ * las señales entregadas por IotSessionService para poder verificar qué evento
+ * (`DOOR_CLOSE` vs `DOOR_CLOSE_ABSENT`) recibe al cerrar la puerta.
+ */
+final class FakeWarehouseRecorder implements WarehouseRecordingServiceInterface
+{
+    /** @var list<array{room_id:int,event:string,meta:array<string,mixed>}> */
+    public array $signals = [];
+
+    public function onSignal(int $roomId, string $event, array $meta = []): void
+    {
+        $this->signals[] = ['room_id' => $roomId, 'event' => $event, 'meta' => $meta];
+    }
+    public function tickDeadlines(): int { return 0; }
+    public function enforceRecordingCap(int $maxSeconds): int { return 0; }
+    public function isWarehouseRoom(int $roomId): bool { return false; }
+    public function activeEnteredVisitAt(int $roomId): ?string { return null; }
+}
+
 // ============================================================================
 // Build service under test
 // ============================================================================
@@ -196,6 +217,7 @@ $rtRepo    = new FakeRoomTypeRepoF8();
 $stayRepo  = new FakeStayRepoF8();
 $evRepo    = new FakeAccessEventRepoF8();
 $smRepo    = new FakeStayRepoF8(); // separate copy for StayStateMachine
+$whSpy     = new FakeWarehouseRecorder(); // F81: espía del motor del almacén
 
 // Room 1, RoomType 1 (exit_gap=5s, cooldown=10s)
 $rt = new RoomType(1,'STANDARD','Standard', 5, 5, 10, 30);
@@ -211,7 +233,7 @@ $exitAction    = new ExitActionService(
 
 $svc = new IotSessionService(
     $presRepo, $iotRepo, $roomRepo, $rtRepo, $stayRepo, $stayMachine, $evRepo, $exitEvaluator,
-    null, $exitAction
+    null, $exitAction, null, null, $whSpy
 );
 
 // ============================================================================
@@ -486,6 +508,43 @@ if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRE
     ok('F77.5: puerta OPEN stale no veta la presencia (recuperación)');
 } else {
     bad('F77.5: puerta OPEN stale debería aplicar presencia', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+
+// ============================================================================
+// F81 (RF-104): cierre de puerta del almacén → señal al motor de grabación
+// ============================================================================
+echo "\nF81 · cierre de puerta del almacén (RF-104)\n";
+
+// Caso 1: sesión ya mutada en ABSENT + PROXIMITY=CLOSED → DOOR_CLOSE_ABSENT.
+Clock::freeze(new DateTimeImmutable('2026-04-28T15:00:00Z', new DateTimeZone('UTC')));
+$iotRepo->sessions[10]->presenceState     = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[10]->doorState         = IotSession::DOOR_OPEN;
+$iotRepo->sessions[10]->lastDoorValue     = PresenceEvent::VALUE_OPEN;
+$iotRepo->sessions[10]->lastDoorEventAt   = '2026-04-28 14:59:59.000';
+$whSpy->signals = [];
+$svc->processEvent(makeEvent(10, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T15:00:00Z', 'f81-closed-absent'), 'corr-f81-absent');
+$f81Sigs1 = $whSpy->signals;
+$f81Last1 = $f81Sigs1 !== [] ? end($f81Sigs1) : null;
+if (is_array($f81Last1) && $f81Last1['event'] === 'DOOR_CLOSE_ABSENT') {
+    ok('F81: CLOSED con presencia ABSENT → motor recibe DOOR_CLOSE_ABSENT');
+} else {
+    bad('F81: CLOSED con presencia ABSENT', 'recibió ' . (is_array($f81Last1) ? $f81Last1['event'] : 'ninguna señal'));
+}
+
+// Caso 2: sesión en PRESENT + PROXIMITY=CLOSED → se mantiene DOOR_CLOSE.
+$iotRepo->sessions[10]->presenceState     = IotSession::PRESENCE_PRESENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_PRESENT;
+$iotRepo->sessions[10]->lastDoorValue     = PresenceEvent::VALUE_OPEN;
+$iotRepo->sessions[10]->lastDoorEventAt   = '2026-04-28 15:00:00.000';
+$whSpy->signals = [];
+$svc->processEvent(makeEvent(10, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T15:00:01Z', 'f81-closed-present'), 'corr-f81-present');
+$f81Sigs2 = $whSpy->signals;
+$f81Last2 = $f81Sigs2 !== [] ? end($f81Sigs2) : null;
+if (is_array($f81Last2) && $f81Last2['event'] === 'DOOR_CLOSE') {
+    ok('F81: CLOSED con presencia PRESENT → motor recibe DOOR_CLOSE (no cierra visita)');
+} else {
+    bad('F81: CLOSED con presencia PRESENT', 'recibió ' . (is_array($f81Last2) ? $f81Last2['event'] : 'ninguna señal'));
 }
 
 Clock::unfreeze();

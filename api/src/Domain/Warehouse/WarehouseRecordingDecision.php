@@ -21,7 +21,14 @@ namespace App\Domain\Warehouse;
  *                     EXTERIOR keeps recording for M more seconds
  *
  * Events:
- *   QR_OK, DOOR_OPEN, DOOR_CLOSE, PRESENT, ABSENT, X_EXPIRED, M_EXPIRED
+ *   QR_OK, DOOR_OPEN, DOOR_CLOSE, DOOR_CLOSE_ABSENT, PRESENT, ABSENT,
+ *   X_EXPIRED, M_EXPIRED
+ *
+ * F81 (RF-104): DOOR_CLOSE_ABSENT is emitted when the door closes and the
+ * (already-mutated) IoT session is NOT in PRESENT state. In
+ * RECORDING_INSIDE it ends the visit exactly like ABSENT (stop INT, mark
+ * exit, deadline M); DOOR_CLOSE stays a no-op there so a close with someone
+ * still inside does not cut the recording.
  *
  * See design.md §27.2.
  */
@@ -36,6 +43,7 @@ final class WarehouseRecordingDecision
     public const EV_QR_OK      = 'QR_OK';
     public const EV_DOOR_OPEN  = 'DOOR_OPEN';
     public const EV_DOOR_CLOSE = 'DOOR_CLOSE';
+    public const EV_DOOR_CLOSE_ABSENT = 'DOOR_CLOSE_ABSENT';
     public const EV_PRESENT    = 'PRESENT';
     public const EV_ABSENT     = 'ABSENT';
     public const EV_X_EXPIRED  = 'X_EXPIRED';
@@ -110,7 +118,10 @@ final class WarehouseRecordingDecision
                 break; // DOOR_CLOSE / others: keep waiting for X
 
             case self::STATE_RECORDING_INSIDE:
-                if ($event === self::EV_ABSENT) {
+                // F81 (RF-104.1/104.2): closing the door with no presence inside
+                // (DOOR_CLOSE_ABSENT) ends the visit exactly like ABSENT. A plain
+                // DOOR_CLOSE stays a no-op: someone remains inside, keep recording.
+                if ($event === self::EV_ABSENT || $event === self::EV_DOOR_CLOSE_ABSENT) {
                     return self::out(self::STATE_EXIT_PENDING, $trigger, true, [
                         self::A_STOP_INT, self::A_MARK_EXIT, self::A_SET_DEADLINE_M,
                     ]);

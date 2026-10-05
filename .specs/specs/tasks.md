@@ -3767,3 +3767,70 @@ F80-00 (specs) ─> F80-01/02 (backend presencia) ─> F80-03 (contrato live)
 - [ ] F80-03 `live.recent_presence`
 - [ ] F80-04 fases del croquis
 - [ ] F80-05 tests + BLOCK 53
+
+---
+
+# Fase 81: Cierre de visita del almacén (RF-104)
+
+## TSK-F81-01: Evento interno `DOOR_CLOSE_ABSENT` en el motor
+- **Trazabilidad**: RF-104.2, RF-104.3, RF-104.4.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingDecision.php`,
+  `api/tests/Unit/WarehouseRecordingDecisionTest.php`.
+- **Pasos**:
+  - [ ] Añadir la constante `EV_DOOR_CLOSE_ABSENT = 'DOOR_CLOSE_ABSENT'`.
+  - [ ] En `STATE_RECORDING_INSIDE`, tratar `EV_DOOR_CLOSE_ABSENT` igual que `EV_ABSENT`:
+        acciones `STOP_INT`, `MARK_EXIT`, `SET_DEADLINE_M` → `EXIT_PENDING`.
+  - [ ] Mantener `EV_DOOR_CLOSE` como no-op en `RECORDING_INSIDE` (presencia interior).
+  - [ ] Tests: `DOOR_CLOSE_ABSENT` en `RECORDING_INSIDE` → `EXIT_PENDING`; `DOOR_CLOSE` sigue
+        no-op; `QR_PENDING + DOOR_CLOSE` sigue esperando X.
+- **Verificación**: `api/tests/Unit/WarehouseRecordingDecisionTest.php` y
+  `cd /root/cerraduras/api && bash bin/run-tests.sh`.
+
+## TSK-F81-02: Elegir el evento según `presence_state` post-commit
+- **Trazabilidad**: RF-104.1, RF-104.2, RF-104.3, RF-104.6.
+- **Archivo(s)**: `api/src/Domain/Presence/IotSessionService.php`,
+  `api/tests/Unit/IotSessionServiceTest.php`.
+- **Pasos**:
+  - [ ] En el bloque post-commit del motor del almacén, al procesar `PROXIMITY=CLOSED`, leer el
+        `presence_state` de la sesión IoT ya mutada.
+  - [ ] Entregar `EV_DOOR_CLOSE_ABSENT` si `presence_state=ABSENT`; `EV_DOOR_CLOSE` en caso
+        contrario (incluye `PRESENT`).
+  - [ ] Mantener los filtros F79 (provider `SIMULATED`, `source` `resync`/`sim`).
+  - [ ] Tests: cierre sin presencia → `EXIT_PENDING`; cierre con presencia → `RECORDING_INSIDE`.
+- **Verificación**: `api/tests/Unit/IotSessionServiceTest.php` y
+  `cd /root/cerraduras/api && bash bin/run-tests.sh`.
+
+## TSK-F81-03: Croquis `inside` al detectar presencia
+- **Trazabilidad**: RF-104.5.
+- **Archivo(s)**: `api/public/assets/croquis-logic.js`, `api/public/almacen.html`,
+  `api/tests/Unit/croquis-logic.test.js`.
+- **Pasos**:
+  - [ ] `deriveCroquis`: si hay presencia (`PRESENT`/`occupied`) la fase es `inside` aunque la
+        puerta esté abierta; puerta abierta sin presencia → `near`; sin nada → `outside`.
+  - [ ] Posición de `inside` más al interior en el CSS de `almacen.html`.
+  - [ ] Tests: `inside` con puerta abierta + presencia; `near` con puerta abierta sin presencia.
+- **Verificación**: `api/tests/Unit/croquis-logic.test.js` y
+  `cd /root/cerraduras/api && bash bin/run-tests.sh`.
+
+## TSK-F81-04: Regresión del runner con marcadores F81
+- **Trazabilidad**: RF-104.6, RF-104.7, RF-104.8.
+- **Archivo(s)**: `api/bin/run-tests.sh`.
+- **Pasos**:
+  - [ ] Ampliar el BLOCK vigente con casos F81 (inicio por los 3 disparadores; fin por `ABSENT` con
+        puerta abierta; fin por cierre sin presencia; cierre con presencia no termina).
+  - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
+  - [ ] Ejecutar la regresión completa.
+- **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
+
+## Orden de ejecución (F81)
+
+```
+F81-01 (motor) ─> F81-02 (enganche) ─> F81-03 (croquis) ─> F81-04 (runner + regresión)
+```
+
+## Estado de ejecución (F81)
+
+- [ ] F81-01 evento `DOOR_CLOSE_ABSENT`
+- [ ] F81-02 elección según `presence_state`
+- [ ] F81-03 croquis `inside`
+- [ ] F81-04 BLOCK del runner + regresión

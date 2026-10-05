@@ -237,6 +237,16 @@ final class IotSessionService
             // F63/RF-71: warehouse recording engine (best-effort, post-commit).
             if ($this->warehouseRecorder !== null) {
                 $warehouseEvent = self::warehouseEventFor($sensor, $value);
+                // F81 (RF-104.3/104.4): al cerrar la puerta, si la sesión IoT ya
+                // mutada NO tiene presencia interior (ABSENT), la visita del
+                // almacén debe terminar. Con PRESENT o UNKNOWN se mantiene
+                // EV_DOOR_CLOSE (conservador: no cerrar sin certeza de interior).
+                if ($warehouseEvent === \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_CLOSE
+                    && $session !== null
+                    && $session->presenceState === IotSession::PRESENCE_ABSENT
+                ) {
+                    $warehouseEvent = \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_CLOSE_ABSENT;
+                }
                 if ($warehouseEvent !== null) {
                     try {
                         // F79 (RF-102.1/102.2): se entrega el provider y el origen
