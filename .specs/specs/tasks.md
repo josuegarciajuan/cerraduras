@@ -3636,3 +3636,38 @@ F75-01 (specs) ─> F75-02 (presencia) ─> F75-03 (refresh+panel) ─> F75-04 (
 ```
 F76-01 (specs) ─> F76-02 (contexto) ─> F76-03 (ancla) ─> F76-04 (runner + regresión)
 ```
+
+---
+
+# Fase 77 — Correcciones del panel /almacen (RF-93..RF-100)
+
+| Tarea | Descripción | RF | Archivos | Verificación |
+|-------|-------------|----|----------|--------------|
+| F77-00 | Specs F77 | RF-93..100 | `.specs/specs/*`, `AGENTS.md` | revisión |
+| F77-01 | Servido de clips (base `api/`) | RF-93 | `WarehouseRecordingController.php`, `WarehouseStateController.php`, `WarehouseClipPathTest.php` | unit PHP |
+| F77-02 | Estado de puerta robusto (frescura real + STALE) | RF-94 | `WarehouseStateController.php`, `IotSessionService.php`, `croquis-logic.js` | unit PHP/JS |
+| F77-03 | Replay coherente con tope | RF-95 | `visit-playback.js` | unit JS |
+| F77-04 | Directo estable | RF-96 | `almacen.js`, `AlmacenEventStreamController.php` | unit + estático |
+| F77-05 | Consumer: pong + presupuesto compartido | RF-97 | `tuya-pulsar-consumer/index.js` | unit JS |
+| F77-06 | Purga sin huérfanos | RF-98 | `warehouse-recorder.php`, `warehouse-purge.php` | estático + manual |
+| F77-07 | Luz inferida + detalle persistente + menores | RF-99/100 | `WarehouseStateController.php`, `croquis-logic.js`, `almacen.js` | unit JS + estático |
+| F77-08 | Runner + regresión completa | RF-93..100 | `run-tests.sh`, `AGENTS.md` | `bash bin/run-tests.sh` |
+
+## Orden de ejecución (F77)
+
+```
+F77-00 (specs) ─> F77-05 (consumer) ─> F77-01 (clips) ─> F77-02 (puerta)
+              ─> F77-03 (replay) ─> F77-04 (directo) ─> F77-06 (purga)
+              ─> F77-07 (luz/detalle) ─> F77-08 (runner + regresión)
+```
+
+## Estado de ejecución (F77)
+
+- [x] F77-01 clips servidos + `WarehouseClipPathTest` (4/4)
+- [x] F77-02 puerta robusta + `IotSessionServiceTest` (26/26) + `croquis-logic` (42/42)
+- [x] F77-03 replay + `visit-playback` (63/63)
+- [x] F77-04 directo estable (diff DOM + fingerprint)
+- [x] F77-05 consumer pong/budget + `tuya-pulsar-consumer` (37/37)
+- [x] F77-06 recorder aborta huérfanos
+- [x] F77-07 luz inferida + detalle persistente
+- [ ] F77-08 regresión completa (`run-tests.sh`)

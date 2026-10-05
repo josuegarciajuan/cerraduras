@@ -4183,3 +4183,47 @@ abierta, el sensor además ve el pasillo por el hueco.
 |---|---|---|---|
 | RF-91 | §40.2 | Fase 76 | F76-02 |
 | RF-92 | §40.3 | Fase 76 | F76-03 |
+
+## 41. Fase 77 — Correcciones del panel /almacen
+
+### 41.1 Servido de clips (RF-93 / F77.1)
+`WarehouseRecordingController` resuelve `storageRoot` y la base de rutas con `dirname(__DIR__, 3)`
+= `api/` (antes `api/src` → `realpath` fallaba y todos los clips daban 404). Aplica también a
+`WarehouseStateController::retentionInfo()` (`disk_used_pct`).
+
+### 41.2 Estado de puerta robusto (RF-94 / F77.5)
+- Frescura real desde `iot_sessions.last_door_event_at` / `last_presence_event_at` (solo `APPLY`).
+- `deriveCroquis` pinta `PUERTA SIN DATOS (hace X)` si `live.door_stale`.
+- `IotSessionService::warehousePresenceContext()`: veta presencia con `OPEN` **solo si el sensor está
+  fresco** (`DOOR_STALE_SECONDS`, default 300 s); si está mudo devuelve `[true,false]` (recuperación F71).
+
+### 41.3 Reproducción (RF-95 / F77.2)
+`visit-playback.js` ancla `crossOutMs` a `exited_at` (o clip EXIT explícito) restando `CROSS_MS`; ya no
+usa el fin del clip INTERIOR, que con el tope de grabación termina antes que la estancia.
+
+### 41.4 Directo (RF-96 / F77.3)
+Fingerprint SSE sin `*_age_seconds`; `renderCameras` solo reconstruye el DOM si cambia la firma de cámaras
+y no está en modo replay.
+
+### 41.5 Consumer sin poll periódico (RF-97 / F77.4)
+`silenceExceeded()` usa `max(lastMessageAt, lastPongAt)`; `resyncKnownDevices()` reserva cuota en
+`api/run/tuya-quota.json` antes de cada `tuyaRequest` (token y status).
+
+### 41.6 Recorder (RF-98 / F77.6)
+Reconcile 3b: mata ffmpeg gestionados cuyo id ya no está en `camera_recordings`.
+
+### 41.7 Luz y detalle (RF-99/RF-100 / F77.7–F77.8)
+`switch_state_inferred` (último comando) mostrado como estimación; `selectedVisitId` evita cerrar el
+detalle en el refresco de 15 s.
+
+### 41.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-93 | §41.1 | §4 | F77-01 |
+| RF-94 | §41.2 | §4 | F77-02 |
+| RF-95 | §41.3 | §4 | F77-03 |
+| RF-96 | §41.4 | §4 | F77-04 |
+| RF-97 | §41.5 | §4 | F77-05 |
+| RF-98 | §41.6 | §4 | F77-06 |
+| RF-99/100 | §41.7 | §4 | F77-07 |

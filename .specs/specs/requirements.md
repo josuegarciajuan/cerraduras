@@ -1570,3 +1570,40 @@ estancia, **sin ningún sondeo periódico**.
   credibilidad (rompe la auto-justificación).
 - **RF-92.2**: **No regresión**: la regresión completa termina con **0 failures**; el **BLOCK 52**
   se amplía con los marcadores F76.
+
+## RF-93 (F77.1): Los clips del almacén se sirven de verdad
+- **RF-93.1**: `GET /almacen-api/recordings/{id}/video|poster` resuelve la ruta relativa desde la raíz
+  `api/` (no `api/src/`), de modo que un clip `SAVED` con fichero existente responde 200 (antes siempre 404).
+- **RF-93.2**: Se mantiene el bloqueo de path traversal (nada fuera de `data/cameras/`).
+
+## RF-94 (F77.5): Estado de puerta robusto
+- **RF-94.1**: `door_age_seconds`/`presence_age_seconds` se calculan desde el último evento **aplicado**
+  (`iot_sessions.last_door_event_at`/`last_presence_event_at`), no desde `MAX(received_at)`.
+- **RF-94.2**: `GET /almacen-api/state` expone `door_stale` y `door_stale_seconds`; un `OPEN` viejo se
+  pinta como `PUERTA SIN DATOS` en el croquis.
+- **RF-94.3**: Con sensor de puerta mudo (`> DOOR_STALE_SECONDS`, default 300 s) la presencia **no** se
+  veta (se recupera F71). Con sensor fresco y puerta `OPEN` se mantiene la supresión de fantasmas (F76).
+
+## RF-95 (F77.2): Reproducción coherente con el tope de grabación
+- **RF-95.1**: El inicio de la fase de salida se ancla a `exited_at` (un clip EXIT explícito manda), no al
+  fin del clip INTERIOR; con clips más cortos que la estancia el monigote permanece DENTRO.
+
+## RF-96 (F77.3): Directo estable
+- **RF-96.1**: El fingerprint SSE excluye las edades de señal (diagnóstico) y el panel no recrea el DOM de
+  cámaras si no cambia nada relevante, evitando reiniciar el MJPEG en cada push.
+
+## RF-97 (F77.4): Sin poll periódico a Tuya
+- **RF-97.1**: El watchdog de silencio considera el PONG del ping proactivo como señal de vida; un socket
+  sano en reposo no se reconecta (antes cada 15 min → resync REST ~192 llamadas/día).
+- **RF-97.2**: El resync puntual REST respeta y contabiliza el presupuesto compartido
+  (`api/run/tuya-quota.json`, `TUYA_HOURLY_BUDGET`/`TUYA_DAILY_BUDGET`, `backoffUntil`).
+
+## RF-98 (F77.6): Purga sin ffmpeg huérfanos
+- **RF-98.1**: El recorder aborta los ffmpeg gestionados cuyo registro ya no existe en `camera_recordings`.
+
+## RF-99 (F77.7): Estado de luz honesto
+- **RF-99.1**: Sin push del SWITCH, `/state` expone `switch_state_inferred` (último comando); el croquis lo
+  muestra como estimación (`LUZ ON?`) sin encender el foco.
+
+## RF-100 (F77.8): Detalle de visita persistente
+- **RF-100.1**: El refresco periódico de la lista no cierra el detalle de la visita seleccionada.
