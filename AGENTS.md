@@ -145,6 +145,31 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F74 Sin polling periódico que gaste cuota Tuya** | **BLOCK 50** | **Completado** |
 | **F75 Refresco de sensores del almacén bajo demanda** | **BLOCK 52** | **Completado** |
 | **F76 Presencia del almacén anclada al ciclo de puerta** | **BLOCK 52** | **Completado** |
+| **F77 Correcciones del panel `/almacen`** | **unit + BLOCK 46/50/51** | **Completado** |
+
+### F77 — Correcciones del panel `/almacen` (RF-93..RF-100)
+
+- **B1 clips (RF-93)**: `WarehouseRecordingController`/`retentionInfo` resolvían la raíz con
+  `dirname(__DIR__,2)` = `api/src` → `realpath` fallaba y **todos** los clips daban 404. Ahora `api/`
+  (`WarehouseClipPathTest.php`).
+- **B2 replay (RF-95)**: `crossOutMs` se anclaba al fin del clip INTERIOR; con el tope de 60 s el
+  monigote quedaba "Saliendo" durante el resto. Ahora se ancla a `exited_at` (clip EXIT explícito manda).
+- **B3 directo (RF-96)**: el fingerprint SSE excluye `*_age_seconds` y `renderCameras` no recrea el
+  `<img>` MJPEG si no cambia nada (antes se reiniciaba ~1/s).
+- **B4 poll oculto (RF-97)**: el watchdog de silencio reconectaba cada 15 min (socket sano en reposo) y
+  el resync REST gastaba ~192 llamadas/día a Tuya sin pasar por el presupuesto. Ahora la liveness
+  incluye el PONG y el resync respeta/contabiliza `api/run/tuya-quota.json`.
+- **B5 puerta atascada (RF-94)**: frescura real desde el último evento **aplicado**; `door_stale`
+  (default `DOOR_STALE_SECONDS=300`); un `OPEN` mudo ya **no** veta la presencia (recupera F71) y el
+  croquis pinta `PUERTA SIN DATOS`.
+- **B6 purga (RF-98)**: el recorder aborta ffmpeg cuyo registro ya no existe (se recuperaron ~3,9 GB
+  retenidos por 2 ffmpeg huérfanos de 3 días).
+- **B7 luz (RF-99)**: sin push del SWITCH, `switch_state_inferred` (último comando) como estimación.
+- **B8/B9 (RF-100)**: `retention.disk_used_pct` deja de ser `null`; el refresco de visitas no cierra el
+  detalle abierto.
+- **Verificación**: `bash bin/run-tests.sh` → **444 passed, 0 failed, 5 skipped**. Stopgap previo
+  `CONSUMER_SILENCE_MS` retirado tras desplegar F77.4; verificado en vivo que no hay reconexión ni
+  resync en 16 min de reposo.
 
 ### F76 — Presencia del almacén anclada al ciclo de puerta (RF-91 / RF-92)
 
