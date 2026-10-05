@@ -73,7 +73,7 @@ final class WarehouseStateController
         $visit = null;
         if ($wsRow['current_visit_id'] !== null) {
             $vs = $this->pdo->prepare(
-                'SELECT v.id, v.worker_id, w.name AS worker_name, v.entry_trigger, v.outcome, v.entered_at
+                'SELECT v.id, v.worker_id, w.name AS worker_name, v.entry_trigger, v.outcome, v.entered_at, v.exited_at
                  FROM warehouse_visits v LEFT JOIN workers w ON w.id = v.worker_id WHERE v.id = :id LIMIT 1'
             );
             $vs->execute([':id' => (int) $wsRow['current_visit_id']]);
@@ -86,6 +86,7 @@ final class WarehouseStateController
                     'entry_trigger' => (string) $v['entry_trigger'],
                     'outcome' => (string) $v['outcome'],
                     'entered_at' => $entered,
+                    'exited_at' => $v['exited_at'] ?? null,
                     'seconds_inside' => $entered !== null ? max(0, time() - strtotime((string) $entered . ' UTC')) : null,
                 ];
             }
@@ -217,11 +218,26 @@ final class WarehouseStateController
             ];
         }
 
+        // F83/RF-106.1/106.2: fidelidad al sensor. ABSENT manda sobre la visita;
+        // UNKNOWN no afirma presencia (fallback a visita activa sin salida).
+        $presenceState = (string) ($live['presence_state'] ?? 'UNKNOWN');
+        $presenceKnown = in_array($presenceState, ['PRESENT', 'ABSENT'], true);
+        $presenceActive = ($presenceState === 'PRESENT');
+        $activeVisit = ($visit !== null
+            && (string) ($visit['outcome'] ?? '') === 'ENTERED'
+            && ($visit['exited_at'] ?? null) === null);
+        $exiting = ((string) $wsRow['state'] === 'EXIT_PENDING')
+            || ($visit !== null && ($visit['exited_at'] ?? null) !== null);
+        $occupied = $presenceKnown ? $presenceActive : $activeVisit;
+        $live['presence_active'] = $presenceActive;
+        $live['presence_known'] = $presenceKnown;
+
         return [
             'room' => ['id' => $roomId, 'code' => (string) $room['code'], 'room_type_id' => (int) $room['room_type_id']],
             'warehouse' => [
                 'state' => (string) $wsRow['state'],
-                'occupied' => $visit !== null && ($visit['outcome'] ?? '') === 'ENTERED',
+                'occupied' => $occupied,
+                'exiting' => $exiting,
                 'current_visit' => $visit,
             ],
             'live' => $live,

@@ -1,7 +1,8 @@
 /**
  * croquis-logic.js — F67 (RF-77): lógica PURA del croquis en vivo del almacén.
  *
- * Trazabilidad: RF-77.1/77.2/77.5 · design.md §31.4 · tasks.md TSK-F67-03.
+ * Trazabilidad: RF-77.1/77.2/77.5 · F83/RF-106 (fidelidad al radar) ·
+ * design.md §31.4 · tasks.md TSK-F67-03.
  *
  * Función PURA `deriveCroquis(snapshot, now)`:
  *   - no lee el DOM ni globals mutables;
@@ -92,7 +93,14 @@
    * @param {number} now epoch ms
    * @returns {{door:string,presence:string,light:string,occupied:boolean,
    *            personInside:boolean,doorOpen:boolean,unknown:boolean,
-   *            phase:string,classes:object,chips:object,desc:string}}
+   *            recentPresent:boolean,phase:string,classes:object,chips:object,
+   *            desc:string}}
+   *
+   * F83/RF-106:
+   *   - `personInside` = presencia conocida ? (PRESENT) : `occupied` (fallback).
+   *     `ABSENT` siempre manda; `UNKNOWN` nunca afirma presencia.
+   *   - `phase` no se recoloca a 'inside' por un PRESENT anterior.
+   *   - el chip de presencia es honesto (sin forzar 'PRESENTE' por `occupied`).
    */
   function deriveCroquis(snapshot, now) {
     var s = snapshot || {};
@@ -117,24 +125,27 @@
     var staleOpen = doorStale && door === 'OPEN';
     var doorOpen = !staleOpen && resolveDoor(door, pulseUntil, nowMs);
 
-    var personInside = occupied || presence === 'PRESENT';
+    // F83/RF-106.1/106.2: el radar manda. ABSENT gana sobre la visita enlazada
+    // y sobre cualquier PRESENT anterior; UNKNOWN (el radar no ha reportado) no
+    // afirma presencia, solo cae al fallback de visita activa sin salida.
+    var presenceKnown = (presence === 'PRESENT' || presence === 'ABSENT');
+    var personInside = presenceKnown ? (presence === 'PRESENT') : occupied;
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
 
     // F80/RF-103.4: fase en vivo del monigote (acercamiento → dentro → fuera).
     // F81/RF-104.5: ya no hay "crossing" en vivo; el cruce es solo de la
-    // reproducción de visitas (F68). Se deriva de la puerta + presencia +
-    // eventos de presencia APLICADOS recientes.
+    // reproducción de visitas (F68).
+    // F83/RF-106.2: la fase NO se recoloca a 'inside' por un PRESENT anterior;
+    // manda `personInside` (presencia conocida o fallback de visita activa) y,
+    // en su defecto, la puerta. `recentPresent` queda solo como diagnóstico.
     var recentPresentMs = lastPresenceEventMs(live.recent_presence, 'PRESENT');
     var recentOpen = lastOpenMs > 0 && (nowMs - lastOpenMs) <= DOOR_NEAR_WINDOW_MS;
     var recentPresent = recentPresentMs > 0 && (nowMs - recentPresentMs) <= LIVE_PRESENCE_WINDOW_MS;
     var phase;
     if (personInside) {
-      // F81 (RF-104.5): presencia detectada ⇒ monigote dentro, no medio afuera.
       phase = 'inside';
     } else if (doorOpen || recentOpen) {
       phase = 'near';
-    } else if (recentPresent) {
-      phase = 'inside';
     } else {
       phase = 'outside';
     }
@@ -147,10 +158,10 @@
       : door === 'CLOSED' ? chip('PUERTA CERRADA', 'dim')
       : chip('PUERTA SIN DATOS', 'dim');
 
+    // F83/RF-106.2: el chip es honesto con el radar; `occupied` no fuerza
+    // 'PRESENTE'. UNKNOWN nunca afirma presencia (chip "SIN DATOS").
     var presenceChip;
-    if (occupied) {
-      presenceChip = chip('PRESENTE', 'ok');
-    } else if (presence === 'PRESENT') {
+    if (presence === 'PRESENT') {
       presenceChip = chip('PRESENCIA', 'warn');
     } else if (presence === 'ABSENT') {
       presenceChip = chip('VACÍO', 'dim');
@@ -183,9 +194,12 @@
       personInside: personInside,
       doorOpen: doorOpen,
       unknown: unknown,
+      // F83/RF-106.2: diagnóstico; NO interviene en `phase`.
+      recentPresent: recentPresent,
       // F80/RF-103.4: 'outside' | 'near' | 'inside'. F81/RF-104.5: 'crossing'
       // y 'qr' quedan reservados a la reproducción de visitas (F68), no al modo
-      // en vivo (presencia ⇒ 'inside').
+      // en vivo. F83/RF-106.2: 'inside' solo con presencia conocida PRESENT o
+      // fallback de visita activa; un PRESENT anterior no recoloca dentro.
       phase: phase,
       classes: {
         open: doorOpen,

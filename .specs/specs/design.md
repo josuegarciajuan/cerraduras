@@ -4496,3 +4496,78 @@ debe reflejar las visitas que el motor realmente crea, sin exigir un parámetro.
 | RF-105.2 | §46.1 | §F82.1 | TSK-F82-01, TSK-F82-02 |
 | RF-105.3 | §46.1 | §F82.1 | TSK-F82-01 |
 | RF-105.4 | §46.3 | §F82.2–82.3 | TSK-F82-02 |
+
+---
+
+# 47. F83 — Presencia fiel en el panel del almacén (RF-106)
+
+## 47.1 API: `WarehouseStateController::stateArray()` (aditivo + redefinición)
+
+`GET /almacen-api/state?room_id=` publica sin cambiar la forma de los campos previos:
+
+- `live.presence_active` (bool): `iot_sessions.presence_state === 'PRESENT'`.
+- `live.presence_known` (bool): `presence_state ∈ {PRESENT, ABSENT}` (es decir, `≠ UNKNOWN`).
+- `warehouse.exiting` (bool): `warehouse_state.state === 'EXIT_PENDING'` **o** la visita actual ya tiene
+  `exited_at` no nulo (salida marcada y cámara EXTERIOR aún dentro de su margen).
+- `current_visit.exited_at` (string MySQL UTC | null): se añade al `SELECT` de `warehouse_visits`.
+
+**Redefinición de `warehouse.occupied`** (RF-106.5): `presence_known ? presence_active : activeVisit`,
+con `activeVisit = current_visit.outcome='ENTERED' && current_visit.exited_at IS NULL`. Antes era solo
+`outcome='ENTERED'`, de ahí que una visita enlazada tapara el `ABSENT`.
+
+Los helpers `presenceKnown`, `presenceActive`, `activeVisit` y `exiting` se calculan tras resolver
+`$wsRow` y `$visit`. Sin rutas nuevas y sin llamadas a Tuya: todo sale de BD (estado por push ya
+persistido).
+
+## 47.2 Croquis: `croquis-logic.js::deriveCroquis` (lógica pura)
+
+- `personInside = presenceKnown ? (presence === 'PRESENT') : occupied`. Con `presence_state` conocido
+  (`PRESENT`/`ABSENT`) **manda el radar** y `occupied` no lo tapa: `ABSENT` → `personInside=false`
+  aunque haya visita o un `PRESENT` anterior.
+- `UNKNOWN` (ni `PRESENT` ni `ABSENT`): único caso en que se usa `occupied` como **fallback** (visita
+  activa sin salida) → muñeco dentro **atenuado**.
+- **Fase**: `if (personInside) 'inside' else if (doorOpen || recentOpen) 'near' else 'outside'`. Se
+  elimina la rama que recolocaba a `inside` por `recentPresent`: un `PRESENT` anterior a un `ABSENT` ya
+  no devuelve el muñeco dentro; `recentPresent` queda solo como diagnóstico.
+- **Chip de presencia**: `PRESENT`→`PRESENCIA` (`warn`), `ABSENT`→`VACÍO` (`dim`), `UNKNOWN`→
+  `SIN DATOS` (`dim`). `occupied` ya **no** fuerza `PRESENTE`. El fallback atenuado se representa con
+  `personInside=true` + chip `SIN DATOS` dim, nunca `PRESENTE`/`PRESENCIA`.
+- La función sigue siendo pura (sin red ni DOM).
+
+## 47.3 Panel: `almacen.js` (encabezado y meta)
+
+- `renderHeader()`: prioridad `warehouse.exiting` → **`SALIENDO`**; si no, `warehouse.occupied` →
+  **`OCUPADO`**; si no, `warehouse.state !== 'IDLE'` → estado; si no → **`LIBRE`**.
+- `renderCroquisMeta()`: "Dentro: …" **solo** si hay presencia real (`live.presence_state === 'PRESENT'`
+  / `live.presence_active`). Con `UNKNOWN` + visita activa se muestra un texto atenuado tipo "Visita en
+  curso · presencia sin confirmar" (nunca "Dentro"). El caso "última salida / sin actividad" se
+  mantiene.
+- El croquis consume `deriveCroquis` ya existente; no se añaden fuentes de datos ni polling.
+
+## 47.4 Margen exterior 10 s (migración `0121_warehouse_exterior_margin_10.sql`)
+
+`room_types.warehouse_exterior_margin_seconds = 10` para `ALMACEN_BEBIDAS` (idempotente:
+`UPDATE room_types SET warehouse_exterior_margin_seconds=10 WHERE code='ALMACEN_BEBIDAS'`). El motor
+(`WarehouseRecordingService::roomConfig()` → `SET_DEADLINE_M`) ya consume `M`; **no** cambia la máquina
+de estados (`WarehouseRecordingDecision`) ni el contrato de `EXIT_PENDING` (F81/RF-104.3).
+
+## 47.5 Alcance, derogaciones y no-objetivos
+
+- **Revisa parcialmente**: RF-103.4 (fase `inside` disparada por `recent_presence`) y RF-104.5 (croquis
+  `inside` con presencia sin filo `UNKNOWN`).
+- **Deroga** la lectura de `warehouse.occupied` como "visita activa" en el croquis y el panel.
+- **Vigente**: RF-101 (sin poller/cuota), F81/RF-104.4 (cierre con presencia interior no termina),
+  F80/RF-103 (credibilidad de presencia del almacén), F82/RF-105 (listado).
+- **Sin cambios**: motor (`WarehouseRecordingDecision`/`WarehouseRecordingService` salvo el margen por
+  configuración), recorder, `/dashboard` y el resto de contratos de rutas.
+
+## 47.6 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-106.1 | §47.2 | §F83.1–F83.2 | TSK-F83-02 |
+| RF-106.2 | §47.1–47.3 | §F83.1–F83.2 | TSK-F83-01, TSK-F83-02, TSK-F83-03 |
+| RF-106.3 | §47.4 | §F83.1 | TSK-F83-04 |
+| RF-106.4 | §47.5 | §F83.2 | TSK-F83-05 |
+| RF-106.5 | §47.1 | §F83.1 | TSK-F83-01, TSK-F83-03 |
+| RF-106.6 | §47.5 | §F83.3 | TSK-F83-05 |

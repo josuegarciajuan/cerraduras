@@ -75,11 +75,15 @@ const noPulse = deriveCroquis(snap({
 }), BASE + DOOR_PULSE_MS + 1);
 check('pulso caducado → puerta cerrada', noPulse.doorOpen === false);
 
-// ─── 5. Persona dentro por visita ──────────────────────────────────────
-const occupied = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'ABSENT' }, true), BASE);
-check('occupied → personInside=true', occupied.personInside === true);
-check('occupied → classes.occupied=true', occupied.classes.occupied === true);
-check('occupied → chip PRESENTE ok', occupied.chips.presence.text === 'PRESENTE' && occupied.chips.presence.mod === 'ok');
+// ─── 5. F83/RF-106: la visita NO pisa al radar ─────────────────────────
+// occupied=true + radar ABSENT ⇒ vacío: el radar manda y el muñeco no se pinta
+// dentro por la visita enlazada.
+const occupiedAbsent = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'ABSENT' }, true), BASE);
+check('F83 ABSENT manda sobre occupied → personInside=false', occupiedAbsent.personInside === false);
+check('F83 ABSENT manda sobre occupied → classes.occupied=false', occupiedAbsent.classes.occupied === false);
+check('F83 ABSENT manda sobre occupied → chip VACÍO dim',
+  occupiedAbsent.chips.presence.text === 'VACÍO' && occupiedAbsent.chips.presence.mod === 'dim');
+check('F83 ABSENT manda sobre occupied → phase outside', occupiedAbsent.phase === 'outside');
 
 // ─── 6. Presencia sin visita (sensor) ──────────────────────────────────
 const presenceOnly = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'PRESENT' }, false), BASE);
@@ -97,6 +101,14 @@ const unknown = deriveCroquis(snap({}), BASE);
 check('UNKNOWN+UNKNOWN → unknown=true', unknown.unknown === true);
 check('UNKNOWN → personInside=false', unknown.personInside === false);
 check('UNKNOWN → chip SIN DATOS', unknown.chips.presence.text === 'SIN DATOS');
+
+// F83/RF-106.1: UNKNOWN no afirma presencia. Como fallback, una visita activa
+// mantiene el muñeco atenuado dentro, pero el chip sigue siendo "SIN DATOS".
+const unknownOccupied = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'UNKNOWN' }, true), BASE);
+check('F83 UNKNOWN + occupied → personInside=true (fallback)', unknownOccupied.personInside === true);
+check('F83 UNKNOWN + occupied → classes.occupied=true', unknownOccupied.classes.occupied === true);
+check('F83 UNKNOWN + occupied → chip SIN DATOS dim',
+  unknownOccupied.chips.presence.text === 'SIN DATOS' && unknownOccupied.chips.presence.mod === 'dim');
 
 // ─── 9. Luz (switch) ───────────────────────────────────────────────────
 const lightOn = deriveCroquis(snap({ switch_state: 'ON' }), BASE);
@@ -202,12 +214,41 @@ const recentNear = deriveCroquis(snap({
 }), BASE);
 check('F80 apertura reciente sin presencia → phase near', recentNear.phase === 'near');
 
+// F83/RF-106.2: un PRESENT anterior no recoloca el muñeco dentro si el radar
+// ya reporta ABSENT (ABSENT manda).
 const recentEvt = deriveCroquis(snap({
   door_state: 'CLOSED',
   presence_state: 'ABSENT',
   recent_presence: [{ sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:59:56.000' }],
 }), BASE);
-check('F80 PRESENT reciente aplicado → phase inside', recentEvt.phase === 'inside');
+check('F83 PRESENT reciente + ABSENT → phase outside', recentEvt.phase === 'outside');
+check('F83 PRESENT reciente + ABSENT → personInside=false', recentEvt.personInside === false);
+check('F83 PRESENT reciente queda como diagnóstico', recentEvt.recentPresent === true);
+
+// F83/RF-106.2: aunque en `recent_presence` el PRESENT sea más reciente que un
+// ABSENT, el estado enlazado (ABSENT) manda y el muñeco queda fuera.
+const presentAfterAbsent = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'ABSENT',
+  recent_presence: [
+    { sensor: 'PRESENCE', value: 'ABSENT', occurred_at: '2026-10-01 07:59:50.000' },
+    { sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:59:58.000' },
+  ],
+}), BASE);
+check('F83 PRESENT posterior a ABSENT → phase outside', presentAfterAbsent.phase === 'outside');
+check('F83 PRESENT posterior a ABSENT → chip VACÍO',
+  presentAfterAbsent.chips.presence.text === 'VACÍO');
+
+// F83/RF-106.2: puerta abierta + radar ABSENT → 'near' aunque haya un PRESENT
+// reciente; el muñeco no salta a 'inside'.
+const openAbsentRecent = deriveCroquis(snap({
+  door_state: 'OPEN',
+  presence_state: 'ABSENT',
+  last_open_at: '2026-10-01 07:00:00.000',
+  recent_presence: [{ sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:59:56.000' }],
+}), BASE);
+check('F83 puerta abierta + ABSENT + PRESENT reciente → phase near',
+  openAbsentRecent.phase === 'near');
 
 const staleEvt = deriveCroquis(snap({
   door_state: 'CLOSED',

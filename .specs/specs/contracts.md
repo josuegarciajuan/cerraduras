@@ -2544,3 +2544,53 @@ Respuestas:
 
 - Sin rutas nuevas ni campos eliminados.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; BLOCK del runner con marcadores F82.
+
+---
+
+# Fase 83: Presencia fiel en el panel del almacén (RF-106)
+
+## 1. `GET /almacen-api/state` — campos aditivos y cambio de semántica
+
+**Bloque `live` (aditivo)**:
+- `live.presence_active` (bool): presencia real del radar (`presence_state='PRESENT'`).
+- `live.presence_known` (bool): hay lectura del radar (`PRESENT`/`ABSENT`); `false` cuando
+  `presence_state='UNKNOWN'`.
+- Los campos previos (`presence_state`, `door_state`, `recent_presence`, `last_*`, `*_age_seconds`, …)
+  conservan su forma.
+
+**Bloque `warehouse`**:
+- **Cambio de semántica de `warehouse.occupied`** (breaking semántico intencional; único consumidor el
+  panel interno `/almacen`): antes = "visita activa" (`outcome='ENTERED'`); ahora = **presencia real**
+  con fallback:
+  - `presence_state='PRESENT'` → `true`;
+  - `presence_state='ABSENT'` → `false` (aunque exista visita enlazada);
+  - `presence_state='UNKNOWN'` → `true` solo si hay visita activa confirmada sin salida
+    (`outcome='ENTERED'` y `exited_at IS NULL`).
+- `warehouse.exiting` (bool, aditivo): estado `EXIT_PENDING` **o** visita con `exited_at` marcado
+  (cámara EXTERIOR aún en el margen `M`).
+
+**Bloque `warehouse.current_visit`**:
+- `exited_at` (string MySQL UTC | null, aditivo): hora de salida registrada por el motor.
+
+## 2. Comportamiento de representación y sin cuota
+
+- El croquis (`croquis-logic.js`, pura) deriva `personInside` de la presencia **conocida**
+  (`PRESENT`/`ABSENT`) y solo usa `occupied` como fallback con `UNKNOWN`; un `PRESENT` anterior no
+  vuelve a colocar al muñeco dentro tras un `ABSENT`. El panel (`almacen.js`) muestra `SALIENDO` /
+  `OCUPADO` / `LIBRE` y "Dentro" solo con `PRESENT`.
+- El motor F81/RF-104.4 (cierre con presencia interior no termina la visita) **no cambia**.
+- Sin nuevas rutas ni parámetros; sin sondeo periódico ni llamadas a la API de Tuya (RF-101 intacto):
+  todo se resuelve con el estado ya persistido por push.
+
+## 3. No regresión
+
+- `/dashboard`, el motor de grabación y los contratos de las fases previas quedan intactos.
+- Verificación: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**; **BLOCK 56**
+  nuevo con marcadores F83.
+
+## 4. Nota F80/F81
+
+- Revisa parcialmente la Fase 80/RF-103.4 (la fase del croquis ya no se recoloca a `inside` por un
+  `PRESENT` anterior a un `ABSENT`) y la Fase 81/RF-104.5 (con `UNKNOWN` + visita activa el muñeco se
+  muestra atenuado, sin afirmar presencia).
+- La Fase 82/RF-105 (listado de visitas) no se ve afectada.

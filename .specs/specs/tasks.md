@@ -3872,3 +3872,86 @@ F82-01 (filtro del listado) ─> F82-02 (BLOCK del runner + regresión)
 
 - [ ] F82-01 eliminar exclusión por defecto de PRESENCE en el listado
 - [ ] F82-02 BLOCK del runner con marcadores F82 + regresión
+
+---
+
+# Fase 83: Presencia fiel en el panel del almacén (RF-106)
+
+## TSK-F83-01: API `WarehouseStateController` (presencia fiel + `exited_at`)
+- **Trazabilidad**: RF-106.1, RF-106.2, RF-106.5.
+- **Archivo(s)**: `api/src/Http/Controllers/WarehouseStateController.php`.
+- **Pasos**:
+  - [ ] En `stateArray()`, calcular `presenceKnown` (`presence_state` ∈ `PRESENT`/`ABSENT`) y
+        `presenceActive` (`PRESENT`); publicar `live.presence_active` y `live.presence_known` (aditivos).
+  - [ ] Añadir `exited_at` al `SELECT` de la visita y exponer `current_visit.exited_at`.
+  - [ ] Calcular `activeVisit` (`outcome='ENTERED'` y `exited_at IS NULL`) y redefinir
+        `warehouse.occupied = presence_known ? presence_active : activeVisit`.
+  - [ ] Calcular `warehouse.exiting` (`warehouse_state.state='EXIT_PENDING'` o `exited_at` no nulo).
+  - [ ] No añadir rutas ni llamadas a Tuya (solo BD).
+- **Verificación**: `php -l api/src/Http/Controllers/WarehouseStateController.php` y **BLOCK 56** con
+  marcadores F83.
+
+## TSK-F83-02: Croquis `croquis-logic.js` (el radar manda)
+- **Trazabilidad**: RF-106.1, RF-106.2.
+- **Archivo(s)**: `api/public/assets/croquis-logic.js`, `api/tests/Unit/croquis-logic.test.js`.
+- **Pasos**:
+  - [ ] `personInside = presenceKnown ? (presence === 'PRESENT') : occupied`; `ABSENT` con visita,
+        `occupied` o `PRESENT` anterior → **fuera**.
+  - [ ] Eliminar la rama `recentPresent → 'inside'`: la fase usa `personInside` y, en su defecto, la
+        puerta (`recentPresent` queda solo como diagnóstico).
+  - [ ] Chip de presencia sin forzar `PRESENTE` por `occupied`: `PRESENT`→`PRESENCIA`,
+        `ABSENT`→`VACÍO`, `UNKNOWN`→`SIN DATOS` (dim). Fallback `UNKNOWN`+visita activa: muñeco dentro
+        pero **atenuado**.
+  - [ ] Añadir los casos unit en `croquis-logic.test.js`.
+- **Verificación**: `node api/tests/Unit/croquis-logic.test.js` y
+  `cd /root/cerraduras/api && bash bin/run-tests.sh`.
+
+## TSK-F83-03: Panel `almacen.js` (encabezado y meta)
+- **Trazabilidad**: RF-106.2, RF-106.5.
+- **Archivo(s)**: `api/public/assets/almacen.js`.
+- **Pasos**:
+  - [ ] `renderHeader()`: `warehouse.exiting` → `SALIENDO`; si no `occupied` → `OCUPADO`; si no
+        `warehouse.state !== 'IDLE'` → estado; si no → `LIBRE`.
+  - [ ] `renderCroquisMeta()`: "Dentro: …" solo con `live.presence_state === 'PRESENT'`
+        (`live.presence_active`); con `UNKNOWN`+visita activa, texto atenuado "presencia sin confirmar"
+        (nunca "Dentro").
+  - [ ] Mantener el caso de "última salida / sin actividad".
+- **Verificación**: revisión del panel `/almacen` y **BLOCK 56** (marcadores F83).
+
+## TSK-F83-04: Margen exterior 10 s (migración `0121`)
+- **Trazabilidad**: RF-106.3.
+- **Archivo(s)**: `api/migrations/0121_warehouse_exterior_margin_10.sql`.
+- **Pasos**:
+  - [ ] `UPDATE room_types SET warehouse_exterior_margin_seconds=10 WHERE code='ALMACEN_BEBIDAS'`
+        (idempotente).
+  - [ ] No cambiar `WarehouseRecordingDecision`: el motor ya consume `M` vía `roomConfig()`.
+- **Verificación**: aplicar la migración y comprobar
+  `room_types.warehouse_exterior_margin_seconds=10`.
+
+## TSK-F83-05: Tests (unit JS + BLOCK 56) y regresión
+- **Trazabilidad**: RF-106.1–RF-106.6.
+- **Archivo(s)**: `api/tests/Unit/croquis-logic.test.js`, `api/bin/run-tests.sh`.
+- **Pasos**:
+  - [ ] Casos unit: `ABSENT`+`occupied`+`PRESENT` anterior → `personInside=false`/`phase='outside'` y
+        chip `VACÍO`; `PRESENT` → dentro; `UNKNOWN`+visita activa → `personInside=true` con chip
+        `SIN DATOS` (nunca `PRESENTE`/`PRESENCIA`).
+  - [ ] Añadir **BLOCK 56** al runner con marcadores F83: `state` publica `live.presence_active`,
+        `live.presence_known`, `warehouse.exiting` y `current_visit.exited_at`; `warehouse.occupied`
+        refleja `ABSENT` aunque haya visita; sin rutas nuevas ni cuota Tuya.
+  - [ ] Ejecutar la regresión completa.
+- **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
+
+## Orden de ejecución (F83)
+
+```
+F83-01 (API) ─┬─> F83-02 (croquis) ─> F83-03 (panel) ─┐
+             └─> F83-04 (migración margen) ───────────┴─> F83-05 (tests + BLOCK 56) ─> regresión
+```
+
+## Estado de ejecución (F83)
+
+- [ ] TSK-F83-01 API `WarehouseStateController`
+- [ ] TSK-F83-02 croquis `croquis-logic.js`
+- [ ] TSK-F83-03 panel `almacen.js`
+- [ ] TSK-F83-04 migración `0121_warehouse_exterior_margin_10.sql`
+- [ ] TSK-F83-05 tests + BLOCK 56 + regresión
