@@ -4210,10 +4210,12 @@ fi
 if [ -n "$WH_TYPE_ID" ]; then
     WH_X=$($MYSQL -sN -e "SELECT warehouse_confirm_seconds FROM room_types WHERE id=$WH_TYPE_ID" 2>/dev/null)
     WH_M=$($MYSQL -sN -e "SELECT warehouse_exterior_margin_seconds FROM room_types WHERE id=$WH_TYPE_ID" 2>/dev/null)
-    if [ "$WH_X" = "40" ] && [ "$WH_M" = "5" ]; then
-        pass "F60: ventanas por defecto X=40, M=5"
+    # F83/RF-106.3: el margen exterior del almacén pasa de 5 a 10 s
+    # (migración 0121) para grabar la salida del individuo.
+    if [ "$WH_X" = "40" ] && [ "$WH_M" = "10" ]; then
+        pass "F60/F83: ventanas por defecto X=40, M=10"
     else
-        fail "F60: ventanas por defecto" "X=$WH_X M=$WH_M (esperado 40/5)"
+        fail "F60/F83: ventanas por defecto" "X=$WH_X M=$WH_M (esperado 40/10)"
     fi
 fi
 
