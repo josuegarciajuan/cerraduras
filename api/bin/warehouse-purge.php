@@ -8,7 +8,9 @@ declare(strict_types=1);
  *   - filas de camera_recordings, warehouse_visits y warehouse_state;
  *   - ficheros bajo data/cameras/<room_id>/.
  *
- * Recomendado parar el recorder antes (evita procesos ffmpeg huérfanos):
+ * F77.6: el recorder aborta por sí mismo los ffmpeg cuyo registro ya no existe
+ * (reconcile 3b), así que la purga ya no deja procesos huérfanos reteniendo
+ * disco. Aun así, parar el recorder antes es lo más limpio:
  *   systemctl stop cerraduras-warehouse-recorder
  *   php bin/warehouse-purge.php --room=12        # o --all
  *   systemctl start cerraduras-warehouse-recorder
