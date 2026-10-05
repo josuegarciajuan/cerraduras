@@ -80,9 +80,10 @@ const RECONNECT_BASE_MS = 1000;          // F47: base de reconexión (antes 5000
 // si no hay ni mensajes NI pongs en SILENCE_MS (socket realmente zombie).
 const SILENCE_MS = parseInt(process.env.CONSUMER_SILENCE_MS || '900000', 10);
 
-// F77.4: presupuesto de cuota Tuya COMPARTIDO con la API/poller (mismo fichero
-// que `tuyaPresenceApi()` y `tuya-presence-poller.js`). El resync puntual REST
+// F77.4: presupuesto de cuota Tuya COMPARTIDO con la API (mismo fichero
+// `api/run/tuya-quota.json` que usa `tuyaPresenceApi()`). El resync puntual REST
 // consume cuota IoT Core: se contabiliza y respeta backoff/budgets.
+// F78: ya NO existe poller (`tuya-presence-poller.js` fue eliminado).
 const QUOTA_FILE = __dirname + '/../../run/tuya-quota.json';
 const TUYA_HOURLY_BUDGET = parseInt(process.env.TUYA_HOURLY_BUDGET || '150', 10);
 const TUYA_DAILY_BUDGET = parseInt(process.env.TUYA_DAILY_BUDGET || '1000', 10);

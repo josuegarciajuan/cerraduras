@@ -2732,8 +2732,8 @@ fi
 # =============================================================================
 block "BLOCK 33 — F41: robustez de sensores y coreografía"
 
-# ── 33.0 Unit tests JS (poller + coreografía). No dependen del servidor. ──────
-for F41_JS in tests/Unit/choreography.test.js tests/Unit/presence-poller-gate.test.js; do
+# ── 33.0 Unit tests JS (coreografía). No dependen del servidor. ───────────────
+for F41_JS in tests/Unit/choreography.test.js; do
     if [ ! -f "$F41_JS" ]; then
         skip "JS: $F41_JS" "fichero no encontrado"
         continue
@@ -2750,7 +2750,7 @@ for F41_JS in tests/Unit/choreography.test.js tests/Unit/presence-poller-gate.te
     fi
 done
 
-# ── 33.1 system-status: esquema ampliado de 6 workers (contrato §5) ──────────
+# ── 33.1 system-status: esquema ampliado de 5 workers (contrato §5, F78) ────
 if [ "$SERVER_UP" != true ]; then
     skip "F41 system-status" "servidor HTTP no disponible"
 else
@@ -2761,7 +2761,7 @@ try:
     d = json.load(sys.stdin)
 except Exception as e:
     print('ERR ' + str(e)); sys.exit(0)
-keys = ['exit-scan','overstay-scan','outbox-worker','anomaly-scanner','presence-poller-manager','pulsar-consumer']
+keys = ['exit-scan','overstay-scan','outbox-worker','anomaly-scanner','pulsar-consumer']
 missing = [k for k in keys if k not in d]
 bad = []
 for k in keys:
@@ -2783,7 +2783,7 @@ for k in keys:
 print('OK' if not missing and not bad else 'FAIL missing=' + str(missing) + ' bad=' + str(bad))
 " 2>/dev/null)
     case "$F41_SS_RES" in
-        OK*)   pass "F41 system-status: 6 workers con expected/instances/pids/healthy/degraded" ;;
+        OK*)   pass "F41 system-status: 5 workers con expected/instances/pids/healthy/degraded" ;;
         FAIL*) fail "F41 system-status: esquema §5" "${F41_SS_RES#FAIL }" ;;
         *)     fail "F41 system-status: parse" "${F41_SS_RES:-respuesta vacía}" ;;
     esac
@@ -3340,12 +3340,29 @@ if [ "$F46_ZY" = "disabled" ]; then
 else
     fail "F46: ZY-M100 debe estar 'disabled'" "got '$F46_ZY'"
 fi
-# Sin poller de nube para el ZY-M100 (truco [t] para no auto-emparejar el propio shell).
-F46_POLLERS=$(pgrep -f "[t]uya-presence-poller\.js bf98d27d79685e38a2wbda" 2>/dev/null | wc -l | tr -d ' ')
-if [ "$F46_POLLERS" = "0" ]; then
-    pass "F46: sin poller de nube para el ZY-M100 (0 procesos)"
+# ── 35.7 F78/RF-101: NO existe ningún poller de Tuya (prohibido) ────────────
+# Regresión: si alguien reintroduce `tuya-presence-poller.js` o reactiva el unit
+# legacy, este test debe fallar. El sistema usa push (Pulsar) + sondas bajo
+# demanda; NUNCA sondeo continuo de la API de Tuya.
+F78_POLLER_PROCS=$(pgrep -f "[t]uya-presence-poller\.js" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F78_POLLER_PROCS" = "0" ]; then
+    pass "F78: sin procesos tuya-presence-poller.js (0)"
 else
-    fail "F46: no debe haber poller para el ZY-M100" "procesos=$F46_POLLERS"
+    fail "F78: no debe haber ningún poller de presencia" "procesos=$F78_POLLER_PROCS"
+fi
+F78_POLLER_BIN=0
+for _f in bin/tuya-presence-poller.js bin/presence-poller-manager.sh bin/wrapper-poller.sh; do
+    [ -e "$_f" ] && F78_POLLER_BIN=$((F78_POLLER_BIN+1))
+done
+if [ "$F78_POLLER_BIN" = "0" ]; then
+    pass "F78: scripts de poller eliminados (manager/js/wrapper)"
+else
+    fail "F78: quedan scripts de poller en el repo" "encontrados=$F78_POLLER_BIN"
+fi
+if systemctl is-enabled cerraduras-presence-poller >/dev/null 2>&1; then
+    fail "F78: unit legacy cerraduras-presence-poller habilitado" "systemctl disable --now cerraduras-presence-poller"
+else
+    pass "F78: unit legacy cerraduras-presence-poller no habilitado"
 fi
 
 # =============================================================================
@@ -3448,9 +3465,9 @@ else
 fi
 
 # =============================================================================
-# BLOCK 37 — Saneamiento de logs: rotación programada + aviso único del manager
-# Trazabilidad: TAREA 1/2/3 (log-rotate parametrizable, timer systemd, manager
-# de pollers sin aviso en bucle).
+# BLOCK 37 — Saneamiento de logs: rotación programada
+# Trazabilidad: TAREA 1/2 (log-rotate parametrizable, timer systemd).
+# F78: el test del manager de pollers fue eliminado con el propio poller.
 # =============================================================================
 block "BLOCK 37 — Saneamiento de logs y avisos"
 
@@ -3471,24 +3488,7 @@ else
     skip "JS: log-rotate.test.js" "fichero no encontrado"
 fi
 
-# ── 37.1 Unit JS: guardia del aviso del presence-poller-manager (TAREA 3) ──
-LOGS_PPM_JS="tests/Unit/presence-poller-manager.test.js"
-if [ -f "$LOGS_PPM_JS" ]; then
-    LOGS_P_OUT=$(node "$LOGS_PPM_JS" 2>&1)
-    LOGS_P_RC=$?
-    LOGS_P_SUM=$(echo "$LOGS_P_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
-    [ -z "$LOGS_P_SUM" ] && LOGS_P_SUM="exit=$LOGS_P_RC"
-    if [ "$LOGS_P_RC" -eq 0 ]; then
-        pass "JS: presence-poller-manager.test.js ($LOGS_P_SUM)"
-    else
-        fail "JS: presence-poller-manager.test.js" \
-            "$LOGS_P_SUM — $(echo "$LOGS_P_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
-    fi
-else
-    skip "JS: presence-poller-manager.test.js" "fichero no encontrado"
-fi
-
-# ── 37.2 Units systemd versionadas (no instaladas por el runner) ───────────
+# ── 37.1 Units systemd versionadas (no instaladas por el runner) ───────────
 for LOGS_UNIT in docs/systemd/cerraduras-logrotate.service \
                  docs/systemd/cerraduras-logrotate.timer \
                  docs/systemd/journald-cerraduras.conf; do

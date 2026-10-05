@@ -336,8 +336,8 @@ $router->delete(
  * EMERGENCY FALLBACK: Check Tuya PRESENCE device online status via Tuya Cloud API.
  *
  * IMPORTANT – DO NOT call this from automatic dashboard polling.
- * Device liveness is determined by last_seen_at (updated by Pulsar webhooks,
- * presence poller, and device heartbeat). This function exists ONLY for
+ * Device liveness is determined by last_seen_at (updated by Pulsar webhooks
+ * and device heartbeat). This function exists ONLY for
  * manual debugging or emergency use.
  *
  * Changes from the original (which burned Tuya trial quota on 2 accounts):
@@ -482,10 +482,11 @@ function checkTuyaOnline(\PDO $pdo): array {
     return $result;
 }
 
-// ── F46+: presupuesto de cuota Tuya COMPARTIDO con el poller (Node) ──────────
-// Mismo fichero `api/run/tuya-quota.json` que escribe `tuya-presence-poller.js`.
-// Una sola fuente de verdad: ni la app ni el poller agotan la cuota (el
-// 2026-09-17 una puerta atascada agotó la cuota con ~1.400 llamadas/hora).
+// ── F46+: presupuesto de cuota Tuya (F78: ya NO hay poller) ─────────────────
+// Fichero `api/run/tuya-quota.json`, escrito por la API y por el consumer
+// Pulsar. Fuente única de verdad para las sondas REST (bajo demanda) y las
+// llamadas del consumer. El 2026-09-17 una puerta atascada agotó la cuota con
+// ~1.400 llamadas/hora; hoy no existe ningún bucle de sondeo continuo (F78).
 function tuyaQuotaFile(): string
 {
     return dirname(__DIR__) . '/run/tuya-quota.json';
@@ -602,7 +603,7 @@ function tuyaPresenceApi(string $method, string $path, ?string $body, bool $igno
             @unlink($backoffFile);
         }
 
-        // F46+: presupuesto compartido (mismo fichero que el poller Node).
+        // F46+: presupuesto compartido (mismo fichero tuya-quota.json).
         $qchk = tuyaQuotaCheck();
         if (!$qchk['ok']) {
             return ['http' => 429, 'data' => [], 'error' => 'Tuya quota budget (' . $qchk['reason'] . ')', 'elapsed_ms' => 0];
@@ -987,7 +988,8 @@ $router->get(
 );
 
 // GET /dashboard-api/system-status — health check of background processes
-// F41 (contracts.md §5): 6 workers with expected/instances/pids/healthy/degraded.
+// F41 (contracts.md §5): 5 workers with expected/instances/pids/healthy/degraded.
+// F78: el worker `presence-poller-manager` fue eliminado (no hay poller de Tuya).
 // label/online/pid are kept for the existing renderSystemStatus() frontend.
 $router->get(
     '/dashboard-api/system-status',
@@ -1000,7 +1002,8 @@ $router->get(
             'overstay-scan'          => ['label' => 'Overstay Scanner',         'run_key' => 'overstay-scan',           'pattern' => 'bin/overstay-scan.php',          'systemd_unit' => 'cerraduras-worker@overstay-scan'],
             'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php',          'systemd_unit' => 'cerraduras-worker@outbox-worker'],
             'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php',        'systemd_unit' => 'cerraduras-worker@anomaly-scanner'],
-            'presence-poller-manager'=> ['label' => 'Gestor Poller Presencia',  'run_key' => 'presence-poller-manager', 'pattern' => 'bin/presence-poller-manager.sh', 'systemd_unit' => 'cerraduras-presence-poller'],
+            // F78/RF-101: SIN poller de presencia. Fue eliminado por completo
+            // (el sistema usa push por Pulsar + sondas bajo demanda).
             // F44 (RF-50.2.4): el consumer Pulsar es dueño único de systemd.
             'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer', 'systemd_unit' => 'cerraduras-pulsar-consumer'],
         ];
@@ -2993,7 +2996,7 @@ $router->post(
 // Generalizes the /simula dev tool to the PRESENCE device assigned to any room
 // (each sensor lives in its own room/pack). The live badge below reads the raw
 // Tuya DP directly (~2s polling only while the calibration modal is open) because
-// the domain presence_state only flips via webhook/poller and can lag several
+// the domain presence_state only flips via webhook/push and can lag several
 // seconds. We intentionally DO NOT inject events into iot_session here to avoid
 // polluting anomalies while the technician walks in/out.
 

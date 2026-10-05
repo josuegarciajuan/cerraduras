@@ -14,8 +14,7 @@
 #   1) Wrappers/supervisores primero  → evita que relancen a sus hijos.
 #      - wrappers `bash -c ... bin/<worker>.php` (exit-scan, overstay-scan,
 #        outbox-worker, anomaly-scanner, tuya-pulsar-consumer)
-#      - `bin/presence-poller-manager.sh` (supervisor de pollers de presencia)
-#   2) Hijos después → procesos `php bin/<worker>.php`, `node ...tuya-presence-poller.js`
+#   2) Hijos después → procesos `php bin/<worker>.php`
 #      y el `node ...bin/tuya-pulsar-consumer/index.js` del consumer Pulsar
 #      (por patrón y, para huérfanos antiguos, por cwd `.../bin/tuya-pulsar-consumer`).
 #   3) Escalado acotado TERM → espera (STOP_WAIT_SECS) → KILL.
@@ -42,7 +41,7 @@ log() { echo "[stop-all] $*"; }
 # ── Workers gestionados (nombre = nombre del PID file en api/run) ─────────────
 # F44 (RF-50.2): `tuya-pulsar-consumer` ya NO se gestiona aquí con PID file; su
 # único dueño es el unit systemd `cerraduras-pulsar-consumer.service`.
-WORKERS="exit-scan overstay-scan outbox-worker anomaly-scanner presence-poller-manager"
+WORKERS="exit-scan overstay-scan outbox-worker anomaly-scanner"
 
 # ── Patrón 1: wrappers `bash -c ... bin/<worker>` (mueren PRIMERO) ────────────
 #    Comentario por patrón: cada uno acota al wrapper de UN worker concreto.
@@ -52,7 +51,6 @@ WRAPPER_PATTERNS=(
   'bash -c .*bin/outbox-worker\.php'      # wrapper while-true de outbox-worker
   'bash -c .*bin/anomaly-scanner\.php'    # wrapper while-true de anomaly-scanner
   'bash -c .*bin/tuya-pulsar-consumer'    # wrapper while-true del consumer Pulsar
-  'bin/presence-poller-manager\.sh'       # supervisor de pollers (relanza pollers)
 )
 
 # ── Patrón 2: hijos directos (mueren DESPUÉS de los wrappers) ────────────────
@@ -64,7 +62,6 @@ CHILD_PATTERNS=(
   'php .*bin/overstay-scan\.php'          # hijo php de overstay-scan
   'php .*bin/outbox-worker\.php'          # hijo php de outbox-worker
   'php .*bin/anomaly-scanner\.php'        # hijo php de anomaly-scanner
-  'node .*bin/tuya-presence-poller\.js'   # pollers de presencia (hijos del manager)
   'node .*bin/tuya-pulsar-consumer'       # consumer LEGADO con ruta relativa
 )
 
@@ -125,7 +122,7 @@ stop_pulsar_service
 
 # 0b) Workers de fondo bajo systemd (F46) — parada por SERVICIO, no por patrón.
 #     Si se matan por patrón con Restart=always, systemd los relanzaría.
-systemctl stop cerraduras-presence-poller 2>/dev/null || true
+#     F78: el unit legacy `cerraduras-presence-poller` YA NO EXISTE; no se para.
 systemctl stop cerraduras-warehouse-recorder 2>/dev/null || true
 # F70/RF-80: servidor MJPEG de cámaras (directo del almacén).
 systemctl stop cerraduras-cameras-live 2>/dev/null || true

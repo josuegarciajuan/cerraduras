@@ -1607,3 +1607,18 @@ estancia, **sin ningún sondeo periódico**.
 
 ## RF-100 (F77.8): Detalle de visita persistente
 - **RF-100.1**: El refresco periódico de la lista no cierra el detalle de la visita seleccionada.
+
+## RF-101 (F78): Prohibido el sondeo continuo de la API Tuya
+- **RF-101.1**: El sistema NO debe mantener ningún proceso que sondee en bucle la API REST de Tuya
+  (ni en `start-all.sh`, ni en systemd, ni en cron, ni en workers). El poller de presencia de
+  F44/F46 (`presence-poller-manager.sh`, `tuya-presence-poller.js`) queda eliminado por completo.
+- **RF-101.2**: El estado de presencia/puerta llega **solo** por push del Message Service (consumer
+  `tuya-pulsar-consumer`) o por **sondas REST bajo demanda** (acción explícita del usuario) sujetas
+  al presupuesto compartido `api/run/tuya-quota.json`.
+- **RF-101.3**: `GET /dashboard-api/system-status` expone **5** workers (sin
+  `presence-poller-manager`) y `HealthController` no comprueba ningún poller.
+- **RF-101.4**: El runner (`api/bin/run-tests.sh`, BLOCK 35) y `start-all.sh` incluyen una guardia
+  que falla/remedia si reaparecen los scripts, un proceso `tuya-presence-poller.js` o el unit
+  legacy `cerraduras-presence-poller` habilitado.
+- **RF-101.5**: Si un sensor no entrega por push, la solución documentada es ampliar la regla de
+  mensajes de Tuya (`design.md` §13.9), nunca reintroducir un poller.

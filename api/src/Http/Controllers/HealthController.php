@@ -103,7 +103,6 @@ final class HealthController
             'anomaly-scanner'  => 'php.*bin/anomaly-scanner',
             'outbox-worker'    => 'php.*bin/outbox-worker',
             'pulsar-consumer'  => 'node.*index.js',
-            'presence-poller'  => 'node.*tuya-presence-poller',
         ];
 
         foreach ($workerNames as $name => $pattern) {

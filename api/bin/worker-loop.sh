@@ -17,8 +17,8 @@
 #   outbox-worker    php bin/outbox-worker.php   30s
 #   anomaly-scanner  php bin/anomaly-scanner.php  5s
 #
-# El poller de presencia NO usa este runner: `presence-poller-manager.sh` ya
-# itera internamente y tiene su propio unit (`cerraduras-presence-poller`).
+# F78/RF-101: NO hay poller de Tuya. La presencia llega por push (consumer
+# Pulsar) y los sensores se refrescan bajo demanda desde la API.
 # =============================================================================
 set -u
 
