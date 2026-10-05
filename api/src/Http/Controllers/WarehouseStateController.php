@@ -137,6 +137,7 @@ final class WarehouseStateController
         // F67/RF-77.3: bloque `live` aditivo para el croquis del panel. Lee el
         // estado IoT de la sala (puerta/presencia) y el estado real del SWITCH
         // por push (F50). Sin llamadas a Tuya: solo BD.
+        $staleSeconds = $this->doorStaleSeconds();
         $live = [
             'door_state' => 'UNKNOWN',
             'presence_state' => 'UNKNOWN',
@@ -144,48 +145,36 @@ final class WarehouseStateController
             'last_open_at' => null,
             'last_close_at' => null,
             'last_absent_since' => null,
-            // F71 (RF-82.1): frescura de la señal (segundos desde el último
-            // evento recibido por sensor). null si nunca hubo evento.
+            // F77.5: frescura HONESTA desde el último evento APLICADO (transición
+            // real). Antes se usaba MAX(received_at), que los no-ops del resync
+            // refrescaban cada 15 min → una puerta atascada parecía "fresca".
             'door_age_seconds' => null,
             'presence_age_seconds' => null,
+            'door_stale_seconds' => $staleSeconds,
+            'door_stale' => true,
         ];
         $ls = $this->pdo->prepare(
-            'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since
+            'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
+                    last_door_event_at, last_presence_event_at
              FROM iot_sessions WHERE room_id = :r LIMIT 1'
         );
         $ls->execute([':r' => $roomId]);
         $lsRow = $ls->fetch(PDO::FETCH_ASSOC);
+        $nowTs = time();
         if ($lsRow !== false) {
             $live['door_state'] = (string) ($lsRow['door_state'] ?? 'UNKNOWN');
             $live['presence_state'] = (string) ($lsRow['presence_state'] ?? 'UNKNOWN');
             $live['last_open_at'] = $lsRow['last_open_at'] ?? null;
             $live['last_close_at'] = $lsRow['last_close_at'] ?? null;
             $live['last_absent_since'] = $lsRow['last_absent_since'] ?? null;
+            $live['door_age_seconds'] = $this->ageSeconds($lsRow['last_door_event_at'] ?? null, $nowTs);
+            $live['presence_age_seconds'] = $this->ageSeconds($lsRow['last_presence_event_at'] ?? null, $nowTs);
         }
-        // F71 (RF-82.1): edad de la señal por sensor desde el último evento
-        // RECIBIDO (incluye no-ops), no solo desde el último aplicado.
-        $ageStmt = $this->pdo->prepare(
-            'SELECT sensor, MAX(received_at) AS last_received
-             FROM presence_events WHERE room_id = :r GROUP BY sensor'
-        );
-        $ageStmt->execute([':r' => $roomId]);
-        $nowTs = time();
-        foreach ($ageStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $ageRow) {
-            $last = $ageRow['last_received'] ?? null;
-            if ($last === null || $last === '') {
-                continue;
-            }
-            $ts = strtotime((string) $last . ' UTC');
-            if ($ts === false) {
-                continue;
-            }
-            $age = max(0, $nowTs - $ts);
-            if (($ageRow['sensor'] ?? '') === 'PROXIMITY') {
-                $live['door_age_seconds'] = $age;
-            } elseif (($ageRow['sensor'] ?? '') === 'PRESENCE') {
-                $live['presence_age_seconds'] = $age;
-            }
-        }
+        // F77.5: la puerta es "stale" si no hay estado conocido o el último
+        // evento aplicado supera el umbral (sensor mudo/cacheado).
+        $live['door_stale'] = ($live['door_state'] === 'UNKNOWN')
+            || ($live['door_age_seconds'] === null)
+            || ($live['door_age_seconds'] > $staleSeconds);
         $swStmt = $this->pdo->prepare(
             "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='SWITCH' LIMIT 1"
@@ -235,12 +224,34 @@ final class WarehouseStateController
         if ($v !== false && $v !== null && $v !== '') {
             $days = (int) $v;
         }
-        $dir = dirname(__DIR__, 2) . '/data/cameras';
+        // F77.1/F77.8: la raíz de la API es `api/` (3 niveles desde src/Http/Controllers).
+        // Antes apuntaba a `api/src/data/cameras` (inexistente) → disk_used_pct null.
+        $dir = dirname(__DIR__, 3) . '/data/cameras';
         $free = @disk_free_space($dir);
         $total = @disk_total_space($dir);
         $pct = ($free !== false && $total !== false && $total > 0)
             ? (int) round((($total - $free) / $total) * 100)
             : null;
         return ['days' => $days, 'auto' => $days > 0, 'disk_used_pct' => $pct];
+    }
+
+    /**
+     * F77.5: umbral (segundos) a partir del cual el estado de puerta se considera
+     * viejo/no fiable. Configurable por `DOOR_STALE_SECONDS` (default 300 s).
+     */
+    private function doorStaleSeconds(): int
+    {
+        $v = (int) (\App\Support\Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300);
+        return $v > 0 ? $v : 300;
+    }
+
+    /** F77.5: antigüedad (s) de un timestamp MySQL UTC nullable; null si no hay. */
+    private function ageSeconds(?string $ts, int $nowTs): ?int
+    {
+        if ($ts === null || $ts === '') {
+            return null;
+        }
+        $parsed = strtotime($ts . ' UTC');
+        return $parsed === false ? null : max(0, $nowTs - $parsed);
     }
 }

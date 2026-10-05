@@ -17,6 +17,7 @@ use App\Domain\Workers\WorkerSessionRepositoryInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
 use App\Domain\Anomalies\AnomalyService;
 use App\Support\Clock;
+use App\Support\Config;
 use App\Support\Errors\NotFoundException;
 use App\Support\IsoTime;
 use PDOException;
@@ -518,21 +519,39 @@ final class IotSessionService
     }
 
     /**
-     * F76 (RF-91/92): contexto de presencia para el almacén.
+     * F76 (RF-91/92) + F77.5: contexto de presencia para el almacén.
      *
-     * - Con la puerta ABIERTA el 24G puede ver el pasillo a través del hueco, así
-     *   que la presencia **no** es creíble en ese instante (elimina fantasmas).
-     * - Con la puerta cerrada, la presencia es creíble durante la ventana tras el
-     *   último OPEN/CLOSE (entrada en curso) o mientras haya una visita ENTRADA
-     *   con trigger DOOR/QR y sin apertura posterior (huésped dentro). Las visitas
-     *   creadas solo por presencia NO anclan (evita auto-justificarse).
+     * - Con la puerta ABIERTA **y el sensor fresco**, el 24G puede ver el pasillo
+     *   a través del hueco: la presencia **no** es creíble (elimina fantasmas).
+     * - F77.5: si el sensor de puerta está mudo o su último evento aplicado supera
+     *   `DOOR_STALE_SECONDS`, el estado (p. ej. un OPEN cacheado) **no** se usa para
+     *   vetar la presencia: se recupera el comportamiento F71 para no dejar el
+     *   sistema ciego ante un fallo del sensor.
+     * - Con la puerta cerrada y fresca, la presencia es creíble durante la ventana
+     *   tras el último OPEN/CLOSE o mientras haya una visita ENTRADA con trigger
+     *   DOOR/QR sin apertura posterior.
      *
      * @return array{0:bool,1:bool} [entryWindowActive, insideNoExitCycle]
      */
     private function warehousePresenceContext(Room $room, IotSession $session, \DateTimeImmutable $now): array
     {
-        if ($session->doorState === IotSession::DOOR_OPEN) {
+        $nowTs      = $now->getTimestamp();
+        $staleAfter = (int) (Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300);
+        if ($staleAfter <= 0) {
+            $staleAfter = 300;
+        }
+        $lastDoorTs = $session->lastDoorEventAt !== null
+            ? strtotime($session->lastDoorEventAt . ' UTC')
+            : false;
+        $doorFresh = $lastDoorTs !== false && ($nowTs - $lastDoorTs) <= $staleAfter;
+
+        if ($session->doorState === IotSession::DOOR_OPEN && $doorFresh) {
             return [false, false];
+        }
+
+        // Sensor de puerta sin datos fiables → no vetar presencia (F71).
+        if ($session->doorState === IotSession::DOOR_UNKNOWN || !$doorFresh) {
+            return [true, false];
         }
 
         $entryConfirmedAt = null;
@@ -545,7 +564,6 @@ final class IotSessionService
         }
 
         $window    = $this->resolveEntryWindowSeconds($room);
-        $nowTs     = $now->getTimestamp();
         $lastOpen  = $session->lastOpenAt  !== null ? strtotime($session->lastOpenAt . ' UTC')  : null;
         $lastClose = $session->lastCloseAt !== null ? strtotime($session->lastCloseAt . ' UTC') : null;
 

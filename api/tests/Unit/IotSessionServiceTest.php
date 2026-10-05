@@ -471,6 +471,21 @@ if (($iotRepo->sessions[11]->presenceState ?? null) !== IotSession::PRESENCE_PRE
     bad('F71: huésped sin contexto → PRESENT descartado (F48 intacto)', 'got PRESENT');
 }
 
+// F77.5: puerta OPEN con sensor MUDO (último evento aplicado > DOOR_STALE_SECONDS)
+// NO debe vetar la presencia (recuperación ante sensor/caché atascado).
+$iotRepo->sessions[10]->doorState = IotSession::DOOR_OPEN;
+$iotRepo->sessions[10]->lastDoorEventAt = '2026-04-28 13:50:00.000';
+$iotRepo->sessions[10]->lastDoorValue = PresenceEvent::VALUE_OPEN;
+$iotRepo->sessions[10]->presenceState = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceEventAt = '2026-04-28 14:00:00.000';
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:10Z', 'f77-wh-stale', 'presence'), 'corr-f77-wh-stale');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F77.5: puerta OPEN stale no veta la presencia (recuperación)');
+} else {
+    bad('F77.5: puerta OPEN stale debería aplicar presencia', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+
 Clock::unfreeze();
 
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";

@@ -149,7 +149,27 @@ const whPresence = deriveCroquis(snap({
 check('F71 presencia almacén → personInside=true', whPresence.personInside === true);
 check('F71 presencia almacén → classes.occupied=true', whPresence.classes.occupied === true);
 
-// ─── 13. Módulo require-safe ───────────────────────────────────────────
+// ─── 13. F77.5: estado de puerta viejo → SIN DATOS, no "abierta" ───────
+const staleOpen = deriveCroquis(snap({
+  door_state: 'OPEN', presence_state: 'ABSENT', door_stale: true, door_age_seconds: 600,
+}), BASE);
+check('F77.5 OPEN stale → doorOpen=false', staleOpen.doorOpen === false);
+check('F77.5 OPEN stale → chip PUERTA SIN DATOS (warn)',
+  staleOpen.chips.door.text.indexOf('PUERTA SIN DATOS') === 0 && staleOpen.chips.door.mod === 'warn');
+check('F77.5 OPEN stale → desc "no fiable"', staleOpen.desc.indexOf('no fiable') >= 0);
+
+const staleClosed = deriveCroquis(snap({
+  door_state: 'CLOSED', presence_state: 'ABSENT', door_stale: true, door_age_seconds: 600,
+}), BASE);
+check('F77.5 CLOSED stale → PUERTA CERRADA (edge-triggered legítimo)',
+  staleClosed.chips.door.text === 'PUERTA CERRADA' && staleClosed.doorOpen === false);
+
+const freshOpen = deriveCroquis(snap({
+  door_state: 'OPEN', presence_state: 'ABSENT', door_stale: false, door_age_seconds: 3,
+}), BASE);
+check('F77.5 OPEN fresco → PUERTA ABIERTA', freshOpen.doorOpen === true && freshOpen.chips.door.text === 'PUERTA ABIERTA');
+
+// ─── 14. Módulo require-safe ───────────────────────────────────────────
 check('module exports the pure croquis logic', typeof deriveCroquis === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
 

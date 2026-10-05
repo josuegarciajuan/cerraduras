@@ -55,6 +55,15 @@
     return { text: text, mod: mod || '' };
   }
 
+  /** F77.5: antigüedad legible corta ("hace 5 min", "hace 3 h", "hace 2 d"). */
+  function formatAge(seconds) {
+    if (typeof seconds !== 'number' || !isFinite(seconds) || seconds < 0) return '';
+    if (seconds < 60) return 'hace ' + Math.floor(seconds) + ' s';
+    if (seconds < 3600) return 'hace ' + Math.floor(seconds / 60) + ' min';
+    if (seconds < 86400) return 'hace ' + Math.floor(seconds / 3600) + ' h';
+    return 'hace ' + Math.floor(seconds / 86400) + ' d';
+  }
+
   /**
    * @param {object} snapshot
    * @param {number} now epoch ms
@@ -75,14 +84,24 @@
     var lastOpenMs = parseTime(live.last_open_at);
     var lastCloseMs = parseTime(live.last_close_at);
     var pulseUntil = lastOpenMs + DOOR_PULSE_MS;
-    var doorOpen = resolveDoor(door, pulseUntil, nowMs);
+
+    // F77.5: si el servidor marca el estado de puerta como viejo (sensor mudo o
+    // valor cacheado), un OPEN no se pinta como "abierta": no es fiable. El
+    // CLOSED sigue siendo válido (el MC400D es edge-triggered y puede no emitir
+    // durante horas con la puerta cerrada).
+    var doorStale = live.door_stale === true;
+    var doorAge = (typeof live.door_age_seconds === 'number') ? live.door_age_seconds : null;
+    var staleOpen = doorStale && door === 'OPEN';
+    var doorOpen = !staleOpen && resolveDoor(door, pulseUntil, nowMs);
 
     var personInside = occupied || presence === 'PRESENT';
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
 
-    // F72 (RF-83): el MC400D es edge-triggered; el último estado de puerta
-    // persiste hasta el evento contrario. "Sin datos" solo si nunca hubo estado.
-    var doorChip = doorOpen ? chip('PUERTA ABIERTA', 'ok')
+    // F72 (RF-83) + F77.5: el último estado persiste hasta el evento contrario,
+    // salvo que el servidor lo marque como STALE (entonces "SIN DATOS").
+    var doorChip = staleOpen
+      ? chip('PUERTA SIN DATOS' + (formatAge(doorAge) ? ' · ' + formatAge(doorAge) : ''), 'warn')
+      : doorOpen ? chip('PUERTA ABIERTA', 'ok')
       : door === 'CLOSED' ? chip('PUERTA CERRADA', 'dim')
       : chip('PUERTA SIN DATOS', 'dim');
 
@@ -101,7 +120,8 @@
       : light === 'OFF' ? chip('LUZ OFF', 'dim')
       : chip('LUZ —', 'dim');
 
-    var doorText = doorOpen ? 'Puerta abierta'
+    var doorText = staleOpen ? 'Estado de puerta no fiable (sensor sin datos)'
+      : doorOpen ? 'Puerta abierta'
       : door === 'CLOSED' ? 'Puerta cerrada'
       : 'Puerta sin datos';
     var desc = doorText + '. ' + (personInside ? 'Persona dentro' : 'Almacén vacío')
