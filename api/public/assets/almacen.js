@@ -72,6 +72,17 @@
     var box = $('cams');
     var cams = (state && state.cameras) || [];
     renderLiveButton(cams);
+    // F77.3: el push SSE llega ~1/s; recrear el DOM del directo reiniciaba el
+    // <img> MJPEG cada segundo (imagen a tirones). Solo se recrea si cambia algo
+    // relevante y no estamos en modo reproducción.
+    var sig = cams.map(function (c) {
+      return [c.id, c.position, c.label, c.enabled, c.recording, c.mjpeg_url, c.live_url].join('|');
+    }).join(';;');
+    if (box.dataset && box.dataset.mode === 'live' && box.dataset.sig === sig) {
+      return;
+    }
+    box.dataset.mode = 'live';
+    box.dataset.sig = sig;
     if (!cams.length) {
       box.innerHTML = '<div class="muted">Sin cámaras configuradas para este almacén.</div>';
       return;
@@ -279,6 +290,8 @@
     var box = $('cams');
     var cams = (state && state.cameras) || [];
     playback.videos = {};
+    // F77.3: marca el DOM como reproducción para forzar el rebuild al volver al directo.
+    if (box.dataset) { box.dataset.mode = 'replay'; }
     box.innerHTML = playback.positions.map(function (pos) {
       var cam = null;
       for (var i = 0; i < cams.length; i++) { if (cams[i].position === pos) { cam = cams[i]; break; } }

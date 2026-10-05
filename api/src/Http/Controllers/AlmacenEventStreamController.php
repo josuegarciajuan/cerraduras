@@ -63,11 +63,19 @@ final class AlmacenEventStreamController
                 $snapshot = $this->state->stateArray($roomId);
                 // F67/RF-77.4: `live` (puerta/presencia/luz) entra en el fingerprint
                 // para empujar los cambios del croquis sin recargar la página.
+                // F77.3: las EDADES de señal (*_age_seconds) son diagnóstico y cambian
+                // cada segundo; se excluyen para no empujar un state por segundo (que
+                // recreaba el directo MJPEG). `door_stale` sí entra (cambia al cruzar
+                // el umbral).
+                $fpLive = $snapshot['live'] ?? null;
+                if (is_array($fpLive)) {
+                    unset($fpLive['door_age_seconds'], $fpLive['presence_age_seconds']);
+                }
                 $fp = md5(json_encode([
                     $snapshot['warehouse'],
                     $snapshot['cameras'],
                     $snapshot['recordings_active'],
-                    $snapshot['live'] ?? null,
+                    $fpLive,
                 ]));
                 if ($fp !== $lastFp) {
                     $lastFp = $fp;
