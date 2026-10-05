@@ -2021,8 +2021,10 @@ interna de permisos (excepción sobre rol). Rechazo por permisos: `403` con
 - Los registros `DISCARDED` no tienen `video_url` (o devuelve `410 gone`).
 - `GET /almacen-api/visits/{id}` → `{ "visit": {…} }`; `404 not_found` si no existe.
 - **F79 (RF-102.3)**: por defecto se **excluyen** los intentos sin entrada
-  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`). `include_no_show=1` los incluye; un
-  `outcome=NO_SHOW` explícito también los muestra. Los `NO_SHOW` con `QR` siempre se listan.
+  (`outcome='NO_SHOW' AND entry_trigger='DOOR'`) y las visitas disparadas solo por `PRESENCE`
+  (radar; F80/RF-103 las mantiene para el croquis en vivo, no para el listado).
+  `include_no_show=1` las incluye; un `outcome=NO_SHOW` explícito también muestra los intentos.
+  Los `NO_SHOW` con `QR` siempre se listan.
 
 ## 1b. Origen de las señales del motor (F79, RF-102.1/102.2)
 
