@@ -5315,6 +5315,98 @@ else
 fi
 
 # =============================================================================
+# BLOCK 58 — F85: modelo de detección del pack almacén + puerta fiel (RF-109..114)
+# Trazabilidad: RF-109.4, RF-110.1/110.2, RF-111.2/111.4, RF-112, RF-113; TSK-F85-01..F85-07
+# =============================================================================
+block "BLOCK 58 — F85: modelo de detección del almacén y puerta fiel"
+
+# 58.0 Estáticos: motor, servicio/evidencia, recorder, API y panel.
+for F85_MARK in \
+    "src/Domain/Warehouse/WarehouseRecordingDecision.php:RF-109.4" \
+    "src/Domain/Warehouse/WarehouseRecordingDecision.php:RF-110.1" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:warehouse_reentry_context_seconds" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:reentry_seconds" \
+    "bin/warehouse-recorder.php:busyDevices" \
+    "public/index.php:unresolved_transition" \
+    "public/index.php:source' => 'panel'" \
+    "public/almacen.html:f-discards" \
+    "public/assets/almacen.js:doorStaleProbed"; do
+    F85_FILE="${F85_MARK%%:*}"
+    F85_NEEDLE="${F85_MARK#*:}"
+    if grep -q "$F85_NEEDLE" "$F85_FILE" 2>/dev/null; then
+        pass "F85: $F85_FILE define '$F85_NEEDLE'"
+    else
+        fail "F85: $F85_FILE" "falta '$F85_NEEDLE'"
+    fi
+done
+if [ -f "migrations/0123_warehouse_reentry_context.sql" ]; then
+    pass "F85: migración 0123 presente"
+else
+    fail "F85: migración 0123" "no encontrada"
+fi
+
+# 58.1 Units puros (motor + re-entrada + evidencia).
+for F85_TEST in \
+    "tests/Unit/WarehouseRecordingDecisionTest.php" \
+    "tests/Unit/WarehouseReentryTest.php" \
+    "tests/Unit/PresenceEvidenceTest.php"; do
+    if [ -f "$F85_TEST" ]; then
+        F85_OUT=$(php "$F85_TEST" 2>&1)
+        F85_RC=$?
+        F85_SUM=$(echo "$F85_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+        [ -z "$F85_SUM" ] && F85_SUM="exit=$F85_RC"
+        if [ "$F85_RC" -eq 0 ]; then
+            pass "F85: $(basename "$F85_TEST") ($F85_SUM)"
+        else
+            fail "F85: $(basename "$F85_TEST")" \
+                "$F85_SUM — $(echo "$F85_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F85: $F85_TEST" "no encontrado"
+    fi
+done
+
+# 58.2 BD: columna de contexto de re-entrada.
+if [ -n "$MYSQL_BIN" ]; then
+    F85_COL=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='room_types' AND column_name='warehouse_reentry_context_seconds'" 2>/dev/null)
+    if [ "$F85_COL" = "1" ]; then
+        pass "F85: room_types expone warehouse_reentry_context_seconds"
+    elif [ -z "$F85_COL" ]; then
+        skip "F85: columna de re-entrada" "sin BD"
+    else
+        fail "F85: columna de re-entrada" "col=$F85_COL (esperado 1)"
+    fi
+fi
+
+# 58.3 HTTP/DB: el refresh respeta el cooldown cuando NO hay transición sin resolver
+# (sin gastar cuota Tuya). La rama de bypass (door_stale + transición) se verifica
+# estáticamente en 58.0 y en vivo en la tarea F85-08.
+if [ "$SERVER_UP" = true ]; then
+    F85_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F85_ROOM" ]; then
+        F85_PREV_META=$($MYSQL -sN -e "SELECT meta_json FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY' LIMIT 1" 2>/dev/null)
+        $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json=JSON_SET(COALESCE(d.meta_json,'{}'),'\$.status_probed_at','$(date -u +%Y-%m-%dT%H:%M:%SZ)') WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
+        F85_RJ=$(curl -s --max-time 8 -X POST "$API_BASE/almacen-api/sensors/refresh" -H 'Content-Type: application/json' -d "{\"room_id\":$F85_ROOM}" 2>/dev/null)
+        F85_RREASON=$(printf '%s' "$F85_RJ" | python3 -c "import sys,json
+try: print((json.load(sys.stdin) or {}).get('reason',''))
+except Exception: print('parse_error')" 2>/dev/null || echo "parse_error")
+        if [ "$F85_RREASON" = "throttled" ] || [ "$F85_RREASON" = "unresolved_transition" ]; then
+            pass "F85: refresh no fuerza sonda innecesaria (reason=$F85_RREASON)"
+        else
+            fail "F85: refresh cooldown" "reason=$F85_RREASON (esperado throttled)"
+        fi
+        if [ -n "$F85_PREV_META" ]; then
+            F85_ESC=$(printf '%s' "$F85_PREV_META" | sed "s/'/''/g")
+            $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json='$F85_ESC' WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
+        fi
+    else
+        skip "F85 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "F85 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

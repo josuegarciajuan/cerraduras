@@ -583,7 +583,14 @@
   function loadVisits() {
     if (!state || !state.room) { $('visits').innerHTML = ''; return; }
     var outcome = $('f-outcome') ? $('f-outcome').value : '';
-    var q = '?room_id=' + state.room.id + '&limit=50' + (outcome ? '&outcome=' + outcome : '');
+    var showDiscards = !!($('f-discards') && $('f-discards').checked);
+    var q = '?room_id=' + state.room.id + '&limit=50';
+    if (outcome) {
+      q += '&outcome=' + outcome;
+    } else if (showDiscards) {
+      // F85/RF-113.1: mostrar también los NO_SHOW y NOISE (descartes) para auditar.
+      q += '&include_noise=1&include_no_show=1';
+    }
     api('/almacen-api/visits' + q).then(function (j) {
       var rows = (j.visits || []).map(function (v) {
         var who = v.worker ? v.worker.name : 'anónimo';
@@ -719,6 +726,7 @@
       loadAccess(false);
       if (first) { loadVisits(); }
     }
+    maybeRecoverDoor();
   }
 
   function pollState() {
@@ -743,6 +751,18 @@
       }
       return r;
     }).catch(function (e) { if (!silent) { toast('Sensores: ' + e.message); } });
+  }
+
+  // F85/RF-111.3: si el estado de puerta queda STALE (push perdido), se pide UNA
+  // relectura puntual (cooldown en servidor). NO es un temporizador: se rearma
+  // cuando la puerta deja de estar stale (llega un evento o la sonda la resuelve).
+  var doorStaleProbed = false;
+  function maybeRecoverDoor() {
+    var stale = !!(state && state.live && state.live.door_stale === true);
+    if (!stale) { doorStaleProbed = false; return; }
+    if (doorStaleProbed) { return; }
+    doorStaleProbed = true;
+    refreshSensors(true);
   }
 
   function connectSSE() {

@@ -68,12 +68,25 @@ while ($running) {
         $pdo->beginTransaction();
 
         // 1. Start pending recordings.
+        // F85/RF-109.4: no arrancar un PENDING si el mismo device ya tiene una fila
+        // RECORDING (en la re-entrada la grabación anterior sigue viva hasta que se
+        // procesa su stop en este mismo tick). El PENDING se recoge en un tick
+        // posterior; evita dos ffmpeg sobre la misma cámara.
+        $busyDevices = [];
+        foreach ($pdo->query(
+            "SELECT DISTINCT device_id FROM camera_recordings WHERE status='RECORDING'"
+        )->fetchAll(PDO::FETCH_COLUMN) ?: [] as $busyId) {
+            $busyDevices[(int) $busyId] = true;
+        }
         foreach ($pdo->query(
             "SELECT id, room_id, device_id, position, episode, visit_id
              FROM camera_recordings
              WHERE status='PENDING' AND discard_requested=0 AND stop_requested=0
              ORDER BY id ASC LIMIT 20"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            if (isset($busyDevices[(int) $r['device_id']])) {
+                continue;
+            }
             startRecording($pdo, $procs, $log, $ffmpeg, $storageRoot, $r);
         }
 

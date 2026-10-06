@@ -2667,7 +2667,7 @@ $router->get('/almacen-api/state', [$warehouseStateController, 'show']);
 // POST /almacen-api/door/open — apertura manual desde el panel (F65/RF-74).
 $router->post(
     '/almacen-api/door/open',
-    function (\App\Http\Request $request) use ($lockService): \App\Http\Response {
+    function (\App\Http\Request $request) use ($lockService, $warehouseRecordingService, $pdo): \App\Http\Response {
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         $roomId = (int) ($body['room_id'] ?? 0);
         if ($roomId <= 0) {
@@ -2676,7 +2676,36 @@ $router->post(
         $correlationId = (string) ($request->attr('correlation_id', '') ?? '');
         try {
             $result = $lockService->open($roomId, 'manual_almacen', true, $correlationId);
-            return \App\Http\Response::json(200, array_merge(['ok' => true], is_array($result) ? $result : []));
+
+            // F85/RF-111.4: la apertura manual alimenta el motor del almacén (no
+            // depende solo del push del sensor). `panel` no es SIMULATED/resync.
+            $visitStarted = false;
+            try {
+                $before = null;
+                if ($warehouseRecordingService->isWarehouseRoom($roomId)) {
+                    $q = $pdo->prepare('SELECT current_visit_id FROM warehouse_state WHERE room_id = :r LIMIT 1');
+                    $q->execute([':r' => $roomId]);
+                    $before = $q->fetchColumn();
+                }
+                $warehouseRecordingService->onSignal(
+                    $roomId,
+                    \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_OPEN,
+                    ['provider' => 'PANEL', 'source' => 'panel']
+                );
+                if ($before !== null && $before !== false) {
+                    $q2 = $pdo->prepare('SELECT current_visit_id FROM warehouse_state WHERE room_id = :r LIMIT 1');
+                    $q2->execute([':r' => $roomId]);
+                    $after = $q2->fetchColumn();
+                    $visitStarted = ($after !== false && $after !== null && (string) $after !== (string) $before);
+                }
+            } catch (\Throwable $e) {
+                error_log('[almacen door/open] warehouse signal failed: ' . $e->getMessage());
+            }
+
+            return \App\Http\Response::json(200, array_merge(
+                ['ok' => true, 'visit_started' => $visitStarted],
+                is_array($result) ? $result : []
+            ));
         } catch (\Throwable $e) {
             return \App\Http\Response::json(409, ['error' => 'door_error', 'message' => $e->getMessage()]);
         }
@@ -2731,15 +2760,33 @@ $router->post(
         $meta = json_decode((string) ($door['meta_json'] ?? ''), true);
         $meta = is_array($meta) ? $meta : [];
         $lastAt = $meta['status_probed_at'] ?? null;
-        if ($cooldown > 0 && is_string($lastAt) && $lastAt !== '') {
-            $lastTs = strtotime($lastAt . ' UTC');
-            if ($lastTs !== false && (time() - $lastTs) < $cooldown) {
-                return \App\Http\Response::json(200, [
-                    'ok' => true, 'probed' => false, 'reason' => 'throttled',
-                    'retry_in_seconds' => max(0, $cooldown - (time() - $lastTs)),
-                    'state' => $warehouseStateController->stateArray($roomId),
-                ]);
-            }
+        $lastProbedTs = (is_string($lastAt) && $lastAt !== '') ? strtotime($lastAt . ' UTC') : false;
+        $cooldownActive = ($cooldown > 0 && $lastProbedTs !== false && (time() - $lastProbedTs) < $cooldown);
+
+        // F85/RF-111.2: una transición de puerta sin resolver (door_stale + evento
+        // aplicado posterior a la última sonda) justifica UNA lectura REST aunque el
+        // cooldown esté vigente. La sonda sigue respetando el presupuesto compartido.
+        $unresolvedTransition = false;
+        if ($cooldownActive) {
+            $ls = $pdo->prepare('SELECT door_state, last_door_event_at FROM iot_sessions WHERE room_id = :r LIMIT 1');
+            $ls->execute([':r' => $roomId]);
+            $lsRow = $ls->fetch(\PDO::FETCH_ASSOC) ?: [];
+            $staleSeconds = \App\Support\Config::getInt('DOOR_STALE_SECONDS', 300);
+            $staleSeconds = $staleSeconds > 0 ? $staleSeconds : 300;
+            $doorState = (string) ($lsRow['door_state'] ?? 'UNKNOWN');
+            $lastDoor = $lsRow['last_door_event_at'] ?? null;
+            $lastDoorTs = ($lastDoor !== null && $lastDoor !== '') ? strtotime((string) $lastDoor . ' UTC') : false;
+            $doorStale = ($doorState === 'UNKNOWN' || $lastDoorTs === false
+                || (time() - $lastDoorTs) > $staleSeconds);
+            $unresolvedTransition = $doorStale && $lastDoorTs !== false && $lastProbedTs !== false
+                && $lastDoorTs > $lastProbedTs;
+        }
+        if ($cooldownActive && !$unresolvedTransition) {
+            return \App\Http\Response::json(200, [
+                'ok' => true, 'probed' => false, 'reason' => 'throttled',
+                'retry_in_seconds' => max(0, $cooldown - (int) $lastProbedTs),
+                'state' => $warehouseStateController->stateArray($roomId),
+            ]);
         }
 
         $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId) . '/status', null);
@@ -2766,7 +2813,7 @@ $router->post(
                 ->execute([':m' => json_encode($meta, JSON_UNESCAPED_UNICODE), ':id' => $deviceId]);
         } catch (\Throwable $e) { /* best-effort */ }
 
-        $result = ['ok' => true, 'probed' => true, 'reason' => 'ok'];
+        $result = ['ok' => true, 'probed' => true, 'reason' => $unresolvedTransition ? 'unresolved_transition' : 'ok'];
         try {
             $status = [];
             foreach (($res['data']['result'] ?? []) as $dp) {

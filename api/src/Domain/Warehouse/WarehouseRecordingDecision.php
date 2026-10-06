@@ -30,7 +30,11 @@ namespace App\Domain\Warehouse;
  * exit, deadline M); DOOR_CLOSE stays a no-op there so a close with someone
  * still inside does not cut the recording.
  *
- * See design.md §27.2.
+ * F85 (RF-109.4/110.1): reaparición en EXIT_PENDING = **visita nueva** (no se
+ * fusionan ciclos), y la expiración de X descarta **ambas** grabaciones (ya no se
+ * conserva el EXTERIOR en EXTERIOR_ONLY). EXTERIOR_ONLY queda deprecado.
+ *
+ * See design.md §27.2 / §49.3.
  */
 final class WarehouseRecordingDecision
 {
@@ -109,13 +113,10 @@ final class WarehouseRecordingDecision
                     ]);
                 }
                 if ($event === self::EV_X_EXPIRED) {
-                    if ($trigger === 'QR') {
-                        // Keep the EXTERIOR evidence; discard the INTERIOR clip.
-                        return self::out(self::STATE_EXTERIOR_ONLY, $trigger, false, [
-                            self::A_STOP_INT, self::A_DISCARD_INT, self::A_SET_DEADLINE_M, self::A_VISIT_NO_SHOW,
-                        ]);
-                    }
-                    // Door without QR: cut and discard both.
+                    // F85/RF-110.1/110.3: sin presencia dentro de X no hubo entrada
+                    // (QR o puerta, con o sin QR). Se descartan TODAS las grabaciones
+                    // de la tentativa. Revisa el `EXTERIOR_ONLY` previo, que para el
+                    // trigger QR conservaba el clip EXTERIOR.
                     return self::out(self::STATE_IDLE, null, false, [
                         self::A_STOP_EXT, self::A_STOP_INT, self::A_DISCARD_EXT, self::A_DISCARD_INT,
                         self::A_CLOSE_VISIT, self::A_VISIT_NO_SHOW,
@@ -164,8 +165,14 @@ final class WarehouseRecordingDecision
                     return self::out(self::STATE_IDLE, null, false, [self::A_STOP_EXT, self::A_CLOSE_VISIT]);
                 }
                 if ($event === self::EV_PRESENT) {
-                    return self::out(self::STATE_RECORDING_INSIDE, $trigger, true, [
-                        self::A_START_INT, self::A_CLEAR_DEADLINES,
+                    // F85/RF-109.4: reaparición tras un ABSENT acreditado = RE-ENTRADA.
+                    // La visita anterior ya quedó cerrada en su `exited_at` al pasar a
+                    // EXIT_PENDING; aquí se para su clip EXTERIOR y se crea una visita
+                    // NUEVA (trigger PRESENCE) con sus propios clips de entrada. No se
+                    // fusionan ciclos ni se reabre la visita anterior.
+                    return self::out(self::STATE_RECORDING_INSIDE, 'PRESENCE', true, [
+                        self::A_STOP_EXT, self::A_CREATE_VISIT, self::A_CONFIRM_ENTRY,
+                        self::A_START_EXT, self::A_START_INT, self::A_CLEAR_DEADLINES,
                     ]);
                 }
                 break;

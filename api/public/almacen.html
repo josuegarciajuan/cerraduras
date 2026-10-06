@@ -275,7 +275,11 @@
         <option value="NO_SHOW">No entró</option>
         <option value="ANONYMOUS">Anónimo</option>
         <option value="DENIED">Denegado</option>
+        <option value="NOISE">Ruido (descartes)</option>
       </select>
+      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px">
+        <input type="checkbox" id="f-discards" onchange="Almacen.loadVisits()"> mostrar descartes
+      </label>
       <button class="ghost" onclick="Almacen.loadVisits()">Refrescar</button>
     </div>
     <div id="visits"></div>

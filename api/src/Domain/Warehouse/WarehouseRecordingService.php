@@ -127,10 +127,15 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             $deadlineX = $row['deadline_x'] !== null ? (string) $row['deadline_x'] : null;
             $deadlineM = $row['deadline_m'] !== null ? (string) $row['deadline_m'] : null;
 
+            // F85 (RF-109.4): al crear una visita nueva en este lote (p. ej. la
+            // re-entrada desde EXIT_PENDING) sus clips son de ENTRADA, no del
+            // `preState` anterior (que sería EXIT).
+            $createdNewVisit = false;
             foreach ($result['actions'] as $action) {
                 switch ($action) {
                     case WarehouseRecordingDecision::A_CREATE_VISIT:
                         $visitId = $this->createVisit($roomId, $result['entry_trigger'], $meta, $now);
+                        $createdNewVisit = true;
                         break;
                     case WarehouseRecordingDecision::A_CONFIRM_ENTRY:
                         if ($visitId !== null) {
@@ -166,10 +171,10 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                         }
                         break;
                     case WarehouseRecordingDecision::A_START_EXT:
-                        $this->startRecordings($roomId, $visitId, 'EXTERIOR', $this->episodeFor($preState), $result['entry_trigger'], $now);
+                        $this->startRecordings($roomId, $visitId, 'EXTERIOR', $createdNewVisit ? 'ENTRY' : $this->episodeFor($preState), $result['entry_trigger'], $now);
                         break;
                     case WarehouseRecordingDecision::A_START_INT:
-                        $this->startRecordings($roomId, $visitId, 'INTERIOR', $this->episodeFor($preState), $result['entry_trigger'], $now);
+                        $this->startRecordings($roomId, $visitId, 'INTERIOR', $createdNewVisit ? 'ENTRY' : $this->episodeFor($preState), $result['entry_trigger'], $now);
                         break;
                     case WarehouseRecordingDecision::A_STOP_EXT:
                         $this->requestStop($roomId, $visitId, 'EXTERIOR');
@@ -278,7 +283,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
     // -- helpers ---------------------------------------------------------------
 
     /**
-     * @return array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int}
+     * @return array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int,reentry_seconds:int}
      */
     private function roomConfig(int $roomId): array
     {
@@ -302,7 +307,32 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             'min_moves' => $evidence['min_moves'],
             'min_events' => $evidence['min_events'],
             'static_seconds' => $evidence['static_seconds'],
+            // F85/RF-112.3: ventana de contexto de re-entrada (def. 300 s).
+            'reentry_seconds' => $this->reentryWindow($roomId),
         ];
+    }
+
+    /**
+     * F85/RF-112.3: ventana (s) de contexto de re-entrada. Tolerante a que la
+     * migración `0123` aún no esté aplicada (default 300).
+     */
+    private function reentryWindow(int $roomId): int
+    {
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT rt.warehouse_reentry_context_seconds
+                   FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+                  WHERE r.id = :rid LIMIT 1'
+            );
+            $stmt->execute([':rid' => $roomId]);
+            $v = $stmt->fetchColumn();
+            if ($v !== false && $v !== null) {
+                return max(0, (int) $v);
+            }
+        } catch (\Throwable $e) {
+            // Columna no migrada todavía: se usa el valor por defecto.
+        }
+        return 300;
     }
 
     /**
@@ -310,7 +340,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
      * presencia y decide si es una visita real o un falso positivo del radar.
      * Solo BD local (push ya persistido): no consume cuota Tuya.
      *
-     * @param array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int} $config
+     * @param array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int,reentry_seconds:int} $config
      */
     private function presenceEvidenceConfirmed(
         int $roomId,
@@ -356,6 +386,30 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         $doorEvent = $dStmt->fetchColumn() !== false;
 
         $seconds = max(0, $now->getTimestamp() - $startTs);
+
+        // F85/RF-112.1: contexto de re-entrada. Si hay una visita REAL (DOOR/QR,
+        // ENTERED) cerrada en la misma sala dentro de la ventana configurada, este
+        // episodio de presencia es una re-entrada legítima aunque el radar solo
+        // haya emitido un `move`. Solo BD local (sin cuota).
+        $window = (int) ($config['reentry_seconds'] ?? 300);
+        if ($window > 0) {
+            $rq = $this->pdo->prepare(
+                "SELECT 1 FROM warehouse_visits
+                  WHERE room_id = :r AND id <> :id
+                    AND entry_trigger IN ('DOOR','QR')
+                    AND outcome = 'ENTERED'
+                    AND exited_at IS NOT NULL
+                    AND exited_at >= (UTC_TIMESTAMP(3) - INTERVAL :s SECOND)
+                  LIMIT 1"
+            );
+            $rq->bindValue(':r', $roomId, PDO::PARAM_INT);
+            $rq->bindValue(':id', $visitId, PDO::PARAM_INT);
+            $rq->bindValue(':s', $window, PDO::PARAM_INT);
+            $rq->execute();
+            if ($rq->fetchColumn() !== false) {
+                return true;
+            }
+        }
 
         return PresenceEvidence::isConfirmed($moves, $events, (float) $seconds, $doorEvent, $config);
     }

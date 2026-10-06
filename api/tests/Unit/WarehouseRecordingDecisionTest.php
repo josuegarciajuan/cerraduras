@@ -82,14 +82,14 @@ if ($r['state'] === D::STATE_IDLE
     fail('D: EXIT_PENDING + M_EXPIRED inesperado: ' . json_encode($r));
 }
 
-// ── Caso A': QR sin presencia (NO_SHOW): INT descartada, EXT conservada ──
+// ── F85/RF-110.1: QR sin entrada descarta TODAS las grabaciones ─────────
 $r = D::decide(st(D::STATE_QR_PENDING, 'QR'), D::EV_X_EXPIRED);
-if ($r['state'] === D::STATE_EXTERIOR_ONLY
-    && hasAll($r['actions'], [D::A_STOP_INT, D::A_DISCARD_INT, D::A_SET_DEADLINE_M, D::A_VISIT_NO_SHOW])
-    && hasNone($r['actions'], [D::A_DISCARD_EXT, D::A_STOP_EXT])) {
-    pass('A\': QR_PENDING(QR) + X_EXPIRED → EXTERIOR_ONLY (descarta INT, conserva EXT)');
+if ($r['state'] === D::STATE_IDLE
+    && $r['entry_trigger'] === null
+    && hasAll($r['actions'], [D::A_STOP_EXT, D::A_STOP_INT, D::A_DISCARD_EXT, D::A_DISCARD_INT, D::A_VISIT_NO_SHOW, D::A_CLOSE_VISIT])) {
+    pass('F85: QR_PENDING(QR) + X_EXPIRED → IDLE (descarta EXT e INT, NO_SHOW)');
 } else {
-    fail('A\': QR_PENDING(QR) + X_EXPIRED inesperado: ' . json_encode($r));
+    fail('F85: QR_PENDING(QR) + X_EXPIRED inesperado: ' . json_encode($r));
 }
 
 $r = D::decide(st(D::STATE_EXTERIOR_ONLY, 'QR'), D::EV_DOOR_CLOSE);
@@ -141,14 +141,40 @@ if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['entry_trigger'] === 'PRESEN
     fail('C: IDLE + PRESENT inesperado: ' . json_encode($r));
 }
 
-// Reappearance during EXIT_PENDING resumes INTERIOR without reopening the visit.
+// F85/RF-109.4: reaparición tras ABSENT en EXIT_PENDING = RE-ENTRADA → visita nueva.
 $r = D::decide(st(D::STATE_EXIT_PENDING, 'PRESENCE', true), D::EV_PRESENT);
 if ($r['state'] === D::STATE_RECORDING_INSIDE
-    && hasAll($r['actions'], [D::A_START_INT, D::A_CLEAR_DEADLINES])
-    && hasNone($r['actions'], [D::A_CREATE_VISIT])) {
-    pass('C: EXIT_PENDING + PRESENT → RECORDING_INSIDE (sin reabrir visita)');
+    && $r['entry_trigger'] === 'PRESENCE'
+    && hasAll($r['actions'], [D::A_STOP_EXT, D::A_CREATE_VISIT, D::A_CONFIRM_ENTRY, D::A_START_EXT, D::A_START_INT, D::A_CLEAR_DEADLINES])
+    && hasNone($r['actions'], [D::A_MARK_EXIT])) {
+    pass('F85: EXIT_PENDING + PRESENT → RECORDING_INSIDE (visita nueva, re-entrada)');
 } else {
-    fail('C: EXIT_PENDING + PRESENT inesperado: ' . json_encode($r));
+    fail('F85: EXIT_PENDING + PRESENT inesperado: ' . json_encode($r));
+}
+
+// La re-entrada desde una visita DOOR/QR también crea visita nueva (PRESENCE).
+$r = D::decide(st(D::STATE_EXIT_PENDING, 'DOOR', true), D::EV_PRESENT);
+if ($r['state'] === D::STATE_RECORDING_INSIDE
+    && $r['entry_trigger'] === 'PRESENCE'
+    && hasAll($r['actions'], [D::A_CREATE_VISIT, D::A_STOP_EXT])) {
+    pass('F85: re-entrada desde visita DOOR → visita nueva (PRESENCE)');
+} else {
+    fail('F85: re-entrada DOOR inesperado: ' . json_encode($r));
+}
+
+// Dedupe: un segundo DOOR_OPEN dentro del ciclo no crea visita.
+$r = D::decide(st(D::STATE_QR_PENDING, 'DOOR'), D::EV_DOOR_OPEN);
+if ($r['state'] === D::STATE_QR_PENDING && $r['actions'] === []) {
+    pass('F85: QR_PENDING + DOOR_OPEN → no-op (no duplica la visita)');
+} else {
+    fail('F85: QR_PENDING + DOOR_OPEN inesperado: ' . json_encode($r));
+}
+
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'DOOR', true), D::EV_DOOR_OPEN);
+if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['actions'] === []) {
+    pass('F85: RECORDING_INSIDE + DOOR_OPEN → no-op');
+} else {
+    fail('F85: RECORDING_INSIDE + DOOR_OPEN inesperado: ' . json_encode($r));
 }
 
 // ── No-op events keep state ──────────────────────────────────────────────
