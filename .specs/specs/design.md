@@ -4571,3 +4571,99 @@ de estados (`WarehouseRecordingDecision`) ni el contrato de `EXIT_PENDING` (F81/
 | RF-106.4 | §47.5 | §F83.2 | TSK-F83-05 |
 | RF-106.5 | §47.1 | §F83.1 | TSK-F83-01, TSK-F83-03 |
 | RF-106.6 | §47.5 | §F83.3 | TSK-F83-05 |
+
+---
+
+# 48. F84 — Antiruido del radar del almacén y reproducción fiel de la puerta (RF-107/RF-108)
+
+## 48.1 Problema y evidencia
+
+La madrugada del 2026-10-06 (sala 12, vacía) el radar produjo 73 episodios
+`move`→`presence`→`none` y F80/RF-103 los aceptó al instante (con o sin contexto), creando 76
+visitas `PRESENCE` y ~1,1 GB de clips. El crudo de un falso positivo es **idéntico** al de una
+entrada real (mismo DP `presence_state`; no hay distancia/confianza fiable). F80 se mantiene por
+requisito del operador (presencia con o sin contexto: p. ej. volver tras dejar la puerta abierta).
+
+Análisis de 60 h (91 episodios) sobre `presence_events`:
+
+| Grupo | Patrón dominante | Conclusión |
+|---|---|---|
+| Sin evento de puerta (fantasmas) | `m1 p1` (1 `move`, 1 `presence`), 20-180 s; **ninguno** con ≥2 `move` | parpadeo único |
+| Con puerta (actividad real) | `move`/`presence` **repetidos** (ej. 07:00: 6 eventos en 64 s; episodio largo: 135 `move`) | el radar reemite transiciones al moverse la persona |
+
+## 48.2 Clasificador puro `PresenceEvidence` (nuevo)
+
+`App\Domain\Warehouse\PresenceEvidence::isConfirmed(int $moves, int $events, float $seconds, bool $doorEvent, array $config): bool`
+— función pura, sin I/O, testeable:
+
+```
+confirmed = moves  >= config.min_moves    (def. 2)
+         || events >= config.min_events   (def. 3)
+         || seconds >= config.static_seconds (def. 300)
+         || doorEvent
+```
+
+`doorEvent` (evento `PROXIMITY` aplicado dentro del episodio) es **evidencia adicional**, nunca un
+veto: respeta RF-107.1 (con o sin contexto).
+
+## 48.3 Motor: evaluación en el fin del episodio
+
+`WarehouseRecordingService::onSignal()`:
+
+- La creación/provisión no cambia: `IDLE + EV_PRESENT` crea visita (`PRESENCE`) y arranca cámaras
+  (F80 intacto).
+- En `RECORDING_INSIDE` con `EV_ABSENT` o `EV_DOOR_CLOSE_ABSENT` y `entry_trigger='PRESENCE'`, antes
+  de decidir se calcula la evidencia con una consulta local (sin cuota):
+  - ventana `[visit.created_at - 2 s, now]`;
+  - `COUNT(DISTINCT event_fingerprint)` de `PRESENT`, y de ellos los `tuya_raw_val='move'`;
+  - `EXISTS` de `PROXIMITY` aplicado en la ventana;
+  - duración desde `visit.entered_at`.
+- Se pasa `presence_confirmed` a `WarehouseRecordingDecision::decide()` (nuevo parámetro de contexto,
+  mismo patrón que `SensorEventDecision`).
+  - `confirmed=true` → ruta actual a `EXIT_PENDING` (STOP_INT, MARK_EXIT, M).
+  - `confirmed=false` → nuevo camino de ruido: `STOP_EXT`, `STOP_INT`, `DISCARD_EXT`, `DISCARD_INT`,
+    `A_MARK_NOISE` (visita `outcome='NOISE'`), estado `IDLE` (sin margen `M`).
+- Los clips ya solicitados se descartan vía `discard_requested=1`; el recorder borra los ficheros
+  (F64/F77.6). Las filas de `warehouse_visits`/`camera_recordings` se conservan como auditoría.
+
+## 48.4 Migración `0122`
+
+- `ALTER TABLE warehouse_visits MODIFY outcome ENUM('ENTERED','NO_SHOW','ANONYMOUS','DENIED','NOISE')`.
+- `ALTER TABLE room_types ADD COLUMN warehouse_presence_min_moves TINYINT UNSIGNED NOT NULL DEFAULT 2`,
+  `warehouse_presence_min_events TINYINT UNSIGNED NOT NULL DEFAULT 3`,
+  `warehouse_presence_static_seconds INT UNSIGNED NOT NULL DEFAULT 300` (idempotente: `ADD COLUMN IF
+  NOT EXISTS`).
+- `UPDATE room_types SET ... WHERE code='ALMACEN_BEBIDAS'` para fijar los defaults del almacén.
+
+## 48.5 Listado y contrato
+
+`WarehouseVisitController::index()` oculta `outcome='NOISE'` por defecto (además del `NO_SHOW` DOOR ya
+oculto). `include_noise=1` o `outcome=NOISE` los muestran. `show()` sigue accesible por id para
+auditoría.
+
+## 48.6 Reproducción fiel de la puerta
+
+`WarehouseVisitController::show()` adjunta `visit.door` leyendo `presence_events`
+(`sensor='PROXIMITY'`, `applied=1`): `state_at_start` (último valor aplicado antes de
+`created_at`) y `events[]` en `[created_at - 10 s, fin + margen]`. `visit-playback.js` convierte esos
+eventos en intervalos OPEN→CLOSED y `frameAt()` deriva `doorOpen`/chip/descripción de ellos; sin
+eventos, puerta cerrada. Fallback sintético solo si `door` no viene (compatibilidad).
+
+## 48.7 Alcance y derogaciones
+
+- **No se toca**: el detector (config/hardware), `SensorEventDecision`, `IotSessionService`,
+  `TuyaSensorIngress`, el recorder, `/dashboard` ni RF-101 (sin poller/cuota).
+- **Revisa** el efecto de RF-103.2 (la visita por presencia puede acabar en `NOISE` si no hay
+  evidencia) y la representación de RF-78 (replay deja de inventar la puerta).
+- **Vigente**: F80/RF-103 (credibilidad al instante), F81/RF-104, F82/RF-105, F83/RF-106.
+
+## 48.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-107.1–107.2 | §48.1–48.3 | §F84.2 | TSK-F84-02, TSK-F84-03 |
+| RF-107.3–107.4 | §48.3, §48.5 | §F84.1, §F84.3 | TSK-F84-03, TSK-F84-04 |
+| RF-107.5 | §48.4 | §F84.1 | TSK-F84-01 |
+| RF-107.6–107.8 | §48.7 | §F84.4 | TSK-F84-06 |
+| RF-108.1 | §48.6 | §F84.3 | TSK-F84-04 |
+| RF-108.2–108.4 | §48.6 | §F84.3 | TSK-F84-05 |

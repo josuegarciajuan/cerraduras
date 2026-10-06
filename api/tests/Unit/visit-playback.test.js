@@ -202,6 +202,79 @@ check('F77.2 estancia larga: sin vídeo a los 10 min (clip de 60 s)',
 check('F77.2 estancia larga: crossOut cerca del fin de estancia',
   tlLong.crossOutMs === tlLong.inside.endMs - 2500);
 
+// ─── 6c. F84/RF-108: puerta fiel al sensor (sin inventar aperturas) ─────
+// Visita por PRESENCIA sin ningún evento de puerta: la puerta NUNCA se abre.
+const noDoorVisit = {
+  id: 90, entry_trigger: 'PRESENCE', outcome: 'ENTERED',
+  qr_at: null,
+  entered_at: '2026-10-01 14:00:00.000', exited_at: '2026-10-01 14:00:20.000',
+  created_at: '2026-10-01 14:00:00.000',
+  recordings: [
+    { id: 901, position: 'EXTERIOR', episode: 'ENTRY', trigger: 'PRESENCE', status: 'SAVED',
+      requested_at: '2026-10-01 14:00:00.000', stopped_at: '2026-10-01 14:00:30.000', duration_s: 30,
+      video_url: '/almacen-api/recordings/901/video', poster_url: null },
+  ],
+  door: { state_at_start: null, events: [] },
+};
+const tlNoDoor = buildVisitTimeline(noDoorVisit);
+check('F84: doorKnown=true con eventos vacíos', tlNoDoor.doorKnown === true);
+check('F84: sin eventos de puerta → fase exit sin puerta abierta',
+  frameAt(tlNoDoor, tlNoDoor.originMs + 19000, 0).doorOpen === false
+  && frameAt(tlNoDoor, tlNoDoor.originMs + 19000, 0).chips.door.text === 'PUERTA CERRADA');
+check('F84: sin eventos de puerta → nunca abierta en toda la visita',
+  [0, 5000, 10000, 15000, 18000, 22000].every(function (ms) {
+    return frameAt(tlNoDoor, tlNoDoor.originMs + ms, 0).doorOpen === false;
+  }));
+
+// Visita DOOR con intervalos reales OPEN→CLOSED.
+const realDoorVisit = {
+  id: 91, entry_trigger: 'DOOR', outcome: 'ENTERED',
+  qr_at: null,
+  entered_at: '2026-10-01 15:00:02.000', exited_at: '2026-10-01 15:00:40.000',
+  created_at: '2026-10-01 15:00:00.000',
+  recordings: [
+    { id: 911, position: 'INTERIOR', episode: 'ENTRY', trigger: 'DOOR', status: 'SAVED',
+      requested_at: '2026-10-01 15:00:00.000', stopped_at: '2026-10-01 15:00:50.000', duration_s: 50,
+      video_url: '/almacen-api/recordings/911/video', poster_url: null },
+  ],
+  door: {
+    state_at_start: 'CLOSED',
+    events: [
+      { value: 'OPEN', occurred_at: '2026-10-01 15:00:00.000' },
+      { value: 'CLOSED', occurred_at: '2026-10-01 15:00:20.000' },
+    ],
+  },
+};
+const tlRealDoor = buildVisitTimeline(realDoorVisit);
+check('F84: DOOR abierta dentro del intervalo real',
+  frameAt(tlRealDoor, tlRealDoor.originMs + 5000, 0).doorOpen === true);
+check('F84: DOOR cerrada tras el CLOSED real',
+  frameAt(tlRealDoor, tlRealDoor.originMs + 25000, 0).doorOpen === false);
+
+// state_at_start=OPEN sin evento OPEN: abierta desde el inicio hasta el CLOSED.
+const alreadyOpenVisit = {
+  id: 92, entry_trigger: 'PRESENCE', outcome: 'ENTERED',
+  qr_at: null,
+  entered_at: '2026-10-01 16:00:00.000', exited_at: '2026-10-01 16:00:30.000',
+  created_at: '2026-10-01 16:00:00.000',
+  recordings: [],
+  door: { state_at_start: 'OPEN', events: [
+    { value: 'CLOSED', occurred_at: '2026-10-01 16:00:10.000' },
+  ] },
+};
+const tlAlreadyOpen = buildVisitTimeline(alreadyOpenVisit);
+check('F84: state_at_start=OPEN → abierta al inicio',
+  frameAt(tlAlreadyOpen, tlAlreadyOpen.originMs + 2000, 0).doorOpen === true);
+check('F84: state_at_start=OPEN → cerrada tras CLOSED',
+  frameAt(tlAlreadyOpen, tlAlreadyOpen.originMs + 12000, 0).doorOpen === false);
+
+// Compatibilidad: sin `door` se conserva el comportamiento por fase (fallback).
+const legacyNoDoor = qrVisit();
+delete legacyNoDoor.door;
+const tlLegacy = buildVisitTimeline(legacyNoDoor);
+check('F84: sin campo door → fallback sintético (puerta en fase enter)',
+  tlLegacy.doorKnown === false && frameAt(tlLegacy, tlLegacy.originMs + 5000, 0).doorOpen === true);
+
 // ─── 7. Sin grabaciones ────────────────────────────────────────────────
 const tlEmpty = buildVisitTimeline({
   id: 45, entry_trigger: 'QR', outcome: 'ENTERED',

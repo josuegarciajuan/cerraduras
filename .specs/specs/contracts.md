@@ -2594,3 +2594,47 @@ Respuestas:
   `PRESENT` anterior a un `ABSENT`) y la Fase 81/RF-104.5 (con `UNKNOWN` + visita activa el muñeco se
   muestra atenuado, sin afirmar presencia).
 - La Fase 82/RF-105 (listado de visitas) no se ve afectada.
+
+---
+
+# Fase 84: Antiruido del radar y reproducción fiel de la puerta (RF-107 / RF-108)
+
+## 1. Base de datos
+
+- `warehouse_visits.outcome` admite el nuevo valor **`NOISE`** (migración `0122`).
+- `room_types` incorpora los umbrales configurables (idempotente):
+  `warehouse_presence_min_moves` (def. 2), `warehouse_presence_min_events` (def. 3),
+  `warehouse_presence_static_seconds` (def. 300).
+
+## 2. `GET /almacen-api/visits` — conjunto devuelto por defecto
+
+- **Cambio de comportamiento** (único consumidor el panel interno `/almacen`): se ocultan por defecto
+  las visitas con `outcome='NOISE'` (falsos positivos del radar), además de los `NO_SHOW` con
+  `entry_trigger='DOOR'` ya ocultos (F79). Se muestran con `include_noise=1` o `outcome=NOISE`.
+- **Forma del JSON sin cambios**: `visits[]` conserva campos y tipos; solo cambia el conjunto por
+  defecto. `include_no_show` mantiene su semántica.
+
+## 3. `GET /almacen-api/visits/{id}` — campo aditivo `door`
+
+```json
+{
+  "visit": {
+    "...": "campos actuales sin cambios",
+    "door": {
+      "state_at_start": "OPEN" | "CLOSED" | null,
+      "events": [ { "value": "OPEN"|"CLOSED", "occurred_at": "YYYY-MM-DDTHH:MM:SS.mmmZ" } ]
+    }
+  }
+}
+```
+
+- `state_at_start`: último `PROXIMITY` **aplicado** anterior a `created_at` de la visita.
+- `events[]`: eventos `PROXIMITY` aplicados en la ventana de la visita, ordenados por `occurred_at`.
+- **Aditivo**: los clientes que no lo lean no se ven afectados.
+
+## 4. Sin cuota Tuya / no regresión
+
+- Todo se resuelve con BD local y push ya persistido; no se añade ninguna llamada a la API de Tuya
+  (RF-101 intacto) ni sondeo periódico.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 57** nuevo con marcadores F84.
+  Los tests F80 (credibilidad al instante) permanecen.

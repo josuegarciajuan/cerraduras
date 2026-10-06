@@ -197,6 +197,50 @@ if ($r['state'] === D::STATE_IDLE && $r['actions'] === []) {
     fail('F81: IDLE + DOOR_CLOSE_ABSENT inesperado: ' . json_encode($r));
 }
 
+// ── F84 (RF-107.3): visita de radar sin evidencia → NOISE y descarte ──────
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'PRESENCE', true), D::EV_ABSENT, false);
+if ($r['state'] === D::STATE_IDLE
+    && $r['entry_trigger'] === null
+    && hasAll($r['actions'], [D::A_STOP_EXT, D::A_STOP_INT, D::A_DISCARD_EXT, D::A_DISCARD_INT, D::A_MARK_NOISE, D::A_CLOSE_VISIT])
+    && hasNone($r['actions'], [D::A_MARK_EXIT, D::A_SET_DEADLINE_M])) {
+    pass('F84: RECORDING_INSIDE(PRESENCE) + ABSENT sin evidencia → IDLE (descarta ambas, NOISE)');
+} else {
+    fail('F84: ABSENT sin evidencia inesperado: ' . json_encode($r));
+}
+
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'PRESENCE', true), D::EV_DOOR_CLOSE_ABSENT, false);
+if ($r['state'] === D::STATE_IDLE && hasAll($r['actions'], [D::A_MARK_NOISE, D::A_DISCARD_INT])) {
+    pass('F84: RECORDING_INSIDE(PRESENCE) + DOOR_CLOSE_ABSENT sin evidencia → NOISE');
+} else {
+    fail('F84: DOOR_CLOSE_ABSENT sin evidencia inesperado: ' . json_encode($r));
+}
+
+// Con evidencia → ruta normal (EXIT_PENDING, sin NOISE).
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'PRESENCE', true), D::EV_ABSENT, true);
+if ($r['state'] === D::STATE_EXIT_PENDING
+    && hasAll($r['actions'], [D::A_STOP_INT, D::A_MARK_EXIT, D::A_SET_DEADLINE_M])
+    && hasNone($r['actions'], [D::A_MARK_NOISE, D::A_DISCARD_INT])) {
+    pass('F84: RECORDING_INSIDE(PRESENCE) + ABSENT con evidencia → EXIT_PENDING (sin NOISE)');
+} else {
+    fail('F84: ABSENT con evidencia inesperado: ' . json_encode($r));
+}
+
+// Visitas QR/DOOR no aplican el filtro de evidencia (contexto ya las acredita).
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'DOOR', true), D::EV_ABSENT, false);
+if ($r['state'] === D::STATE_EXIT_PENDING && hasNone($r['actions'], [D::A_MARK_NOISE])) {
+    pass('F84: visita DOOR ignora la evidencia (sigue EXIT_PENDING)');
+} else {
+    fail('F84: DOOR + evidence=false inesperado: ' . json_encode($r));
+}
+
+// Compatibilidad: sin contexto de evidencia (null) → comportamiento previo.
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'PRESENCE', true), D::EV_ABSENT);
+if ($r['state'] === D::STATE_EXIT_PENDING && hasNone($r['actions'], [D::A_MARK_NOISE])) {
+    pass('F84: sin contexto de evidencia → ruta previa (EXIT_PENDING)');
+} else {
+    fail('F84: sin contexto inesperado: ' . json_encode($r));
+}
+
 echo "\n" . str_repeat("=", 60) . "\n";
 echo "Results: {$passed} passed, {$failed} failed\n";
 exit($failed > 0 ? 1 : 0);
