@@ -5384,7 +5384,7 @@ fi
 if [ "$SERVER_UP" = true ]; then
     F85_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
     if [ -n "$F85_ROOM" ]; then
-        F85_PREV_META=$($MYSQL -sN -e "SELECT meta_json FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY' LIMIT 1" 2>/dev/null)
+        F85_PREV_AT=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.status_probed_at')) FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY' LIMIT 1" 2>/dev/null)
         $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json=JSON_SET(COALESCE(d.meta_json,'{}'),'\$.status_probed_at','$(date -u +%Y-%m-%dT%H:%M:%SZ)') WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
         F85_RJ=$(curl -s --max-time 8 -X POST "$API_BASE/almacen-api/sensors/refresh" -H 'Content-Type: application/json' -d "{\"room_id\":$F85_ROOM}" 2>/dev/null)
         F85_RREASON=$(printf '%s' "$F85_RJ" | python3 -c "import sys,json
@@ -5395,9 +5395,11 @@ except Exception: print('parse_error')" 2>/dev/null || echo "parse_error")
         else
             fail "F85: refresh cooldown" "reason=$F85_RREASON (esperado throttled)"
         fi
-        if [ -n "$F85_PREV_META" ]; then
-            F85_ESC=$(printf '%s' "$F85_PREV_META" | sed "s/'/''/g")
-            $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json='$F85_ESC' WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
+        # Restaura SOLO el campo (evita dejar el cooldown activo tras el test).
+        if [ -n "$F85_PREV_AT" ] && [ "$F85_PREV_AT" != "NULL" ]; then
+            $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json=JSON_SET(COALESCE(d.meta_json,'{}'),'\$.status_probed_at','$F85_PREV_AT') WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
+        else
+            $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json=JSON_REMOVE(COALESCE(d.meta_json,'{}'),'\$.status_probed_at') WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
         fi
     else
         skip "F85 HTTP" "sin sala ALMACEN_BEBIDAS"
