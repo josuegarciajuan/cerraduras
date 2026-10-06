@@ -166,6 +166,32 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F79 Visitas fantasma del almacén** | **BLOCK 42/44** | **Completado** |
 | **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
 | **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
+| **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Pendiente** |
+
+### F85 — Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
+
+- **Motivo**: el 2026-10-06 (sala 12) *entrar → `ABSENT` → re-entrar a los ~6 s* se fusionó en una
+  sola visita (`EXIT_PENDING + PRESENT` reabría la misma), y el push `CLOSED` de la puerta no llegó
+  (el estado quedó `OPEN`, sin recuperación tras F74). El operador fija el modelo del pack almacén,
+  distinto del `/dashboard` de hotel (que **no se toca**).
+- **Modelo (RF-109)**: la entrada se detecta por el **primer** disparador de `QR_OK` / `DOOR_OPEN` /
+  `PRESENCE` (define `entry_trigger`); dentro del mismo ciclo no se duplica; la salida es al dejar de
+  haber presencia (`ABSENT`); una **re-entrada tras `ABSENT` crea siempre visita nueva** (aunque la
+  puerta siga abierta y no haya expirado `M`).
+- **Fallbacks (RF-110)**: QR sin apertura/presencia → descartar **todas** las grabaciones y `NO_SHOW`;
+  puerta sin presencia → descartar; presencia sin QR/puerta → visita `PRESENCE` válida. Revisa el
+  `EXTERIOR_ONLY` previo (que conservaba el clip exterior).
+- **Puerta fiel (RF-111)**: `POST /almacen-api/sensors/refresh` permite la sonda con cooldown vigente
+  si `door_stale` **y** hay transición de puerta sin resolver (`last_door_event_at >
+  status_probed_at`), con `reason:"unresolved_transition"`. La apertura manual del panel
+  (`/almacen-api/door/open`) emite `EV_DOOR_OPEN` al motor. Sin poller (RF-101).
+- **Evidencia (RF-112)**: una re-entrada por presencia tras una visita real (`DOOR`/`QR`, `ENTERED`)
+  cerrada dentro de `warehouse_reentry_context_seconds` (def. 300) se confirma (no `NOISE`); los
+  fantasmas sin ciclo real siguen `NOISE`.
+- **Panel (RF-113)**: filtro `NOISE` + "mostrar descartes" (`include_noise`/`include_no_show`).
+- **Migración**: `0123` (`room_types.warehouse_reentry_context_seconds`, def. 300).
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 58, marcadores F85) + units
+  `WarehouseRecordingDecisionTest.php`, `WarehouseReentryTest.php`, `PresenceEvidenceTest.php`.
 
 ### F84 — Antiruido del radar del almacén y reproducción fiel de la puerta (RF-107 / RF-108)
 

@@ -4049,3 +4049,114 @@ F84-01 (migración) ─> F84-02 (clasificador) ─> F84-03 (motor) ─┬─> F8
 - [ ] TSK-F84-05 `visit-playback.js`
 - [ ] TSK-F84-06 runner BLOCK 57 + AGENTS + regresión
 - [ ] TSK-F84-07 purga sala 12 + verificación en vivo
+
+---
+
+# Fase 85: Modelo de detección del pack almacén (RF-109…RF-114)
+
+## TSK-F85-01: Migración `0123` — contexto de re-entrada
+- **Trazabilidad**: RF-112.3.
+- **Archivo(s)**: `api/migrations/0123_warehouse_reentry_context.sql`.
+- **Pasos**:
+  - [ ] `ALTER TABLE room_types ADD COLUMN IF NOT EXISTS warehouse_reentry_context_seconds INT UNSIGNED NOT NULL DEFAULT 300`.
+  - [ ] `UPDATE room_types SET warehouse_reentry_context_seconds=300 WHERE code='ALMACEN_BEBIDAS'`.
+  - [ ] Idempotente; sin tocar `warehouse_visits.outcome` (ya admite `NOISE`, `0122`).
+- **Verificación**: `php api/bin/migrate.php` + `DESCRIBE room_types`.
+
+## TSK-F85-02: Motor `WarehouseRecordingDecision` (modelo y fallbacks)
+- **Trazabilidad**: RF-109.1–109.4, RF-110.1–110.5.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingDecision.php`,
+  `api/tests/Unit/WarehouseRecordingDecisionTest.php`.
+- **Pasos**:
+  - [ ] `IDLE` sigue siendo el único que crea visita con los 3 disparadores (dedupe).
+  - [ ] `QR_PENDING + X_EXPIRED` → `IDLE` con `STOP+DISCARD EXT+INT`, `VISIT_NO_SHOW`, `CLOSE_VISIT`
+    (antes `EXTERIOR_ONLY` para trigger `QR`); marcar `EXTERIOR_ONLY`/`A_DISCARD_EXT` como deprecados.
+  - [ ] `EXIT_PENDING + PRESENT` → `MARK_EXIT`(prev) + `STOP_EXT`(prev) + `CREATE_VISIT`(PRESENCE) +
+    `CONFIRM_ENTRY` + `START_EXT`/`START_INT` + `CLEAR_DEADLINES` → `RECORDING_INSIDE` (visita nueva).
+  - [ ] Mantener `DOOR_OPEN`/`DOOR_CLOSE` no-op en `QR_PENDING`/`RECORDING_INSIDE`.
+  - [ ] Tests unit: QR+apertura+presencia=1 visita QR; QR sin entrada descarta todo; DOOR sin
+    presencia descarta; re-entrada tras ABSENT = 2 visitas; segundo `DOOR_OPEN` no duplica.
+- **Verificación**: `php api/tests/Unit/WarehouseRecordingDecisionTest.php` + BLOCK 58.
+
+## TSK-F85-03: Servicio `WarehouseRecordingService` (re-entrada y evidencia)
+- **Trazabilidad**: RF-109.4, RF-112.1.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/tests/Unit/WarehouseReentryTest.php`.
+- **Pasos**:
+  - [ ] Procesar en orden `A_STOP_EXT`(prev) → `A_CREATE_VISIT`(nueva) → `A_START_*`(nueva) para no
+    mezclar `visit_id`.
+  - [ ] `presenceEvidenceConfirmed()`: añadir contexto de re-entrada (`entry_trigger IN ('DOOR','QR')`,
+    `outcome='ENTERED'`, `exited_at >= now - warehouse_reentry_context_seconds`, `id <> visita actual`)
+    → real aunque el episodio tenga 1 `move`.
+  - [ ] No usar contexto para los fantasmas sin ciclo real (siguen `NOISE`).
+- **Verificación**: `php api/tests/Unit/WarehouseReentryTest.php` + BLOCK 58.
+
+## TSK-F85-04: Guarda del recorder (evitar doble ffmpeg)
+- **Trazabilidad**: RF-109.4.
+- **Archivo(s)**: `api/bin/warehouse-recorder.php`.
+- **Pasos**:
+  - [ ] No arrancar un `PENDING` si el mismo `device_id` ya tiene una fila `RECORDING`.
+  - [ ] El EXTERIOR anterior (stop solicitado) se para en el tick y el nuevo arranca en el siguiente
+    (~1 s).
+  - [ ] Test/verificación manual: en la re-entrada no quedan dos ffmpeg del mismo `device_id`.
+- **Verificación**: `php -l api/bin/warehouse-recorder.php` + inspección `ps`/BD.
+
+## TSK-F85-05: API — recuperación acotada y apertura manual
+- **Trazabilidad**: RF-111.2–111.4.
+- **Archivo(s)**: `api/public/index.php` (rutas `sensors/refresh`, `door/open`).
+- **Pasos**:
+  - [ ] `sensors/refresh`: permitir la sonda con `door_stale && last_door_event_at > status_probed_at`
+    aunque el cooldown esté vigente; `reason:'unresolved_transition'` (aditivo).
+  - [ ] `door/open`: emitir `EV_DOOR_OPEN` (`source='panel'`) tras abrir; respuesta aditiva
+    `visit_started`.
+  - [ ] Mantener presupuesto/backoff compartido; sin temporizadores.
+- **Verificación**: BLOCK 58 HTTP.
+
+## TSK-F85-06: Panel `/almacen` (visibilidad y auto-recuperación)
+- **Trazabilidad**: RF-113, RF-111.3.
+- **Archivo(s)**: `api/public/almacen.html`, `api/public/assets/almacen.js`.
+- **Pasos**:
+  - [ ] Filtro de resultados con opción `NOISE` + checkbox "mostrar descartes"
+    (`include_noise=1`/`include_no_show=1`).
+  - [ ] Disparar **una** `refreshSensors` al observar `live.door_stale===true` (una vez por
+    transición), sin temporizador; mantener la del arranque.
+  - [ ] Reverificar croquis/replay (sin regresiones de F67/F68/F84).
+- **Verificación**: BLOCK 58 (estáticos) + prueba manual en `/almacen`.
+
+## TSK-F85-07: Runner BLOCK 58 + AGENTS + regresión
+- **Trazabilidad**: RF-114.
+- **Archivo(s)**: `api/bin/run-tests.sh`, `AGENTS.md`.
+- **Pasos**:
+  - [ ] **BLOCK 58** con marcadores F85: re-entrada = 2 visitas; QR sin entrada descarta todo;
+    `reason:"unresolved_transition"`; `door/open` dispara el motor; filtro `NOISE` en UI; guarda del
+    recorder.
+  - [ ] AGENTS.md: fila F85 + sección de resumen.
+  - [ ] Regresión completa 0 failures.
+- **Verificación**: `cd api && bash bin/run-tests.sh`.
+
+## TSK-F85-08: Verificación en vivo (sala 12)
+- **Trazabilidad**: RF-109, RF-111.
+- **Pasos**:
+  - [ ] Abrir panel → `Actualizar estado` recupera el `CLOSED` real si la puerta está cerrada.
+  - [ ] Ciclo: entrar (apertura) → salir (`ABSENT`) → re-entrar ≤ M → **2 visitas** en el listado.
+  - [ ] Cerrar puerta: el croquis pasa a `PUERTA CERRADA` (o se recupera con la sonda acotada).
+- **Verificación**: consultas a BD + panel `/almacen`.
+
+## Orden de ejecución (F85)
+
+```
+F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) ─> F85-04 (recorder)
+                                       ├─> F85-05 (API refresh/door) ─> F85-06 (panel)
+                                       └─> F85-07 (runner/AGENTS) ─> F85-08 (verificación en vivo)
+```
+
+## Estado de ejecución (F85)
+
+- [ ] TSK-F85-01 migración `0123`
+- [ ] TSK-F85-02 motor `WarehouseRecordingDecision`
+- [ ] TSK-F85-03 servicio/evidencia
+- [ ] TSK-F85-04 guarda del recorder
+- [ ] TSK-F85-05 API refresh/door
+- [ ] TSK-F85-06 panel `/almacen`
+- [ ] TSK-F85-07 runner BLOCK 58 + AGENTS + regresión
+- [ ] TSK-F85-08 verificación en vivo

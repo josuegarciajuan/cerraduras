@@ -1825,3 +1825,101 @@ movimiento reemite transiciones (`move`/`presence`) mientras que el fantasma es 
 - **RF-108.3**: Compatibilidad: si la respuesta no trae `door` (cliente antiguo), se conserva el
   comportamiento sintético previo como fallback.
 - **RF-108.4**: Sin cuota Tuya y sin cambios en el motor ni en el resto de contratos.
+
+---
+
+# Fase 85: Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
+
+**Motivo**: el 2026-10-06 (13:34–13:43, sala 12) se detectaron dos fallos:
+
+1. La secuencia *entrar → `ABSENT` → re-entrar a los ~6 s* se fusionó en **una** visita: el motor
+   reabría la misma visita en `EXIT_PENDING + PRESENT` (`WarehouseRecordingDecision`), de modo que la
+   re-entrada no quedó como visita propia.
+2. El push `CLOSED` de la puerta (MC400D, edge-triggered) no llegó por Tuya. Sin el resync periódico
+   (derogado en F74) y con la relectura F75 solo al abrir el panel con cooldown de 30 min,
+   `iot_sessions.door_state` quedó `OPEN` y el croquis no marcó la puerta como cerrada.
+
+Además, el operador fija el **modelo de detección del pack almacén**, que es **distinto** del
+`/dashboard` de habitaciones de hotel y que se documenta aquí como contrato de comportamiento. El
+`/dashboard` **no se modifica**.
+
+## RF-109: Modelo de entrada/salida del pack almacén
+
+- **RF-109.1**: En un pack `ALMACEN_BEBIDAS`, la **entrada** se detecta por el **primer** disparador
+  de: `QR_OK`, `DOOR_OPEN` (sensor físico de puerta) o `PRESENCE`. Ese primero define
+  `warehouse_visits.entry_trigger` (`QR`/`DOOR`/`PRESENCE`).
+- **RF-109.2**: Dentro del **mismo ciclo**, un disparador posterior **no** crea otra visita ni cambia
+  el `entry_trigger` (p. ej. QR + apertura + presencia = 1 visita con trigger `QR`). La deduplicación
+  usa el estado de `warehouse_state.state`.
+- **RF-109.3**: La **salida** se determina al **dejar de haber presencia** (`PRESENT`→`ABSENT`, o
+  `DOOR_CLOSE_ABSENT` con ausencia). Se fija `exited_at`.
+- **RF-109.4**: Una **re-entrada** tras una salida acreditada (`ABSENT`) crea **siempre una visita
+  nueva**, aunque la puerta siga abierta y aunque el margen exterior `M` de la visita anterior no
+  haya expirado. La visita anterior se cierra en su `exited_at`; su clip EXTERIOR puede terminar con
+  el margen `M` (o al reanudar la grabación de la nueva visita).
+- **RF-109.5**: Este modelo es exclusivo de packs `ALMACEN_BEBIDAS`; el flujo de habitaciones de hotel
+  del `/dashboard` no cambia.
+
+## RF-110: Fallbacks por disparador (casos de error de entrada)
+
+- **RF-110.1**: `QR_OK` sin apertura de puerta y sin presencia dentro de `X`
+  (`warehouse_confirm_seconds`): no hubo entrada. Se descartan **todas** las grabaciones de la
+  tentativa (INTERIOR y EXTERIOR) y la visita queda `NO_SHOW` (oculta por defecto, RF-102.3). Revisa
+  el comportamiento previo de `EXTERIOR_ONLY` (que conservaba el clip exterior).
+- **RF-110.2**: `DOOR_OPEN` sin presencia dentro de `X`: no hubo entrada; se descartan ambas
+  grabaciones y la visita queda `NO_SHOW`.
+- **RF-110.3**: `QR_OK` + apertura de puerta pero sin presencia dentro de `X`: se trata como
+  RF-110.1 (descartar todo).
+- **RF-110.4**: `PRESENCE` sin `QR_OK` ni apertura: es una entrada válida
+  (`entry_trigger='PRESENCE'`, RF-103). Aplica la evidencia de RF-112.
+- **RF-110.5**: Un disparador ya usado en la tentativa no vuelve a disparar por sí solo (un segundo
+  `DOOR_OPEN` en `QR_PENDING`/`RECORDING_INSIDE`/`EXIT_PENDING` no crea visita; la re-entrada la
+  produce el `PRESENT` tras el `ABSENT`, RF-109.4).
+- **RF-110.6**: El descarte usa el camino existente (`discard_requested=1`); el recorder borra los
+  ficheros (F64/F73) y no se conserva vídeo de la tentativa.
+- **RF-110.7**: Un fallo de sensor (push perdido) **no** se resuelve sondeando en bucle: aplica
+  RF-111 (sonda acotada) y RF-101 (sin poller).
+
+## RF-111: Estado de puerta fiel y recuperación acotada (sin poller)
+
+- **RF-111.1**: Se mantiene el último estado de puerta conocido (RF-83) y el marcado `door_stale`
+  (RF-94); un `OPEN` viejo se pinta `PUERTA SIN DATOS`.
+- **RF-111.2**: `POST /almacen-api/sensors/refresh` permite **una** lectura REST del sensor de
+  puerta **aunque el cooldown esté vigente** cuando `live.door_stale === true` **y** existe un evento
+  `PROXIMITY` aplicado posterior a `devices.meta_json.status_probed_at` (transición sin resolver). En
+  cualquier otro caso se mantiene el cooldown (`throttled`, sin gastar crédito).
+- **RF-111.3**: El panel `/almacen` ejecuta esa lectura **una sola vez** al abrirse y cuando observa
+  `door_stale` en el SSE; **nunca** por temporizador periódico (RF-88/RF-101 intactos). El botón
+  "Actualizar estado" sigue forzando la lectura.
+- **RF-111.4**: La apertura manual del panel (`POST /almacen-api/door/open`) emite al motor del
+  almacén `EV_DOOR_OPEN` con fuente `panel` (no `SIMULATED`), para no depender solo del push del
+  sensor. No altera la semántica del relé ni el resto de contratos.
+- **RF-111.5**: Sin cuota extra: la sonda respeta y contabiliza el presupuesto compartido
+  (`api/run/tuya-quota.json`); no se introduce ningún proceso de sondeo continuo.
+
+## RF-112: Evidencia de re-entradas tras un ciclo real (revisa RF-107.2)
+
+- **RF-112.1**: Una visita iniciada por `PRESENCE` que ocurre **inmediatamente después** de una
+  visita real (`entry_trigger IN ('DOOR','QR')`, `outcome='ENTERED'`) **cerrada** en la misma sala
+  dentro de la ventana `warehouse_reentry_context_seconds` (def. **300 s**) se considera **real**
+  (no `NOISE`), aunque su episodio de radar tenga un solo `move`.
+- **RF-112.2**: Los falsos positivos **sin** ciclo real reciente siguen clasificándose `NOISE`
+  (RF-107.3); no se relaja el umbral global `min_moves`/`min_events`.
+- **RF-112.3**: El umbral de contexto es configurable por tipo de sala
+  (`room_types.warehouse_reentry_context_seconds`), sin desplegar.
+
+## RF-113: Visibilidad y auditoría en el panel
+
+- **RF-113.1**: El filtro de visitas de `/almacen` incluye la opción `NOISE` (falsos positivos) y un
+  control para mostrar `NO_SHOW` y `NOISE`; por defecto se mantiene el comportamiento F79/F84
+  (ocultos).
+- **RF-113.2**: La UI no introduce rutas nuevas: usa `outcome=NOISE` / `include_noise=1` /
+  `include_no_show=1` ya existentes.
+
+## RF-114: No regresión
+
+- **RF-114.1**: La regresión completa (`bash api/bin/run-tests.sh`) termina con **0 failures**.
+- **RF-114.2**: Los tests del `/dashboard` de habitaciones permanecen verdes; este modelo no los toca.
+- **RF-114.3**: Se añade un bloque nuevo al runner (**BLOCK 58**) con marcadores F85 y units
+  (`WarehouseRecordingDecisionTest`, `WarehouseReentryTest`, `PresenceEvidenceTest`,
+  `croquis-logic.test.js`).

@@ -2638,3 +2638,51 @@ Respuestas:
   (RF-101 intacto) ni sondeo periódico.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 57** nuevo con marcadores F84.
   Los tests F80 (credibilidad al instante) permanecen.
+
+---
+
+# Fase 85: Modelo de detección del pack almacén (RF-109…RF-114)
+
+## 1. `POST /almacen-api/sensors/refresh`
+
+- **Forma sin cambios**: petición `{ room_id? }`; respuesta `{ ok, probed, reason?, applied?, error?, state }`.
+- **Comportamiento nuevo**: si el cooldown está vigente **pero** `state.live.door_stale === true` y hay
+  un evento `PROXIMITY` aplicado posterior a `devices.meta_json.status_probed_at`, se ejecuta la
+  lectura y se responde con `reason:"unresolved_transition"` (valor **aditivo** de `reason`; los
+  existentes `ok`/`throttled`/`no_door_sensor`/`unavailable`/`quota` no cambian).
+- Se mantiene el respeto al presupuesto compartido (`api/run/tuya-quota.json`).
+
+## 2. Motor de visitas de almacén (`warehouse_visits`)
+
+- **Sin cambio de forma**: `entry_trigger` ∈ `QR|DOOR|PRESENCE`; `outcome` ∈
+  `ENTERED|NO_SHOW|ANONYMOUS|DENIED|NOISE`; campos y tipos iguales.
+- **Cambio de comportamiento**:
+  - Una **re-entrada** tras `ABSENT` crea una **fila nueva** con `entry_trigger='PRESENCE'` (la
+    anterior conserva su `exited_at`).
+  - `QR_OK` (o `QR_OK`+apertura) **sin** presencia en `X` descarta **todas** las grabaciones
+    (`camera_recordings.status='DISCARDED'`) y deja la visita en `NO_SHOW`.
+- **`camera_recordings`**: la visita nueva genera sus propias filas EXT+INT; el recorder no arranca
+  un `PENDING` cuyo `device_id` ya tenga una fila `RECORDING` (sin cambio de esquema).
+
+## 3. `room_types.warehouse_reentry_context_seconds`
+
+- Columna nueva (migración `0123`), `INT UNSIGNED NOT NULL DEFAULT 300`, idempotente.
+  `ALMACEN_BEBIDAS` queda a `300`. Configura RF-112 sin desplegar.
+
+## 4. `POST /almacen-api/door/open`
+
+- **Forma sin cambios**. Efecto lateral aditivo: emite `EV_DOOR_OPEN` al motor del almacén con
+  `source='panel'`. La respuesta puede incluir `visit_started` (booleano, **aditivo**); los clientes
+  actuales lo ignoran.
+
+## 5. Panel `/almacen` (UI)
+
+- Filtro de resultados: nueva opción `NOISE` y checkbox **"mostrar descartes"**
+  (`include_noise=1` / `include_no_show=1`). **Sin rutas nuevas**.
+- El croquis mantiene `PUERTA SIN DATOS` para `door_stale` y se auto-recupera con la sonda acotada.
+
+## 6. Sin cuota Tuya / no regresión
+
+- Todo se resuelve con push ya persistido + BD local; la única sonda REST nueva es la de
+  `sensors/refresh` (ya existente, con presupuesto y cooldown). No se añade ningún temporizador.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 58** nuevo con marcadores F85.

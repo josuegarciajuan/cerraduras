@@ -4667,3 +4667,166 @@ eventos, puerta cerrada. Fallback sintético solo si `door` no viene (compatibil
 | RF-107.6–107.8 | §48.7 | §F84.4 | TSK-F84-06 |
 | RF-108.1 | §48.6 | §F84.3 | TSK-F84-04 |
 | RF-108.2–108.4 | §48.6 | §F84.3 | TSK-F84-05 |
+
+---
+
+# 49. F85 — Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
+
+## 49.1 Problema (evidencia 2026-10-06, sala 12)
+
+- **Re-entrada fusionada**: `13:34:43` `DOOR_OPEN` → visita 238; `13:35:58` `ABSENT` →
+  `EXIT_PENDING` (`exited_at`); `13:36:04` `PRESENT` → el motor volvía a `RECORDING_INSIDE` de la
+  **misma** visita (`WarehouseRecordingDecision`, `EXIT_PENDING + PRESENT`). Se esperaban **2**
+  visitas.
+- **Puerta atascada**: `13:34:43` `PROXIMITY OPEN` aplicado; **ningún** `CLOSED` en
+  `presence_events`, `systemd.log` (RAW) ni `pulsar-consumer.log`. `door_state=OPEN`,
+  `door_age>300 s`, `door_stale=true`. La última sonda REST fue `11:25:52Z`; la relectura F75 solo
+  corre al abrir el panel con cooldown 30 min. Sin resync periódico (F74), no hay red de seguridad.
+
+## 49.2 Modelo de detección (almacén ≠ dashboard)
+
+En packs `ALMACEN_BEBIDAS`, una **visita** es una estancia; se abre por el **primer** disparador de
+`{QR_OK, DOOR_OPEN, PRESENCE}` y se cierra cuando **deja de haber presencia**. Es independiente del
+modelo de habitaciones de hotel (`/dashboard`), que **no se toca**.
+
+| Disparador | Semántica | `entry_trigger` |
+|---|---|---|
+| `QR_OK` | Lectura de QR correcta (abre el relé) | `QR` |
+| `DOOR_OPEN` | Apertura física del contacto de puerta (o manual del panel, RF-111.4) | `DOOR` |
+| `PRESENCE` | Radar 24G detecta personas dentro (entrada sin QR / puerta abierta) | `PRESENCE` |
+
+Dedupe: el estado `warehouse_state.state` decide si un disparador inicia ciclo (`IDLE`) o es parte del
+ciclo en curso.
+
+## 49.3 Máquina de estados revisada
+
+`WarehouseRecordingDecision::decide()` (pura). Cambios F85 marcados con **▲**; `EXTERIOR_ONLY` queda
+**deprecado** (sin transición que lo alcance) pero se conserva el enum por compatibilidad.
+
+| Estado | Evento | Acciones | Destino |
+|---|---|---|---|
+| IDLE | `QR_OK` | crear(QR), EXT+INT ENTRY, `X` | QR_PENDING |
+| IDLE | `DOOR_OPEN` | crear(DOOR), EXT+INT ENTRY, `X` | QR_PENDING |
+| IDLE | `PRESENT` | crear(PRESENCE, ENTERED), EXT+INT | RECORDING_INSIDE |
+| QR_PENDING | `PRESENT` | `CONFIRM_ENTRY`, `CLEAR_DEADLINES` | RECORDING_INSIDE |
+| QR_PENDING | `X_EXPIRED` **▲** | `STOP_EXT+INT`, `DISCARD_EXT+INT`, `VISIT_NO_SHOW`, `CLOSE_VISIT` | IDLE |
+| QR_PENDING | `DOOR_CLOSE`/`DOOR_OPEN` | no-op | QR_PENDING |
+| RECORDING_INSIDE | `ABSENT`/`DOOR_CLOSE_ABSENT` | `STOP_INT`, `MARK_EXIT`, `M` | EXIT_PENDING |
+| RECORDING_INSIDE | `DOOR_CLOSE`/`DOOR_OPEN` | no-op | RECORDING_INSIDE |
+| EXIT_PENDING | `PRESENT` **▲** | `MARK_EXIT`(prev), `STOP_EXT`(prev), **`CREATE_VISIT`(PRESENCE)**, `CONFIRM_ENTRY`, `START_EXT+INT`, `CLEAR_DEADLINES` | RECORDING_INSIDE (visita nueva) |
+| EXIT_PENDING | `M_EXPIRED` | `STOP_EXT`, `CLOSE_VISIT` | IDLE |
+| QUERY (F84) | `ABSENT`/`DOOR_CLOSE_ABSENT` con `entry_trigger=PRESENCE` y sin evidencia | `STOP_EXT+INT`, `DISCARD_EXT+INT`, `MARK_NOISE`, `CLOSE_VISIT` | IDLE |
+
+Notas:
+- **▲ QR sin entrada** (`RF-110.1/110.3`): se descarta todo (antes, con trigger `QR`, se conservaba
+  el EXTERIOR en `EXTERIOR_ONLY`). Revisa RF-102.3 para los `NO_SHOW` de QR.
+- **▲ Re-entrada** (`RF-109.4`): finaliza la visita anterior en su `exited_at`, **detiene su clip
+  EXTERIOR** y crea una visita nueva con sus propios clips de entrada. No se fusionan ciclos.
+- La reaparición en `EXIT_PENDING` sigue sin reabrir la visita anterior.
+
+## 49.4 Deduplicación de disparadores
+
+- `IDLE` es el único estado que **crea** visita con `QR_OK`/`DOOR_OPEN`/`PRESENT`.
+- `QR_PENDING` solo avanza con `PRESENT` (o expira `X`); `DOOR_OPEN`/`DOOR_CLOSE` son no-op.
+- `RECORDING_INSIDE` solo cierra con `ABSENT`/`DOOR_CLOSE_ABSENT`.
+- `EXIT_PENDING` solo avanza con `PRESENT` (nueva visita) o `M` expira.
+- Resultado: QR+apertura+presencia = 1 visita (`QR`); un segundo `DOOR_OPEN` no duplica.
+
+## 49.5 Re-entrada: gestión de clips (evita doble ffmpeg)
+
+La visita anterior y la nueva no pueden compartir fila de `camera_recordings` (el detalle y el replay
+se consultan por `visit_id`). Al re-entrar:
+
+1. `A_STOP_EXT` (visit_id anterior) marca `stop_requested=1` en su EXTERIOR.
+2. `A_CREATE_VISIT` + `A_START_EXT/INT` insertan las filas `PENDING` de la visita nueva.
+3. El recorder **no arranca** un `PENDING` cuyo `device_id` ya tenga una fila `RECORDING`
+   (**guarda nueva**); en el mismo tick para el EXTERIOR anterior y en el siguiente arranca el nuevo.
+   Ventana de ~1 s, aceptable.
+
+## 49.6 Estado de puerta fiel y recuperación acotada
+
+`POST /almacen-api/sensors/refresh` (RF-111.2):
+
+```
+doorStale  = state.live.door_stale === true
+unresolved = iot_sessions.last_door_event_at > devices.meta_json.status_probed_at
+probe      = !cooldownActive || (doorStale && unresolved)
+```
+
+- Si `probe === false` → `{ok:true, probed:false, reason:'throttled'}` (sin gastar crédito).
+- Si se fuerza por transición sin resolver → respuesta **aditiva** `reason:'unresolved_transition'`.
+- Sigue respetando `api/run/tuya-quota.json` (presupuesto/backoff compartido).
+
+El panel (`almacen.js`), además de la lectura al arrancar (F75), dispara **una** sonda cuando el SSE
+publica un snapshot con `live.door_stale===true` (una vez por transición; sin temporizador). Sin
+poller (RF-101).
+
+## 49.7 Apertura manual del panel
+
+`POST /almacen-api/door/open` → tras `lockService->open(...)`, llama
+`warehouseRecorder->onSignal(roomId, EV_DOOR_OPEN, ['provider'=>'PANEL','source'=>'panel'])`. El
+disparador real (push del contacto) queda deduplicado por el estado `QR_PENDING`. Si no hay presencia
+dentro de `X`, aplica RF-110.2 (descarte). No cambia la respuesta del endpoint (aditiva si se
+añade `visit_started`).
+
+## 49.8 Evidencia de re-entradas
+
+`WarehouseRecordingService::presenceEvidenceConfirmed()` añade contexto de ciclo real: existe una
+visita previa en la misma sala con `entry_trigger IN ('DOOR','QR')`, `outcome='ENTERED'` y
+`exited_at` dentro de `now - warehouse_reentry_context_seconds` (def. 300 s) → el episodio de
+presencia se confirma (no `NOISE`). Sin ciclo real reciente se aplica F84/RF-107.2 sin cambios. Solo
+BD local (sin cuota).
+
+## 49.9 Panel (`/almacen`)
+
+- Filtro de resultados: añadir la opción **`NOISE`** y un checkbox **"mostrar descartes"** que usa
+  `include_noise=1` / `include_no_show=1` (RF-113). Reverifica que el filtro actual (sin `NOISE`) no
+  permite auditar F84 desde la UI.
+- El croquis ya pinta `PUERTA SIN DATOS` con `door_stale` (F77.5); con RF-111 se auto-recupera al
+  recibir el estado real.
+- "Actualizar estado" se mantiene; ahora también funciona dentro del cooldown si hay transición sin
+  resolver.
+
+## 49.10 Migración
+
+- `ALTER TABLE room_types ADD COLUMN IF NOT EXISTS warehouse_reentry_context_seconds INT UNSIGNED NOT
+  NULL DEFAULT 300` (migración `0123`).
+- `UPDATE room_types SET warehouse_reentry_context_seconds=300 WHERE code='ALMACEN_BEBIDAS'`.
+- `warehouse_visits.outcome` ya admite `NOISE` (F84 `0122`). Sin cambios de forma en otras tablas.
+
+## 49.11 Alcance y derogaciones
+
+- **No se toca**: el detector (hardware/config), `SensorEventDecision`, `TuyaSensorIngress`,
+  `IotSessionService` (salvo el enganche de la apertura manual), el recorder (salvo la guarda de
+  `PENDING`), `/dashboard` ni RF-101.
+- **Deroga**: el comportamiento de `EXTERIOR_ONLY` en la expiración de `QR_PENDING` por trigger `QR`
+  (RF-110.1) y la fusión de la re-entrada en `EXIT_PENDING` (RF-109.4).
+- **Vigente**: F80/RF-103, F81/RF-104, F82/RF-105, F83/RF-106, F84/RF-107-108 (con la salvedad
+  RF-112.1).
+
+## 49.11bis Riesgo: fragmentación por parpadeo del radar
+
+El modelo RF-109.3 ("salida = dejar de haber presencia") hace que cualquier `ABSENT` seguido de
+`PRESENT` cree visita nueva. Si el 24G emite un parpadeo `presence→none→presence` durante una misma
+estancia, se fragmentaría en dos visitas. Mitigaciones previstas:
+
+- RF-112 confirma la nueva visita solo si hay ciclo real reciente; si el parpadeo ocurre **dentro** de
+  una visita real, el contexto la confirmaría igualmente → se acepta el riesgo (el operador prefiere
+  no perder re-entradas).
+- Si en campo se observa fragmentación, se puede introducir un `warehouse_exit_debounce_seconds`
+  (def. 0 = desactivado) que exija que el `ABSENT` se mantenga antes de cerrar la visita, sin tocar
+  el resto del modelo. Queda documentado como ajuste futuro, no implementado en F85.
+
+## 49.12 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-109.1–109.3 | §49.2–49.4 | §F85.2 | TSK-F85-02 |
+| RF-109.4 | §49.3, §49.5 | §F85.2 | TSK-F85-02, TSK-F85-03 |
+| RF-110.1–110.3 | §49.3 | §F85.2 | TSK-F85-02 |
+| RF-110.4–110.7 | §49.4, §49.6 | — | TSK-F85-02, TSK-F85-05 |
+| RF-111.1–111.3 | §49.6 | §F85.1 | TSK-F85-04, TSK-F85-05 |
+| RF-111.4 | §49.7 | §F85.1 | TSK-F85-05 |
+| RF-112 | §49.8 | §F85.1 | TSK-F85-01, TSK-F85-03 |
+| RF-113 | §49.9 | §F85.3 | TSK-F85-06 |
+| RF-114 | §49.11 | §F85.4 | TSK-F85-07 |
