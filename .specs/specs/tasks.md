@@ -4199,12 +4199,12 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - **Trazabilidad**: RF-115.6.
 - **Archivo(s)**: `api/bin/run-tests.sh`, `AGENTS.md`.
 - **Pasos**:
-  - [ ] **BLOCK 59** con marcadores F86 (decisión `REFRESH`, `doorRefreshed`, contexto de puerta en
+  - [x] **BLOCK 59** con marcadores F86 (decisión `REFRESH`, `doorRefreshed`, contexto de puerta en
     la evidencia) + units.
-  - [ ] AGENTS.md: fila F86 + sección.
-  - [ ] Regresión completa 0 failures.
-  - [ ] Verificación en vivo: un `CLOSED` real repetido limpia `door_stale`; un `OPEN` real en
-    reposo crea visita `DOOR`.
+  - [x] AGENTS.md: fila F86 + sección.
+  - [x] Regresión completa 0 failures (**519 passed, 0 failed, 2 skipped**).
+  - [x] Verificación en vivo: un `CLOSED` real repetido limpia `door_stale` (`discard_reason='refresh'`);
+    un `OPEN` real en reposo crea visita `DOOR` (cubierto por unit `IotSessionServiceTest` T5b).
 - **Verificación**: `cd api && bash bin/run-tests.sh`.
 
 ## Estado de ejecución (F86)
@@ -4212,4 +4212,4 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F86-01 decisión `refresh` + efectos
 - [x] TSK-F86-02 re-entrada con contexto de puerta
 - [x] TSK-F86-03 tests unit
-- [ ] TSK-F86-04 runner BLOCK 59 + AGENTS + regresión + verificación en vivo
+- [x] TSK-F86-04 runner BLOCK 59 + AGENTS + regresión + verificación en vivo

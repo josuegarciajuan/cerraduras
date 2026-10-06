@@ -167,7 +167,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
 | **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
 | **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Completado** |
-| **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **En curso** |
+| **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **Completado** |
 
 ### F86 — Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
 
@@ -184,7 +184,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `ABSENT`).
 - **Sin migración**: `presence_events.discard_reason` es `VARCHAR(16)` y admite `refresh`.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 59, marcadores F86) + units
-  `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`.
+  `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`. Regresión: **519 passed, 0 failed,
+  2 skipped**. En vivo: un `CLOSED` real repetido produce `discard_reason='refresh'` sin cambiar
+  `door_state` y limpia `door_stale`; el resync REST sigue `noop`.
 
 ### F85 — Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
 
