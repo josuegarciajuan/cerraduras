@@ -3955,3 +3955,97 @@ F83-01 (API) ─┬─> F83-02 (croquis) ─> F83-03 (panel) ─┐
 - [ ] TSK-F83-03 panel `almacen.js`
 - [ ] TSK-F83-04 migración `0121_warehouse_exterior_margin_10.sql`
 - [ ] TSK-F83-05 tests + BLOCK 56 + regresión
+
+---
+
+# Fase 84: Antiruido del radar y reproducción fiel de la puerta (RF-107 / RF-108)
+
+## TSK-F84-01: Migración `0122` (enum `NOISE` + umbrales)
+- **Trazabilidad**: RF-107.5.
+- **Archivo(s)**: `api/migrations/0122_warehouse_presence_noise.sql`.
+- **Pasos**:
+  - [ ] `ALTER TABLE warehouse_visits MODIFY outcome ENUM(...,'NOISE')`.
+  - [ ] `ADD COLUMN IF NOT EXISTS` de `warehouse_presence_min_moves` (2), `warehouse_presence_min_events` (3),
+        `warehouse_presence_static_seconds` (300) en `room_types`.
+  - [ ] `UPDATE room_types` de `ALMACEN_BEBIDAS` con los valores por defecto.
+- **Verificación**: aplicar migración y comprobar columnas/enum.
+
+## TSK-F84-02: Clasificador puro `PresenceEvidence`
+- **Trazabilidad**: RF-107.2.
+- **Archivo(s)**: `api/src/Domain/Warehouse/PresenceEvidence.php`, `api/tests/Unit/PresenceEvidenceTest.php`.
+- **Pasos**:
+  - [ ] `isConfirmed(moves, events, seconds, doorEvent, config)` con la regla del diseño §48.2.
+  - [ ] Tests unit: fantasma `m1 p1` 25 s → false; `m2 p1` → true; `m1 p1` 400 s → true; `m1 p1` + puerta → true;
+        umbrales configurados a medida.
+- **Verificación**: `php -l` + autodescubierto en BLOCK 1.
+
+## TSK-F84-03: Motor: evaluar evidencia y descartar ruido
+- **Trazabilidad**: RF-107.2/107.3/107.4/107.7.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/src/Domain/Warehouse/WarehouseRecordingDecision.php`, `api/tests/Unit/WarehouseRecordingDecisionTest.php`.
+- **Pasos**:
+  - [ ] `WarehouseRecordingDecision::decide()` acepta contexto `presence_confirmed`; en
+        `RECORDING_INSIDE + (ABSENT|DOOR_CLOSE_ABSENT)` con `entry_trigger=PRESENCE` y
+        `presence_confirmed=false` → acciones de descarte + `A_MARK_NOISE` + `IDLE`.
+  - [ ] `A_MARK_NOISE`: `UPDATE warehouse_visits SET outcome='NOISE'`.
+  - [ ] `WarehouseRecordingService::onSignal()`: en el fin de episodio calcula la evidencia (SQL local
+        sobre `presence_events` + duración + puerta) y la pasa al decisor; lee umbrales de `room_types`.
+  - [ ] Respeta F79 (provider `SIMULATED` / `source` `resync` siguen ignorados).
+- **Verificación**: `php -l` + tests unit + BLOCK 57.
+
+## TSK-F84-04: Listado y `door` en el detalle
+- **Trazabilidad**: RF-107.3, RF-108.1.
+- **Archivo(s)**: `api/src/Http/Controllers/WarehouseVisitController.php`.
+- **Pasos**:
+  - [ ] `index()`: oculta `outcome='NOISE'` por defecto; `include_noise=1` o `outcome=NOISE` los muestran.
+  - [ ] `show()`: adjunta `visit.door` (`state_at_start` + `events[]`) desde `presence_events`.
+  - [ ] Sin rutas nuevas ni llamadas a Tuya.
+- **Verificación**: `php -l` + BLOCK 57 HTTP.
+
+## TSK-F84-05: Reproducción fiel de la puerta
+- **Trazabilidad**: RF-108.2/108.3.
+- **Archivo(s)**: `api/public/assets/visit-playback.js`, `api/tests/Unit/visit-playback.test.js`.
+- **Pasos**:
+  - [ ] `buildVisitTimeline`: integra `visit.door` en intervalos OPEN→CLOSED (`state_at_start`).
+  - [ ] `frameAt`: `doorOpen`/chip/descripción desde los intervalos reales; sin eventos → cerrada.
+  - [ ] Fallback sintético si `door` no viene (compatibilidad).
+  - [ ] Tests unit: visita PRESENCE sin puerta → nunca abierta; visita DOOR con intervalos reales; `state_at_start=OPEN`;
+        visitas sin `door` → fallback previo.
+- **Verificación**: `node api/tests/Unit/visit-playback.test.js` + BLOCK 46/57.
+
+## TSK-F84-06: Runner BLOCK 57 + AGENTS + regresión
+- **Trazabilidad**: RF-107.8, RF-108.4.
+- **Archivo(s)**: `api/bin/run-tests.sh`, `AGENTS.md`.
+- **Pasos**:
+  - [ ] **BLOCK 57** con marcadores F84: `PresenceEvidence`, `A_MARK_NOISE`, filtro `NOISE`, `visit.door`,
+        `visit-playback.js` puerta fiel, sin cuota/ruido.
+  - [ ] HTTP: `visits` oculta NOISE; `visits/{id}` expone `door`; detalle de visita de prueba.
+  - [ ] AGENTS.md: fila F84 + sección.
+  - [ ] Regresión completa 0 failures.
+- **Verificación**: `cd api && bash bin/run-tests.sh`.
+
+## TSK-F84-07: Purga sala 12 y verificación en vivo
+- **Trazabilidad**: RF-107.3.
+- **Pasos**:
+  - [ ] `systemctl stop cerraduras-warehouse-recorder` → `php bin/warehouse-purge.php --room=12` →
+        `systemctl start cerraduras-warehouse-recorder`.
+  - [ ] Verificar: sala vacía no aparecen visitas nuevas; una detección fantasma acaba en `NOISE`
+        (oculta); una entrada real (movimiento) se conserva; replay de visita DOOR coincide con el vídeo.
+- **Verificación**: consultas a BD + panel `/almacen`.
+
+## Orden de ejecución (F84)
+
+```
+F84-01 (migración) ─> F84-02 (clasificador) ─> F84-03 (motor) ─┬─> F84-04 (controladores) ─> F84-05 (replay)
+                                                                └─> F84-06 (runner/AGENTS) ─> F84-07 (purga)
+```
+
+## Estado de ejecución (F84)
+
+- [ ] TSK-F84-01 migración `0122`
+- [ ] TSK-F84-02 clasificador `PresenceEvidence`
+- [ ] TSK-F84-03 motor (evidencia + NOISE)
+- [ ] TSK-F84-04 controladores (filtro + door)
+- [ ] TSK-F84-05 `visit-playback.js`
+- [ ] TSK-F84-06 runner BLOCK 57 + AGENTS + regresión
+- [ ] TSK-F84-07 purga sala 12 + verificación en vivo

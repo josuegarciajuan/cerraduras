@@ -5183,6 +5183,138 @@ else
 fi
 
 # =============================================================================
+# BLOCK 57 — F84: Antiruido del radar + reproducción fiel de la puerta (RF-107/108)
+# Trazabilidad: RF-107.1..107.8, RF-108.1..108.4; TSK-F84-01..F84-07
+# =============================================================================
+block "BLOCK 57 — F84: Antiruido del radar y puerta fiel"
+
+# 57.0 Estáticos: clasificador, acción NOISE, filtro del listado y replay fiel.
+for F84_MARK in \
+    "src/Domain/Warehouse/PresenceEvidence.php:isConfirmed" \
+    "src/Domain/Warehouse/WarehouseRecordingDecision.php:A_MARK_NOISE" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:presenceEvidenceConfirmed" \
+    "src/Http/Controllers/WarehouseVisitController.php:include_noise" \
+    "src/Http/Controllers/WarehouseVisitController.php:attachDoorEvents" \
+    "public/assets/visit-playback.js:doorKnown" \
+    "public/assets/visit-playback.js:doorOpenAt"; do
+    F84_FILE="${F84_MARK%%:*}"
+    F84_NEEDLE="${F84_MARK#*:}"
+    if grep -q "$F84_NEEDLE" "$F84_FILE" 2>/dev/null; then
+        pass "F84: $F84_FILE define '$F84_NEEDLE'"
+    else
+        fail "F84: $F84_FILE" "falta '$F84_NEEDLE'"
+    fi
+done
+if [ -f "migrations/0122_warehouse_presence_noise.sql" ]; then
+    pass "F84: migración 0122 presente"
+else
+    fail "F84: migración 0122" "no encontrada"
+fi
+
+# 57.1 Clasificador puro PresenceEvidence (autodescubierto en BLOCK 1; aquí explícito).
+F84_EV="tests/Unit/PresenceEvidenceTest.php"
+if [ -f "$F84_EV" ]; then
+    F84_EV_OUT=$(php "$F84_EV" 2>&1)
+    F84_EV_RC=$?
+    F84_EV_SUM=$(echo "$F84_EV_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F84_EV_SUM" ] && F84_EV_SUM="exit=$F84_EV_RC"
+    if [ "$F84_EV_RC" -eq 0 ]; then
+        pass "F84: PresenceEvidence ($F84_EV_SUM)"
+    else
+        fail "F84: PresenceEvidence" \
+            "$F84_EV_SUM — $(echo "$F84_EV_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F84: PresenceEvidence" "$F84_EV no encontrado"
+fi
+
+# 57.2 BD: enum NOISE + umbrales configurables.
+if [ -n "$MYSQL_BIN" ]; then
+    F84_ENUM=$($MYSQL -sN -e "SHOW COLUMNS FROM warehouse_visits LIKE 'outcome'" 2>/dev/null)
+    if echo "$F84_ENUM" | grep -q "NOISE"; then
+        pass "F84: warehouse_visits.outcome admite NOISE"
+    elif [ -z "$F84_ENUM" ]; then
+        skip "F84: enum NOISE" "sin BD"
+    else
+        fail "F84: enum NOISE" "no admite NOISE"
+    fi
+    F84_COLS=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='room_types' AND column_name IN ('warehouse_presence_min_moves','warehouse_presence_min_events','warehouse_presence_static_seconds')" 2>/dev/null)
+    if [ "$F84_COLS" = "3" ]; then
+        pass "F84: room_types expone los 3 umbrales de evidencia"
+    elif [ -z "$F84_COLS" ]; then
+        skip "F84: umbrales de evidencia" "sin BD"
+    else
+        fail "F84: umbrales de evidencia" "columnas=$F84_COLS (esperado 3)"
+    fi
+fi
+
+# 57.3 HTTP/DB: el listado oculta NOISE por defecto y lo muestra con include_noise=1.
+if [ "$SERVER_UP" = true ]; then
+    F84_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F84_ROOM" ]; then
+        F84_V=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, created_at) VALUES ($F84_ROOM,'PRESENCE','NOISE',UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
+        if [ -n "$F84_V" ]; then
+            F84_DEF=$(curl -s --max-time 8 "$API_BASE/almacen-api/visits?room_id=$F84_ROOM&limit=200" 2>/dev/null)
+            F84_INCL=$(curl -s --max-time 8 "$API_BASE/almacen-api/visits?room_id=$F84_ROOM&include_noise=1&limit=200" 2>/dev/null)
+            F84_CHK=$(printf '%s\n%s\n%s' "$F84_DEF" "$F84_INCL" "$F84_V" | python3 -c "import sys,json
+raw=sys.stdin.read().split('\n')
+try:
+    d=json.loads(raw[0]); i=json.loads(raw[1]); vid=int(raw[2].strip())
+    dids=[v.get('id') for v in (d.get('visits') or [])]
+    iids=[v.get('id') for v in (i.get('visits') or [])]
+    print('ok' if (vid not in dids and vid in iids) else 'bad: def='+str(vid in dids)+' incl='+str(vid in iids))
+except Exception:
+    print('parse_error')" 2>/dev/null || echo "parse_error")
+            if [ "$F84_CHK" = "ok" ]; then
+                pass "F84: listado oculta NOISE por defecto y lo muestra con include_noise=1"
+            else
+                fail "F84: filtro NOISE en el listado" "chk=$F84_CHK"
+            fi
+            $MYSQL -e "DELETE FROM camera_recordings WHERE visit_id=$F84_V; DELETE FROM warehouse_visits WHERE id=$F84_V;" 2>/dev/null
+        else
+            skip "F84 HTTP" "no se pudo crear la visita NOISE"
+        fi
+    else
+        skip "F84 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "F84 HTTP" "servidor no disponible"
+fi
+
+# 57.4 HTTP/DB: el detalle de visita expone `door` (state_at_start + events reales).
+if [ "$SERVER_UP" = true ]; then
+    F84_ROOM2=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    if [ -n "$F84_ROOM2" ]; then
+        F84_V2=$($MYSQL -sN -e "INSERT INTO warehouse_visits (room_id, entry_trigger, outcome, created_at) VALUES ($F84_ROOM2,'DOOR','ENTERED',UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null)
+        F84_PE=$($MYSQL -sN -e "INSERT INTO presence_events (room_id, sensor, value, provider, occurred_at, event_fingerprint, applied, meta_json) VALUES ($F84_ROOM2,'PROXIMITY','OPEN','TUYA',UTC_TIMESTAMP(3),SHA1(CONCAT('f84-',UUID())),1,'{}'); SELECT LAST_INSERT_ID();" 2>/dev/null)
+        if [ -n "$F84_V2" ]; then
+            F84_DET=$(curl -s --max-time 8 "$API_BASE/almacen-api/visits/$F84_V2" 2>/dev/null)
+            F84_DCHK=$(printf '%s' "$F84_DET" | python3 -c "import sys,json
+try:
+    v=json.load(sys.stdin).get('visit') or {}
+    dr=v.get('door') or {}
+    ok=('events' in dr and isinstance(dr.get('events'),list) and any(e.get('value')=='OPEN' for e in dr.get('events',[])))
+    print('ok' if ok else 'bad: '+str(dr)[:120])
+except Exception:
+    print('parse_error')" 2>/dev/null || echo "parse_error")
+            if [ "$F84_DCHK" = "ok" ]; then
+                pass "F84: visits/{id} expone door.events con el OPEN real"
+            else
+                fail "F84: door en el detalle" "chk=$F84_DCHK"
+            fi
+            $MYSQL -e "DELETE FROM camera_recordings WHERE visit_id=$F84_V2; DELETE FROM warehouse_visits WHERE id=$F84_V2;" 2>/dev/null
+        else
+            skip "F84 HTTP" "no se pudo crear la visita DOOR"
+        fi
+        [ -n "$F84_PE" ] && $MYSQL -e "DELETE FROM presence_events WHERE id=$F84_PE;" 2>/dev/null
+    else
+        skip "F84 HTTP" "sin sala ALMACEN_BEBIDAS"
+    fi
+else
+    skip "F84 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

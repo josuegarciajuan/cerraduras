@@ -105,12 +105,27 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                 'entry_trigger' => $row['entry_trigger'] !== null ? (string) $row['entry_trigger'] : null,
                 'presence_confirmed' => (bool) $row['presence_confirmed'],
             ];
-            $result = WarehouseRecordingDecision::decide($state, $event);
+            $visitId = $row['current_visit_id'] !== null ? (int) $row['current_visit_id'] : null;
+            $now = Clock::nowUtc();
+
+            // F84 (RF-107.2/107.3): al cerrar un episodio iniciado SOLO por
+            // presencia, se evalúa la evidencia del propio radar para separar una
+            // visita real de un falso positivo. `null` = no aplica (QR/DOOR).
+            $presenceEvidenceOk = null;
+            if (($event === WarehouseRecordingDecision::EV_ABSENT
+                    || $event === WarehouseRecordingDecision::EV_DOOR_CLOSE_ABSENT)
+                && $preState === WarehouseRecordingDecision::STATE_RECORDING_INSIDE
+                && $state['entry_trigger'] === 'PRESENCE'
+                && $visitId !== null
+            ) {
+                $presenceEvidenceOk = $this->presenceEvidenceConfirmed($roomId, $visitId, $config, $now);
+            }
+
+            $result = WarehouseRecordingDecision::decide($state, $event, $presenceEvidenceOk);
 
             $visitId = $row['current_visit_id'] !== null ? (int) $row['current_visit_id'] : null;
             $deadlineX = $row['deadline_x'] !== null ? (string) $row['deadline_x'] : null;
             $deadlineM = $row['deadline_m'] !== null ? (string) $row['deadline_m'] : null;
-            $now = Clock::nowUtc();
 
             foreach ($result['actions'] as $action) {
                 switch ($action) {
@@ -136,6 +151,18 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                         if ($visitId !== null) {
                             $this->pdo->prepare("UPDATE warehouse_visits SET outcome='NO_SHOW' WHERE id=:id")
                                 ->execute([':id' => $visitId]);
+                        }
+                        break;
+                    case WarehouseRecordingDecision::A_MARK_NOISE:
+                        // F84 (RF-107.3): falso positivo del radar. Se conserva la
+                        // fila como auditoría (oculta en el listado por defecto) y
+                        // se marca la salida para no dejarla "abierta".
+                        if ($visitId !== null) {
+                            $this->pdo->prepare(
+                                "UPDATE warehouse_visits
+                                    SET outcome='NOISE', exited_at=COALESCE(exited_at, :n)
+                                  WHERE id=:id"
+                            )->execute([':n' => $now->format('Y-m-d H:i:s.v'), ':id' => $visitId]);
                         }
                         break;
                     case WarehouseRecordingDecision::A_START_EXT:
@@ -250,16 +277,87 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
 
     // -- helpers ---------------------------------------------------------------
 
-    /** @return array{x:int,m:int} */
+    /**
+     * @return array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int}
+     */
     private function roomConfig(int $roomId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT rt.warehouse_confirm_seconds AS x, rt.warehouse_exterior_margin_seconds AS m
+            'SELECT rt.warehouse_confirm_seconds AS x, rt.warehouse_exterior_margin_seconds AS m,
+                    rt.warehouse_presence_min_moves AS min_moves,
+                    rt.warehouse_presence_min_events AS min_events,
+                    rt.warehouse_presence_static_seconds AS static_seconds
              FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id WHERE r.id = :rid LIMIT 1'
         );
         $stmt->execute([':rid' => $roomId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['x' => 40, 'm' => 5];
-        return ['x' => (int) $row['x'], 'm' => (int) $row['m']];
+        $evidence = PresenceEvidence::configFromRow([
+            'warehouse_presence_min_moves'      => $row['min_moves'] ?? null,
+            'warehouse_presence_min_events'     => $row['min_events'] ?? null,
+            'warehouse_presence_static_seconds' => $row['static_seconds'] ?? null,
+        ]);
+        return [
+            'x' => (int) $row['x'],
+            'm' => (int) $row['m'],
+            'min_moves' => $evidence['min_moves'],
+            'min_events' => $evidence['min_events'],
+            'static_seconds' => $evidence['static_seconds'],
+        ];
+    }
+
+    /**
+     * F84 (RF-107.2): cuenta la evidencia de un episodio iniciado solo por
+     * presencia y decide si es una visita real o un falso positivo del radar.
+     * Solo BD local (push ya persistido): no consume cuota Tuya.
+     *
+     * @param array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int} $config
+     */
+    private function presenceEvidenceConfirmed(
+        int $roomId,
+        int $visitId,
+        array $config,
+        \DateTimeImmutable $now
+    ): bool {
+        $vStmt = $this->pdo->prepare('SELECT created_at FROM warehouse_visits WHERE id=:id LIMIT 1');
+        $vStmt->execute([':id' => $visitId]);
+        $createdAt = $vStmt->fetchColumn();
+        if ($createdAt === false || $createdAt === null || $createdAt === '') {
+            return false;
+        }
+        // Ventana con 2 s de margen previo para incluir el PRESENT que disparó la
+        // visita (su `occurred_at` es ligeramente anterior a `created_at`).
+        $startTs = strtotime((string) $createdAt . ' UTC');
+        if ($startTs === false) {
+            return false;
+        }
+        $from = gmdate('Y-m-d H:i:s', $startTs - 2) . '.000';
+        $to   = $now->format('Y-m-d H:i:s.v');
+
+        $q = $this->pdo->prepare(
+            "SELECT COUNT(DISTINCT COALESCE(event_fingerprint, CONCAT('id-', id))) AS total,
+                    COUNT(DISTINCT CASE
+                        WHEN LOWER(JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.tuya_raw_val'))) = 'move'
+                        THEN COALESCE(event_fingerprint, CONCAT('id-', id)) END) AS moves
+               FROM presence_events
+              WHERE room_id = :r AND sensor = 'PRESENCE' AND value = 'PRESENT'
+                AND provider = 'TUYA' AND occurred_at BETWEEN :a AND :b"
+        );
+        $q->execute([':r' => $roomId, ':a' => $from, ':b' => $to]);
+        $row = $q->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'moves' => 0];
+        $events = (int) $row['total'];
+        $moves  = (int) $row['moves'];
+
+        $dStmt = $this->pdo->prepare(
+            "SELECT 1 FROM presence_events
+              WHERE room_id = :r AND sensor = 'PROXIMITY' AND applied = 1
+                AND occurred_at BETWEEN :a AND :b LIMIT 1"
+        );
+        $dStmt->execute([':r' => $roomId, ':a' => $from, ':b' => $to]);
+        $doorEvent = $dStmt->fetchColumn() !== false;
+
+        $seconds = max(0, $now->getTimestamp() - $startTs);
+
+        return PresenceEvidence::isConfirmed($moves, $events, (float) $seconds, $doorEvent, $config);
     }
 
     /** @param array<string,mixed> $meta */

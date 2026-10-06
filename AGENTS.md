@@ -165,6 +165,30 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F78 Eliminación total del poller de presencia** | **BLOCK 35** | **Completado** |
 | **F79 Visitas fantasma del almacén** | **BLOCK 42/44** | **Completado** |
 | **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
+| **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
+
+### F84 — Antiruido del radar del almacén y reproducción fiel de la puerta (RF-107 / RF-108)
+
+- **Motivo**: la madrugada del 2026-10-06 el radar (24G V3, room 12) emitió 73 episodios
+  `move`→`presence`→`none` con la sala vacía; F80 los acepta al instante y cada uno creó visita
+  `PRESENCE` + clips (~1,1 GB). El crudo de un falso positivo es indistinguible de una entrada real y
+  F80 se mantiene (presencia con o sin contexto, p. ej. volver con la puerta abierta). Además, el
+  replay pintaba la puerta de forma sintética (`phase=enter/exit`).
+- **Evidencia (RF-107.2)**: análisis de 60 h/91 episodios — los fantasmas sin puerta son un parpadeo
+  único (`m1 p1`, 20-180 s; ninguno con ≥2 `move`), mientras la actividad real reemite transiciones
+  (07:00: 6 eventos/64 s; episodio largo: 135 `move`).
+- **Antiruido (RF-107)**: la visita por presencia se crea y graba al instante (F80 intacto); al cerrar
+  el episodio, `PresenceEvidence` la confirma si `moves≥2` **o** `events≥3` **o** duración≥300 s **o**
+  hubo evento de puerta aplicado. Sin evidencia → `outcome='NOISE'`, clips descartados y visita oculta
+  del listado por defecto (`include_noise=1`/`outcome=NOISE` la muestran). Umbrales en `room_types`
+  (migración `0122`). Las filas quedan como auditoría.
+- **Puerta fiel (RF-108)**: `GET /almacen-api/visits/{id}` añade `door { state_at_start, events[] }`
+  desde `presence_events` aplicados; `visit-playback.js` solo abre la puerta con intervalos reales
+  OPEN→CLOSED (nunca la inventa). Fallback sintético si `door` no viene.
+- **Sin tocar el detector ni cuota**: `SensorEventDecision`, `IotSessionService`, `TuyaSensorIngress`,
+  el recorder, `/dashboard` y RF-101 quedan intactos; todo sale de `presence_events` (push) y BD.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 57, marcadores F84) + units
+  `PresenceEvidenceTest.php`, `WarehouseRecordingDecisionTest.php`, `visit-playback.test.js`.
 
 ### F80 — Presencia del almacén en tiempo real (RF-103)
 

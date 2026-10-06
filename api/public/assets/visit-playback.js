@@ -150,6 +150,44 @@
 
     var durationMs = endMs - originMs;
 
+    // F84/RF-108: intervalos REALES de puerta si el API los aporta (`visit.door`).
+    // Sin ellos (cliente antiguo) se conserva el comportamiento sintético previo.
+    var door = v.door;
+    var doorKnown = !!(door && typeof door === 'object');
+    var doorIntervals = [];
+    if (doorKnown) {
+      var changes = [];
+      if (door.state_at_start === 'OPEN' || door.state_at_start === 'CLOSED') {
+        changes.push({ value: door.state_at_start, ms: -Infinity });
+      }
+      var devts = Array.isArray(door.events) ? door.events : [];
+      for (var de = 0; de < devts.length; de++) {
+        var dt = parseTime(devts[de].occurred_at);
+        if (dt > 0) changes.push({ value: String(devts[de].value || ''), ms: dt });
+      }
+      changes.sort(function (a, b) { return a.ms - b.ms; });
+      var openState = false;
+      var openFrom = 0;
+      for (var ci = 0; ci < changes.length; ci++) {
+        var ch = changes[ci];
+        if (ch.value === 'OPEN' && !openState) { openState = true; openFrom = ch.ms; }
+        else if (ch.value === 'CLOSED' && openState) {
+          doorIntervals.push({ startRaw: openFrom, endRaw: ch.ms });
+          openState = false;
+        }
+      }
+      if (openState) doorIntervals.push({ startRaw: openFrom, endRaw: Infinity });
+    }
+    var mappedDoor = [];
+    for (var di = 0; di < doorIntervals.length; di++) {
+      var iv = doorIntervals[di];
+      if (iv.endRaw !== Infinity && iv.endRaw < originMs) continue;
+      var ds = clamp(iv.startRaw - originMs, 0, durationMs);
+      var de2 = iv.endRaw === Infinity ? durationMs : clamp(iv.endRaw - originMs, 0, durationMs);
+      if (de2 <= ds) continue;
+      mappedDoor.push({ startMs: ds, endMs: de2 });
+    }
+
     var markers = [];
     if (qrMs) markers.push({ type: 'QR', icon: '📱', label: 'QR', ms: clamp(qrMs - originMs, 0, durationMs), wall: formatClock(qrMs) });
     if (enteredMs) markers.push({ type: 'ENTRY', icon: '🟢', label: 'Entrada', ms: clamp(enteredMs - originMs, 0, durationMs), wall: formatClock(enteredMs) });
@@ -206,6 +244,9 @@
       inside: inside,
       crossInMs: crossInMs,
       crossOutMs: crossOutMs,
+      // F84/RF-108: puerta real (si el API la aporta).
+      doorKnown: doorKnown,
+      doorIntervals: mappedDoor,
       hasRecordings: clips.some(function (c) { return c.hasVideo; }),
       hasCameras: POSITIONS.some(function (p) { return clips.some(function (c) { return c.position === p; }); })
     };
@@ -259,11 +300,22 @@
    * @param {number=} offsetMinutes huso para el reloj (por defecto local)
    * @returns {object}
    */
+  /** F84/RF-108: ¿la puerta estaba abierta en ese instante según los eventos reales? */
+  function doorOpenAt(tl, elapsedMs) {
+    var list = tl.doorIntervals || [];
+    for (var i = 0; i < list.length; i++) {
+      if (elapsedMs >= list[i].startMs && elapsedMs < list[i].endMs) return true;
+    }
+    return false;
+  }
+
   function frameAt(tl, wallMs, offsetMinutes) {
     var elapsedMs = clamp(wallMs - tl.originMs, 0, tl.durationMs);
     var phase = phaseAt(tl, elapsedMs);
     var personInside = phase === 'inside';
-    var doorOpen = phase === 'enter' || phase === 'exit';
+    // F84/RF-108: con datos reales de puerta, el estado sale del sensor MC400D;
+    // sin ellos se mantiene la estimación por fase (compatibilidad).
+    var doorOpen = tl.doorKnown ? doorOpenAt(tl, elapsedMs) : (phase === 'enter' || phase === 'exit');
     var lightOn = phase === 'enter' || phase === 'inside' || phase === 'exit';
 
     var insideSeconds = 0;

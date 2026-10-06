@@ -41,7 +41,7 @@ final class WarehouseVisitController
             $params[':worker_id'] = $workerId;
         }
         $outcome = (string) ($request->query['outcome'] ?? '');
-        if (in_array($outcome, ['ENTERED', 'NO_SHOW', 'ANONYMOUS', 'DENIED'], true)) {
+        if (in_array($outcome, ['ENTERED', 'NO_SHOW', 'ANONYMOUS', 'DENIED', 'NOISE'], true)) {
             $where[] = 'v.outcome = :outcome';
             $params[':outcome'] = $outcome;
         }
@@ -52,6 +52,12 @@ final class WarehouseVisitController
         $includeNoShow = (string) ($request->query['include_no_show'] ?? '') === '1';
         if (!$includeNoShow && $outcome === '') {
             $where[] = "NOT (v.outcome = 'NO_SHOW' AND v.entry_trigger = 'DOOR')";
+        }
+        // F84 (RF-107.3): los falsos positivos del radar (outcome=NOISE) se ocultan
+        // por defecto; include_noise=1 o outcome=NOISE los muestran (auditoría).
+        $includeNoise = (string) ($request->query['include_noise'] ?? '') === '1';
+        if (!$includeNoise && $outcome === '') {
+            $where[] = "v.outcome <> 'NOISE'";
         }
         $from = (string) ($request->query['from'] ?? '');
         if ($from !== '') {
@@ -108,6 +114,8 @@ final class WarehouseVisitController
         }
         $byId = [(int) $row['id'] => $this->formatVisit($row)];
         $this->attachRecordings($byId);
+        // F84/RF-108: eventos reales de la puerta para la reproducción fiel.
+        $this->attachDoorEvents($byId);
 
         return Response::json(200, ['visit' => $byId[(int) $row['id']]]);
     }
@@ -178,5 +186,67 @@ final class WarehouseVisitController
                 'poster_url' => $saved ? "/almacen-api/recordings/{$rid}/poster" : null,
             ];
         }
+    }
+
+    /**
+     * F84/RF-108: adjunta `door` (estado al inicio + eventos OPEN/CLOSED reales)
+     * para que la reproducción no invente la apertura. Solo BD local.
+     *
+     * @param array<int,array<string,mixed>> $visitsById
+     */
+    private function attachDoorEvents(array &$visitsById): void
+    {
+        foreach ($visitsById as &$visit) {
+            $roomId  = (int) ($visit['room_id'] ?? 0);
+            $created = (string) ($visit['created_at'] ?? '');
+            $startTs = $created !== '' ? strtotime($created . ' UTC') : false;
+            if ($roomId <= 0 || $startTs === false) {
+                $visit['door'] = ['state_at_start' => null, 'events' => []];
+                continue;
+            }
+            // 10 s de margen previo: el OPEN que crea la visita puede ser anterior
+            // a `created_at` (el motor reacciona al evento ya persistido).
+            $from = gmdate('Y-m-d H:i:s', $startTs - 10);
+            $endTs = strtotime((string) (($visit['exited_at'] ?? '') !== '' ? $visit['exited_at'] : $created) . ' UTC');
+            $to = gmdate('Y-m-d H:i:s', ($endTs !== false ? $endTs : $startTs) + 120);
+
+            $stateAtStart = null;
+            $st = $this->pdo->prepare(
+                "SELECT value FROM presence_events
+                  WHERE room_id = :r AND sensor = 'PROXIMITY' AND applied = 1
+                    AND occurred_at < :from
+                  ORDER BY occurred_at DESC, id DESC LIMIT 1"
+            );
+            $st->execute([':r' => $roomId, ':from' => $from]);
+            $v = $st->fetchColumn();
+            if ($v === 'OPEN' || $v === 'CLOSED') {
+                $stateAtStart = (string) $v;
+            }
+
+            $events = [];
+            $ev = $this->pdo->prepare(
+                "SELECT value, occurred_at FROM presence_events
+                  WHERE room_id = :r AND sensor = 'PROXIMITY' AND applied = 1
+                    AND occurred_at BETWEEN :a AND :b
+                  ORDER BY occurred_at ASC, id ASC"
+            );
+            $ev->execute([':r' => $roomId, ':a' => $from, ':b' => $to]);
+            foreach ($ev->fetchAll(PDO::FETCH_ASSOC) ?: [] as $e) {
+                $value = (string) $e['value'];
+                if ($value !== 'OPEN' && $value !== 'CLOSED') {
+                    continue;
+                }
+                $events[] = [
+                    'value'       => $value,
+                    'occurred_at' => (string) $e['occurred_at'],
+                ];
+            }
+
+            $visit['door'] = [
+                'state_at_start' => $stateAtStart,
+                'events'         => $events,
+            ];
+        }
+        unset($visit);
     }
 }

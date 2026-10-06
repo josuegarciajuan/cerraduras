@@ -1769,3 +1769,59 @@ confirmado. Revisa parcialmente RF-103.4 y RF-104.5.
 - **Nota**: revisa parcialmente **RF-103.4** (la fase ya no se recoloca a `inside` por un `PRESENT`
   anterior) y **RF-104.5** (el fallback `UNKNOWN`+visita activa se muestra atenuado, nunca como
   presencia afirmada).
+
+---
+
+# Fase 84: Antiruido del radar del almacén y reproducción fiel de la puerta (RF-107 / RF-108)
+
+**Motivo**: la madrugada del 2026-10-06 el radar del almacén (24G V3, room 12) emitió 73 secuencias
+`move`→`presence`→`none` con la sala vacía; F80 las acepta al instante (con o sin contexto) y cada
+una creó una visita `entry_trigger=PRESENCE` y grabó clips (~1,1 GB). El dato crudo de un falso
+positivo es **indistinguible** del de una entrada real (mismo DP `presence_state`), y F80 se mantiene
+por requisito del operador (la presencia debe crear/grabar con o sin contexto, p. ej. volver a entrar
+con la puerta abierta). La separación se hace con **evidencia del propio radar**: una persona en
+movimiento reemite transiciones (`move`/`presence`) mientras que el fantasma es un parpadeo único
+(1 `move` + 1 `presence`). Además, la reproducción de visitas pintaba la puerta de forma sintética
+(`phase=enter/exit`) aunque el sensor MC400D no la hubiese abierto.
+
+## RF-107: Antiruido del radar del almacén (visita provisional + evidencia)
+- **RF-107.1**: F80 se mantiene intacto: en `ALMACEN_BEBIDAS` todo `PRESENT` del radar (provider TUYA,
+  `presence` **o** `move`) es creíble al instante, con o sin contexto; crea la visita
+  (`entry_trigger=PRESENCE`) y arranca ambas cámaras desde el primer segundo. Volver a detectar
+  presencia (p. ej. tras dejar la puerta abierta) vuelve a crear visita y grabar.
+- **RF-107.2**: Al terminar un episodio de una visita iniciada **solo por presencia**
+  (`entry_trigger='PRESENCE'`), el motor clasifica el episodio como **real** si se cumple al menos una
+  condición de evidencia:
+  - `moves` (eventos `move` distintos) ≥ `warehouse_presence_min_moves` (def. **2**), **o**
+  - eventos `PRESENT` distintos (move+presence, incluidos los auditados como `noop`) ≥
+    `warehouse_presence_min_events` (def. **3**), **o**
+  - duración del episodio ≥ `warehouse_presence_static_seconds` (def. **300 s**), **o**
+  - un evento `PROXIMITY` aplicado dentro del episodio (evidencia adicional; **no** es un requisito
+    de contexto ni un veto).
+- **RF-107.3**: Si el episodio **no** tiene evidencia, la visita pasa a `outcome='NOISE'`, se solicita
+  el descarte de sus clips (`discard_requested=1`, el recorder borra los ficheros) y queda **oculta
+  por defecto** en `GET /almacen-api/visits` (visible con `include_noise=1` o `outcome=NOISE`). No
+  genera basura visible ni conserva vídeo del falso positivo.
+- **RF-107.4**: Con evidencia, el comportamiento es el actual: `outcome='ENTERED'`, clips
+  conservados, `ABSENT`/`DOOR_CLOSE_ABSENT` → `EXIT_PENDING` con margen `M` (F81/F83).
+- **RF-107.5**: Los umbrales son configurables por tipo de sala
+  (`room_types.warehouse_presence_min_moves|min_events|static_seconds`, migración `0122`), con los
+  valores por defecto anteriores. Ajustarlos no requiere desplegar.
+- **RF-107.6**: **Sin tocar el detector** (ni `far_detection`, ni `sensitivity`, ni orientación) y
+  **sin cuota Tuya**: la evidencia sale de `presence_events` (push ya persistido) y de la BD.
+- **RF-107.7**: Las visitas `NOISE` se conservan como auditoría (no se borran filas); la consulta por
+  id sigue disponible.
+- **RF-107.8**: **No regresión**: la regresión completa termina con **0 failures**; los tests F80
+  existentes permanecen válidos (la credibilidad del radar no cambia) y se añade **BLOCK 57**.
+
+## RF-108: Reproducción fiel de la puerta en las visitas (RF-108)
+- **RF-108.1**: `GET /almacen-api/visits/{id}` expone **aditivamente** `visit.door`
+  (`{ state_at_start, events[] }`): `state_at_start` es el último valor aplicado de `PROXIMITY`
+  anterior al inicio de la visita (`OPEN`/`CLOSED`/`null`) y `events` la lista de eventos
+  `PROXIMITY` aplicados (`OPEN`/`CLOSED` + `occurred_at`) que caen en la ventana de la visita.
+- **RF-108.2**: `visit-playback.js` deriva `doorOpen` de esos intervalos reales OPEN→CLOSED. **Nunca**
+  inventa una apertura: sin eventos de puerta en la visita, la puerta se muestra cerrada. La fase y el
+  movimiento del monigote no cambian.
+- **RF-108.3**: Compatibilidad: si la respuesta no trae `door` (cliente antiguo), se conserva el
+  comportamiento sintético previo como fallback.
+- **RF-108.4**: Sin cuota Tuya y sin cambios en el motor ni en el resto de contratos.

@@ -60,15 +60,21 @@ final class WarehouseRecordingDecision
     public const A_MARK_EXIT      = 'MARK_EXIT';
     public const A_CLOSE_VISIT    = 'CLOSE_VISIT';
     public const A_VISIT_NO_SHOW  = 'VISIT_NO_SHOW';
+    /** F84 (RF-107.3): marca la visita como NOISE (falso positivo del radar). */
+    public const A_MARK_NOISE     = 'MARK_NOISE';
     public const A_SET_DEADLINE_X = 'SET_DEADLINE_X';
     public const A_SET_DEADLINE_M = 'SET_DEADLINE_M';
     public const A_CLEAR_DEADLINES = 'CLEAR_DEADLINES';
 
     /**
      * @param array{state:string,entry_trigger:?string,presence_confirmed:bool} $state
+     * @param bool|null $presenceEvidenceOk F84 (RF-107.2/107.3): al cerrar un episodio
+     *        iniciado SOLO por presencia, indica si acumuló evidencia suficiente
+     *        (`PresenceEvidence`). `null` = no aplica (visitas QR/DOOR o evento que
+     *        no cierra el episodio) → comportamiento previo.
      * @return array{state:string,entry_trigger:?string,presence_confirmed:bool,actions:list<string>}
      */
-    public static function decide(array $state, string $event): array
+    public static function decide(array $state, string $event, ?bool $presenceEvidenceOk = null): array
     {
         $s = $state['state'] ?? self::STATE_IDLE;
         $trigger = $state['entry_trigger'] ?? null;
@@ -122,6 +128,16 @@ final class WarehouseRecordingDecision
                 // (DOOR_CLOSE_ABSENT) ends the visit exactly like ABSENT. A plain
                 // DOOR_CLOSE stays a no-op: someone remains inside, keep recording.
                 if ($event === self::EV_ABSENT || $event === self::EV_DOOR_CLOSE_ABSENT) {
+                    // F84 (RF-107.3): una visita iniciada SOLO por presencia que no
+                    // acumuló evidencia (parpadeo de radar) se cierra como NOISE y se
+                    // descartan sus clips: no deja basura visible (RF-107.3).
+                    if ($trigger === 'PRESENCE' && $presenceEvidenceOk === false) {
+                        return self::out(self::STATE_IDLE, null, false, [
+                            self::A_STOP_EXT, self::A_STOP_INT,
+                            self::A_DISCARD_EXT, self::A_DISCARD_INT,
+                            self::A_MARK_NOISE, self::A_CLOSE_VISIT,
+                        ]);
+                    }
                     return self::out(self::STATE_EXIT_PENDING, $trigger, true, [
                         self::A_STOP_INT, self::A_MARK_EXIT, self::A_SET_DEADLINE_M,
                     ]);
