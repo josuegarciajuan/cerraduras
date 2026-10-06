@@ -4152,11 +4152,11 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 ## Estado de ejecución (F85)
 
-- [ ] TSK-F85-01 migración `0123`
-- [ ] TSK-F85-02 motor `WarehouseRecordingDecision`
-- [ ] TSK-F85-03 servicio/evidencia
-- [ ] TSK-F85-04 guarda del recorder
-- [ ] TSK-F85-05 API refresh/door
-- [ ] TSK-F85-06 panel `/almacen`
-- [ ] TSK-F85-07 runner BLOCK 58 + AGENTS + regresión
-- [ ] TSK-F85-08 verificación en vivo
+- [x] TSK-F85-01 migración `0123`
+- [x] TSK-F85-02 motor `WarehouseRecordingDecision`
+- [x] TSK-F85-03 servicio/evidencia
+- [x] TSK-F85-04 guarda del recorder
+- [x] TSK-F85-05 API refresh/door
+- [x] TSK-F85-06 panel `/almacen`
+- [x] TSK-F85-07 runner BLOCK 58 + AGENTS + regresión (**512 passed, 0 failed, 2 skipped**)
+- [x] TSK-F85-08 verificación en vivo (sonda real `reason:"ok"`; la re-entrada física queda pendiente de prueba del operador)

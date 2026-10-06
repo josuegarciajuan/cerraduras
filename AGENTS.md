@@ -166,7 +166,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F79 Visitas fantasma del almacén** | **BLOCK 42/44** | **Completado** |
 | **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
 | **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
-| **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Pendiente** |
+| **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Completado** |
 
 ### F85 — Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
 
@@ -192,6 +192,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Migración**: `0123` (`room_types.warehouse_reentry_context_seconds`, def. 300).
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 58, marcadores F85) + units
   `WarehouseRecordingDecisionTest.php`, `WarehouseReentryTest.php`, `PresenceEvidenceTest.php`.
+  Regresión: **512 passed, 0 failed, 2 skipped**. Sonda real de puerta verificada
+  (`reason:"ok"`); el MC400D seguía reportando `OPEN` por Tuya el 2026-10-06 (incidencia de sensor).
 
 ### F84 — Antiruido del radar del almacén y reproducción fiel de la puerta (RF-107 / RF-108)
 
