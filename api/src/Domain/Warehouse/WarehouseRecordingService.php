@@ -387,12 +387,25 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
 
         $seconds = max(0, $now->getTimestamp() - $startTs);
 
+        // F86/RF-115.4: la re-entrada solo se confirma con CONTEXTO DE PUERTA
+        // (puerta OPEN en el estado IoT). Un fantasma del radar con la puerta
+        // cerrada NO se confirma por el mero hecho de haber una visita real
+        // reciente. Solo BD local (sin cuota).
+        $doorOpen = false;
+        try {
+            $ds = $this->pdo->prepare('SELECT door_state FROM iot_sessions WHERE room_id = :r LIMIT 1');
+            $ds->execute([':r' => $roomId]);
+            $doorOpen = ((string) ($ds->fetchColumn() ?: '')) === 'OPEN';
+        } catch (\Throwable $e) {
+            $doorOpen = false;
+        }
+
         // F85/RF-112.1: contexto de re-entrada. Si hay una visita REAL (DOOR/QR,
         // ENTERED) cerrada en la misma sala dentro de la ventana configurada, este
         // episodio de presencia es una re-entrada legítima aunque el radar solo
         // haya emitido un `move`. Solo BD local (sin cuota).
         $window = (int) ($config['reentry_seconds'] ?? 300);
-        if ($window > 0) {
+        if ($doorOpen && $window > 0) {
             $rq = $this->pdo->prepare(
                 "SELECT 1 FROM warehouse_visits
                   WHERE room_id = :r AND id <> :id

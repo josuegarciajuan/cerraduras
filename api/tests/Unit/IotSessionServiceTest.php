@@ -308,6 +308,41 @@ if ($iotRepo->sessions[1]->doorState === $doorBefore) ok('T5: state not mutated 
 else bad('T5: state not mutated on duplicate');
 
 // ============================================================================
+// T5b (F86/RF-115): reporte REAL de puerta con el MISMO valor → REFRESH
+//   - no cambia door_state
+//   - actualiza last_door_event_at / last_close_at
+//   - alimenta al motor del almacén (post-commit)
+// ============================================================================
+$signalsBefore = count($whSpy->signals);
+$refreshEvent = makeEvent(1, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T10:00:10Z', 'evt-refresh');
+$refreshEvent['provider'] = 'TUYA';
+$refreshEvent['meta'] = ['source' => 'real'];
+$r5b = $svc->processEvent($refreshEvent, 'corr-refresh');
+$sess = $iotRepo->sessions[1];
+if ($r5b['accepted'] === true) ok('T5b: refresh accepted=true');
+else bad('T5b: refresh accepted=true');
+if ($sess->doorState === IotSession::DOOR_CLOSED) ok('T5b: refresh no cambia door_state');
+else bad('T5b: refresh no cambia door_state', "got {$sess->doorState}");
+if ($sess->lastDoorEventAt === '2026-04-28 10:00:10.000') ok('T5b: refresh actualiza last_door_event_at');
+else bad('T5b: refresh actualiza last_door_event_at', "got {$sess->lastDoorEventAt}");
+if ($sess->lastCloseAt === '2026-04-28 10:00:10.000') ok('T5b: refresh actualiza last_close_at');
+else bad('T5b: refresh actualiza last_close_at', "got {$sess->lastCloseAt}");
+if (count($whSpy->signals) > $signalsBefore) ok('T5b: refresh alimenta al motor del almacén');
+else bad('T5b: refresh alimenta al motor del almacén');
+
+// El resync REST no es un edge físico → no refresca ni alimenta al motor.
+$signalsBefore2 = count($whSpy->signals);
+$resyncEvent = makeEvent(1, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T10:00:20Z', 'evt-resync');
+$resyncEvent['provider'] = 'TUYA';
+$resyncEvent['meta'] = ['source' => 'resync'];
+$svc->processEvent($resyncEvent, 'corr-resync');
+$sess = $iotRepo->sessions[1];
+if ($sess->lastDoorEventAt === '2026-04-28 10:00:10.000') ok('T5b: resync NO refresca la frescura');
+else bad('T5b: resync NO refresca la frescura', "got {$sess->lastDoorEventAt}");
+if (count($whSpy->signals) === $signalsBefore2) ok('T5b: resync no alimenta al motor');
+else bad('T5b: resync no alimenta al motor');
+
+// ============================================================================
 // T6: Exit rule fires after door close + sustained absence >= gap (5s)
 //     Setup: door open at T=0, close at T=1, absence starts at T=2, now at T=8
 // ============================================================================

@@ -2686,3 +2686,32 @@ Respuestas:
 - Todo se resuelve con push ya persistido + BD local; la única sonda REST nueva es la de
   `sensors/refresh` (ya existente, con presupuesto y cooldown). No se añade ningún temporizador.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 58** nuevo con marcadores F85.
+
+---
+
+# Fase 86: Puerta fiel ante reportes repetidos (RF-115)
+
+## 1. `presence_events.discard_reason` — valor aditivo `refresh`
+
+- La columna es `VARCHAR(16)`; se admite el valor **`refresh`** para los reportes reales de puerta
+  con el mismo valor (aplicados al estado pero auditados como descarte-refresco). **Sin migración**
+  y sin cambio de forma.
+- Valores existentes sin cambios: `duplicate`, `stale`, `noop`, `no_context`.
+
+## 2. Estado IoT (`iot_sessions`)
+
+- **Sin cambio de forma**. Comportamiento: un `refresh` de `PROXIMITY` actualiza
+  `last_door_event_at` y `last_open_at`/`last_close_at` sin cambiar `door_state`/`last_door_value`.
+- `GET /almacen-api/state` refleja la frescura resultante (`door_age_seconds`/`door_stale`) sin
+  campos nuevos.
+
+## 3. Motor del almacén
+
+- **Sin cambio de forma**. Un `refresh` de puerta alimenta `WarehouseRecordingService::onSignal`
+  como si fuera un APPLY; en `IDLE`, un `OPEN` crea visita `DOOR` (consistente con RF-109).
+- RF-112 queda revisada: la re-entrada exige `door_state='OPEN'` (contexto de puerta).
+
+## 4. Sin rutas nuevas / sin cuota / no regresión
+
+- No se añaden endpoints ni llamadas a Tuya; el resync REST sigue en `noop`.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 59** nuevo con marcadores F86.

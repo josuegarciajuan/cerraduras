@@ -1923,3 +1923,31 @@ Además, el operador fija el **modelo de detección del pack almacén**, que es 
 - **RF-114.3**: Se añade un bloque nuevo al runner (**BLOCK 58**) con marcadores F85 y units
   (`WarehouseRecordingDecisionTest`, `WarehouseReentryTest`, `PresenceEvidenceTest`,
   `croquis-logic.test.js`).
+
+---
+
+# Fase 86: Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
+
+**Motivo**: el 2026-10-06, con la puerta atascada en `OPEN` por un `CLOSED` perdido, una apertura
+real (14:36:46) llegó como `PROXIMITY=OPEN` con el **mismo valor** y se descartó como `noop`: no
+refrescó `last_open_at`/`last_door_event_at`, no reseteó `door_stale`, no empujó al panel (SSE) y no
+avisó al motor (la visita salió `PRESENCE` en vez de `DOOR`). Además, la evidencia de re-entrada de
+F85/RF-112 podía confirmar fantasmas del radar con la puerta cerrada.
+
+## RF-115: Frescura de puerta y re-entrada con contexto
+
+- **RF-115.1**: Un `PROXIMITY` real (provider TUYA, `meta.source != 'resync'`) con el **mismo valor**
+  que el último aplicado y un **instante nuevo** se clasifica `refresh`: **no** cambia
+  `door_state`, pero actualiza `last_door_event_at` y `last_open_at`/`last_close_at`.
+- **RF-115.2**: El `refresh` de puerta dispara los **mismos efectos post-commit** que un APPLY de
+  puerta: luz (F28) y motor del almacén (`EV_DOOR_OPEN`/`EV_DOOR_CLOSE`); un `OPEN` refrescado en
+  `IDLE` crea visita `DOOR`.
+- **RF-115.3**: El resync REST (`meta.source='resync'`) sigue en `noop` (mantiene F77.5). El sondeo
+  bajo demanda `POST /almacen-api/sensors/refresh` **sí** refresca (acción explícita del usuario).
+- **RF-115.4**: La confirmación de re-entrada (RF-112) exige además **contexto de puerta**
+  (`iot_sessions.door_state='OPEN'`); un episodio de radar con la puerta cerrada no se confirma por
+  el mero hecho de haber una visita real reciente.
+- **RF-115.5**: `presence_events.discard_reason` admite el valor **aditivo** `refresh`
+  (`VARCHAR(16)`, sin migración).
+- **RF-115.6**: **No regresión**: la regresión completa termina con **0 failures**; **BLOCK 59**
+  nuevo con marcadores F86. Sin cambios de UI (decisión del operador: el sensor manda).

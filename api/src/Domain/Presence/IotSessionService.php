@@ -134,6 +134,10 @@ final class IotSessionService
 
         $session = null;
         $applied = false;
+        // F86 (RF-115): true cuando un reporte real de puerta con el mismo valor
+        // refrescó la frescura (sin cambiar `door_state`). Dispara los mismos
+        // efectos post-commit que un APPLY de puerta (luz + motor del almacén).
+        $doorRefreshed = false;
 
         // --- 3. (B/C) Atomic decide + mutate + update ---
         for ($attempt = 1; $attempt <= self::MAX_TX_RETRIES; $attempt++) {
@@ -167,6 +171,20 @@ final class IotSessionService
                 );
 
                 if ($decision !== SensorEventDecision::APPLY) {
+                    // F86 (RF-115): REFRESH de puerta: mismo valor, instante nuevo
+                    // (reporte real edge). Actualiza la frescura sin tocar el estado.
+                    if ($decision === SensorEventDecision::REFRESH
+                        && $sensor === PresenceEvent::SENSOR_PROXIMITY
+                    ) {
+                        $session->lastDoorEventAt = $evtUtc;
+                        if ($value === PresenceEvent::VALUE_OPEN) {
+                            $session->lastOpenAt = $evtUtc;
+                        } elseif ($value === PresenceEvent::VALUE_CLOSED) {
+                            $session->lastCloseAt = $evtUtc;
+                        }
+                        $this->iotSessions->updateState($session);
+                        $doorRefreshed = true;
+                    }
                     $this->presenceEvents->markAudit($rawEvent->id, false, $decision);
                     $this->iotSessions->commit();
                     break;
@@ -197,7 +215,7 @@ final class IotSessionService
         }
 
         // --- 4. (D) Post-commit effects (never under the row lock) ---
-        if ($applied && $session !== null) {
+        if (($applied || $doorRefreshed) && $session !== null) {
             if ($sensor === PresenceEvent::SENSOR_PROXIMITY
                 && $value === PresenceEvent::VALUE_OPEN
                 && $this->switchService !== null

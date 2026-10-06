@@ -5409,6 +5409,59 @@ else
 fi
 
 # =============================================================================
+# BLOCK 59 — F86: puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
+# Trazabilidad: RF-115.1..115.6; TSK-F86-01..F86-04
+# =============================================================================
+block "BLOCK 59 — F86: puerta fiel ante reportes repetidos"
+
+# 59.0 Estáticos: decisión refresh, efectos y contexto de puerta en la evidencia.
+for F86_MARK in \
+    "src/Domain/Presence/SensorEventDecision.php:REFRESH" \
+    "src/Domain/Presence/SensorEventDecision.php:source !== 'resync'" \
+    "src/Domain/Presence/IotSessionService.php:doorRefreshed" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:RF-115.4"; do
+    F86_FILE="${F86_MARK%%:*}"
+    F86_NEEDLE="${F86_MARK#*:}"
+    if grep -qF "$F86_NEEDLE" "$F86_FILE" 2>/dev/null; then
+        pass "F86: $F86_FILE define '$F86_NEEDLE'"
+    else
+        fail "F86: $F86_FILE" "falta '$F86_NEEDLE'"
+    fi
+done
+
+# 59.1 Units: decisión refresh y efectos en la sesión.
+for F86_TEST in \
+    "tests/Unit/SensorEventDecisionTest.php" \
+    "tests/Unit/IotSessionServiceTest.php"; do
+    if [ -f "$F86_TEST" ]; then
+        F86_OUT=$(php "$F86_TEST" 2>&1)
+        F86_RC=$?
+        F86_SUM=$(echo "$F86_OUT" | grep -oE '([0-9]+ passed, [0-9]+ failed|Total: [0-9]+ passed, [0-9]+ failed)' | tail -1)
+        [ -z "$F86_SUM" ] && F86_SUM="exit=$F86_RC"
+        if [ "$F86_RC" -eq 0 ]; then
+            pass "F86: $(basename "$F86_TEST") ($F86_SUM)"
+        else
+            fail "F86: $(basename "$F86_TEST")" \
+                "$F86_SUM — $(echo "$F86_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F86: $F86_TEST" "no encontrado"
+    fi
+done
+
+# 59.2 BD: discard_reason admite 'refresh' (VARCHAR >= 7).
+if [ -n "$MYSQL_BIN" ]; then
+    F86_LEN=$($MYSQL -sN -e "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='presence_events' AND column_name='discard_reason'" 2>/dev/null)
+    if [ -n "$F86_LEN" ] && [ "$F86_LEN" -ge 7 ] 2>/dev/null; then
+        pass "F86: presence_events.discard_reason admite 'refresh' (len=$F86_LEN)"
+    elif [ -z "$F86_LEN" ]; then
+        skip "F86: discard_reason" "sin BD"
+    else
+        fail "F86: discard_reason" "len=$F86_LEN (necesita >= 7)"
+    fi
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

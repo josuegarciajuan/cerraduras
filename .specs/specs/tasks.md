@@ -4160,3 +4160,56 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F85-06 panel `/almacen`
 - [x] TSK-F85-07 runner BLOCK 58 + AGENTS + regresión (**512 passed, 0 failed, 2 skipped**)
 - [x] TSK-F85-08 verificación en vivo (sonda real `reason:"ok"`; la re-entrada física queda pendiente de prueba del operador)
+
+---
+
+# Fase 86: Puerta fiel ante reportes repetidos (RF-115)
+
+## TSK-F86-01: Decisión `refresh` + efectos en `IotSessionService`
+- **Trazabilidad**: RF-115.1–115.3, RF-115.5.
+- **Archivo(s)**: `api/src/Domain/Presence/SensorEventDecision.php`,
+  `api/src/Domain/Presence/IotSessionService.php`.
+- **Pasos**:
+  - [x] `SensorEventDecision::REFRESH`: PROXIMITY TUYA con mismo valor e instante nuevo y
+    `meta.source !== 'resync'`.
+  - [x] `IotSessionService`: refresca `last_door_event_at` y `last_open_at`/`last_close_at` sin
+    cambiar `door_state`; audita `discard_reason='refresh'`; dispara post-commit (luz + motor).
+- **Verificación**: units + BLOCK 59.
+
+## TSK-F86-02: Re-entrada con contexto de puerta
+- **Trazabilidad**: RF-115.4.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingService.php`.
+- **Pasos**:
+  - [x] `presenceEvidenceConfirmed()`: exigir `iot_sessions.door_state='OPEN'` para el atajo de
+    re-entrada de RF-112; sin puerta abierta se aplica F84 sin cambios.
+- **Verificación**: BLOCK 59 + prueba en vivo.
+
+## TSK-F86-03: Tests
+- **Trazabilidad**: RF-115.1–115.5.
+- **Archivo(s)**: `api/tests/Unit/SensorEventDecisionTest.php`,
+  `api/tests/Unit/IotSessionServiceTest.php`.
+- **Pasos**:
+  - [x] `refresh` real; `noop` para resync/simulado; presencia mismo valor sigue `noop`.
+  - [x] `IotSessionService`: refresh no cambia `door_state`, actualiza frescura y alimenta al motor;
+    resync no refresca ni alimenta.
+- **Verificación**: `php tests/Unit/SensorEventDecisionTest.php` +
+  `php tests/Unit/IotSessionServiceTest.php`.
+
+## TSK-F86-04: Runner BLOCK 59 + AGENTS + regresión
+- **Trazabilidad**: RF-115.6.
+- **Archivo(s)**: `api/bin/run-tests.sh`, `AGENTS.md`.
+- **Pasos**:
+  - [ ] **BLOCK 59** con marcadores F86 (decisión `REFRESH`, `doorRefreshed`, contexto de puerta en
+    la evidencia) + units.
+  - [ ] AGENTS.md: fila F86 + sección.
+  - [ ] Regresión completa 0 failures.
+  - [ ] Verificación en vivo: un `CLOSED` real repetido limpia `door_stale`; un `OPEN` real en
+    reposo crea visita `DOOR`.
+- **Verificación**: `cd api && bash bin/run-tests.sh`.
+
+## Estado de ejecución (F86)
+
+- [x] TSK-F86-01 decisión `refresh` + efectos
+- [x] TSK-F86-02 re-entrada con contexto de puerta
+- [x] TSK-F86-03 tests unit
+- [ ] TSK-F86-04 runner BLOCK 59 + AGENTS + regresión + verificación en vivo

@@ -155,13 +155,37 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::DUPLICATE) pass('decide: same instant + value → duplicate');
 else fail('decide: same instant + value should be duplicate, got ' . $decision);
 
-// ── decide: noop (same value, different instant) ─────────────────────────
+// ── decide F86 (RF-115): mismo valor + instante nuevo, reporte real → refresh ─
 $session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
 $decision = SensorEventDecision::decide(
     doorEvent('2026-04-28T10:00:12Z', 'OPEN'), $session, false
 );
-if ($decision === SensorEventDecision::NOOP) pass('decide: value already in force → noop');
-else fail('decide: same value should be noop, got ' . $decision);
+if ($decision === SensorEventDecision::REFRESH) pass('decide F86: mismo valor + instante nuevo (real) → refresh');
+else fail('decide F86: mismo valor real debería ser refresh, got ' . $decision);
+
+// El resync REST no es un edge físico → noop (mantiene F77.5).
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$evResync = doorEvent('2026-04-28T10:00:13Z', 'OPEN');
+$evResync['meta'] = ['source' => 'resync'];
+$decision = SensorEventDecision::decide($evResync, $session, false);
+if ($decision === SensorEventDecision::NOOP) pass('decide F86: mismo valor con source=resync → noop');
+else fail('decide F86: resync debería ser noop, got ' . $decision);
+
+// Un evento simulado con el mismo valor no refresca.
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$evSim = doorEvent('2026-04-28T10:00:14Z', 'OPEN');
+$evSim['provider'] = 'SIMULATED';
+$decision = SensorEventDecision::decide($evSim, $session, false);
+if ($decision === SensorEventDecision::NOOP) pass('decide F86: mismo valor simulado → noop');
+else fail('decide F86: simulado debería ser noop, got ' . $decision);
+
+// La presencia con el mismo valor sigue siendo noop (REFRESH es solo puerta).
+$session = sessionWithPresence('2026-04-28 10:00:10.000', 'PRESENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:12Z', 'PRESENT', 'presence'), $session, false, true, true, true
+);
+if ($decision === SensorEventDecision::NOOP) pass('decide F86: presencia con el mismo valor → noop');
+else fail('decide F86: presencia mismo valor debería ser noop, got ' . $decision);
 
 // ── decide: apply (new transition) ───────────────────────────────────────
 $session = sessionWithDoor('2026-04-28 10:00:10.000', 'CLOSED');
@@ -317,8 +341,9 @@ foreach ([
     SensorEventDecision::STALE,
     SensorEventDecision::NOOP,
     SensorEventDecision::NO_CONTEXT,
+    SensorEventDecision::REFRESH,
 ] as $reason) {
-    $valid = in_array($reason, ['duplicate', 'stale', 'noop', 'no_context'], true);
+    $valid = in_array($reason, ['duplicate', 'stale', 'noop', 'no_context', 'refresh'], true);
     if ($valid) pass("audit: discard_reason '{$reason}' is a valid persisted value");
     else fail("audit: invalid discard_reason '{$reason}'");
 }

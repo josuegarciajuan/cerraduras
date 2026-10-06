@@ -4830,3 +4830,69 @@ estancia, se fragmentaría en dos visitas. Mitigaciones previstas:
 | RF-112 | §49.8 | §F85.1 | TSK-F85-01, TSK-F85-03 |
 | RF-113 | §49.9 | §F85.3 | TSK-F85-06 |
 | RF-114 | §49.11 | §F85.4 | TSK-F85-07 |
+
+---
+
+# 50. F86 — Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
+
+## 50.1 Problema
+
+El MC400D es **edge-triggered**: solo reporta cuando cambia. Si un `CLOSED` se pierde, el dominio
+queda `OPEN` "atascado"; una apertura real posterior reporta `OPEN` otra vez y `SensorEventDecision`
+la clasifica `noop` (mismo valor), con lo que: no se refresca la frescura, `door_stale` sigue
+`true`, no hay push SSE (el fingerprint no cambia) y el motor del almacén **no recibe** el
+disparador `DOOR`, creando la visita por `PRESENCE` cuando llega el radar.
+
+## 50.2 Decisión `refresh` (pura)
+
+En `SensorEventDecision::decide()`, tras el dedup por fingerprint/instante y antes del `noop`:
+
+```
+si  es PROXIMITY
+y   value === lastDoorValue (no nulo)
+y   provider === TUYA
+y   meta.source !== 'resync'
+→ REFRESH
+```
+
+- Un reporte **real** del mismo valor con instante nuevo es un **edge** del sensor: la puerta
+  cambió a ese estado cuando el dominio creía el anterior.
+- El resync REST se excluye (reconciliación, no transición; F77.5). Las inyecciones simuladas y el
+  mismo instante exacto siguen `noop`/`duplicate`.
+- La identidad lógica (`fingerprint`) no cambia: mismo segundo + mismo valor siguen colapsando.
+
+## 50.3 Efectos del refresh (`IotSessionService`)
+
+- `lastDoorEventAt = evtUtc`; `lastOpenAt`/`lastCloseAt = evtUtc` según el valor. **`doorState` y
+  `lastDoorValue` no cambian.**
+- Auditoría: `presence_events.applied=0`, `discard_reason='refresh'` (`VARCHAR(16)`; sin migración).
+- Post-commit (mismos efectos que un APPLY de puerta):
+  - luz: `turnOn` en `OPEN` (F28);
+  - motor del almacén: `onSignal(EV_DOOR_OPEN|EV_DOOR_CLOSE)`; en `IDLE`, `DOOR_OPEN` crea visita
+    `DOOR` (RF-109).
+- El sondeo `sensors/refresh` llega con `source='real'` ⇒ refresca y limpia `door_stale`. El resync
+  del consumer lleva `source='resync'` ⇒ no.
+
+## 50.4 Re-entrada con contexto de puerta
+
+`WarehouseRecordingService::presenceEvidenceConfirmed()` añade a RF-112 el requisito
+`iot_sessions.door_state='OPEN'` además de la visita real reciente
+(`entry_trigger IN ('DOOR','QR')`, `ENTERED`, `exited_at` dentro de la ventana). Un fantasma con la
+puerta cerrada no se confirma.
+
+## 50.5 Alcance
+
+- **No se toca**: la UI del croquis (decisión del operador: el sensor manda y el monigote sigue al
+  radar hasta el `ABSENT`), el detector/config del 24G, `TuyaSensorIngress`, la firma de eventos ni
+  RF-101 (sin poller; el sondeo solo es bajo demanda).
+- **Revisa**: F85/RF-112.1 (añade contexto de puerta) y F41/RF-44 (nuevo estado `refresh` auditable).
+
+## 50.6 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-115.1–115.2 | §50.2–50.3 | §F86.1 | TSK-F86-01, TSK-F86-03 |
+| RF-115.3 | §50.2–50.3 | §F86.1 | TSK-F86-01 |
+| RF-115.4 | §50.4 | §F86.2 | TSK-F86-02 |
+| RF-115.5 | §50.3 | §F86.3 | TSK-F86-01 |
+| RF-115.6 | §50.5 | §F86.3 | TSK-F86-04 |

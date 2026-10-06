@@ -167,6 +167,24 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F80 Presencia del almacén en tiempo real** | **BLOCK 53** | **Completado** |
 | **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
 | **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Completado** |
+| **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **En curso** |
+
+### F86 — Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
+
+- **Motivo**: con la puerta atascada en `OPEN` por un `CLOSED` perdido, una apertura real llegó como
+  `PROXIMITY=OPEN` con el mismo valor y se descartó como `noop`: no refrescó la frescura, no reseteó
+  `door_stale`, no empujó al panel y no avisó al motor (la visita salió `PRESENCE` en vez de `DOOR`).
+- **Decisión `refresh` (RF-115.1/115.2)**: un `PROXIMITY` real (TUYA, `source != 'resync'`) con el
+  mismo valor e instante nuevo actualiza `last_door_event_at`/`last_open_at`/`last_close_at` **sin
+  cambiar `door_state`**, audita `discard_reason='refresh'` y dispara los efectos post-commit (luz +
+  motor del almacén; `OPEN` en `IDLE` crea visita `DOOR`). El resync REST sigue `noop` (F77.5).
+- **Re-entrada (RF-115.4)**: revisa RF-112; la confirmación exige `door_state='OPEN'` además de la
+  visita real reciente (los fantasmas con puerta cerrada siguen `NOISE`).
+- **UI**: sin cambios (decisión del operador: el sensor manda y el monigote sigue al radar hasta el
+  `ABSENT`).
+- **Sin migración**: `presence_events.discard_reason` es `VARCHAR(16)` y admite `refresh`.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 59, marcadores F86) + units
+  `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`.
 
 ### F85 — Modelo de detección del pack almacén, puerta fiel y re-entradas (RF-109…RF-114)
 

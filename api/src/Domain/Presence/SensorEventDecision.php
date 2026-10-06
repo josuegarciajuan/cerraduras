@@ -10,7 +10,9 @@ namespace App\Domain\Presence;
  *   - fingerprint(): logical identity of a physical fact; collapses Pulsar /
  *     poller re-sends of the same sensor+value within the same second.
  *   - decide(): classifies an incoming event as APPLY / DUPLICATE / STALE / NOOP
- *     using the last applied marks of the same sensor on the locked session.
+ *     / REFRESH using the last applied marks of the same sensor on the locked
+ *     session. REFRESH (F86/RF-115) es un reporte real de puerta con el mismo
+ *     valor: refresca la frescura sin cambiar el estado.
  *
  * This class performs no I/O: it is the testable core of IotSessionService.
  * The discard reasons returned here are exactly the values persisted in
@@ -29,6 +31,14 @@ final class SensorEventDecision
 
     /** Value is already the current one; no transition. */
     public const NOOP = 'noop';
+
+    /**
+     * F86 (RF-115): reporte REAL de puerta con el MISMO valor pero instante nuevo.
+     * El contacto es edge-triggered: un nuevo reporte del mismo valor es un cambio
+     * físico que el dominio daba por hecho (p. ej. un `CLOSED` perdido dejó `OPEN`
+     * atascado). Refresca la frescura sin cambiar `door_state`.
+     */
+    public const REFRESH = 'refresh';
 
     /**
      * F48 (RF-57): PRESENT de presencia no creíble por contexto (p. ej. `move`
@@ -100,6 +110,19 @@ final class SensorEventDecision
             return self::DUPLICATE;
         }
 
+        $provider = (string) ($event['provider'] ?? '');
+        $source   = strtolower((string) (($event['meta'] ?? [])['source'] ?? ''));
+
+        // 2b) F86 (RF-115): reporte REAL de puerta con el mismo valor y un instante
+        // NUEVO. El sensor es edge-triggered: si vuelve a reportar el mismo valor es
+        // que la puerta cambió a ese estado cuando el dominio creía el anterior (un
+        // `CLOSED` perdido dejó `OPEN` "atascado"). Se refresca la frescura sin
+        // cambiar `door_state`; el resync REST queda excluido (no es una transición).
+        if ($isDoor && $lastVal !== null && $value === $lastVal
+            && $provider === PresenceEvent::PROVIDER_TUYA && $source !== 'resync') {
+            return self::REFRESH;
+        }
+
         // 3) Value already in force: no transition.
         if ($lastVal !== null && $value === $lastVal) {
             return self::NOOP;
@@ -109,7 +132,6 @@ final class SensorEventDecision
         // del sensor (provider TUYA); las inyecciones simuladas (/sim/*) se
         // respetan tal cual (herramienta de desarrollo/tests). Solo afecta a
         // PRESENT de presencia; ABSENT (`none`) siempre se aplica para limpiar.
-        $provider = (string) ($event['provider'] ?? '');
         if ($provider === PresenceEvent::PROVIDER_TUYA
             && $sensor === PresenceEvent::SENSOR_PRESENCE
             && $value === PresenceEvent::VALUE_PRESENT
