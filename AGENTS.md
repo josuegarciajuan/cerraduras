@@ -168,6 +168,31 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F84 Antiruido del radar + puerta fiel en replay** | **BLOCK 57** | **Completado** |
 | **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Completado** |
 | **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **Completado** |
+| **F87 Veracidad de presencia y limpieza de grabaciones** | **BLOCK 60** | **Completado** |
+
+### F87 — Veracidad de presencia y limpieza de grabaciones del almacén (RF-116…RF-121)
+
+- **Motivo**: el panel `/almacen` mostraba el monigote dentro con la sala vacía (el 24G retuvo
+  `PRESENT` 9 min y no había umbral de frescura de presencia), los fantasmas del radar se
+  confirmaban como `ENTERED` (bucket `static_seconds=300` y `min_events` contando `presence`
+  no-op) y los clips NOISE no se borraban (el tope F73 los dejaba `SAVED` antes del descarte:
+  410 clips = 4,7 GB). `warehouse-retention.php` no tenía timer.
+- **Presencia (RF-116)**: `live.presence_stale` (def. `PRESENCE_STALE_SECONDS=180`) y
+  `warehouse.occupied=false` cuando la señal es vieja; el croquis muestra "PRESENCIA SIN DATOS"
+  y no pinta al monigote dentro. **La visita no se cierra** por antigüedad (decisión del operador).
+- **Evidencia (RF-117)**: `PresenceEvidence` confirma solo por `moves>=2`, `static_seconds` (def.
+  **1800**, migración `0124`) o evento de puerta aplicado; `min_events` queda vestigial. Se
+  mantienen F85 (re-entrada) y F86 (contexto de puerta).
+- **Grabación (RF-118)**: `RECORDING_INSIDE + DOOR_OPEN` emite `A_ENSURE_RECORDING`; si el tope F73
+  finalizó el clip, se arranca uno nuevo (no se encadenan clips por tiempo; el tope de 60 s sigue).
+- **Descarte (RF-119)**: `requestDiscard` marca todo estado `<> 'DISCARDED'` (incluye `SAVED`) y el
+  recorder borra fichero + póster y pasa a `DISCARDED`. Limpieza de los clips NOISE históricos.
+- **Retención (RF-120)**: timer systemd diario `cerraduras-warehouse-retention.timer`; `start-all.sh`
+  lo habilita y `stop-all.sh` lo para; `warehouse.retention_days` declarado (1 pruebas / 0 = nunca).
+- **Sin cuota**: F74/RF-87 y F78/RF-101 intactos (sin sondeo ni temporizadores Tuya).
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 60, marcadores F87) + units
+  `PresenceEvidenceTest.php`, `WarehouseRecordingDecisionTest.php`, `croquis-logic.test.js`.
+  Regresión: _(completar al cerrar la fase)_.
 
 ### F86 — Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
 

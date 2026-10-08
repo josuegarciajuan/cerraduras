@@ -1951,3 +1951,79 @@ F85/RF-112 podía confirmar fantasmas del radar con la puerta cerrada.
   (`VARCHAR(16)`, sin migración).
 - **RF-115.6**: **No regresión**: la regresión completa termina con **0 failures**; **BLOCK 59**
   nuevo con marcadores F86. Sin cambios de UI (decisión del operador: el sensor manda).
+
+---
+
+# Fase 87: Veracidad de presencia y limpieza de grabaciones del almacén (RF-116…RF-121)
+
+**Motivo** (2026-10-08): el panel `/almacen` muestra el monigote "dentro" con la sala vacía, las
+visitas fantasma se confirman como reales y los clips NOISE no se borran. Evidencia en vivo:
+`iot_sessions.presence_state=PRESENT` durante **9 min** con el almacén vacío (08:40:47→08:50:04) →
+`warehouse_state=RECORDING_INSIDE` y visita 896 `ENTERED` con **557 s**; **410 grabaciones NOISE en
+`SAVED` = 4,7 GB** (el tope F73 de 60 s las finaliza antes de que llegue el descarte); ~25–30 visitas
+NOISE/hora; `warehouse-retention.php` no se ejecuta desde ningún timer/cron.
+
+## RF-116: Frescura y credibilidad de la presencia del almacén
+
+- **RF-116.1**: `GET /almacen-api/state` añade de forma **aditiva** `live.presence_stale` (bool),
+  calculado desde `iot_sessions.last_presence_event_at` con umbral `PRESENCE_STALE_SECONDS`
+  (configurable; por defecto **180 s**). `presence_age_seconds` se conserva como diagnóstico.
+- **RF-116.2**: Cuando `presence_stale=true`, el panel **no afirma** presencia: el chip pasa a
+  "SIN DATOS" y `warehouse.occupied=false`; el monigote no se pinta dentro. **La visita del motor
+  no se cierra** por antigüedad de señal (decisión del operador: no cortar una estancia real
+  silenciosa).
+- **RF-116.3**: La frescura se difunde por SSE (entra en el fingerprint) sin campos que cambien
+  cada segundo. Sin rutas nuevas y sin sondeo a Tuya.
+
+## RF-117: Evidencia reforzada de las visitas disparadas por presencia
+
+- **RF-117.1**: `PresenceEvidence::isConfirmed` confirma una visita iniciada **solo** por presencia
+  únicamente si se cumple alguna de estas condiciones:
+  - `moves >= min_moves` (eventos `move` distintos; defecto 2), **o**
+  - hubo un evento de puerta `PROXIMITY` aplicado dentro del episodio, **o**
+  - duración `>= static_seconds` (configurable; defecto **1800 s**).
+- **RF-117.2**: Se **elimina** el criterio `events >= min_events` (contaba `presence` no-op y
+  confirmaba parpadeos `m1 p2`). La columna `warehouse_presence_min_events` se conserva por
+  compatibilidad, sin efecto en la decisión.
+- **RF-117.3**: Migración `0124`: `warehouse_presence_static_seconds` pasa a `1800` (default y valor
+  de `ALMACEN_BEBIDAS`), idempotente.
+- **RF-117.4**: Se mantienen sin cambios el contexto de re-entrada F85 (`warehouse_reentry_context_seconds`)
+  y el requisito de puerta abierta F86/RF-115.4.
+
+## RF-118: Grabación fiel al ciclo de puerta
+
+- **RF-118.1**: En `STATE_RECORDING_INSIDE`, un `EV_DOOR_OPEN` real (no-op actual) devuelve la acción
+  `A_ENSURE_RECORDING`.
+- **RF-118.2**: `WarehouseRecordingService` ejecuta `A_ENSURE_RECORDING`: si la visita no tiene
+  ninguna grabación `PENDING`/`RECORDING`, arranca EXT+INT del episodio actual; si ya hay una
+  activa, no hace nada. No se encadenan clips por tiempo (el tope F73 de 60 s se mantiene).
+- **RF-118.3**: Una apertura real de puerta nunca deja la visita sin grabación por venir de un
+  estado heredado de un fantasma de radar.
+
+## RF-119: Descarte efectivo de clips (incluidos los finalizados por el tope)
+
+- **RF-119.1**: `requestDiscard` marca `discard_requested=1, stop_requested=1` en **todas** las
+  filas de la visita/posición con `status <> 'DISCARDED'` (incluye `SAVED`, `PENDING`, `RECORDING`,
+  `FAILED`), no solo `PENDING`/`RECORDING`.
+- **RF-119.2**: El recorder procesa las filas `SAVED`/`PENDING`/`FAILED` con `discard_requested=1`:
+  borra el fichero y el póster (si los hay) y las pasa a `DISCARDED` con `stopped_at`.
+- **RF-119.3**: Limpieza puntual de los clips NOISE históricos (`status='SAVED'` con visita
+  `outcome='NOISE'`) mediante `warehouse-purge`/retención.
+
+## RF-120: Retención automática del almacén
+
+- **RF-120.1**: Nuevo par systemd `cerraduras-warehouse-retention.service` + `.timer` (diario) que
+  ejecuta `bin/warehouse-retention.php`.
+- **RF-120.2**: `start-all.sh` habilita/arranca el timer si el unit está instalado (sin duplicar);
+  `stop-all.sh` lo detiene.
+- **RF-120.3**: `system_settings.warehouse.retention_days` queda declarado (migración `0124`);
+  `1` en pruebas, `0` desactiva el borrado.
+
+## RF-121: Sin cuota Tuya / no regresión
+
+- **RF-121.1**: Ningún cambio añade llamadas a la API REST de Tuya ni temporizadores de sondeo
+  (F74/RF-87 y F78/RF-101 intactos).
+- **RF-121.2**: La regresión completa (`bash api/bin/run-tests.sh`) termina con **0 failures**.
+- **RF-121.3**: Se añade **BLOCK 60** al runner con marcadores F87 y se actualizan los units
+  `PresenceEvidenceTest`, `WarehouseRecordingDecisionTest` y `croquis-logic.test.js`.
+- **RF-121.4**: La UI del `/dashboard` de habitaciones no se toca.

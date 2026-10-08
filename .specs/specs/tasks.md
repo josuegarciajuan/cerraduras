@@ -4213,3 +4213,76 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F86-02 re-entrada con contexto de puerta
 - [x] TSK-F86-03 tests unit
 - [x] TSK-F86-04 runner BLOCK 59 + AGENTS + regresión + verificación en vivo
+
+---
+
+# Fase 87: Veracidad de presencia y limpieza de grabaciones (RF-116…RF-121)
+
+## TSK-F87-01: `presence_stale` en el estado y el croquis
+- **Trazabilidad**: RF-116.1–116.3.
+- **Archivo(s)**: `api/src/Http/Controllers/WarehouseStateController.php`,
+  `api/public/assets/croquis-logic.js`.
+- **Pasos**:
+  - [ ] `presenceStaleSeconds()` (def. 180) + `live.presence_stale`; `occupied` falso si stale.
+  - [ ] `croquis-logic.js`: `presence_stale` → chip "SIN DATOS" y `personInside=false`.
+- **Verificación**: `node tests/Unit/croquis-logic.test.js`.
+
+## TSK-F87-02: Evidencia reforzada
+- **Trazabilidad**: RF-117.1–117.4.
+- **Archivo(s)**: `api/src/Domain/Warehouse/PresenceEvidence.php`,
+  `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/migrations/0124_warehouse_evidence_retention.sql`,
+  `api/tests/Unit/PresenceEvidenceTest.php`.
+- **Pasos**:
+  - [ ] `isConfirmed` sin `min_events`; `static_seconds` def. 1800.
+  - [ ] Migración `0124` (static 1800 + retention_days 1), idempotente.
+  - [ ] Consulta de evidencia: mantiene `moves`/`doorEvent`; `events` pasa sin efecto.
+- **Verificación**: `php tests/Unit/PresenceEvidenceTest.php`.
+
+## TSK-F87-03: Grabación fiel al ciclo de puerta
+- **Trazabilidad**: RF-118.1–118.3.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingDecision.php`,
+  `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/tests/Unit/WarehouseRecordingDecisionTest.php`.
+- **Pasos**:
+  - [ ] `A_ENSURE_RECORDING` en `RECORDING_INSIDE + DOOR_OPEN`.
+  - [ ] Servicio: arranca EXT+INT solo si no hay PENDING/RECORDING de la visita.
+- **Verificación**: `php tests/Unit/WarehouseRecordingDecisionTest.php`.
+
+## TSK-F87-04: Descarte robusto y limpieza
+- **Trazabilidad**: RF-119.1–119.3.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/bin/warehouse-recorder.php`.
+- **Pasos**:
+  - [ ] `requestDiscard` sobre todo estado `<> 'DISCARDED'`.
+  - [ ] Recorder: fase de descarte de `SAVED`/`PENDING`/`FAILED` (borra fichero + póster).
+  - [ ] Fix `started_at` (B6) y finalización de `PENDING` descartados (B7).
+  - [ ] Limpieza puntual de los 410 clips NOISE `SAVED`.
+- **Verificación**: `php` + `node`; BLOCK 60.
+
+## TSK-F87-05: Retención automática
+- **Trazabilidad**: RF-120.1–120.3.
+- **Archivo(s)**: `docs/systemd/cerraduras-warehouse-retention.{service,timer}`,
+  `start-all.sh`, `stop-all.sh`.
+- **Pasos**:
+  - [ ] Service (oneshot) + timer (diario 04:00).
+  - [ ] `start-all.sh` enable --now con guarda; `stop-all.sh` stop del timer.
+- **Verificación**: `systemd-analyze verify` si disponible; BLOCK 60 estático.
+
+## TSK-F87-06: Runner BLOCK 60 + AGENTS + regresión
+- **Trazabilidad**: RF-121.1–121.4.
+- **Archivo(s)**: `api/bin/run-tests.sh`, `AGENTS.md`.
+- **Pasos**:
+  - [ ] **BLOCK 60** con marcadores F87 + units.
+  - [ ] AGENTS.md: fila F87 + sección.
+  - [ ] Regresión completa 0 failures + verificación en vivo.
+- **Verificación**: `cd api && bash bin/run-tests.sh`.
+
+## Estado de ejecución (F87)
+
+- [ ] TSK-F87-01 `presence_stale` estado + croquis
+- [ ] TSK-F87-02 evidencia reforzada + migración 0124
+- [ ] TSK-F87-03 grabación en door open
+- [ ] TSK-F87-04 descarte robusto + limpieza
+- [ ] TSK-F87-05 retención automática
+- [ ] TSK-F87-06 runner BLOCK 60 + AGENTS + regresión + verificación en vivo

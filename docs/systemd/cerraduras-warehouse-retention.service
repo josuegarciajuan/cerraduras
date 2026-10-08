@@ -1,0 +1,13 @@
+[Unit]
+Description=Cerraduras — Warehouse retention purge (F87/RF-120)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/usr/bin/php bin/warehouse-retention.php
+User=root
+StandardOutput=journal
+StandardError=journal

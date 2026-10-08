@@ -153,6 +153,14 @@ else
   echo "       (unit cerraduras-cameras-live ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
+echo "[5d/8] Retención del almacén (systemd timer — F87/RF-120)..."
+# F87: purga diaria de grabaciones SAVED según warehouse.retention_days.
+if systemctl enable --now cerraduras-warehouse-retention.timer 2>/dev/null; then
+  echo "       warehouse-retention: timer diario activo"
+else
+  echo "       (unit cerraduras-warehouse-retention.timer ausente — ejecutar 'php bin/warehouse-retention.php' a mano)"
+fi
+
 sleep 2
 
 echo "Health checks:"

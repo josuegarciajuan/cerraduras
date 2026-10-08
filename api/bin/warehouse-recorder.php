@@ -91,13 +91,25 @@ while ($running) {
         }
 
         // 2. Process stop requests.
+        // F87/B6: incluir `started_at` (antes el warning "Undefined array key").
         foreach ($pdo->query(
-            "SELECT id, room_id, device_id, position, episode, file_path, pid, discard_requested
+            "SELECT id, room_id, device_id, position, episode, file_path, pid, discard_requested, started_at
              FROM camera_recordings
              WHERE status='RECORDING' AND stop_requested=1
              ORDER BY id ASC LIMIT 50"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
             stopRecording($pdo, $procs, $log, $r);
+        }
+
+        // 2b. F87/RF-119.2: descartar filas que ya no están RECORDING (SAVED por
+        // el tope F73, FAILED o PENDING nunca arrancadas). El stop de las
+        // RECORDING se procesa arriba; aquí solo queda borrar fichero + marcar.
+        foreach ($pdo->query(
+            "SELECT id, file_path, poster_path FROM camera_recordings
+             WHERE discard_requested=1 AND status IN ('PENDING','SAVED','FAILED')
+             ORDER BY id ASC LIMIT 50"
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            discardFinalized($pdo, $log, $r);
         }
 
         // 3. Reconcile dead processes without a stop request.
@@ -292,6 +304,32 @@ function stopRecording(\PDO $pdo, array &$procs, callable $log, array $r): void
         ':id' => $id,
     ]);
     $log("recording {$id}: saved (" . $size . ' bytes)');
+}
+
+/**
+ * F87/RF-119.2: descarta una grabación que ya no está RECORDING (SAVED por el
+ * tope F73, FAILED o PENDING nunca arrancada). Borra el fichero y el póster
+ * (best-effort) y la marca DISCARDED.
+ *
+ * @param array<string,mixed> $r
+ */
+function discardFinalized(\PDO $pdo, callable $log, array $r): void
+{
+    $id = (int) $r['id'];
+    foreach (['file_path', 'poster_path'] as $col) {
+        $rel = (string) ($r[$col] ?? '');
+        if ($rel === '') {
+            continue;
+        }
+        $abs = absolutePath($rel);
+        if ($abs !== null && is_file($abs)) {
+            @unlink($abs);
+        }
+    }
+    $pdo->prepare(
+        "UPDATE camera_recordings SET status='DISCARDED', stop_requested=1, stopped_at=UTC_TIMESTAMP(3), pid=NULL WHERE id=:id"
+    )->execute([':id' => $id]);
+    $log("recording {$id}: discarded (finalized)");
 }
 
 function finalizeFailed(\PDO $pdo, callable $log, int $id, string $tmpRel, string $error): void

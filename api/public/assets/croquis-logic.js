@@ -125,11 +125,18 @@
     var staleOpen = doorStale && door === 'OPEN';
     var doorOpen = !staleOpen && resolveDoor(door, pulseUntil, nowMs);
 
+    // F87/RF-116.2: si el radar lleva demasiado sin reportar (presence_stale),
+    // un PRESENT viejo NO acredita presencia. La visita del motor no se cierra,
+    // pero el panel no debe afirmar "dentro".
+    var presenceStale = live.presence_stale === true;
+
     // F83/RF-106.1/106.2: el radar manda. ABSENT gana sobre la visita enlazada
     // y sobre cualquier PRESENT anterior; UNKNOWN (el radar no ha reportado) no
     // afirma presencia, solo cae al fallback de visita activa sin salida.
     var presenceKnown = (presence === 'PRESENT' || presence === 'ABSENT');
-    var personInside = presenceKnown ? (presence === 'PRESENT') : occupied;
+    var personInside = presenceStale
+      ? false
+      : (presenceKnown ? (presence === 'PRESENT') : occupied);
     var unknown = door === 'UNKNOWN' && presence === 'UNKNOWN';
 
     // F80/RF-103.4: fase en vivo del monigote (acercamiento → dentro → fuera).
@@ -161,7 +168,10 @@
     // F83/RF-106.2: el chip es honesto con el radar; `occupied` no fuerza
     // 'PRESENTE'. UNKNOWN nunca afirma presencia (chip "SIN DATOS").
     var presenceChip;
-    if (presence === 'PRESENT') {
+    if (presenceStale) {
+      // F87/RF-116.2: el último PRESENT es viejo; no es prueba de nadie dentro.
+      presenceChip = chip('PRESENCIA SIN DATOS', 'warn');
+    } else if (presence === 'PRESENT') {
       presenceChip = chip('PRESENCIA', 'warn');
     } else if (presence === 'ABSENT') {
       presenceChip = chip('VACÍO', 'dim');
@@ -183,7 +193,9 @@
       : doorOpen ? 'Puerta abierta'
       : door === 'CLOSED' ? 'Puerta cerrada'
       : 'Puerta sin datos';
-    var desc = doorText + '. ' + (personInside ? 'Persona dentro' : 'Almacén vacío')
+    var presenceText = presenceStale ? 'Presencia sin datos'
+      : personInside ? 'Persona dentro' : 'Almacén vacío';
+    var desc = doorText + '. ' + presenceText
       + '. Luz ' + (light === 'ON' ? 'encendida' : light === 'OFF' ? 'apagada' : 'sin datos') + '.';
 
     return {

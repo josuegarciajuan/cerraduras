@@ -188,6 +188,11 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                     case WarehouseRecordingDecision::A_DISCARD_INT:
                         $this->requestDiscard($roomId, $visitId, 'INTERIOR');
                         break;
+                    case WarehouseRecordingDecision::A_ENSURE_RECORDING:
+                        // F87/RF-118.2: apertura real con alguien dentro. Si el
+                        // tope F73 ya finalizó el clip, se arranca uno nuevo.
+                        $this->ensureRecording($roomId, $visitId, $preState, $result['entry_trigger'], $now);
+                        break;
                     case WarehouseRecordingDecision::A_SET_DEADLINE_X:
                         $deadlineX = $now->modify('+' . $config['x'] . ' seconds')->format('Y-m-d H:i:s.v');
                         break;
@@ -499,15 +504,44 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         $this->pdo->prepare($sql)->execute($params);
     }
 
+    /**
+     * F87/RF-119.1: marca para descartar TODAS las filas de la visita/posición
+     * que no estén ya descartadas (incluye `SAVED`: el tope F73 finaliza el clip
+     * antes de que llegue el descarte). El recorder borra el fichero.
+     */
     private function requestDiscard(int $roomId, ?int $visitId, string $position): void
     {
         $sql = "UPDATE camera_recordings SET discard_requested=1, stop_requested=1
-                WHERE room_id=:r AND position=:pos AND status IN ('PENDING','RECORDING')";
+                WHERE room_id=:r AND position=:pos AND status <> 'DISCARDED'";
         $params = [':r' => $roomId, ':pos' => $position];
         if ($visitId !== null) {
             $sql .= ' AND visit_id=:vid';
             $params[':vid'] = $visitId;
         }
         $this->pdo->prepare($sql)->execute($params);
+    }
+
+    /**
+     * F87/RF-118.2: garantiza grabación activa durante `RECORDING_INSIDE` tras
+     * una apertura real de puerta. Solo arranca EXT+INT si la visita no tiene
+     * ninguna fila `PENDING`/`RECORDING` (el tope F73 pudo finalizarla). No
+     * encadena clips por tiempo: solo responde a un evento físico.
+     */
+    private function ensureRecording(int $roomId, ?int $visitId, string $preState, ?string $trigger, \DateTimeImmutable $now): void
+    {
+        if ($visitId === null) {
+            return;
+        }
+        $stmt = $this->pdo->prepare(
+            "SELECT COUNT(*) FROM camera_recordings
+              WHERE visit_id = :vid AND status IN ('PENDING','RECORDING')"
+        );
+        $stmt->execute([':vid' => $visitId]);
+        if ((int) $stmt->fetchColumn() > 0) {
+            return;
+        }
+        $episode = $this->episodeFor($preState);
+        $this->startRecordings($roomId, $visitId, 'EXTERIOR', $episode, $trigger, $now);
+        $this->startRecordings($roomId, $visitId, 'INTERIOR', $episode, $trigger, $now);
     }
 }

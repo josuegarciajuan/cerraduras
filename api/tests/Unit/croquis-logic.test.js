@@ -168,6 +168,28 @@ const whPresence = deriveCroquis(snap({
 check('F71 presencia almacén → personInside=true', whPresence.personInside === true);
 check('F71 presencia almacén → classes.occupied=true', whPresence.classes.occupied === true);
 
+// ─── 12b. F87/RF-116.2: presencia stale no acredita "dentro" ───────────
+const stalePresence = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'PRESENT',
+  presence_age_seconds: 600,
+  presence_stale: true,
+}, true), BASE);
+check('F87 presencia stale → personInside=false', stalePresence.personInside === false);
+check('F87 presencia stale → classes.occupied=false', stalePresence.classes.occupied === false);
+check('F87 presencia stale → chip PRESENCIA SIN DATOS warn',
+  stalePresence.chips.presence.text === 'PRESENCIA SIN DATOS' && stalePresence.chips.presence.mod === 'warn');
+check('F87 presencia stale → phase outside', stalePresence.phase === 'outside');
+check('F87 presencia stale → desc "Presencia sin datos"', stalePresence.desc.indexOf('Presencia sin datos') >= 0);
+
+const freshPresence = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'PRESENT',
+  presence_age_seconds: 3,
+  presence_stale: false,
+}, false), BASE);
+check('F87 presencia fresca → personInside=true', freshPresence.personInside === true);
+
 // ─── 13. F77.5: estado de puerta viejo → SIN DATOS, no "abierta" ───────
 const staleOpen = deriveCroquis(snap({
   door_state: 'OPEN', presence_state: 'ABSENT', door_stale: true, door_age_seconds: 600,

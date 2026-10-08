@@ -2715,3 +2715,59 @@ Respuestas:
 
 - No se añaden endpoints ni llamadas a Tuya; el resync REST sigue en `noop`.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 59** nuevo con marcadores F86.
+
+---
+
+# Fase 87: Veracidad de presencia y limpieza de grabaciones (RF-116…RF-121)
+
+## §F87.1 `GET /almacen-api/state` — `live.presence_stale` (aditivo)
+
+- **Forma sin cambios** salvo un campo **aditivo** en `live`:
+  ```json
+  "live": {
+    "presence_state": "PRESENT",
+    "presence_age_seconds": 612,
+    "presence_stale": true,
+    "door_stale_seconds": 300,
+    "door_stale": false
+  }
+  ```
+- `presence_stale` (bool) = `presence_state === 'PRESENT'` y `presence_age_seconds` es `null` o
+  supera `PRESENCE_STALE_SECONDS` (def. 180). Los clientes que lo ignoren no cambian.
+- `warehouse.occupied` pasa a `false` cuando la presencia está stale (asesorar LIBRE), sin cerrar la
+  visita ni cambiar `warehouse.state`. Semántica aditiva, misma forma del bloque `warehouse`.
+
+## §F87.2 Panel `/almacen` (UI) — presencia honesta
+
+- El croquis usa `presence_stale`: chip de presencia "SIN DATOS" y `personInside=false`; no se pinta
+  el monigote dentro. **Sin rutas nuevas** y sin polling.
+
+## §F87.3 Evidencia de visita por presencia (interna)
+
+- **Sin cambio de formato de API**. Cambia el criterio interno de `PresenceEvidence::isConfirmed`:
+  confirmación por `moves >= min_moves` (def. 2), `seconds >= static_seconds` (def. **1800**) o
+  evento de puerta aplicado. `min_events` deja de usarse.
+- Migración `0124` (idempotente): `warehouse_presence_static_seconds` default `1800` y valor `1800`
+  para `ALMACEN_BEBIDAS`; declara `system_settings.warehouse.retention_days='1'` sin pisar valores.
+
+## §F87.4 Grabación fiel al ciclo de puerta (interna)
+
+- Nueva acción `A_ENSURE_RECORDING` (interno del motor). `RECORDING_INSIDE + DOOR_OPEN` la emite; el
+  servicio arranca EXT+INT solo si no hay grabación `PENDING`/`RECORDING` para la visita.
+- El tope `WAREHOUSE_MAX_RECORDING_SECONDS` (60 en pruebas) **no cambia**; no se encadenan clips.
+
+## §F87.5 Descarte de grabaciones (interno / datos)
+
+- `camera_recordings` gana uso de `discard_requested` sobre estados distintos de `DISCARDED`. Sin
+  cambio de columnas. El recorder borra fichero + póster y pasa a `DISCARDED`.
+
+## §F87.6 Retención (operativa)
+
+- Sin cambios de API. Nuevo timer systemd diario que ejecuta `warehouse-retention.php`; el
+  presupuesto de cuota Tuya no se toca (solo BD/filesystem).
+
+## §F87.7 Sin cuota / no regresión
+
+- Ningún endpoint, job ni timer llama a la API de Tuya. La única sonda REST sigue siendo
+  `POST /almacen-api/sensors/refresh` (bajo demanda).
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 60** nuevo con marcadores F87.
