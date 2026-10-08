@@ -91,10 +91,19 @@ if ($r['state'] === D::STATE_IDLE
     fail('RF-110.2: DOOR sin presencia inesperado: ' . json_encode($r));
 }
 
+// ── F87/RF-118.1: RECORDING_INSIDE + DOOR_OPEN ya no es no-op ─────────────
+// Una apertura real con alguien dentro asegura grabación activa (el tope F73
+// pudo finalizar el clip). No crea visita ni cambia el estado.
+$r = D::decide(st85(D::STATE_RECORDING_INSIDE, 'DOOR', true), D::EV_DOOR_OPEN);
+if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['actions'] === [D::A_ENSURE_RECORDING]) {
+    pass('F87/RF-118.1: RECORDING_INSIDE + DOOR_OPEN → ENSURE_RECORDING (sin duplicar)');
+} else {
+    fail('F87/RF-118.1: RECORDING_INSIDE + DOOR_OPEN inesperado: ' . json_encode($r));
+}
+
 // ── RF-109.2/110.5: dedupe de disparadores dentro del ciclo ───────────────
 foreach ([
     ['DOOR_OPEN', D::STATE_QR_PENDING, 'DOOR'],
-    ['DOOR_OPEN', D::STATE_RECORDING_INSIDE, 'DOOR'],
     ['QR_OK',     D::STATE_QR_PENDING, 'QR'],
     ['QR_OK',     D::STATE_RECORDING_INSIDE, 'QR'],
 ] as $case) {

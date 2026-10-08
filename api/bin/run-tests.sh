@@ -5488,20 +5488,22 @@ done
 
 # 60.1 Retención: units systemd + arranque/parada.
 for F87_UNIT in \
-    "docs/systemd/cerraduras-warehouse-retention.service" \
-    "docs/systemd/cerraduras-warehouse-retention.timer"; do
-    if [ -f "$F87_UNIT" ]; then
+    "../docs/systemd/cerraduras-warehouse-retention.service" \
+    "../docs/systemd/cerraduras-warehouse-retention.timer"; do
+    if [ -f "$F87_UNIT" ] || [ -f "${F87_UNIT#../}" ]; then
         pass "F87: existe $F87_UNIT"
     else
         fail "F87: $F87_UNIT" "no encontrado"
     fi
 done
-if grep -qF "cerraduras-warehouse-retention.timer" start-all.sh 2>/dev/null; then
+if grep -qF "cerraduras-warehouse-retention.timer" ../start-all.sh 2>/dev/null \
+   || grep -qF "cerraduras-warehouse-retention.timer" start-all.sh 2>/dev/null; then
     pass "F87: start-all gestiona el timer de retención"
 else
     fail "F87: start-all.sh" "no gestiona cerraduras-warehouse-retention.timer"
 fi
-if grep -qF "cerraduras-warehouse-retention.timer" stop-all.sh 2>/dev/null; then
+if grep -qF "cerraduras-warehouse-retention.timer" ../stop-all.sh 2>/dev/null \
+   || grep -qF "cerraduras-warehouse-retention.timer" stop-all.sh 2>/dev/null; then
     pass "F87: stop-all gestiona el timer de retención"
 else
     fail "F87: stop-all.sh" "no gestiona cerraduras-warehouse-retention.timer"
