@@ -22,10 +22,14 @@ Config::load(__DIR__ . '/../.env');
 $minutes = 60;
 $roomId  = 0;
 foreach ($argv ?? [] as $i => $arg) {
-    if ($arg === '--minutes' && isset($argv[$i + 1])) {
+    if (preg_match('/^--minutes=(\d+)$/', (string) $arg, $m)) {
+        $minutes = max(1, (int) $m[1]);
+    } elseif ($arg === '--minutes' && isset($argv[$i + 1])) {
         $minutes = max(1, (int) $argv[$i + 1]);
     }
-    if ($arg === '--room' && isset($argv[$i + 1])) {
+    if (preg_match('/^--room=(\d+)$/', (string) $arg, $m)) {
+        $roomId = (int) $m[1];
+    } elseif ($arg === '--room' && isset($argv[$i + 1])) {
         $roomId = (int) $argv[$i + 1];
     }
 }

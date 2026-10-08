@@ -4349,9 +4349,9 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 ## Estado de ejecución (F88)
 
-- [ ] TSK-F88-01 worker de movimiento + systemd
-- [ ] TSK-F88-02 endpoint + migración 0125 + exposición
-- [ ] TSK-F88-03 fusión IoT
-- [ ] TSK-F88-04 diagnóstico
-- [ ] TSK-F88-05 hardware
-- [ ] TSK-F88-06 runner BLOCK 61 + AGENTS + regresión + verificación en vivo
+- [x] TSK-F88-01 worker de movimiento + systemd
+- [x] TSK-F88-02 endpoint + migración 0125 + exposición
+- [x] TSK-F88-03 fusión IoT
+- [x] TSK-F88-04 diagnóstico
+- [x] TSK-F88-05 hardware
+- [x] TSK-F88-06 runner BLOCK 61 + AGENTS + regresión + verificación en vivo
