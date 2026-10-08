@@ -4280,9 +4280,9 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 ## Estado de ejecución (F87)
 
-- [ ] TSK-F87-01 `presence_stale` estado + croquis
-- [ ] TSK-F87-02 evidencia reforzada + migración 0124
-- [ ] TSK-F87-03 grabación en door open
-- [ ] TSK-F87-04 descarte robusto + limpieza
-- [ ] TSK-F87-05 retención automática
-- [ ] TSK-F87-06 runner BLOCK 60 + AGENTS + regresión + verificación en vivo
+- [x] TSK-F87-01 `presence_stale` estado + croquis
+- [x] TSK-F87-02 evidencia reforzada + migración 0124
+- [x] TSK-F87-03 grabación en door open
+- [x] TSK-F87-04 descarte robusto + limpieza
+- [x] TSK-F87-05 retención automática
+- [x] TSK-F87-06 runner BLOCK 60 + AGENTS + regresión + verificación en vivo

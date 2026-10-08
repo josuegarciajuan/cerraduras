@@ -192,7 +192,10 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Sin cuota**: F74/RF-87 y F78/RF-101 intactos (sin sondeo ni temporizadores Tuya).
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 60, marcadores F87) + units
   `PresenceEvidenceTest.php`, `WarehouseRecordingDecisionTest.php`, `croquis-logic.test.js`.
-  Regresión: _(completar al cerrar la fase)_.
+  Regresión: **537 passed, 0 failed, 2 skipped**. Migración `0124` aplicada (static=1800,
+  retention_days=1). En vivo: `live.presence_stale` presente; limpieza de 431+ clips
+  (disco `data/cameras` 7,6 GB → 0,5 GB); el timer `cerraduras-warehouse-retention.timer`
+  queda activo (diario 04:00).
 
 ### F86 — Puerta fiel ante reportes repetidos y re-entrada con contexto (RF-115)
 
