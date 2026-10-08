@@ -195,7 +195,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Sin cuota (RF-126)**: F74/RF-87 y F78/RF-101 intactos (sin sondeo Tuya).
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 61, marcadores F88) + units
   `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`, `camera-motion-worker.test.js`.
-  Regresión: _(completar al cerrar la fase)_.
+  Regresión: **555 passed, 0 failed, 2 skipped**. Migración `0125` aplicada. En vivo (sala vacía,
+  150 s): 4 `PRESENT` del radar → `uncorroborated`, **0 visitas nuevas**, `last_motion_at=NULL`;
+  el worker `cerraduras-camera-motion` activo con ambas cámaras (sin tareas falsas).
 
 ### F87 — Veracidad de presencia y limpieza de grabaciones del almacén (RF-116…RF-121)
 
