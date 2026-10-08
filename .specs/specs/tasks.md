@@ -4286,3 +4286,72 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F87-04 descarte robusto + limpieza
 - [x] TSK-F87-05 retención automática
 - [x] TSK-F87-06 runner BLOCK 60 + AGENTS + regresión + verificación en vivo
+
+---
+
+# Fase 88: Presencia robusta por fusión de sensores (RF-122…RF-126)
+
+## TSK-F88-01: Worker de movimiento de cámaras
+- **Trazabilidad**: RF-122.
+- **Archivo(s)**: `api/bin/camera-motion-worker.js`,
+  `docs/systemd/cerraduras-camera-motion.service`, `start-all.sh`, `stop-all.sh`.
+- **Pasos**:
+  - [ ] Worker Node (ffmpeg por cámara vía go2rtc, diff de frames, histéresis, reconexión).
+  - [ ] Unit systemd + alta en arranque/parada.
+- **Verificación**: `node tests/Unit/camera-motion-worker.test.js`.
+
+## TSK-F88-02: Endpoint `/almacen-api/motion` + migración 0125
+- **Trazabilidad**: RF-123.1/123.2, RF-124.
+- **Archivo(s)**: `api/migrations/0125_device_last_motion.sql`, `api/public/index.php`,
+  `api/src/Http/Controllers/WarehouseCameraController.php`,
+  `api/src/Http/Controllers/WarehouseStateController.php`.
+- **Pasos**:
+  - [ ] Migración `0125` (`devices.last_motion_at`).
+  - [ ] Ruta `POST /almacen-api/motion` (valida CAMERA de almacén y actualiza).
+  - [ ] Exponer `last_motion_at`/`motion_active` en cámaras y `live`.
+- **Verificación**: BLOCK 61 (HTTP/BD).
+
+## TSK-F88-03: Fusión en el pipeline IoT
+- **Trazabilidad**: RF-123.3–123.6.
+- **Archivo(s)**: `api/src/Domain/Warehouse/WarehouseRecordingServiceInterface.php`,
+  `api/src/Domain/Warehouse/WarehouseRecordingService.php`,
+  `api/src/Domain/Presence/SensorEventDecision.php`,
+  `api/src/Domain/Presence/IotSessionService.php`.
+- **Pasos**:
+  - [ ] `latestMotionAt(roomId, position)`.
+  - [ ] `UNCORROBORATED` + parámetro `physicalEvidence` en `decide()`.
+  - [ ] `IotSessionService` calcula evidencia (cámara interior / puerta) y la pasa.
+- **Verificación**: `php tests/Unit/SensorEventDecisionTest.php`,
+  `php tests/Unit/IotSessionServiceTest.php`.
+
+## TSK-F88-04: Diagnóstico de fusión
+- **Trazabilidad**: RF-125.1.
+- **Archivo(s)**: `api/bin/presence-fusion-report.php`.
+- **Pasos**:
+  - [ ] Informe de solo lectura (eventos vs `last_motion_at`, conteo `applied`/`uncorroborated`).
+- **Verificación**: ejecución manual `php bin/presence-fusion-report.php`.
+
+## TSK-F88-05: Documentar hardware (MC400D + 24G)
+- **Trazabilidad**: RF-125.2.
+- **Archivo(s)**: `design.md §52.6`, `docs/ops.md` (si procede).
+- **Pasos**:
+  - [ ] Procedimiento de revisión del contacto de puerta y recalibración del 24G.
+- **Verificación**: revisión documental.
+
+## TSK-F88-06: Runner BLOCK 61 + AGENTS + regresión
+- **Trazabilidad**: RF-126.
+- **Archivo(s)**: `api/bin/run-tests.sh`, `api/tests/Unit/*`, `AGENTS.md`.
+- **Pasos**:
+  - [ ] BLOCK 61 (marcadores F88) + units.
+  - [ ] AGENTS.md: fila F88 + sección.
+  - [ ] Regresión 0 failures + verificación en vivo (sala vacía sin visitas/grabaciones).
+- **Verificación**: `cd api && bash bin/run-tests.sh`.
+
+## Estado de ejecución (F88)
+
+- [ ] TSK-F88-01 worker de movimiento + systemd
+- [ ] TSK-F88-02 endpoint + migración 0125 + exposición
+- [ ] TSK-F88-03 fusión IoT
+- [ ] TSK-F88-04 diagnóstico
+- [ ] TSK-F88-05 hardware
+- [ ] TSK-F88-06 runner BLOCK 61 + AGENTS + regresión + verificación en vivo

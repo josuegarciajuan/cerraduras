@@ -169,6 +169,33 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F85 Modelo de detección del almacén + puerta fiel** | **BLOCK 58** | **Completado** |
 | **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **Completado** |
 | **F87 Veracidad de presencia y limpieza de grabaciones** | **BLOCK 60** | **Completado** |
+| **F88 Presencia robusta por fusión de sensores** | **BLOCK 61** | **Completado** |
+
+### F88 — Presencia robusta del almacén por fusión de sensores (RF-122…RF-126)
+
+- **Motivo**: el radar 24G emite con la sala vacía `move`→`presence`→`none` cada 1–3 min; F80 lo
+  aceptaba al instante y el sistema grababa (visitas 920–931 encadenadas). El radar no es fiable por
+  sí solo: hace falta **evidencia física independiente**.
+- **Worker de movimiento (RF-122)**: `bin/camera-motion-worker.js` (systemd
+  `cerraduras-camera-motion.service`) lee el restream RTSP de go2rtc
+  (`rtsp://127.0.0.1:8554/<stream>`), detecta movimiento por diferencia de frames con histéresis y
+  publica `POST /almacen-api/motion`. Local, sin cuota Tuya.
+- **Fusión (RF-123)**: `devices.last_motion_at` (migración `0125`). Un `PRESENT` de radar en el
+  almacén **solo se aplica** si hay movimiento de la cámara INTERIOR reciente
+  (`FUSION_MOTION_WINDOW_SECONDS`, def. 20) o evento de puerta reciente
+  (`FUSION_DOOR_WINDOW_SECONDS`, def. 90); si no, se audita `discard_reason='uncorroborated'` y **no
+  crea visita ni grabación**. `FUSION_INCLUDE_EXTERIOR` (def. false) añade la EXTERIOR. `ABSENT`
+  siempre aplica.
+- **Fail-safe (RF-123.6)**: sin worker de movimiento, el radar aislado se rechaza; la puerta sigue
+  confirmando. Si la sala no tiene cámara INTERIOR, solo la puerta corrobora.
+- **Panel (RF-124)**: `live.motion_active`/`motion_age_seconds` y `last_motion_at`/`motion_active`
+  por cámara (aditivo).
+- **Diagnóstico (RF-125)**: `bin/presence-fusion-report.php` (solo lectura). Documentadas la revisión
+  del MC400D (se atasca en `OPEN`) y la recalibración del 24G.
+- **Sin cuota (RF-126)**: F74/RF-87 y F78/RF-101 intactos (sin sondeo Tuya).
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 61, marcadores F88) + units
+  `SensorEventDecisionTest.php`, `IotSessionServiceTest.php`, `camera-motion-worker.test.js`.
+  Regresión: _(completar al cerrar la fase)_.
 
 ### F87 — Veracidad de presencia y limpieza de grabaciones del almacén (RF-116…RF-121)
 

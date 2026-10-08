@@ -162,7 +162,8 @@ final class WarehouseCameraController
     private function listForRoom(int $roomId): array
     {
         $stmt = $this->pdo->prepare(
-            "SELECT d.id, d.pack_id, d.kind, d.subtype, d.external_id, d.label, d.meta_json
+            "SELECT d.id, d.pack_id, d.kind, d.subtype, d.external_id, d.label, d.meta_json,
+                    d.last_motion_at
              FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='CAMERA'
              ORDER BY FIELD(d.subtype,'EXTERIOR','INTERIOR'), d.id"
@@ -216,7 +217,24 @@ final class WarehouseCameraController
             'stream' => $stream,
             'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
             'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $row['id']) : null,
+            // F88/RF-124.2: último movimiento (aditivo).
+            'last_motion_at' => $row['last_motion_at'] ?? null,
+            'motion_active' => $this->motionActive($row['last_motion_at'] ?? null),
         ];
+    }
+
+    /** F88 (RF-124.2): ¿hay movimiento reciente de la cámara? */
+    private function motionActive(?string $ts): bool
+    {
+        if ($ts === null || $ts === '') {
+            return false;
+        }
+        $t = strtotime($ts . ' UTC');
+        if ($t === false) {
+            return false;
+        }
+        $window = (int) (\App\Support\Config::getInt('FUSION_MOTION_WINDOW_SECONDS', 20) ?? 20);
+        return $window > 0 && (time() - $t) <= $window;
     }
 
     /** F70/RF-80.4: URL del directo MJPEG (aditivo; null si no hay base). */
@@ -248,6 +266,8 @@ final class WarehouseCameraController
             'stream' => Go2rtcClient::streamName($roomId, $position),
             'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
             'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $d->id) : null,
+            'last_motion_at' => null,
+            'motion_active' => false,
         ];
     }
 

@@ -126,6 +126,8 @@ stop_pulsar_service
 systemctl stop cerraduras-warehouse-recorder 2>/dev/null || true
 # F87/RF-120: timer de retención del almacén.
 systemctl stop cerraduras-warehouse-retention.timer 2>/dev/null || true
+# F88/RF-122: detector de movimiento de cámaras del almacén.
+systemctl stop cerraduras-camera-motion 2>/dev/null || true
 # F70/RF-80: servidor MJPEG de cámaras (directo del almacén).
 systemctl stop cerraduras-cameras-live 2>/dev/null || true
 for _w in exit-scan overstay-scan outbox-worker anomaly-scanner; do

@@ -94,7 +94,7 @@ final class WarehouseStateController
 
         $cams = [];
         $cstmt = $this->pdo->prepare(
-            "SELECT d.id, d.subtype, d.label, d.meta_json
+            "SELECT d.id, d.subtype, d.label, d.meta_json, d.last_motion_at
              FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='CAMERA'
              ORDER BY FIELD(d.subtype,'EXTERIOR','INTERIOR'), d.id"
@@ -118,6 +118,9 @@ final class WarehouseStateController
                 'live_url' => $enabled ? $this->go2rtc->liveUrl($roomId, $position) : null,
                 // F70/RF-80.4: directo MJPEG (aditivo). null si no hay base configurada.
                 'mjpeg_url' => $enabled ? $this->mjpegUrl((int) $c['id']) : null,
+                // F88/RF-124.1: último movimiento de la cámara (aditivo).
+                'last_motion_at' => $c['last_motion_at'] ?? null,
+                'motion_active' => $this->motionActive($c['last_motion_at'] ?? null, time()),
             ];
         }
 
@@ -159,6 +162,9 @@ final class WarehouseStateController
             // "dentro" (la visita del motor NO se cierra por antigüedad).
             'presence_stale_seconds' => $presenceStaleSeconds,
             'presence_stale' => false,
+            // F88/RF-124.1: movimiento de cámara (aditivo).
+            'motion_active' => false,
+            'motion_age_seconds' => null,
             // F77.7: estado de luz INFERIDO del último comando (no es estado real
             // por push; se etiqueta distinto para no confundir).
             'switch_state_inferred' => null,
@@ -194,6 +200,10 @@ final class WarehouseStateController
         $live['presence_stale'] = ($live['presence_state'] === 'PRESENT')
             && ($live['presence_age_seconds'] === null
                 || $live['presence_age_seconds'] > $presenceStaleSeconds);
+        // F88/RF-124.1: movimiento de cámara más reciente de la sala.
+        $motion = $this->latestMotion($roomId, $nowTs);
+        $live['motion_active'] = $motion['active'];
+        $live['motion_age_seconds'] = $motion['age'];
         $swStmt = $this->pdo->prepare(
             "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='SWITCH' LIMIT 1"
@@ -315,6 +325,44 @@ final class WarehouseStateController
     {
         $v = (int) (\App\Support\Config::getInt('PRESENCE_STALE_SECONDS', 180) ?? 180);
         return $v > 0 ? $v : 180;
+    }
+
+    /**
+     * F88/RF-124.1: movimiento de cámara más reciente de la sala (MAX de
+     * `devices.last_motion_at`).
+     *
+     * @return array{active:bool,age:?int}
+     */
+    private function latestMotion(int $roomId, int $nowTs): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT MAX(d.last_motion_at) FROM devices d
+              JOIN rooms r ON r.pack_id = d.pack_id
+             WHERE r.id = :r AND d.kind='CAMERA'"
+        );
+        $stmt->execute([':r' => $roomId]);
+        $v = $stmt->fetchColumn();
+        if ($v === false || $v === null || $v === '') {
+            return ['active' => false, 'age' => null];
+        }
+        return [
+            'active' => $this->motionActive((string) $v, $nowTs),
+            'age' => $this->ageSeconds((string) $v, $nowTs),
+        ];
+    }
+
+    /** F88/RF-124.1: ¿movimiento de cámara dentro de `FUSION_MOTION_WINDOW_SECONDS`? */
+    private function motionActive(?string $ts, int $nowTs): bool
+    {
+        if ($ts === null || $ts === '') {
+            return false;
+        }
+        $parsed = strtotime($ts . ' UTC');
+        if ($parsed === false) {
+            return false;
+        }
+        $window = (int) (\App\Support\Config::getInt('FUSION_MOTION_WINDOW_SECONDS', 20) ?? 20);
+        return $window > 0 && ($nowTs - $parsed) <= $window;
     }
 
     /** F77.5: antigüedad (s) de un timestamp MySQL UTC nullable; null si no hay. */

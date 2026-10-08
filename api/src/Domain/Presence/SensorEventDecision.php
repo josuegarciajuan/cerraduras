@@ -48,6 +48,13 @@ final class SensorEventDecision
     public const NO_CONTEXT = 'no_context';
 
     /**
+     * F88 (RF-123.3): PRESENT de radar del almacén sin evidencia física (movimiento
+     * de cámara ni ciclo de puerta reciente). Se audita pero no se aplica: evita
+     * visitas y grabaciones fantasma.
+     */
+    public const UNCORROBORATED = 'uncorroborated';
+
+    /**
      * Logical identity of a physical fact (contracts.md §2.1):
      *   sha1( room_id | sensor | value | floor(occurred_at, second) )
      *
@@ -73,6 +80,9 @@ final class SensorEventDecision
      * @param bool $duplicateFingerprint True when insertOrGet() found an existing fingerprint/source id.
      * @param bool $warehousePresence F80 (RF-103.1): en salas de almacén la presencia es creíble al
      *        instante (F71 restaurado); se aceptan `presence` y `move` y no hay veto por puerta.
+     * @param bool $physicalEvidence F88 (RF-123.3): en el almacén, evidencia física
+     *        (movimiento de cámara o ciclo de puerta reciente). Si es `false`, un
+     *        PRESENT de radar se descarta como `uncorroborated` (sin visita ni grabación).
      */
     public static function decide(
         array $event,
@@ -80,7 +90,8 @@ final class SensorEventDecision
         bool $duplicateFingerprint = false,
         bool $entryWindowActive = true,
         bool $insideNoExitCycle = true,
-        bool $warehousePresence = false
+        bool $warehousePresence = false,
+        bool $physicalEvidence = true
     ): string {
         if ($duplicateFingerprint) {
             return self::DUPLICATE;
@@ -138,12 +149,12 @@ final class SensorEventDecision
         ) {
             $raw = strtolower((string) (($event['meta'] ?? [])['tuya_raw_val'] ?? ''));
             if ($warehousePresence) {
-                // F80 (RF-103.1, restaura F71/RF-81): en el almacén la presencia es
-                // creíble AL INSTANTE. Se aceptan `presence` y `move`; no se veta por
-                // puerta abierta ni se exige ciclo de puerta. El requisito del panel es
-                // que una visita pueda empezar al detectar presencia (con la puerta
-                // abierta a propósito, entrando/saliendo). ABSENT (`none`) siempre aplica.
-                return self::APPLY;
+                // F88 (RF-123.3): en el almacén la presencia se acepta al instante
+                // (F80/F71) SOLO si hay evidencia física independiente (movimiento de
+                // cámara o ciclo de puerta reciente). Sin ella, el radar aislado es un
+                // fantasma (`uncorroborated`) y no debe crear visita ni grabación.
+                // ABSENT (`none`) no pasa por esta rama y siempre se aplica.
+                return $physicalEvidence ? self::APPLY : self::UNCORROBORATED;
             }
             if (!self::presenceCredible($raw, $entryWindowActive, $insideNoExitCycle)) {
                 return self::NO_CONTEXT;

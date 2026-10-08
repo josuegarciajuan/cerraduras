@@ -195,6 +195,8 @@ final class FakeWarehouseRecorder implements WarehouseRecordingServiceInterface
 {
     /** @var list<array{room_id:int,event:string,meta:array<string,mixed>}> */
     public array $signals = [];
+    /** F88: último movimiento de cámara devuelto por latestMotionAt(). */
+    public ?string $motionAt = null;
 
     public function onSignal(int $roomId, string $event, array $meta = []): void
     {
@@ -204,6 +206,7 @@ final class FakeWarehouseRecorder implements WarehouseRecordingServiceInterface
     public function enforceRecordingCap(int $maxSeconds): int { return 0; }
     public function isWarehouseRoom(int $roomId): bool { return false; }
     public function activeEnteredVisitAt(int $roomId): ?string { return null; }
+    public function latestMotionAt(int $roomId, ?string $position = null): ?string { return $this->motionAt; }
 }
 
 // ============================================================================
@@ -531,19 +534,78 @@ if (($iotRepo->sessions[11]->presenceState ?? null) !== IotSession::PRESENCE_PRE
 }
 
 // F77.5: puerta OPEN con sensor MUDO (último evento aplicado > DOOR_STALE_SECONDS)
-// NO debe vetar la presencia (recuperación ante sensor/caché atascado).
+// NO debe vetar la presencia (recuperación ante sensor/caché atascado). F88: la
+// evidencia física la aporta el movimiento de cámara.
 $iotRepo->sessions[10]->doorState = IotSession::DOOR_OPEN;
 $iotRepo->sessions[10]->lastDoorEventAt = '2026-04-28 13:50:00.000';
 $iotRepo->sessions[10]->lastDoorValue = PresenceEvent::VALUE_OPEN;
 $iotRepo->sessions[10]->presenceState = IotSession::PRESENCE_ABSENT;
 $iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
 $iotRepo->sessions[10]->lastPresenceEventAt = '2026-04-28 14:00:00.000';
+$whSpy->motionAt = '2026-04-28 14:00:05.000';
 $svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T14:00:10Z', 'f77-wh-stale', 'presence'), 'corr-f77-wh-stale');
 if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
-    ok('F77.5: puerta OPEN stale no veta la presencia (recuperación)');
+    ok('F77.5: puerta OPEN stale no veta la presencia (recuperación con cámara)');
 } else {
     bad('F77.5: puerta OPEN stale debería aplicar presencia', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
 }
+$whSpy->motionAt = null;
+
+// ============================================================================
+// F88 (RF-123): fusión — radar aislado no crea presencia ni grabación
+// ============================================================================
+echo "\nF88 · fusión de presencia (RF-123)\n";
+
+// Fantasma: PRESENT de radar sin cámara (motionAt null) ni puerta reciente.
+Clock::freeze(new DateTimeImmutable('2026-04-28T16:00:00Z', new DateTimeZone('UTC')));
+$iotRepo->sessions[10]->presenceState     = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[10]->lastDoorEventAt   = '2026-04-28 15:00:00.000'; // > 90 s
+$iotRepo->sessions[10]->lastPresenceEventAt = null;
+$whSpy->motionAt = null;
+$whSpy->signals = [];
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T16:00:05Z', 'f88-ghost', 'move'), 'corr-f88-ghost');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_ABSENT) {
+    ok('F88: radar sin evidencia → NO aplica PRESENT (queda ABSENT)');
+} else {
+    bad('F88: fantasma debería quedar ABSENT', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+if ($whSpy->signals === []) {
+    ok('F88: radar sin evidencia → NO llega señal al motor de grabación');
+} else {
+    bad('F88: el fantasma no debe alimentar el motor', json_encode($whSpy->signals));
+}
+
+// Con movimiento de cámara reciente → PRESENT aplica y llega al motor.
+$iotRepo->sessions[10]->presenceState     = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$whSpy->motionAt = '2026-04-28 16:01:00.000';
+$whSpy->signals = [];
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T16:01:05Z', 'f88-motion', 'move'), 'corr-f88-motion');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F88: radar + movimiento de cámara → PRESENT');
+} else {
+    bad('F88: con movimiento debería aplicar', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+if ($whSpy->signals !== []) {
+    ok('F88: con evidencia → el motor recibe la señal de presencia');
+} else {
+    bad('F88: el motor debería recibir la señal con evidencia');
+}
+$whSpy->motionAt = null;
+
+// Con puerta reciente → PRESENT aplica aunque no haya cámara.
+$iotRepo->sessions[10]->presenceState     = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[10]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[10]->lastDoorEventAt   = '2026-04-28 16:02:40.000'; // 20 s antes
+$svc->processEvent(makeTuyaPresence(10, PresenceEvent::VALUE_PRESENT, '2026-04-28T16:03:00Z', 'f88-door', 'move'), 'corr-f88-door');
+if (($iotRepo->sessions[10]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F88: radar + puerta reciente → PRESENT (sin cámara)');
+} else {
+    bad('F88: con puerta debería aplicar', 'got ' . ($iotRepo->sessions[10]->presenceState ?? 'null'));
+}
+
+Clock::unfreeze();
 
 // ============================================================================
 // F81 (RF-104): cierre de puerta del almacén → señal al motor de grabación

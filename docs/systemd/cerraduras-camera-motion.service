@@ -1,0 +1,28 @@
+[Unit]
+Description=Cerraduras — detector de movimiento de cámaras del almacén (F88/RF-122)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target cerraduras-api.service cerraduras-go2rtc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/cerraduras/api
+Environment=CAMERA_MOTION_API=http://127.0.0.1:8080
+Environment=CAMERA_MOTION_RTSP_BASE=rtsp://127.0.0.1:8554
+Environment=CAMERA_MOTION_FPS=3
+Environment=CAMERA_MOTION_SCALE=160:120
+Environment=CAMERA_MOTION_THRESHOLD=25
+Environment=CAMERA_MOTION_MIN_PCT=0.5
+Environment=CAMERA_MOTION_MIN_FRAMES=2
+Environment=CAMERA_MOTION_WINDOW=3
+Environment=CAMERA_MOTION_POST_MIN_MS=2000
+ExecStart=/usr/bin/node bin/camera-motion-worker.js
+Restart=always
+RestartSec=3
+KillMode=control-group
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

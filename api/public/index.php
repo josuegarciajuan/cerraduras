@@ -2660,6 +2660,40 @@ $router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'up
 $router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
 $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
 
+// POST /almacen-api/motion — F88/RF-123.2: el worker de movimiento de cámaras
+// publica que una cámara del almacén ha detectado movimiento. Uso interno
+// (loopback/LAN, sin auth en el MVP). Solo BD local; sin cuota Tuya.
+$router->post(
+    '/almacen-api/motion',
+    function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $deviceId = (int) ($body['device_id'] ?? ($request->query['device_id'] ?? 0));
+        if ($deviceId <= 0) {
+            return \App\Http\Response::json(400, ['ok' => false, 'error' => 'device_id_required']);
+        }
+        $chk = $pdo->prepare(
+            "SELECT d.id FROM devices d
+               JOIN rooms r ON r.pack_id = d.pack_id
+               JOIN room_types rt ON rt.id = r.room_type_id
+              WHERE d.id = :id AND d.kind = 'CAMERA' AND rt.code = 'ALMACEN_BEBIDAS'
+              LIMIT 1"
+        );
+        $chk->execute([':id' => $deviceId]);
+        if ($chk->fetchColumn() === false) {
+            return \App\Http\Response::json(404, ['ok' => false, 'error' => 'camera_not_found']);
+        }
+        $pdo->prepare('UPDATE devices SET last_motion_at = UTC_TIMESTAMP(3) WHERE id = :id')
+            ->execute([':id' => $deviceId]);
+        $sel = $pdo->prepare('SELECT last_motion_at FROM devices WHERE id = :id LIMIT 1');
+        $sel->execute([':id' => $deviceId]);
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'device_id' => $deviceId,
+            'at' => (string) ($sel->fetchColumn() ?: ''),
+        ]);
+    }
+);
+
 // --- Routes: estado del almacén (F65/RF-74.2, público LAN) ---
 $warehouseStateController = new WarehouseStateController($pdo, $go2rtcClient);
 $router->get('/almacen-api/state', [$warehouseStateController, 'show']);
