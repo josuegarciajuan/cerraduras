@@ -12,23 +12,35 @@ namespace App\Domain\Warehouse;
  * un falso positivo es un parpadeo único (`move` -> `presence` -> `none`),
  * mientras que una persona en movimiento reemite transiciones (`move`/`presence`).
  *
- * Al terminar el episodio, el motor confirma la visita si:
- *   - movimientos distintos >= min_moves (def. 2), o
- *   - eventos PRESENT distintos >= min_events (def. 3), o
- *   - duración >= static_seconds (def. 300), o
- *   - hubo un evento de puerta aplicado dentro del episodio (evidencia extra).
- *
- * Sin I/O, sin tiempo: totalmente unit-testeable.
- */
+     * Al terminar el episodio, el motor confirma la visita si:
+     *   - movimientos distintos >= min_moves (def. 2), o
+     *   - duración >= static_seconds (def. 1800, F87), o
+     *   - hubo un evento de puerta aplicado dentro del episodio (evidencia extra).
+     *
+     * F87/RF-117.2: el criterio `events >= min_events` se elimina (contaba
+     * `presence` no-op y confirmaba parpadeos del radar). `$events`/`min_events`
+     * se mantienen en la firma por compatibilidad, sin efecto.
+     *
+     * Sin I/O, sin tiempo: totalmente unit-testeable.
+     */
 final class PresenceEvidence
 {
     public const DEFAULT_MIN_MOVES = 2;
+    /**
+     * F87/RF-117.2: vestigial. Ya no participa en la confirmación (contaba
+     * `presence` no-op y confirmaba parpadeos `m1 p2`). Se conserva la constante
+     * y la columna por compatibilidad.
+     */
     public const DEFAULT_MIN_EVENTS = 3;
-    public const DEFAULT_STATIC_SECONDS = 300;
+    /**
+     * F87/RF-117.1: subido de 300 a 1800 s. El umbral de 300 s confirmaba
+     * fantasmas del radar que mantenían `PRESENT` >5 min con la sala vacía.
+     */
+    public const DEFAULT_STATIC_SECONDS = 1800;
 
     /**
      * @param int   $moves   nº de eventos `move` distintos del episodio
-     * @param int   $events  nº de eventos PRESENT distintos (move+presence)
+     * @param int   $events  vestigial (F87): ya no decide; se conserva por firma
      * @param float $seconds duración del episodio
      * @param bool  $doorEvent hubo evento PROXIMITY aplicado dentro del episodio
      * @param array{min_moves?:int,min_events?:int,static_seconds?:int} $config
@@ -40,14 +52,10 @@ final class PresenceEvidence
         bool $doorEvent,
         array $config = []
     ): bool {
-        $minMoves  = self::intCfg($config, 'min_moves', self::DEFAULT_MIN_MOVES);
-        $minEvents = self::intCfg($config, 'min_events', self::DEFAULT_MIN_EVENTS);
-        $static    = self::intCfg($config, 'static_seconds', self::DEFAULT_STATIC_SECONDS);
+        $minMoves = self::intCfg($config, 'min_moves', self::DEFAULT_MIN_MOVES);
+        $static   = self::intCfg($config, 'static_seconds', self::DEFAULT_STATIC_SECONDS);
 
         if ($moves >= $minMoves) {
-            return true;
-        }
-        if ($events >= $minEvents) {
             return true;
         }
         if ($seconds >= $static) {

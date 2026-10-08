@@ -170,11 +170,21 @@ if ($r['state'] === D::STATE_QR_PENDING && $r['actions'] === []) {
     fail('F85: QR_PENDING + DOOR_OPEN inesperado: ' . json_encode($r));
 }
 
+// F87/RF-118.1: una apertura real con alguien dentro asegura grabación activa
+// (el tope F73 pudo finalizar el clip). No crea visita ni cambia estado.
 $r = D::decide(st(D::STATE_RECORDING_INSIDE, 'DOOR', true), D::EV_DOOR_OPEN);
-if ($r['state'] === D::STATE_RECORDING_INSIDE && $r['actions'] === []) {
-    pass('F85: RECORDING_INSIDE + DOOR_OPEN → no-op');
+if ($r['state'] === D::STATE_RECORDING_INSIDE
+    && $r['actions'] === [D::A_ENSURE_RECORDING]
+    && hasNone($r['actions'], [D::A_CREATE_VISIT])) {
+    pass('F87: RECORDING_INSIDE + DOOR_OPEN → ENSURE_RECORDING (sin visita nueva)');
 } else {
-    fail('F85: RECORDING_INSIDE + DOOR_OPEN inesperado: ' . json_encode($r));
+    fail('F87: RECORDING_INSIDE + DOOR_OPEN inesperado: ' . json_encode($r));
+}
+$r = D::decide(st(D::STATE_RECORDING_INSIDE, 'PRESENCE', true), D::EV_DOOR_OPEN);
+if ($r['state'] === D::STATE_RECORDING_INSIDE && hasAll($r['actions'], [D::A_ENSURE_RECORDING])) {
+    pass('F87: RECORDING_INSIDE(PRESENCE) + DOOR_OPEN → ENSURE_RECORDING');
+} else {
+    fail('F87: RECORDING_INSIDE(PRESENCE) + DOOR_OPEN inesperado: ' . json_encode($r));
 }
 
 // ── No-op events keep state ──────────────────────────────────────────────

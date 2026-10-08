@@ -1,0 +1,11 @@
+[Unit]
+Description=Cerraduras — Retención diaria de grabaciones del almacén (F87/RF-120)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

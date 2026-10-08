@@ -139,6 +139,7 @@ final class WarehouseStateController
         // estado IoT de la sala (puerta/presencia) y el estado real del SWITCH
         // por push (F50). Sin llamadas a Tuya: solo BD.
         $staleSeconds = $this->doorStaleSeconds();
+        $presenceStaleSeconds = $this->presenceStaleSeconds();
         $live = [
             'door_state' => 'UNKNOWN',
             'presence_state' => 'UNKNOWN',
@@ -153,6 +154,11 @@ final class WarehouseStateController
             'presence_age_seconds' => null,
             'door_stale_seconds' => $staleSeconds,
             'door_stale' => true,
+            // F87/RF-116: veracidad de la presencia. Si el radar lleva demasiado
+            // sin reportar, la presencia NO es fiable y el panel no debe afirmar
+            // "dentro" (la visita del motor NO se cierra por antigüedad).
+            'presence_stale_seconds' => $presenceStaleSeconds,
+            'presence_stale' => false,
             // F77.7: estado de luz INFERIDO del último comando (no es estado real
             // por push; se etiqueta distinto para no confundir).
             'switch_state_inferred' => null,
@@ -183,6 +189,11 @@ final class WarehouseStateController
         $live['door_stale'] = ($live['door_state'] === 'UNKNOWN')
             || ($live['door_age_seconds'] === null)
             || ($live['door_age_seconds'] > $staleSeconds);
+        // F87/RF-116.1: la presencia solo es "stale" cuando afirma PRESENT y no
+        // hay un evento aplicado reciente. ABSENT/UNKNOWN no son stale.
+        $live['presence_stale'] = ($live['presence_state'] === 'PRESENT')
+            && ($live['presence_age_seconds'] === null
+                || $live['presence_age_seconds'] > $presenceStaleSeconds);
         $swStmt = $this->pdo->prepare(
             "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='SWITCH' LIMIT 1"
@@ -228,7 +239,10 @@ final class WarehouseStateController
             && ($visit['exited_at'] ?? null) === null);
         $exiting = ((string) $wsRow['state'] === 'EXIT_PENDING')
             || ($visit !== null && ($visit['exited_at'] ?? null) !== null);
-        $occupied = $presenceKnown ? $presenceActive : $activeVisit;
+        // F87/RF-116.2: una presencia vieja no acredita ocupación (el panel no
+        // debe afirmar "dentro" con el radar mudo). La visita NO se cierra.
+        $presenceStale = (bool) ($live['presence_stale'] ?? false);
+        $occupied = $presenceKnown ? ($presenceActive && !$presenceStale) : $activeVisit;
         $live['presence_active'] = $presenceActive;
         $live['presence_known'] = $presenceKnown;
 
@@ -291,6 +305,16 @@ final class WarehouseStateController
     {
         $v = (int) (\App\Support\Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300);
         return $v > 0 ? $v : 300;
+    }
+
+    /**
+     * F87/RF-116.1: umbral (segundos) a partir del cual una presencia PRESENT se
+     * considera vieja/no fiable (`PRESENCE_STALE_SECONDS`, default 180 s).
+     */
+    private function presenceStaleSeconds(): int
+    {
+        $v = (int) (\App\Support\Config::getInt('PRESENCE_STALE_SECONDS', 180) ?? 180);
+        return $v > 0 ? $v : 180;
     }
 
     /** F77.5: antigüedad (s) de un timestamp MySQL UTC nullable; null si no hay. */

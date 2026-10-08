@@ -38,23 +38,35 @@ if (P::isConfirmed(2, 3, 25.0, false) === true) {
     fail('moves=2 debería confirmar');
 }
 
-// ── Muchos eventos aunque moves=1 (p. ej. m1 p3) → real ────────────────────
-if (P::isConfirmed(1, 3, 20.0, false) === true) {
-    pass('events=3 → real');
+// ── F87/RF-117.2: eventos PRESENT ya NO confirman por sí solos ─────────────
+if (P::isConfirmed(1, 3, 20.0, false) === false) {
+    pass('F87: events=3 con moves=1 → ruido (min_events vestigial)');
 } else {
-    fail('events=3 debería confirmar');
+    fail('F87: events=3 no debería confirmar sin moves>=2 ni puerta');
+}
+if (P::isConfirmed(1, 5, 40.0, false) === false) {
+    pass('F87: m1 p5 corto → ruido');
+} else {
+    fail('F87: m1 p5 corto debería ser ruido');
 }
 
-// ── Presencia estática sostenida > 300 s → real ────────────────────────────
-if (P::isConfirmed(1, 2, 301.0, false) === true) {
-    pass('estático 301 s (m1 p1) → real');
+// ── F87/RF-117.1: fantasma largo real (24G retuvo PRESENT 557 s) → ruido ───
+if (P::isConfirmed(1, 2, 557.0, false) === false) {
+    pass('F87: fantasma 557 s (m1 p1) → ruido');
 } else {
-    fail('estático >=300 s debería confirmar');
+    fail('F87: fantasma 557 s debería ser ruido (static 1800)');
 }
-if (P::isConfirmed(1, 2, 299.0, false) === false) {
-    pass('estático 299 s (m1 p1) → ruido');
+
+// ── Presencia estática sostenida > 1800 s → real ───────────────────────────
+if (P::isConfirmed(1, 2, 1801.0, false) === true) {
+    pass('F87: estático 1801 s (m1 p1) → real');
 } else {
-    fail('estático <300 s debería ser ruido');
+    fail('F87: estático >=1800 s debería confirmar');
+}
+if (P::isConfirmed(1, 2, 1799.0, false) === false) {
+    pass('F87: estático 1799 s (m1 p1) → ruido');
+} else {
+    fail('F87: estático <1800 s debería ser ruido');
 }
 
 // ── Evento de puerta dentro del episodio → evidencia extra ────────────────
@@ -80,8 +92,8 @@ if (P::isConfirmed(2, 3, 400.0, true, [
 
 // ── Config desde fila de room_types (defaults y normalización) ─────────────
 $cfg = P::configFromRow([]);
-if ($cfg['min_moves'] === 2 && $cfg['min_events'] === 3 && $cfg['static_seconds'] === 300) {
-    pass('configFromRow vacío → defaults 2/3/300');
+if ($cfg['min_moves'] === 2 && $cfg['min_events'] === 3 && $cfg['static_seconds'] === 1800) {
+    pass('configFromRow vacío → defaults 2/3/1800 (F87)');
 } else {
     fail('defaults inesperados: ' . json_encode($cfg));
 }

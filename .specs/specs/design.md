@@ -4887,6 +4887,109 @@ puerta cerrada no se confirma.
   RF-101 (sin poller; el sondeo solo es bajo demanda).
 - **Revisa**: F85/RF-112.1 (añade contexto de puerta) y F41/RF-44 (nuevo estado `refresh` auditable).
 
+---
+
+# 51. F87 — Veracidad de presencia y limpieza de grabaciones (RF-116…RF-121)
+
+## 51.1 Problema
+
+El 2026-10-08 se observaron tres defectos encadenados en `/almacen`:
+
+1. **Presencia pegada**: el 24G retuvo `presence_state=presence` **9 min** con la sala vacía y no
+   emitió `none`. `iot_sessions.presence_state` siguió `PRESENT` hasta el siguiente `ABSENT`, así que
+   el croquis pintó "dentro" y `warehouse_state` quedó `RECORDING_INSIDE`. No existe un umbral de
+   frescura de presencia análogo a `DOOR_STALE_SECONDS`.
+2. **Fantasmas confirmados**: `PresenceEvidence::isConfirmed` confirmaba por `seconds >= 300`
+   (el radar mantiene `PRESENT` >5 min en falso) y por `events >= 3` (contaba `presence` no-op).
+   Visitas 505/515/554/569/575/896 (1 solo `move`) quedaron `ENTERED`.
+3. **Clips NOISE no borrados**: el tope F73 (`WAREHOUSE_MAX_RECORDING_SECONDS=60`) finaliza los
+   clips como `SAVED`; `requestDiscard` solo marcaba `PENDING`/`RECORDING` y el recorder nunca
+   revisa `SAVED` → 410 clips = 4,7 GB. Además `warehouse-retention.php` no tiene timer/cron.
+
+## 51.2 Frescura de presencia (`WarehouseStateController` + croquis)
+
+- `stateArray()` calcula `live.presence_stale`:
+  `presence_state === 'PRESENT' && (presence_age_seconds === null || > PRESENCE_STALE_SECONDS)`.
+  Nueva config `PRESENCE_STALE_SECONDS` (def. **180**), helper `presenceStaleSeconds()` espejo de
+  `doorStaleSeconds()`.
+- `warehouse.occupied`: si la presencia es conocida, `occupied = presenceActive && !presenceStale`
+  (asesorar `LIBRE` si la señal está vieja); si es `UNKNOWN`, se mantiene el fallback a visita
+  activa. La visita y `warehouse_state` **no** se tocan (RF-116.2).
+- `croquis-logic.js`: `const presenceStale = live.presence_stale === true;`
+  `personInside = presenceStale ? false : (presenceKnown ? presence==='PRESENT' : occupied)`;
+  chip de presencia "SIN DATOS" y `phase` no `inside` cuando `presenceStale`.
+- El SSE ya incluye `live` en el fingerprint; `presence_stale` entra (cambia al cruzar el umbral) y
+  `presence_age_seconds` sigue excluido del fingerprint.
+
+## 51.3 Evidencia reforzada (`PresenceEvidence` + `WarehouseRecordingService`)
+
+- `PresenceEvidence::isConfirmed(moves, events, seconds, doorEvent, config)`:
+  ```
+  if (moves >= min_moves) return true;
+  if (seconds >= static_seconds) return true;   // def. 1800
+  return $doorEvent;
+  ```
+  `events`/`min_events` dejan de participar (RF-117.2). Se mantienen `doorEvent` (F84) y, en el
+  servicio, el cortocircuito de re-entrada F85 y el requisito de puerta abierta F86.
+- `WarehouseRecordingService::presenceEvidenceConfirmed()`: la consulta sigue contando `moves`
+  (solo `tuya_raw_val='move'`) y `doorEvent` (PROXIMITY aplicado). Se sigue pasando `events` por
+  compatibilidad de firma, sin efecto.
+- Migración `0124`: `warehouse_presence_static_seconds` default **1800** y valor 1800 para
+  `ALMACEN_BEBIDAS` (idempotente). `warehouse_presence_min_events` queda como columna vestigial.
+
+## 51.4 Grabación fiel al ciclo de puerta (`WarehouseRecordingDecision` + servicio)
+
+- Nueva acción `A_ENSURE_RECORDING`. En `STATE_RECORDING_INSIDE`, `EV_DOOR_OPEN` pasa de `[]` a
+  `[A_ENSURE_RECORDING]` (el estado no cambia). Es un refuerzo: no crea visitas.
+- `WarehouseRecordingService`: en `A_ENSURE_RECORDING`, si no hay filas `PENDING`/`RECORDING` para
+  `visit_id`, llama a `startRecordings(EXT)` y `startRecordings(INT)` con
+  `episode = episodeFor($preState)` (EXIT en `RECORDING_INSIDE`). Si ya hay una activa, no-op.
+- No se reintroduce grabación continua por tiempo: el tope F73 de 60 s se mantiene (decisión del
+  operador). Solo una apertura física real puede reanudar.
+
+## 51.5 Descarte efectivo (`WarehouseRecordingService` + `warehouse-recorder.php`)
+
+- `requestDiscard($room, $visit, $position)`:
+  `UPDATE camera_recordings SET discard_requested=1, stop_requested=1
+   WHERE room_id=:r AND position=:pos AND status <> 'DISCARDED' [AND visit_id=:vid]`.
+- `warehouse-recorder.php`: nueva fase tras el stop:
+  - `PENDING`/`SAVED`/`FAILED` con `discard_requested=1` → borrar `file_path` (y `poster_path`)
+    bajo `data/cameras/` y `UPDATE status='DISCARDED', stop_requested=1, stopped_at=UTC_TIMESTAMP(3)`.
+  - Corrige el `Undefined array key "started_at"` seleccionando `started_at` en la consulta de stop
+    (o pasando `null`), y `//` el parámetro no usado de `durationSeconds`.
+- Limpieza de datos (operativa, no código): borrar los 410 clips NOISE `SAVED` y sus ficheros.
+
+## 51.6 Retención automática (`docs/systemd` + `start-all.sh`)
+
+- `docs/systemd/cerraduras-warehouse-retention.service` (Type=oneshot, ExecStart=`php
+  bin/warehouse-retention.php`, WorkingDirectory=`/root/cerraduras/api`) y
+  `cerraduras-warehouse-retention.timer` (OnCalendar diario 04:00, `Persistent=true`).
+- `start-all.sh` `[5c/8]`: `systemctl enable --now cerraduras-warehouse-retention.timer` si existe
+  el unit; `stop-all.sh`: `systemctl stop ...timer`. Sin wrappers ni procesos extra.
+- `0124` declara `system_settings (service='api', setting_key='warehouse.retention_days', value='1')`
+  con `INSERT ... ON DUPLICATE KEY UPDATE value=value` (no pisa el valor de producción).
+
+## 51.7 Tests
+
+- `api/tests/Unit/PresenceEvidenceTest.php`: `m1 p2` corto → ruido; `moves=2` → real; estático
+  1801 s → real; 300 s → ruido; puerta → real; default `static_seconds=1800`.
+- `api/tests/Unit/WarehouseRecordingDecisionTest.php`: `RECORDING_INSIDE + DOOR_OPEN` →
+  `[A_ENSURE_RECORDING]`; `A_MARK_NOISE` descarta EXT+INT con todos los estados.
+- `api/tests/Unit/croquis-logic.test.js`: `presence_stale` → chip SIN DATOS y `personInside=false`.
+- `api/bin/run-tests.sh`: **BLOCK 60** con marcadores F87 (presencia estancada → `presence_stale`;
+  visita NOISE con clip `SAVED` → `DISCARDED`; timer de retención instalado).
+
+## 51.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-116 | §51.2 | §F87.1, §F87.2 | TSK-F87-01, TSK-F87-02 |
+| RF-117 | §51.3 | §F87.3 | TSK-F87-02 |
+| RF-118 | §51.4 | §F87.4 | TSK-F87-03 |
+| RF-119 | §51.5 | §F87.5 | TSK-F87-04 |
+| RF-120 | §51.6 | §F87.6 | TSK-F87-05 |
+| RF-121 | §51.2–51.7 | — | TSK-F87-06 |
+
 ## 50.6 Trazabilidad
 
 | RF | Diseño | Contrato | Tareas |

@@ -66,6 +66,12 @@ final class WarehouseRecordingDecision
     public const A_VISIT_NO_SHOW  = 'VISIT_NO_SHOW';
     /** F84 (RF-107.3): marca la visita como NOISE (falso positivo del radar). */
     public const A_MARK_NOISE     = 'MARK_NOISE';
+    /**
+     * F87 (RF-118.1): garantiza que la visita tiene grabación activa. Se emite en
+     * `RECORDING_INSIDE + DOOR_OPEN`; el servicio solo arranca cámaras si no hay
+     * ninguna fila `PENDING`/`RECORDING` (el tope F73 pudo finalizar el clip).
+     */
+    public const A_ENSURE_RECORDING = 'ENSURE_RECORDING';
     public const A_SET_DEADLINE_X = 'SET_DEADLINE_X';
     public const A_SET_DEADLINE_M = 'SET_DEADLINE_M';
     public const A_CLEAR_DEADLINES = 'CLEAR_DEADLINES';
@@ -141,6 +147,14 @@ final class WarehouseRecordingDecision
                     }
                     return self::out(self::STATE_EXIT_PENDING, $trigger, true, [
                         self::A_STOP_INT, self::A_MARK_EXIT, self::A_SET_DEADLINE_M,
+                    ]);
+                }
+                // F87/RF-118.1: una apertura real de puerta con alguien dentro
+                // debe garantizar grabación activa (el tope F73 pudo finalizar el
+                // clip anterior). No crea visita ni cambia el estado.
+                if ($event === self::EV_DOOR_OPEN) {
+                    return self::out(self::STATE_RECORDING_INSIDE, $trigger, true, [
+                        self::A_ENSURE_RECORDING,
                     ]);
                 }
                 break; // DOOR_CLOSE / other: nothing

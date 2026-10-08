@@ -5462,6 +5462,122 @@ if [ -n "$MYSQL_BIN" ]; then
 fi
 
 # =============================================================================
+# BLOCK 60 — F87: veracidad de presencia y limpieza de grabaciones
+# Trazabilidad: RF-116..RF-121
+# =============================================================================
+block "BLOCK 60 — F87: veracidad de presencia y limpieza de grabaciones"
+
+# 60.0 Estáticos (código nuevo).
+for F87_MARK in \
+    "src/Http/Controllers/WarehouseStateController.php:presence_stale" \
+    "src/Http/Controllers/WarehouseStateController.php:presenceStaleSeconds" \
+    "src/Domain/Warehouse/PresenceEvidence.php:DEFAULT_STATIC_SECONDS = 1800" \
+    "src/Domain/Warehouse/WarehouseRecordingDecision.php:ENSURE_RECORDING" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:status <> 'DISCARDED'" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:ensureRecording" \
+    "bin/warehouse-recorder.php:discardFinalized" \
+    "public/assets/croquis-logic.js:presence_stale"; do
+    F87_FILE="${F87_MARK%%:*}"
+    F87_NEEDLE="${F87_MARK#*:}"
+    if grep -qF "$F87_NEEDLE" "$F87_FILE" 2>/dev/null; then
+        pass "F87: $F87_FILE define '$F87_NEEDLE'"
+    else
+        fail "F87: $F87_FILE" "falta '$F87_NEEDLE'"
+    fi
+done
+
+# 60.1 Retención: units systemd + arranque/parada.
+for F87_UNIT in \
+    "docs/systemd/cerraduras-warehouse-retention.service" \
+    "docs/systemd/cerraduras-warehouse-retention.timer"; do
+    if [ -f "$F87_UNIT" ]; then
+        pass "F87: existe $F87_UNIT"
+    else
+        fail "F87: $F87_UNIT" "no encontrado"
+    fi
+done
+if grep -qF "cerraduras-warehouse-retention.timer" start-all.sh 2>/dev/null; then
+    pass "F87: start-all gestiona el timer de retención"
+else
+    fail "F87: start-all.sh" "no gestiona cerraduras-warehouse-retention.timer"
+fi
+if grep -qF "cerraduras-warehouse-retention.timer" stop-all.sh 2>/dev/null; then
+    pass "F87: stop-all gestiona el timer de retención"
+else
+    fail "F87: stop-all.sh" "no gestiona cerraduras-warehouse-retention.timer"
+fi
+
+# 60.2 Units de dominio (PHP).
+for F87_TEST in \
+    "tests/Unit/PresenceEvidenceTest.php" \
+    "tests/Unit/WarehouseRecordingDecisionTest.php"; do
+    if [ -f "$F87_TEST" ]; then
+        F87_OUT=$(php "$F87_TEST" 2>&1)
+        F87_RC=$?
+        F87_SUM=$(echo "$F87_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+        [ -z "$F87_SUM" ] && F87_SUM="exit=$F87_RC"
+        if [ "$F87_RC" -eq 0 ]; then
+            pass "F87: $(basename "$F87_TEST") ($F87_SUM)"
+        else
+            fail "F87: $(basename "$F87_TEST")" \
+                "$F87_SUM — $(echo "$F87_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F87: $F87_TEST" "no encontrado"
+    fi
+done
+
+# 60.3 Unit JS del croquis (presencia stale).
+F87_JS="tests/Unit/croquis-logic.test.js"
+if [ -f "$F87_JS" ]; then
+    F87_JS_OUT=$(node "$F87_JS" 2>&1)
+    F87_JS_RC=$?
+    F87_JS_SUM=$(echo "$F87_JS_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F87_JS_SUM" ] && F87_JS_SUM="exit=$F87_JS_RC"
+    if [ "$F87_JS_RC" -eq 0 ]; then
+        pass "F87: croquis-logic ($F87_JS_SUM)"
+    else
+        fail "F87: croquis-logic" \
+            "$F87_JS_SUM — $(echo "$F87_JS_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F87: croquis-logic" "tests/Unit/croquis-logic.test.js no encontrado"
+fi
+
+# 60.4 BD: evidencia reforzada (static 1800) + retención declarada.
+if [ -n "$MYSQL_BIN" ]; then
+    F87_STATIC=$($MYSQL -sN -e "SELECT warehouse_presence_static_seconds FROM room_types WHERE code='ALMACEN_BEBIDAS' LIMIT 1" 2>/dev/null)
+    if [ "$F87_STATIC" = "1800" ]; then
+        pass "F87: ALMACEN_BEBIDAS static_seconds=1800"
+    elif [ -z "$F87_STATIC" ]; then
+        skip "F87: static_seconds" "sin BD/columna"
+    else
+        fail "F87: static_seconds" "valor=$F87_STATIC (esperado 1800 — aplicar migración 0124)"
+    fi
+    F87_RET=$($MYSQL -sN -e "SELECT COUNT(*) FROM system_settings WHERE service='api' AND setting_key='warehouse.retention_days'" 2>/dev/null)
+    if [ "$F87_RET" = "1" ]; then
+        pass "F87: system_settings.warehouse.retention_days declarado"
+    elif [ -z "$F87_RET" ]; then
+        skip "F87: retention_days" "sin BD"
+    else
+        fail "F87: retention_days" "no declarado (aplicar migración 0124)"
+    fi
+fi
+
+# 60.5 HTTP: `live.presence_stale` presente en el estado del almacén.
+if [ "$SERVER_UP" = true ]; then
+    F87_STATE=$(curl -s --max-time 10 "$API_BASE/almacen-api/state" 2>/dev/null)
+    if echo "$F87_STATE" | grep -q '"presence_stale"'; then
+        pass "F87: /almacen-api/state expone live.presence_stale"
+    else
+        fail "F87: /almacen-api/state live.presence_stale" \
+            "$(echo "$F87_STATE" | head -c 300)"
+    fi
+else
+    skip "F87: /almacen-api/state presence_stale" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
