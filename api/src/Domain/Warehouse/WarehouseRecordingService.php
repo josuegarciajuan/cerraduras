@@ -62,6 +62,26 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         return ($v !== false && $v !== null && $v !== '') ? (string) $v : null;
     }
 
+    /**
+     * F88 (RF-123.3): último movimiento de cámara de la sala (`devices.last_motion_at`),
+     * opcionalmente por posición. Solo BD local (el worker lo publica por push).
+     */
+    public function latestMotionAt(int $roomId, ?string $position = null): ?string
+    {
+        $sql = "SELECT MAX(d.last_motion_at) FROM devices d
+                 JOIN rooms r ON r.pack_id = d.pack_id
+                WHERE r.id = :r AND d.kind = 'CAMERA'";
+        $params = [':r' => $roomId];
+        if ($position !== null && $position !== '') {
+            $sql .= ' AND d.subtype = :pos';
+            $params[':pos'] = strtoupper($position);
+        }
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $v = $stmt->fetchColumn();
+        return ($v !== false && $v !== null && $v !== '') ? (string) $v : null;
+    }
+
     public function onSignal(int $roomId, string $event, array $meta = []): void
     {
         // F79 (RF-102.1/102.2): el motor solo reacciona a ciclos reales. Las

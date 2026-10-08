@@ -326,6 +326,39 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::APPLY) pass('F75: almacén + none (ABSENT) → apply');
 else fail('F75: ABSENT en almacén debería aplicar, got ' . $decision);
 
+// ── F88 (RF-123.3): fusión de presencia — evidencia física obligatoria ─────
+// Almacén + radar SIN evidencia (ni cámara ni puerta) → uncorroborated.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, false, false, true, false
+);
+if ($decision === SensorEventDecision::UNCORROBORATED) pass('F88: almacén + PRESENT sin evidencia → uncorroborated');
+else fail('F88: sin evidencia debería ser uncorroborated, got ' . $decision);
+
+// Almacén + radar CON evidencia física → apply.
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'move'), $session, false, false, false, true, true
+);
+if ($decision === SensorEventDecision::APPLY) pass('F88: almacén + PRESENT con evidencia → apply');
+else fail('F88: con evidencia debería aplicar, got ' . $decision);
+
+// ABSENT en almacén → apply aunque no haya evidencia (no pasa por la rama).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'ABSENT', 'none'), $session, false, false, false, true, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F88: almacén + ABSENT sin evidencia → apply (limpia)');
+else fail('F88: ABSENT en almacén debería aplicar, got ' . $decision);
+
+// Hotel: la fusión NO aplica (physicalEvidence=false pero warehousePresence=false).
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $session, false, true, false, false, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F88: hotel sin evidencia → apply (F88 no aplica fuera del almacén)');
+else fail('F88: hotel no debería verse afectado, got ' . $decision);
+
 // Helper puro.
 if (SensorEventDecision::presenceCredible('move', false, false) === false
     && SensorEventDecision::presenceCredible('move', true, false) === true
@@ -342,8 +375,9 @@ foreach ([
     SensorEventDecision::NOOP,
     SensorEventDecision::NO_CONTEXT,
     SensorEventDecision::REFRESH,
+    SensorEventDecision::UNCORROBORATED,
 ] as $reason) {
-    $valid = in_array($reason, ['duplicate', 'stale', 'noop', 'no_context', 'refresh'], true);
+    $valid = in_array($reason, ['duplicate', 'stale', 'noop', 'no_context', 'refresh', 'uncorroborated'], true);
     if ($valid) pass("audit: discard_reason '{$reason}' is a valid persisted value");
     else fail("audit: invalid discard_reason '{$reason}'");
 }

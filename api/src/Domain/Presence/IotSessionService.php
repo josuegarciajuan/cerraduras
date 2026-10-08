@@ -151,6 +151,8 @@ final class IotSessionService
                 $insideNoExitCycle = true;
                 // F75 (RF-89): en el almacén la señal fiable es `presence` (no `move`).
                 $warehousePresence = false;
+                // F88 (RF-123.3): evidencia física para corroborar el radar en el almacén.
+                $physicalEvidence = true;
                 if ($provider === PresenceEvent::PROVIDER_TUYA
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                     && $value === PresenceEvent::VALUE_PRESENT
@@ -160,6 +162,8 @@ final class IotSessionService
                         // F76 (RF-91/92): contexto por ciclo de puerta / visita real.
                         [$entryWindowActive, $insideNoExitCycle] =
                             $this->warehousePresenceContext($room, $session, $now);
+                        // F88 (RF-123.3): cámara (INTERIOR) o puerta recientes.
+                        $physicalEvidence = $this->warehousePhysicalEvidence($room, $session, $now);
                     } else {
                         [$entryWindowActive, $insideNoExitCycle] =
                             $this->presenceContext($room, $session, $now);
@@ -167,7 +171,8 @@ final class IotSessionService
                 }
 
                 $decision = SensorEventDecision::decide(
-                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle, $warehousePresence
+                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle,
+                    $warehousePresence, $physicalEvidence
                 );
 
                 if ($decision !== SensorEventDecision::APPLY) {
@@ -578,6 +583,59 @@ final class IotSessionService
         // La ventana de entrada está siempre activa en el almacén: cualquier `PRESENT`
         // (`presence` o `move`) se aplica de inmediato.
         return [true, $insideNoExitCycle];
+    }
+
+    /**
+     * F88 (RF-123.3): evidencia física independiente del radar para corroborar un
+     * `PRESENT` en el almacén. Es cierta si hubo un evento de puerta reciente
+     * (`FUSION_DOOR_WINDOW_SECONDS`, def. 90) o movimiento reciente de la cámara
+     * INTERIOR (`FUSION_MOTION_WINDOW_SECONDS`, def. 20). Con
+     * `FUSION_INCLUDE_EXTERIOR=true` también vale cualquier cámara. Solo BD local.
+     */
+    private function warehousePhysicalEvidence(
+        Room $room,
+        IotSession $session,
+        \DateTimeImmutable $now
+    ): bool {
+        $nowTs = $now->getTimestamp();
+
+        $doorWindow = (int) (Config::getInt('FUSION_DOOR_WINDOW_SECONDS', 90) ?? 90);
+        if ($doorWindow <= 0) {
+            $doorWindow = 90;
+        }
+        if ($session->lastDoorEventAt !== null && $session->lastDoorEventAt !== '') {
+            $t = strtotime($session->lastDoorEventAt . ' UTC');
+            if ($t !== false && ($nowTs - $t) <= $doorWindow) {
+                return true;
+            }
+        }
+
+        if ($this->warehouseRecorder === null) {
+            return false;
+        }
+        $motionWindow = (int) (Config::getInt('FUSION_MOTION_WINDOW_SECONDS', 20) ?? 20);
+        if ($motionWindow <= 0) {
+            $motionWindow = 20;
+        }
+        $includeExterior = filter_var(
+            (string) (Config::get('FUSION_INCLUDE_EXTERIOR', 'false') ?? 'false'),
+            FILTER_VALIDATE_BOOLEAN
+        );
+        foreach ($includeExterior ? [null] : ['INTERIOR'] as $position) {
+            try {
+                $at = $this->warehouseRecorder->latestMotionAt($room->id, $position);
+            } catch (\Throwable $e) {
+                $at = null;
+            }
+            if ($at === null) {
+                continue;
+            }
+            $t = strtotime($at . ' UTC');
+            if ($t !== false && ($nowTs - $t) <= $motionWindow) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

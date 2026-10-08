@@ -2771,3 +2771,47 @@ Respuestas:
 - Ningún endpoint, job ni timer llama a la API de Tuya. La única sonda REST sigue siendo
   `POST /almacen-api/sensors/refresh` (bajo demanda).
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 60** nuevo con marcadores F87.
+
+---
+
+# Fase 88: Presencia robusta por fusión de sensores (RF-122…RF-126)
+
+## §F88.1 `POST /almacen-api/motion` (nuevo)
+
+- **Uso interno** (loopback, LAN sin auth): el worker de movimiento publica que una cámara ha
+  detectado movimiento.
+- Request: `{ "device_id": 325 }`.
+- Respuesta `200`: `{ "ok": true, "device_id": 325, "at": "2026-10-08 10:00:00.123" }`.
+- `400` si falta `device_id`; `404` si no es una cámara de una sala `ALMACEN_BEBIDAS`.
+- Efecto: `devices.last_motion_at = UTC_TIMESTAMP(3)`. Sin cuota Tuya.
+
+## §F88.2 `GET /almacen-api/cameras` y `GET /almacen-api/state` (aditivo)
+
+- Cada cámara añade:
+  ```json
+  { "last_motion_at": "2026-10-08 10:00:00.123", "motion_active": true }
+  ```
+- `live` añade `motion_active` (bool) y `motion_age_seconds` (int|null). Los campos anteriores no
+  cambian de forma.
+
+## §F88.3 Decisión de presencia (interna)
+
+- Nuevo valor de `presence_events.discard_reason`: **`uncorroborated`** (`VARCHAR(16)` lo admite;
+  sin migración de columna).
+- Un `PRESENT` de radar `TUYA` en `ALMACEN_BEBIDAS` sin evidencia física se audita `uncorroborated`
+  y **no** cambia `iot_sessions` ni dispara el motor del almacén.
+- Evidencia física = movimiento de cámara INTERIOR reciente (`FUSION_MOTION_WINDOW_SECONDS`, def.
+  20 s) **o** evento de puerta reciente (`FUSION_DOOR_WINDOW_SECONDS`, def. 90 s). Configurable por
+  `.env`; `FUSION_INCLUDE_EXTERIOR` (def. false) añade la cámara EXTERIOR.
+
+## §F88.4 `devices.last_motion_at` (migración 0125)
+
+```sql
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_motion_at DATETIME(3) NULL;
+```
+Columna idempotente, sin backfill.
+
+## §F88.5 Sin cuota / no regresión
+
+- El worker de movimiento y `POST /almacen-api/motion` son locales; no tocan Tuya.
+- Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 61** nuevo con marcadores F88.

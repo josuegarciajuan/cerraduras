@@ -4999,3 +4999,93 @@ El 2026-10-08 se observaron tres defectos encadenados en `/almacen`:
 | RF-115.4 | §50.4 | §F86.2 | TSK-F86-02 |
 | RF-115.5 | §50.3 | §F86.3 | TSK-F86-01 |
 | RF-115.6 | §50.5 | §F86.3 | TSK-F86-04 |
+
+---
+
+# 51. (reservado F87)
+
+---
+
+# 52. F88 — Presencia robusta por fusión de sensores (RF-122…RF-126)
+
+## 52.1 Problema
+
+El radar 24G es la única señal y emite fantasmas con la sala vacía (`move`→`presence`→`none` cada
+1–3 min). F80 lo acepta al instante y el sistema graba. F84/F87 solo limpian **a posteriori**
+(`NOISE`), pero el ciclo se repite y se sigue grabando. Falta una **verificación física
+independiente**.
+
+## 52.2 Worker de movimiento (`bin/camera-motion-worker.js`)
+
+- Node, un `ffmpeg` por cámara habilitada del almacén. Fuente: **restream RTSP de go2rtc**
+  (`rtsp://127.0.0.1:8554/<stream>`, `CAMERA_MOTION_RTSP_BASE`) para no añadir conexiones directas
+  a la cámara.
+- Comando: `ffmpeg -nostdin -rtsp_transport tcp -i <rtsp> -an -vf fps=FPS,scale=W:H -pix_fmt gray
+  -f rawvideo -`. El worker acumula `W*H` bytes por frame y compara con el anterior:
+  `cambios = #{|px_i - px_prev| > threshold}`; `mov = cambios/frameSize*100 >= MIN_PCT`.
+- Histéresis: buffer rodante de N decisiones; `hay = sum(últimas N) >= MIN_FRAMES`. Al pasar a
+  `hay`, y respetando `POST_MIN_INTERVAL_MS`, hace `POST /almacen-api/motion {device_id}`.
+- Reconexión con backoff si `ffmpeg` sale; nunca loguea la URL. Funciones puras exportadas
+  (`parseScale`, `frameDiffPct`, `debounce`) para tests.
+- systemd `cerraduras-camera-motion.service` (Restart=always) + `start-all.sh` `[5e/8]` /
+  `stop-all.sh`.
+
+## 52.3 Persistencia y endpoint
+
+- Migración `0125`: `devices.last_motion_at DATETIME(3) NULL`.
+- `POST /almacen-api/motion` (loopback, sin auth LAN): body `{device_id}` → valida que el device
+  sea `CAMERA` de una sala `ALMACEN_BEBIDAS` y hace `UPDATE devices SET last_motion_at =
+  UTC_TIMESTAMP(3)`. Devuelve `{ok:true, device_id, at}`.
+- `/almacen-api/cameras` (`WarehouseCameraController::formatRow`) y `WarehouseStateController::
+  stateArray()` añaden `last_motion_at` y `motion_active` (aditivos).
+
+## 52.4 Fusión en el pipeline IoT
+
+- `WarehouseRecordingServiceInterface` gana `latestMotionAt(int $roomId, ?string $position = null):
+  ?string` (MAX de `devices.last_motion_at` de las cámaras de la sala, filtrando por `subtype`).
+- `IotSessionService`, para `PRESENT` de radar TUYA en almacén:
+  - `doorRecent` = `session->lastDoorEventAt` dentro de `FUSION_DOOR_WINDOW_SECONDS` (def. 90).
+  - `motionRecent` = `latestMotionAt($roomId, 'INTERIOR')` dentro de `FUSION_MOTION_WINDOW_SECONDS`
+    (def. 20). Con `FUSION_INCLUDE_EXTERIOR=true` también vale el máximo de cualquier cámara. Si la
+    sala no tiene cámara INTERIOR, solo la puerta corrobora (modo degradado).
+  - `physicalEvidence = doorRecent || motionRecent`.
+- `SensorEventDecision::decide(..., bool $warehousePresence = false, bool $physicalEvidence = true)`:
+  en la rama de almacén, si `!$physicalEvidence` → devuelve la nueva constante
+  `SensorEventDecision::UNCORROBORATED` (auditada, no aplica). Si hay evidencia → `APPLY` (F80 se
+  mantiene cuando hay corroboración física). `ABSENT` no pasa por la rama.
+- Consecuencia: sin `APPLY` no hay `post-commit`, así que `WarehouseRecordingService::onSignal` no
+  recibe `EV_PRESENT` → **sin visita ni grabación**.
+
+## 52.5 Degradación
+
+- Sin worker (`last_motion_at` nulo) el radar aislado queda `uncorroborated`; la **puerta** sigue
+  corroborando (edge real). No se pierde una entrada con apertura de puerta.
+- Sin cámaras configuradas, sólo la puerta confirma; se documenta como modo degradado.
+
+## 52.6 Diagnóstico y hardware
+
+- `bin/presence-fusion-report.php`: para una ventana temporal lista los eventos `PRESENCE` de la
+  sala cruzados con `last_motion_at` de las cámaras, con conteo de `applied`/`uncorroborated`.
+  Solo lectura, sin cuota.
+- Documentar la revisión física del MC400D y la recalibración del 24G.
+
+## 52.7 Tests
+
+- Unit JS `camera-motion-worker.test.js`: `parseScale`, `frameDiffPct` (frame igual → 0; frame con
+  bloque → >0), `debounce`.
+- `SensorEventDecisionTest`: almacén + `PRESENT` sin evidencia → `uncorroborated`; con evidencia →
+  `apply`; hotel intacto.
+- `IotSessionServiceTest`: `FakeWarehouseRecorder::latestMotionAt`; PRESENT con puerta reciente →
+  PRESENT; PRESENT sin puerta ni movimiento → no aplica (`uncorroborated`) y no llega señal al motor;
+  PRESENT con movimiento → aplica.
+- Runner **BLOCK 61** (marcadores F88) + regresión.
+
+## 52.8 Trazabilidad
+
+| RF | Diseño | Contrato | Tareas |
+|---|---|---|---|
+| RF-122 | §52.2 | §F88.1 | TSK-F88-01 |
+| RF-123 | §52.3–52.4 | §F88.2, §F88.3 | TSK-F88-02, TSK-F88-03 |
+| RF-124 | §52.3 | §F88.2 | TSK-F88-04 |
+| RF-125 | §52.6 | — | TSK-F88-05 |
+| RF-126 | §52.7 | — | TSK-F88-06 |

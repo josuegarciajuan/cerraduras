@@ -36,4 +36,11 @@ interface WarehouseRecordingServiceInterface
      * para vetar presencia (deroga F76/RF-92.1). Devuelve null si no hay visita así.
      */
     public function activeEnteredVisitAt(int $roomId): ?string;
+
+    /**
+     * F88 (RF-123.3): instante (MySQL UTC) del último movimiento detectado por las
+     * cámaras de la sala, opcionalmente restringido a una posición
+     * (`EXTERIOR`/`INTERIOR`). `null` si no hay dato. Solo BD local; sin cuota.
+     */
+    public function latestMotionAt(int $roomId, ?string $position = null): ?string;
 }

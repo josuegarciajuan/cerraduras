@@ -5580,6 +5580,113 @@ else
 fi
 
 # =============================================================================
+# BLOCK 61 — F88: presencia robusta por fusión de sensores
+# Trazabilidad: RF-122..RF-126
+# =============================================================================
+block "BLOCK 61 — F88: presencia robusta por fusión de sensores"
+
+# 61.0 Estáticos (código nuevo).
+for F88_MARK in \
+    "bin/camera-motion-worker.js:frameDiffPct" \
+    "bin/camera-motion-worker.js:debounce" \
+    "bin/camera-motion-worker.js:/almacen-api/motion" \
+    "src/Domain/Presence/SensorEventDecision.php:UNCORROBORATED" \
+    "src/Domain/Presence/IotSessionService.php:warehousePhysicalEvidence" \
+    "src/Domain/Warehouse/WarehouseRecordingService.php:latestMotionAt" \
+    "src/Http/Controllers/WarehouseStateController.php:motion_active" \
+    "public/index.php:/almacen-api/motion"; do
+    F88_FILE="${F88_MARK%%:*}"
+    F88_NEEDLE="${F88_MARK#*:}"
+    if grep -qF "$F88_NEEDLE" "$F88_FILE" 2>/dev/null; then
+        pass "F88: $F88_FILE define '$F88_NEEDLE'"
+    else
+        fail "F88: $F88_FILE" "falta '$F88_NEEDLE'"
+    fi
+done
+
+# 61.1 Worker y units systemd.
+[ -f bin/presence-fusion-report.php ] \
+    && pass "F88: existe bin/presence-fusion-report.php" \
+    || fail "F88: bin/presence-fusion-report.php" "no encontrado"
+if [ -f ../docs/systemd/cerraduras-camera-motion.service ]; then
+    pass "F88: existe ../docs/systemd/cerraduras-camera-motion.service"
+else
+    fail "F88: cerraduras-camera-motion.service" "no encontrado"
+fi
+if grep -qF "cerraduras-camera-motion" ../start-all.sh 2>/dev/null \
+   || grep -qF "cerraduras-camera-motion" start-all.sh 2>/dev/null; then
+    pass "F88: start-all arranca el detector de movimiento"
+else
+    fail "F88: start-all.sh" "no gestiona cerraduras-camera-motion"
+fi
+if grep -qF "cerraduras-camera-motion" ../stop-all.sh 2>/dev/null \
+   || grep -qF "cerraduras-camera-motion" stop-all.sh 2>/dev/null; then
+    pass "F88: stop-all para el detector de movimiento"
+else
+    fail "F88: stop-all.sh" "no gestiona cerraduras-camera-motion"
+fi
+
+# 61.2 Units (PHP + JS).
+for F88_TEST in \
+    "tests/Unit/SensorEventDecisionTest.php" \
+    "tests/Unit/IotSessionServiceTest.php"; do
+    if [ -f "$F88_TEST" ]; then
+        F88_OUT=$(php "$F88_TEST" 2>&1)
+        F88_RC=$?
+        F88_SUM=$(echo "$F88_OUT" | grep -oE '([0-9]+ passed, [0-9]+ failed|Total: [0-9]+ passed, [0-9]+ failed)' | tail -1)
+        [ -z "$F88_SUM" ] && F88_SUM="exit=$F88_RC"
+        if [ "$F88_RC" -eq 0 ]; then
+            pass "F88: $(basename "$F88_TEST") ($F88_SUM)"
+        else
+            fail "F88: $(basename "$F88_TEST")" \
+                "$F88_SUM — $(echo "$F88_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F88: $F88_TEST" "no encontrado"
+    fi
+done
+F88_JS="tests/Unit/camera-motion-worker.test.js"
+if [ -f "$F88_JS" ]; then
+    F88_JS_OUT=$(node "$F88_JS" 2>&1)
+    F88_JS_RC=$?
+    F88_JS_SUM=$(echo "$F88_JS_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F88_JS_SUM" ] && F88_JS_SUM="exit=$F88_JS_RC"
+    if [ "$F88_JS_RC" -eq 0 ]; then
+        pass "F88: camera-motion-worker ($F88_JS_SUM)"
+    else
+        fail "F88: camera-motion-worker" \
+            "$F88_JS_SUM — $(echo "$F88_JS_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F88: camera-motion-worker" "tests/Unit/camera-motion-worker.test.js no encontrado"
+fi
+
+# 61.3 BD: columna devices.last_motion_at (migración 0125).
+if [ -n "$MYSQL_BIN" ]; then
+    F88_COL=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='devices' AND column_name='last_motion_at'" 2>/dev/null)
+    if [ "$F88_COL" = "1" ]; then
+        pass "F88: devices.last_motion_at existe"
+    elif [ -z "$F88_COL" ]; then
+        skip "F88: devices.last_motion_at" "sin BD"
+    else
+        fail "F88: devices.last_motion_at" "no existe (aplicar migración 0125)"
+    fi
+fi
+
+# 61.4 HTTP: POST /almacen-api/motion.
+if [ "$SERVER_UP" = true ] && [ -n "$MYSQL_BIN" ]; then
+    F88_CAM=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id JOIN room_types rt ON rt.id=r.room_type_id WHERE d.kind='CAMERA' AND rt.code='ALMACEN_BEBIDAS' LIMIT 1" 2>/dev/null)
+    if [ -n "$F88_CAM" ]; then
+        http_test POST /almacen-api/motion 200 "F88: POST /almacen-api/motion registra movimiento" --body "{\"device_id\":$F88_CAM}"
+        http_test POST /almacen-api/motion 400 "F88: POST /almacen-api/motion sin device_id → 400" --body '{}'
+    else
+        skip "F88: /almacen-api/motion" "sin cámara de almacén"
+    fi
+else
+    skip "F88: /almacen-api/motion" "servidor/BD no disponibles"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

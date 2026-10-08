@@ -161,6 +161,14 @@ else
   echo "       (unit cerraduras-warehouse-retention.timer ausente — ejecutar 'php bin/warehouse-retention.php' a mano)"
 fi
 
+echo "[5e/8] Detector de movimiento de cámaras (systemd — F88/RF-122)..."
+# F88: verificación física de presencia por diferencia de frames (local, sin cuota).
+if systemctl restart cerraduras-camera-motion 2>/dev/null; then
+  echo "       camera-motion: systemd (pid $(systemctl show -p MainPID --value cerraduras-camera-motion 2>/dev/null))"
+else
+  echo "       (unit cerraduras-camera-motion ausente — NO se lanza wrapper: evita duplicado)"
+fi
+
 sleep 2
 
 echo "Health checks:"

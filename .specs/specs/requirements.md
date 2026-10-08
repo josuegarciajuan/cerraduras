@@ -2027,3 +2027,68 @@ NOISE/hora; `warehouse-retention.php` no se ejecuta desde ningún timer/cron.
 - **RF-121.3**: Se añade **BLOCK 60** al runner con marcadores F87 y se actualizan los units
   `PresenceEvidenceTest`, `WarehouseRecordingDecisionTest` y `croquis-logic.test.js`.
 - **RF-121.4**: La UI del `/dashboard` de habitaciones no se toca.
+
+---
+
+# Fase 88: Presencia robusta del almacén por fusión de sensores (RF-122…RF-126)
+
+**Motivo** (2026-10-08): el radar 24G emite con la sala vacía un ciclo `move` → `presence` → `none`
+cada 1–3 min (`source=real`). F80 acepta el primer `PRESENT` al instante → visita + grabación; el
+tope F73 corta a 60 s y F87 lo marca `NOISE`, pero **el ciclo se repite continuamente** (visitas
+920–931 seguidas). El radar es la única señal y no es fiable. Se introduce un sistema de presencia
+por **fusión de sensores**: la presencia se confirma con **evidencia física** (movimiento de cámara
+o ciclo de puerta); el radar solo **mantiene** la ocupación.
+
+## RF-122: Worker de movimiento de cámaras (nuevo, local, sin cuota Tuya)
+
+- **RF-122.1**: `bin/camera-motion-worker.js` (Node) mantiene un `ffmpeg` por cámara habilitada del
+  almacén, leyendo el **restream RTSP de go2rtc** (`rtsp://127.0.0.1:8554/<stream>`) para compartir
+  la conexión con las cámaras, a baja resolución y en escala de grises.
+- **RF-122.2**: Detecta movimiento por diferencia de frames (umbral de píxel + % mínimo de píxeles
+  cambiados) con **histéresis** (K de N frames) y anti-rebote, y publica
+  `POST /almacen-api/motion {device_id}` al iniciar un episodio de movimiento.
+- **RF-122.3**: Se reconecta si `ffmpeg` muere; **nunca** registra la URL RTSP. Sin llamadas a Tuya.
+  Gestionado por systemd (`cerraduras-camera-motion.service`, `Restart=always`) y por
+  `start-all.sh`/`stop-all.sh`.
+- **RF-122.4**: Parámetros por `.env`: `CAMERA_MOTION_FPS`, `CAMERA_MOTION_SCALE`,
+  `CAMERA_MOTION_THRESHOLD`, `CAMERA_MOTION_MIN_PCT`, `CAMERA_MOTION_MIN_FRAMES`.
+
+## RF-123: Fusión de presencia (cámara + puerta + radar)
+
+- **RF-123.1**: Migración `0125`: `devices.last_motion_at DATETIME(3) NULL`.
+- **RF-123.2**: `POST /almacen-api/motion` valida un dispositivo `CAMERA` del almacén y actualiza
+  `last_motion_at`; `/almacen-api/cameras` y el bloque `live` lo exponen de forma **aditiva**.
+- **RF-123.3**: Un `PRESENT` de radar (`provider=TUYA`) en una sala `ALMACEN_BEBIDAS` solo se
+  **aplica** si hay evidencia física: movimiento de la cámara **INTERIOR** dentro de
+  `FUSION_MOTION_WINDOW_SECONDS` (def. **20**) **o** un evento de puerta dentro de
+  `FUSION_DOOR_WINDOW_SECONDS` (def. **90**). Si no, se audita con `discard_reason='uncorroborated'`
+  y **no** se aplica: no se crea visita ni grabación.
+- **RF-123.4**: `FUSION_INCLUDE_EXTERIOR` (def. `false`) permite que el movimiento de la cámara
+  EXTERIOR también corrobore. Si la sala no tiene cámara INTERIOR, solo la puerta corrobora (modo
+  degradado).
+- **RF-123.5**: `ABSENT` (`none`) siempre se aplica. Los eventos de puerta siguen alimentando al
+  motor de grabación como hasta ahora (F85/F86).
+- **RF-123.6**: **Fail-safe**: si no hay `last_motion_at` (worker caído), el radar aislado se
+  rechaza; un ciclo de puerta sigue confirmando (no se pierde una entrada real).
+
+## RF-124: Panel y observabilidad
+
+- **RF-124.1**: El croquis y `warehouse.occupied` reflejan la presencia fusionada; se mantiene
+  `presence_stale` (F87). Se expone `live.motion_active` (aditivo).
+- **RF-124.2**: `/almacen-api/cameras` incluye `last_motion_at` y `motion_active` por cámara.
+
+## RF-125: Diagnóstico y hardware
+
+- **RF-125.1**: `bin/presence-fusion-report.php` cruza `presence_events` con `last_motion_at` de un
+  periodo (solo lectura, sin cuota) para cuantificar fantasmas y validar umbrales.
+- **RF-125.2**: Documentar la revisión del **MC400D** (se atasca en `OPEN`; `door_stale`) y la
+  **recalibración del 24G** (`far_detection`/`sensitivity`/orientación).
+
+## RF-126: Sin cuota / no regresión
+
+- **RF-126.1**: Ningún cambio añade llamadas a la API REST de Tuya ni temporizadores de sondeo
+  (F74/RF-87 y F78/RF-101 intactos).
+- **RF-126.2**: La regresión completa (`bash api/bin/run-tests.sh`) termina con **0 failures**;
+  **BLOCK 61** nuevo con marcadores F88 y units (`SensorEventDecisionTest`, `IotSessionServiceTest`,
+  `camera-motion-worker.test.js`).
+- **RF-126.3**: La UI del `/dashboard` de habitaciones no se toca.
