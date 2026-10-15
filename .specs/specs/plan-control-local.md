@@ -159,6 +159,24 @@ resultados en §0.4.
 - **Restauración**: `camaraESP` re-subido y verificado. Pista: el `productKey` del switch en
   discovery (`keyuh3jxk9wu8ruj`) difiere del `product_id` de la nube (`odhgp5hewa1o7mdn`).
 
+## 0.6 Verificación del lado Tuya (2026-10-15)
+
+Consulta a la nube (solo lectura): los 3 devices existen, `online:true`, **mismo `owner_id`
+(273486377)**, `sub:false`, `gateway_id:""`:
+
+| device | category | product_id | `sub`/gateway | ip (nube) | local_key |
+|---|---|---|---|---|---|
+| 24G | hps | `5lld8pgsoynvctqa` | false / — | `93.176.170.12` | 16 chars |
+| MC400D | mcs (contact sensor) | `5etnzhfidcmm0ang` | false / — | **`93.176.173.242`** | 16 chars |
+| EAWCBT-J | dlq | `odhgp5hewa1o7mdn` | false / — | `93.176.170.12` | 16 chars |
+
+- **MC400D NO es Zigbee**: `sub=false`, sin gateway → WiFi autónomo. Su IP de nube es una **WAN
+  distinta** → está en **otra red/SSID** (por eso no aparece en `192.168.31.0/24`). El fallo actual
+  se atribuye a la **cuenta Tuya sin créditos** (entrega cloud), no a un problema de hardware.
+- **Punto abierto**: el `local_key` de la nube **no es aceptado** por el device en el handshake
+  local (§0.5), pese a la misma cuenta y sin re-emparejar. Hipótesis: clave devuelta no vigente /
+  no sincronizada, o **control local (LAN) deshabilitado** en el firmware.
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.
@@ -327,9 +345,9 @@ python3 -m venv .venv-local-tuya
 2. **Topología de red**: resuelta parcialmente — los devices están en `192.168.31.0/24` (router
    Xiaomi `Xiaomi_B04D`), alcanzables vía el vantage (§0.4/§0.5). Falta un **host Linux estable**
    en esa subred para el control (p. ej. dongle WiFi en `oficina`).
-3. **`local_key` / control local**: la clave de la nube **no la aceptan** los devices (§0.5).
-   ¿Re-emparejar en ventana controlada, verificar la cuenta/proyecto, o habilitar el control
-   local en el firmware?
+3. **`local_key` / control local**: la clave de la nube **no la aceptan** los devices (§0.5/§0.6).
+   Comprobar en la app Tuya si el dispositivo tiene el **control local/LAN habilitado**, si la
+   cuenta sin créditos afecta a la clave entregada, o re-emparejar en ventana controlada.
 4. ¿Presupuesto para un coordinador Zigbee de pruebas? (solo si P3 resultara Zigbee).
 5. **MC400D**: no aparece en la LAN del router Xiaomi (§0.4) → probable **Zigbee** u otra red/SSID;
    confirmar en consola Tuya (modelo/gateway).
