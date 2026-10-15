@@ -114,8 +114,31 @@ clientes del AP), y el MC400D probablemente es Zigbee (sin IP LAN).
   `/dev/ttyUSB0`).
 
 ### Vantage elegido
-Reflashear el ESP32-CAM como escáner (junta a `Xiaomi_B04D`, hace discovery Tuya + ping sweep y
-reporta por serie). Ejecución pendiente de confirmación.
+ESP32-CAM reflasheado como escáner (`docs/hardware/tuya-local-scan/TuyaScan.ino`) — **ejecutado**;
+resultados en §0.4.
+
+## 0.4 Fase 3 — Escáner ESP32-CAM: identificación local (2026-10-15)
+
+- **Sketch**: `docs/hardware/tuya-local-scan/TuyaScan.ino`, flasheado en la ESP32-CAM vía
+  `arduino-cli` (FQBN `esp32:esp32:esp32cam`, `/dev/ttyUSB0`). **100 % local, sin cuota Tuya**.
+  Envía el REQ_DEVINFO de Tuya en broadcast (UDP 6666/6667/7000) y escucha en los mismos puertos.
+- **Red del router Xiaomi**: subred **`192.168.31.0/24`**, gateway `192.168.31.1`; la ESP32-CAM
+  obtiene `192.168.31.112`.
+- **Resultado del discovery: 2 de 3 devices responden**, `version 3.4`, `encrypt:true`:
+
+| IP LAN | `gwId` | dispositivo | `productKey` (discovery) |
+|---|---|---|---|
+| `192.168.31.109` | `bf9a278e76e2c3f01ay0cs` | 24G-Presence V3 | `5lld8pgsoynvctqa` |
+| `192.168.31.249` | `bfc8730a715c56c8d1paby` | EAWCBT-J (luz) | `keyuh3jxk9wu8ruj` |
+
+- **MC400D NO responde** en `192.168.31.0/24`. Su `ip` de nube (`93.176.173.242`) era una **WAN
+  distinta** a la de los otros dos (`93.176.170.12`) → probablemente está en **otra red/SSID**
+  (o es Zigbee). Pendiente de localizar.
+- **Nota**: el `productKey` del switch en el discovery (`keyuh3jxk9wu8ruj`) difiere del `product_id`
+  de la nube (`odhgp5hewa1o7mdn`); manda el discovery.
+- **Decodificación**: `tinytuya.decrypt_udp(...)` con la `udpkey` universal (sin `local_key`).
+- **Restauración**: `camaraESP` re-subido y verificado en streaming (v2.6.4-qvga). Backup del sketch
+  remoto en `/home/oficina/Arduino/ESP32cam/ESP32cam.ino.bak-20261015-155437`.
 
 ## 1. Objetivo y criterio de éxito
 
@@ -127,9 +150,9 @@ reporta por serie). Ejecución pendiente de confirmación.
 
 | Modelo | kind | external_id | product_id | Tecnología | Notas |
 |---|---|---|---|---|---|
-| 24G-Presence Sensor V3 | PRESENCE | `bf9a278e76e2c3f01ay0cs` | `5lld8pgsoynvctqa` | WiFi | `far_detection`/sensibilidad ya calibrados |
-| MC400D | PROXIMITY (puerta) | `bf4c7e7d2cef28cea2nkwk` | `5etnzhfidcmm0ang` | **WiFi probable** (local_key + `sub=false`; la doc decía Zigbee) | sensor crítico (F86) |
-| EAWCBT-J | SWITCH | `bfc8730a715c56c8d1paby` | `odhgp5hewa1o7mdn` | WiFi | DP `switch`; Local Key documentada |
+| 24G-Presence Sensor V3 | PRESENCE | `bf9a278e76e2c3f01ay0cs` | `5lld8pgsoynvctqa` | WiFi | **IP LAN `192.168.31.109`**; v3.4; `far_detection`/sensibilidad ya calibrados |
+| MC400D | PROXIMITY (puerta) | `bf4c7e7d2cef28cea2nkwk` | `5etnzhfidcmm0ang` | **WiFi probable** (local_key + `sub=false`) | **no hallado** en `192.168.31.0/24` (WAN distinta) — sensor crítico (F86) |
+| EAWCBT-J | SWITCH | `bfc8730a715c56c8d1paby` | `odhgp5hewa1o7mdn` | WiFi | **IP LAN `192.168.31.249`**; v3.4; DP `switch` |
 
 Referencia de inventario completo: `docs/tuya-account-migration.md` §2.
 
@@ -303,3 +326,20 @@ los devices actuales.
 4. **P1** (24G) → **P2** (EAWCBT-J) → **P3** (MC400D, según rama).
 5. Rellenar §7 → emitir veredictos → recomendar el siguiente paso (diseño formal
    `requirements/design/contracts/tasks` o compra de hardware).
+
+## 12. Impacto en la arquitectura actual al saltar Tuya (a corregir en su fase)
+
+Cuando el control local sustituya a la nube, las siguientes piezas quedan **obsoletas o
+reformables**: se implementaron **solo para no gastar cuota de Tuya**, motivo que desaparece en local.
+
+- **Push (Message Service / Pulsar, F50)** y la regla **"sin polling a Tuya" (F74/RF-101/F78)**:
+  existían por la cuota. Con control local, la presencia se puede obtener por **polling local
+  continuo** o **escucha local**, sin cuota → candidatos a derogar/reescribir.
+  *Matiz*: el "no polling" seguirá aplicando a la **nube Tuya** mientras conviva con lo local;
+  el polling **local** es libre (aunque conviene moderarlo: límites del device/red).
+- **`TuyaSwitchGateway`** (on/off del switch): sustituir por un **gateway local** (protocolo 6668).
+- **Calibración de presencia**, **`battery-refresh`** y **`ping-all-devices`**: equivalentes locales.
+- **Obtención de `local_key`**: hoy vía nube; solo se necesita al **re-emparejar** (rota entonces);
+  en régimen normal, cero nube.
+
+Nada de esto se toca en la PoC: queda **documentado** para su fase.
