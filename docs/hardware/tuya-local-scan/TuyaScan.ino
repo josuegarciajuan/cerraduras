@@ -2,19 +2,13 @@
  * TuyaScan — escáner local de dispositivos Tuya (vantage point)
  *
  * PoC Plan L1 (.specs/specs/plan-control-local.md), Fase 3.
- * Se flashea en la ESP32-CAM de camaraESP (que ya está en la WiFi Xiaomi_B04D)
- * para descubrir dispositivos Tuya en su misma LAN. 100% local: NO usa la nube
- * Tuya ni consume cuota (solo UDP broadcast a 6666/6667/7000 y escucha en los
- * mismos puertos, igual que tinytuya).
+ * Flasheado en la ESP32-CAM de camaraESP (en la WiFi Xiaomi_B04D) para descubrir
+ * dispositivos Tuya en su misma LAN. 100% local: NO usa la nube Tuya ni cuota.
  *
- * - Toma las credenciales WiFi del NVS (namespace "camaraesp", claves
- *   wifi_ssid/wifi_pass) que ya usa el firmware camaraESP.
- * - Envía un REQ_DEVINFO Tuya (payload generado con tinytuya, 89 bytes) en
- *   broadcast (255.255.255.255 y broadcast de subred) y muestra las respuestas
- *   en crudo por serie; se decodifican luego con tinytuya + local_key.
- *
- * Uso: leer el puerto serie a 115200 (arduino-cli monitor o cat).
- * Restaurar camaraESP después con scripts/deploy_camara.sh.
+ * - Credenciales WiFi del NVS (namespace "camaraesp", claves wifi_ssid/wifi_pass).
+ * - Envía REQ_DEVINFO (payload generado con tinytuya, 89 bytes) en broadcast
+ *   (255.255.255.255 y broadcast de subred) a 6666/6667/7000 y escucha en
+ *   6666/6667/7000/6668. Decodificar luego con tinytuya.decrypt_udp().
  */
 
 #include <WiFi.h>
@@ -39,9 +33,13 @@ static const uint8_t TUYA_REQ[] = {
 };
 static const size_t TUYA_REQ_LEN = sizeof(TUYA_REQ);
 
-WiFiUDP udp6666, udp6667, udp7000;
-WiFiUDP *socks[3] = { &udp6666, &udp6667, &udp7000 };
-const uint16_t SOCKS_PORTS[3] = { 6666, 6667, 7000 };
+// Ventana de escaneo ampliada (Plan A: localizar MC400D).
+static const unsigned long SCAN_MS   = 150000UL;
+static const unsigned long BCAST_MS  = 5000UL;
+
+WiFiUDP udp6666, udp6667, udp7000, udp6668;
+WiFiUDP *socks[4] = { &udp6666, &udp6667, &udp7000, &udp6668 };
+const uint16_t SOCKS_PORTS[4] = { 6666, 6667, 7000, 6668 };
 bool scanStarted = false;
 unsigned long scanStart = 0;
 unsigned long lastBcast = 0;
@@ -62,7 +60,7 @@ static void hexdump(const uint8_t *d, int n) {
 
 static void broadcastDiscovery() {
   IPAddress bcast = subnetBroadcast();
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     WiFiUDP *u = socks[i];
     uint16_t port = SOCKS_PORTS[i];
     u->beginPacket(IPAddress(255, 255, 255, 255), port);
@@ -78,7 +76,7 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== TUYA LOCAL SCANNER (PoC L1) ===");
+  Serial.println("=== TUYA LOCAL SCANNER v2 (Plan A) ===");
 
   Preferences p;
   p.begin(NVS_NS, true);
@@ -100,24 +98,20 @@ void setup() {
     WiFi.localIP().toString().c_str(), WiFi.subnetMask().toString().c_str(),
     WiFi.gatewayIP().toString().c_str(), subnetBroadcast().toString().c_str(), WiFi.RSSI());
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     if (socks[i]->begin(SOCKS_PORTS[i])) Serial.printf("[UDP] bind %u OK\n", SOCKS_PORTS[i]);
     else Serial.printf("[UDP] bind %u FALLO\n", SOCKS_PORTS[i]);
   }
 
-  for (int r = 0; r < 3; r++) {
-    broadcastDiscovery();
-    Serial.printf("[TX] discovery round %d\n", r + 1);
-    delay(1500);
-  }
-  Serial.println("[WAIT] escuchando respuestas 90s...");
+  for (int r = 0; r < 3; r++) { broadcastDiscovery(); Serial.printf("[TX] round %d\n", r + 1); delay(1500); }
+  Serial.println("[WAIT] escuchando respuestas 150s...");
   scanStart = millis();
   scanStarted = true;
 }
 
 void loop() {
   if (scanStarted) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
       WiFiUDP *u = socks[i];
       int sz = u->parsePacket();
       if (sz > 0) {
@@ -125,13 +119,12 @@ void loop() {
         uint16_t rp = u->remotePort();
         uint8_t buf[512];
         int n = u->read(buf, sizeof(buf));
-        Serial.printf("[RX] from=%s:%u on=%u len=%d hex=",
-          r.toString().c_str(), rp, SOCKS_PORTS[i], n);
+        Serial.printf("[RX] from=%s:%u on=%u len=%d hex=", r.toString().c_str(), rp, SOCKS_PORTS[i], n);
         hexdump(buf, n);
         Serial.println();
       }
     }
-    if (millis() - scanStart < 90000 && millis() - lastBcast > 10000) {
+    if (millis() - scanStart < SCAN_MS && millis() - lastBcast > BCAST_MS) {
       lastBcast = millis();
       broadcastDiscovery();
       Serial.println("[TX] re-broadcast");

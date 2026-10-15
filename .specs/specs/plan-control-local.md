@@ -140,6 +140,25 @@ resultados en §0.4.
 - **Restauración**: `camaraESP` re-subido y verificado en streaming (v2.6.4-qvga). Backup del sketch
   remoto en `/home/oficina/Arduino/ESP32cam/ESP32cam.ino.bak-20261015-155437`.
 
+## 0.5 Fase B1 — Prueba de control local vía puente TCP↔serie (2026-10-15)
+
+- **Puente**: `docs/hardware/tuya-local-scan/TuyaBridge.ino` (ESP32-CAM) +
+  `docs/hardware/tuya-local-scan/tuya_bridge_client.py` (host). El ESP32 une a `Xiaomi_B04D` y
+  conecta **TCP al device:6668**; el host relaya con `tinytuya` (que conecta a `127.0.0.1:6668`).
+  **100 % local, cero cuota.**
+- **Integridad del puente verificada**: una petición HTTP a `192.168.31.1:80` (router Xiaomi) a
+  través del ESP devuelve `HTTP/1.1 200 OK` (nginx) con cabeceras íntegras.
+- **Alcance TCP**: ambos devices (24G `.109`, switch `.249`) **aceptan TCP 6668** localmente.
+- **Handshake de control (v3.4)**: se envía `SESS_KEY_NEG_START`; **el device no responde**
+  (`session key negotiation failed on step 1` → **error 914**). Probado también con v3.5 (914) y
+  v3.3/v3.1 (timeout) y con 3 s extra de escucha: **sin bytes de vuelta**.
+- **Conclusión**: el **control local está bloqueado por la `local_key`**: la clave obtenida de la
+  nube **no es aceptada** por ninguno de los dos devices (posible **clave obsoleta** — dispositivo
+  re-emparejado a otra cuenta — o **control local deshabilitado** en el firmware). La
+  **conectividad local queda probada**; falta una clave válida para completar el control.
+- **Restauración**: `camaraESP` re-subido y verificado. Pista: el `productKey` del switch en
+  discovery (`keyuh3jxk9wu8ruj`) difiere del `product_id` de la nube (`odhgp5hewa1o7mdn`).
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.
@@ -305,12 +324,15 @@ python3 -m venv .venv-local-tuya
 ## 10. Preguntas abiertas
 
 1. ¿El pago a Tuya es único o anual? (define urgencia).
-2. **Topología de red**: confirmado que los devices **no** están en la LAN cableada de
-   `oficina` (§0.2). Falta identificar la **VLAN/subred de la WiFi del hotel** y disponer de
-   un host de pruebas en ella.
-3. MC400D: `local_key` + `sub=false` → **WiFi propio** (§0.3), no sub-device Zigbee. Confirmar
-   visualmente en consola Tuya (modelo/categoría).
+2. **Topología de red**: resuelta parcialmente — los devices están en `192.168.31.0/24` (router
+   Xiaomi `Xiaomi_B04D`), alcanzables vía el vantage (§0.4/§0.5). Falta un **host Linux estable**
+   en esa subred para el control (p. ej. dongle WiFi en `oficina`).
+3. **`local_key` / control local**: la clave de la nube **no la aceptan** los devices (§0.5).
+   ¿Re-emparejar en ventana controlada, verificar la cuenta/proyecto, o habilitar el control
+   local en el firmware?
 4. ¿Presupuesto para un coordinador Zigbee de pruebas? (solo si P3 resultara Zigbee).
+5. **MC400D**: no aparece en la LAN del router Xiaomi (§0.4) → probable **Zigbee** u otra red/SSID;
+   confirmar en consola Tuya (modelo/gateway).
 
 **Resueltas:** host de pruebas = nodo Tailscale `oficina`; escritura EAWCBT-J autorizada con
 los devices actuales.
