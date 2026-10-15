@@ -14,7 +14,7 @@
 | **DP code on/off** | `switch` (boolean: `true` = ON, `false` = OFF) |
 | **Product ID** | `odhgp5hewa1o7mdn` |
 | **Categoría** | `dlq` |
-| **IP local** | `93.176.170.12` |
+| **IP** | `93.176.170.12` (**WAN del hotel, NO IP LAN**) — la IP LAN real debe obtenerse de la consola Smart Life / `tuya-discover.php`. Ver `.specs/specs/plan-control-local.md` §0.1. |
 | **Local Key** | `qhvE^7.4XW25}]i8` |
 | **Voltaje entrada** | 220V AC |
 | **Voltaje salida** | 220V AC |
