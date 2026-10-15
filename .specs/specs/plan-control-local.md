@@ -81,6 +81,42 @@ clientes del AP), y el MC400D probablemente es Zigbee (sin IP LAN).
 > Nota: el *subnet router* de `oficina` anuncia `172.16.51.0/24`, pero esta LAN **no** es la
 > de los devices; el control local exigirá un host en la red WiFi correspondiente.
 
+## 0.3 Identificación — Fase 1 (2026-10-15)
+
+### Router de los devices
+- Los devices cuelgan de un **router Xiaomi** (SSID **`Xiaomi_B04D`**) con **doble NAT**: su WAN
+  está en la red cableada de `oficina` (`172.16.51.0/24`) y su LAN es otra subred (típica Xiaomi
+  `192.168.31.0/24`), por lo que **`oficina` no alcanza a los devices** (confirma el 0 de §0.2).
+- Candidato a WAN del router Xiaomi en la LAN de oficina: MAC `cc:d8:43` (Xiaomi) en
+  `172.16.51.138` y `.140` (a confirmar). El TP-Link `172.16.51.130` con login es **otro** router
+  de la red, no el de los devices.
+
+### Ventana de nube única (ejecutada)
+| device | product_id | category | online | `ip` (nube) | local_key |
+|---|---|---|---|---|---|
+| 24G | `5lld8pgsoynvctqa` | hps | true | `93.176.170.12` (WAN) | 16 chars ✓ |
+| MC400D | `5etnzhfidcmm0ang` | mcs | true | `93.176.173.242` (WAN) | 16 chars ✓ |
+| EAWCBT-J | `odhgp5hewa1o7mdn` | dlq | true | `93.176.170.12` (WAN) | 16 chars ✓ |
+
+- El campo `ip` de Tuya es la **IP WAN, no la LAN** → no sirve para localizarlos.
+- **MC400D: `sub=false` + `local_key`** → **NO es un sub-device Zigbee**; apunta a **WiFi propio**
+  (contradice `tuya-account-migration.md` §2). Queda pendiente la confirmación visual en consola.
+- Claves guardadas fuera de git: `api/run/local-tuya-devices.json` (modo 600).
+- 4 llamadas realizadas (1 token + 3 detalle); el contador de la app (`api/run/tuya-quota.json`) **no
+  las contabiliza** (solo cuenta las de `tuyaPresenceApi`).
+
+### ESP32-CAM (`camaraESP`) como vantage
+- Físicamente en `oficina` como `/dev/ttyUSB0` (adaptador FTDI), unido a `Xiaomi_B04D`.
+- Firmware `esp32cam_ip.ino` v2.6.4 push-only: sin HTTP entrante, sin mDNS, **no imprime su IP LAN**
+  por serie (reset verificado: `POWERON_RESET` → conecta con credenciales guardadas).
+- **No sirve como host tal cual** → se **reflasheará como escáner** (Paso 3), con backup y
+  restauración vía `camaraESP/scripts/deploy_camara.sh` (`arduino-cli`, `esp32:esp32:esp32cam`,
+  `/dev/ttyUSB0`).
+
+### Vantage elegido
+Reflashear el ESP32-CAM como escáner (junta a `Xiaomi_B04D`, hace discovery Tuya + ping sweep y
+reporta por serie). Ejecución pendiente de confirmación.
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.
@@ -92,7 +128,7 @@ clientes del AP), y el MC400D probablemente es Zigbee (sin IP LAN).
 | Modelo | kind | external_id | product_id | Tecnología | Notas |
 |---|---|---|---|---|---|
 | 24G-Presence Sensor V3 | PRESENCE | `bf9a278e76e2c3f01ay0cs` | `5lld8pgsoynvctqa` | WiFi | `far_detection`/sensibilidad ya calibrados |
-| MC400D | PROXIMITY (puerta) | `bf4c7e7d2cef28cea2nkwk` | — | **A CONFIRMAR** (plan→Zigbee; código→WiFi) | sensor crítico (F86) |
+| MC400D | PROXIMITY (puerta) | `bf4c7e7d2cef28cea2nkwk` | `5etnzhfidcmm0ang` | **WiFi probable** (local_key + `sub=false`; la doc decía Zigbee) | sensor crítico (F86) |
 | EAWCBT-J | SWITCH | `bfc8730a715c56c8d1paby` | `odhgp5hewa1o7mdn` | WiFi | DP `switch`; Local Key documentada |
 
 Referencia de inventario completo: `docs/tuya-account-migration.md` §2.
@@ -249,7 +285,8 @@ python3 -m venv .venv-local-tuya
 2. **Topología de red**: confirmado que los devices **no** están en la LAN cableada de
    `oficina` (§0.2). Falta identificar la **VLAN/subred de la WiFi del hotel** y disponer de
    un host de pruebas en ella.
-3. ¿El MC400D es WiFi o Zigbee? → **confirmar en consola Tuya**.
+3. MC400D: `local_key` + `sub=false` → **WiFi propio** (§0.3), no sub-device Zigbee. Confirmar
+   visualmente en consola Tuya (modelo/categoría).
 4. ¿Presupuesto para un coordinador Zigbee de pruebas? (solo si P3 resultara Zigbee).
 
 **Resueltas:** host de pruebas = nodo Tailscale `oficina`; escritura EAWCBT-J autorizada con
