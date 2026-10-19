@@ -93,21 +93,21 @@ el operador.
 - Pulso del proveedor **bloqueante** (~800 ms).
 - No debe flashearse en la placa prototipo antigua.
 
-## Siguiente paso
+## Siguiente paso — hecho (F89)
 
-Crear el sketch definitivo usando como base:
-
-```text
-docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino
-```
-
-y como referencia de hardware nuevo:
+Sketch definitivo creado:
 
 ```text
-docs/esp32-qr-reader/r35d-basic-test.ino
+docs/esp32-qr-reader/scanner-relay-prod-r35d.ino
 ```
 
-El sketch definitivo debe conservar la lógica de producción (WiFiManager/NVS,
-credenciales de fábrica, TLS, `/api/v1/qr/validate`, heartbeat, command-queue,
-identify, watchdog, announce) y sustituir el lector GM65 USB Host y el relé
-GPIO16 activo-bajo por el R35D-B RS-485 y el relé GPIO15 activo-alto.
+Parte de `scanner-relay-prod-12v-robusto-lowpower.ino` y conserva la lógica de
+producción (WiFiManager/NVS, credenciales de fábrica, TLS, `/api/v1/qr/validate`,
+heartbeat, command-queue, identify, watchdog, announce). Sustituye el lector
+GM65 USB Host por el R35D-B RS-485 y el relé GPIO16 activo-bajo por GPIO15
+activo-alto con la secuencia del proveedor.
+
+- Compilación: `esp32:esp32:esp32s3usbotg`.
+- Unit estático: `php api/tests/Unit/R35dProductionSketchTest.php`.
+- Pendiente: validación física del ciclo productivo en la placa nueva (QR válido,
+  QR inválido, LEDs, GPIO9, heartbeat/command-queue, WiFi/TLS).

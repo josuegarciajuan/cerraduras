@@ -2092,3 +2092,75 @@ o ciclo de puerta); el radar solo **mantiene** la ocupación.
   **BLOCK 61** nuevo con marcadores F88 y units (`SensorEventDecisionTest`, `IotSessionServiceTest`,
   `camera-motion-worker.test.js`).
 - **RF-126.3**: La UI del `/dashboard` de habitaciones no se toca.
+
+---
+
+# Fase 89: Firmware productivo para la base nueva R35D-B (RF-127…RF-132)
+
+**Motivo** (2026-10-19): la base definitiva ya está validada a nivel de hardware
+(`r35d-basic-test.ino`), pero el firmware productivo sigue siendo el del prototipo
+(GM65 por USB Host, relé GPIO16 activo-bajo, pulsador GPIO4). Se crea el sketch
+definitivo partiendo del productivo y cambiando **solo** el hardware.
+
+## RF-127: Base y continuidad productiva
+
+- **RF-127.1**: El sketch nuevo se crea en
+  `docs/esp32-qr-reader/scanner-relay-prod-r35d.ino` partiendo de
+  `scanner-relay-prod-12v-robusto-lowpower.ino`; no es una reescritura desde cero.
+- **RF-127.2**: Conserva WiFiManager/NVS, wipe de WiFi por build nuevo, credencial
+  individual `device-cred`, TLS con CA embebida, NTP, `/api/v1/qr/validate`,
+  health, heartbeat, command-queue (`check`), identify, announce de fábrica,
+  watchdog de 60 s, mitigaciones de brownout, prioridad del QR y keep-alive.
+- **RF-127.3**: No cambia ningún contrato HTTP ni endpoint existente.
+
+## RF-128: Adaptación al hardware nuevo
+
+- **RF-128.1**: Elimina el host USB y sus callbacks. No incluye ni inicializa la
+  librería del host USB.
+- **RF-128.2**: Lee el R35D-B por UART1 a **9600 8N1**, RX=GPIO18, TX=GPIO17,
+  DIR=GPIO7 (LOW=lectura, HIGH=escritura), texto ASCII plano + CRLF. Inicializa
+  `Serial1` en `setup()`, después de `initVariant()`, y amplía el buffer RX para
+  un JWT de ~200 bytes.
+- **RF-128.3**: La cerradura usa GPIO15 **activo-alto** y la secuencia validada
+  del proveedor: 250 ms HIGH + 125×(1 ms ON / 1 ms OFF) + 30×(5 ms ON / 5 ms OFF)
+  + LOW final. No reutiliza `relayOn`/`relayOff` ni el reposo tri-state.
+- **RF-128.4**: La secuencia no bloquea `loop()`/TLS: corre en una tarea FreeRTOS
+  dedicada, replica los tiempos y termina siempre en LOW.
+- **RF-128.5**: LEDs externos rojo GPIO1 y verde GPIO2. Por defecto rojo ON,
+  verde OFF; al abrir, verde ON y rojo OFF durante 3 s y después vuelve al estado
+  cerrado. El LED verde integrado (GPIO15) no se usa como indicador.
+- **RF-128.6**: El pulsador de identify y el reset de provisioning pasan a GPIO9
+  (`INPUT_PULLUP`, LOW = pulsado). Mantenerlo al arrancar borra solo las
+  credenciales WiFi y reabre el portal, como GPIO4 en el prototipo.
+- **RF-128.7**: Los códigos de diagnóstico de arranque (1 normal, 2 cuelgue SW,
+  3 brownout) usan el LED rojo externo y vuelven a rojo fijo; no usan el verde.
+
+## RF-129: Lectura QR, autoridad de la API y antirrebote
+
+- **RF-129.1**: El pre-filtro del R35D-B descarta vacío, no imprimible y longitud
+  mínima, pero **no** exige dos puntos ni un formato JWT concreto. El texto puede
+  ser un JWT de ~200 bytes.
+- **RF-129.2**: No se hardcodea ningún token de prueba. Todo texto válido se envía
+  a `/api/v1/qr/validate` y la cerradura solo se acciona con **HTTP 200**.
+- **RF-129.3**: Se mantiene un cooldown/debounce de 2 s para el mismo token.
+- **RF-129.4**: Las lecturas descartadas se reportan de forma diferida a
+  `/api/v1/devices/qr-rejected` con `len`/`dots`/hex y `fw="r35d-prod"`.
+
+## RF-130: Operación segura y no regresión
+
+- **RF-130.1**: La red no se usa con la cerradura activa: heartbeat periódico,
+  SCANNER, announce e identify se difieren mientras `relayPulsing`.
+- **RF-130.2**: El firmware no introduce polling ni llamadas a la API REST de
+  Tuya (F74/RF-87 y F78/RF-101 intactos).
+- **RF-130.3**: El sketch del prototipo no se modifica ni se flashea en la base
+  nueva; el sketch nuevo no se flashea en la base antigua.
+
+## RF-131: Verificación
+
+- **RF-131.1**: Compila para `esp32:esp32:esp32s3usbotg` sin errores.
+- **RF-131.2**: Unit estático `R35dProductionSketchTest.php` que verifica pines,
+  protocolo, secuencia, LEDs, botón, endpoints, ausencia de USB Host, ausencia
+  del token local y ausencia de polling Tuya.
+- **RF-131.3**: Regresión completa `bash api/bin/run-tests.sh` con 0 failures.
+- **RF-131.4**: Validación física en la placa nueva: QR válido abre, QR inválido
+  no abre, LEDs correctos, identify GPIO9, heartbeat/command-queue, WiFi/TLS.

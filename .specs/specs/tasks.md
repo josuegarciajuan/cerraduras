@@ -4355,3 +4355,68 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F88-04 diagnóstico
 - [x] TSK-F88-05 hardware
 - [x] TSK-F88-06 runner BLOCK 61 + AGENTS + regresión + verificación en vivo
+
+---
+
+# Fase 89 — Firmware productivo R35D-B (RF-127…RF-131)
+
+## TSK-F89-01: Crear el sketch productivo desde el base
+- **Trazabilidad**: RF-127.
+- **Archivo(s)**: `docs/esp32-qr-reader/scanner-relay-prod-r35d.ino`.
+- **Pasos**:
+  - [x] Copiar `scanner-relay-prod-12v-robusto-lowpower.ino` como base.
+  - [x] Conservar WiFiManager/NVS, `device-cred`, TLS/CA, NTP, health, heartbeat,
+        command-queue, identify, announce, watchdog, brownout, prioridad QR y
+        keep-alive.
+  - [x] No cambiar endpoints ni contratos HTTP.
+
+## TSK-F89-02: Sustituir el lector USB por el R35D-B
+- **Trazabilidad**: RF-128.1, RF-128.2, RF-129.
+- **Archivo(s)**: `scanner-relay-prod-r35d.ino`.
+- **Pasos**:
+  - [x] Eliminar el host USB y sus callbacks.
+  - [x] `Serial1.begin(9600, SERIAL_8N1, 18, 17)` en `setup()`, DIR=7 LOW,
+        `setRxBufferSize(1024)`.
+  - [x] Parser ASCII + CRLF, sin filtro de puntos, `QR_MIN_LEN=8`,
+        cooldown de 2 s del mismo token.
+  - [x] Enviar a `/api/v1/qr/validate`; abrir solo con HTTP 200.
+  - [x] Sin token hardcodeado; telemetría a `/api/v1/devices/qr-rejected`.
+
+## TSK-F89-03: Cerradura GPIO15 activo-alto no bloqueante
+- **Trazabilidad**: RF-128.3, RF-128.4.
+- **Archivo(s)**: `scanner-relay-prod-r35d.ino`.
+- **Pasos**:
+  - [x] Reposo LOW desde la primera línea de `setup()`.
+  - [x] Secuencia del proveedor en tarea FreeRTOS dedicada.
+  - [x] `checkLock` de 5 ms sin solaparse con la apertura.
+  - [x] Serializar red mientras `relayPulsing`.
+
+## TSK-F89-04: LEDs externos y pulsador GPIO9
+- **Trazabilidad**: RF-128.5…RF-128.7.
+- **Archivo(s)**: `scanner-relay-prod-r35d.ino`.
+- **Pasos**:
+  - [x] Rojo GPIO1 / verde GPIO2; reposo rojo ON, apertura verde 3 s.
+  - [x] Diagnóstico de arranque por LED rojo, sin usar el verde.
+  - [x] Identify + factory reset de WiFi en GPIO9 (`INPUT_PULLUP`).
+
+## TSK-F89-05: Tests y documentación
+- **Trazabilidad**: RF-131.
+- **Archivo(s)**: `api/tests/Unit/R35dProductionSketchTest.php`,
+  `docs/hardware/esp32-s3-r35d-pinmap.md`,
+  `docs/esp32-qr-reader/r35d-basic-test.md`,
+  `.specs/specs/{requirements,design,contracts}.md`.
+- **Pasos**:
+  - [x] Unit estático del sketch.
+  - [x] Actualizar pinmap, informe de pruebas y specs.
+  - [x] Compilar `esp32:esp32:esp32s3usbotg`.
+  - [ ] Regresión completa `bash api/bin/run-tests.sh` (entorno local).
+  - [ ] Validación física en la placa nueva (operador).
+
+## Estado de ejecución (F89)
+
+- [x] TSK-F89-01 sketch base + producción conservada
+- [x] TSK-F89-02 R35D-B UART1
+- [x] TSK-F89-03 cerradura GPIO15
+- [x] TSK-F89-04 LEDs + GPIO9
+- [x] TSK-F89-05 unit estático + docs + compilación
+- [ ] Regresión completa y prueba física en la placa

@@ -2815,3 +2815,82 @@ Columna idempotente, sin backfill.
 
 - El worker de movimiento y `POST /almacen-api/motion` son locales; no tocan Tuya.
 - Verificación: `bash bin/run-tests.sh` con **0 failures**; **BLOCK 61** nuevo con marcadores F88.
+
+---
+
+# Fase 89: Contrato interno del firmware productivo R35D-B
+
+> **No hay cambios de contrato HTTP.** Se reutilizan exactamente los endpoints
+> de F1/F33/F39/F40 documentados arriba. Esta sección fija el contrato de
+> hardware/operación del sketch `scanner-relay-prod-r35d.ino`.
+
+## §F89.1 Pines y niveles
+
+| Recurso | GPIO | Contrato |
+|---|---|---|
+| UART1 RX — R35D-B | 18 | Entrada, 9600 8N1 |
+| UART1 TX — R35D-B | 17 | Salida, no se usa en operación normal |
+| DIR RS-485 | 7 | Salida: **LOW = lectura**, HIGH = escritura |
+| Cerradura | 15 | Salida **activo-alto**: HIGH = activado, LOW = reposo |
+| LED rojo externo | 1 | Salida; ON = cerrado |
+| LED verde externo | 2 | Salida; ON = apertura (3 s) |
+| Pulsador | 9 | Entrada `INPUT_PULLUP`; LOW = pulsado |
+
+- El LED verde integrado de la placa está en GPIO15 (macro `LED_GREEN` del
+  variant) y **no** es el indicador de apertura: parpadea con la cerradura.
+- `Serial1` se inicializa en `setup()`, después de `initVariant()`. El sketch no
+  habilita el host USB ni reutiliza GPIO17/18 como control USB.
+
+## §F89.2 Protocolo del lector
+
+- Texto ASCII imprimible terminado en **CRLF** (`0D 0A`). **No es MODBUS.**
+- El firmware cierra tramas por `\n` o por silencio de 120 ms, recorta CR/LF y
+  rechaza bytes no imprimibles. `QR_MIN_LEN = 8`; **no** exige dos puntos.
+- El texto se envía tal cual a `POST /api/v1/qr/validate`:
+  ```json
+  {"qr_text":"<texto leído>","device_id":"<chipId>"}
+  ```
+  Solo HTTP 200 inicia la apertura. No hay token hardcodeado.
+- Mismo token: ignorado durante 2000 ms.
+
+## §F89.3 Secuencia de cerradura
+
+```text
+GPIO15 HIGH 250 ms
+125 × (HIGH 1 ms / LOW 1 ms)
+30  × (HIGH 5 ms / LOW 5 ms)
+GPIO15 LOW (reposo)
+```
+
+- Se ejecuta en una tarea FreeRTOS dedicada; no bloquea `loop()` ni TLS.
+- `checkLock` (comando `check`) hace un pulso de 5 ms HIGH y no se solapa con
+  una apertura.
+
+## §F89.4 LEDs y pulsador
+
+- Reposo: rojo ON, verde OFF.
+- Apertura: rojo OFF, verde ON durante `OPEN_LED_MS` (3000); después vuelve a
+  reposo.
+- Diagnóstico de arranque por parpadeos del **rojo** (1 normal, 2 cuelgue SW,
+  3 brownout), restaurando rojo fijo.
+- GPIO9: identify en runtime; mantenido al arrancar ejecuta
+  `factoryResetProvisioning()` (solo WiFi) y reinicia.
+
+## §F89.5 Diagnóstico de rechazos
+
+`POST /api/v1/devices/qr-rejected` conserva el cuerpo de FIX #1 y añade
+`"fw":"r35d-prod"`:
+
+```json
+{"external_id":"<chipId>","len":12,"dots":0,
+ "hex_head":"...","hex_tail":"...","fw":"r35d-prod"}
+```
+
+El endpoint lo acepta sin cambios (campo aditivo).
+
+## §F89.6 Verificación
+
+- Compilación: `arduino-cli compile --fqbn esp32:esp32:esp32s3usbotg`.
+- Unit: `php api/tests/Unit/R35dProductionSketchTest.php`.
+- Regresión: `cd api && bash bin/run-tests.sh` con 0 failures.
+- Sin polling Tuya (F74/RF-87 y F78/RF-101 intactos).

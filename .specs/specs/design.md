@@ -5127,5 +5127,66 @@ Detalles de diseño:
   prueba, rechazo de QR incorrecto/ruido, apertura con la secuencia del proveedor
   en GPIO15 y LEDs rojo/verde. Informe:
   [`docs/esp32-qr-reader/r35d-basic-test.md`](../../docs/esp32-qr-reader/r35d-basic-test.md).
-- La migración del firmware productivo queda **pendiente**; este anexo solo fija
-  el hardware definitivo de la base nueva.
+- **F89 (2026-10-19)**: firmware productivo creado en
+  [`scanner-relay-prod-r35d.ino`](../../docs/esp32-qr-reader/scanner-relay-prod-r35d.ino),
+  partiendo de `scanner-relay-prod-12v-robusto-lowpower.ino`. Compila para
+  `esp32:esp32:esp32s3usbotg`. La migración de hardware queda implementada; la
+  validación física queda como checklist del operador.
+
+## A.1 Diseño del firmware productivo R35D-B (F89)
+
+### A.1.1 Lector R35D-B
+
+- La UART1 se inicializa en `setup()` (después de `initVariant()`) con
+  `Serial1.begin(9600, SERIAL_8N1, 18, 17)` y `Serial1.setRxBufferSize(1024)`
+  para absorber un JWT de ~200 B mientras `loop()` está en TLS.
+- GPIO7 (DIR) queda en **LOW** en operación normal. No se envían comandos al
+  lector: solo se lee. El formato es ASCII imprimible + CRLF; no es MODBUS.
+- El parser cierra la trama con `\n` o por silencio (`R35D_GAP_MS=120`). Recorta
+  CR/LF/espacios y un NUL residual de arranque. Rechaza bytes no imprimibles y
+  `len < QR_MIN_LEN` (8). **No** exige dos puntos: el backend valida el token.
+- El mismo token se ignora durante `SAME_TOKEN_COOLDOWN_MS` (2000). Si ya hay un
+  QR pendiente, la nueva lectura se descarta para no pisar la prioridad del QR.
+
+### A.1.2 Cerradura GPIO15 activo-alto
+
+- Reposo: `OUTPUT` + `LOW` desde la primera línea de `setup()`.
+- Apertura (solo tras HTTP 200): tarea FreeRTOS `lock-seq` en el núcleo 0,
+  prioridad 2, notificada desde `loop()`. Secuencia:
+  - 250 ms HIGH;
+  - 125 × (1 ms HIGH / 1 ms LOW);
+  - 30 × (5 ms HIGH / 5 ms LOW);
+  - LOW final.
+- `relayPulsing`/`lockSequenceBusy` serializan la red con la bobina. Los LEDs
+  verdes se encienden al iniciar la apertura y se apagan a los 3 s.
+- `checkLock()` (command-queue) usa un pulso de 5 ms HIGH y se omite si hay una
+  apertura en curso.
+
+### A.1.3 LEDs y pulsador
+
+- `LED_RED_PIN=1`, `LED_GREEN_PIN=2`. `setLockedLeds()` = rojo ON, verde OFF;
+  `setOpenLeds()` = rojo OFF, verde ON. El verde integrado de GPIO15 pertenece a
+  la cerradura y se ignora como indicador.
+- El diagnóstico de arranque (1/2/3) parpadea el **rojo** y restaura rojo fijo.
+  La conexión WiFi no enciende el verde.
+- `IDENTIFY_PIN=9` con `INPUT_PULLUP`: identify en runtime y factory reset de
+  WiFi si se mantiene al arrancar.
+
+### A.1.4 Producción conservada
+
+- Se mantienen sin cambios de contrato: `/api/v1/qr/validate`, `/api/v1/health`,
+  `/dashboard-api/device-heartbeat`, `/dashboard-api/pending-command`,
+  `/dashboard-api/command-result`, `/api/v1/devices/identify`,
+  `/api/v1/devices/qr-rejected` y `/api/v1/factory-devices/announce`.
+- WiFiManager/NVS, wipe por build, `device-cred`, TLS+CA, NTP, watchdog de 60 s,
+  mitigaciones de brownout, keep-alive y announce conservan la lógica del sketch
+  base. No hay polling de Tuya.
+
+### A.1.5 Verificación
+
+- Compilación: `arduino-cli compile --fqbn esp32:esp32:esp32s3usbotg`.
+- Unit estático: `php api/tests/Unit/R35dProductionSketchTest.php`.
+- Regresión: `cd api && bash bin/run-tests.sh`.
+- Prueba física pendiente del operador: QR válido abre; QR inválido no abre;
+  LEDs rojo/verde correctos; identify GPIO9; heartbeat/command-queue; WiFi/TLS.
+  Monitor 115200 con DTR/RTS off.
