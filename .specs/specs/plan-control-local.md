@@ -194,6 +194,22 @@ Consulta a la nube (solo lectura): los 3 devices existen, `online:true`, **mismo
   en la misma WiFi**; si la app tampoco controla en local, es **NO-GO del protocolo estándar**.
 - **MC400D**: WiFi autónomo en **otra WAN/red** (`93.176.173.242`), fuera de `192.168.31.0/24`.
 
+## 0.8 D1 — Segundo cliente independiente (`tuyapi`) vía túnel (2026-10-19)
+
+- **Infra**: ESP32-CAM (`ttyUSB0`, FTDI `A5069RR4`) como puente TCP; relé Python temporal en
+  `oficina` (`127.0.0.1:16668`) + túnel SSH al VPS; `tuyapi` (Node) en `/tmp` del VPS. **Sin instalar
+  nada en `oficina`**; el **otro ESP32** (`ttyACM0`, con `serial-monitor`) **no se tocó**; `camaraESP`
+  restaurado.
+- **v3.4**: el device **cierra la conexión TCP** al recibir `SESS_KEY_NEG_START`. (Los «20 bytes» que
+  veía `tuyapi` eran el texto `TCP_CLOSED/WAIT` del **ESP** colándose por el serie, no del device.)
+- **v3.3 / v3.1**: el device **mantiene la conexión pero no responde** al `DP_QUERY`.
+- **Conclusión**: **dos clientes independientes** (`tinytuya` y `tuyapi`) fallan igual → el device
+  **no acepta el control local estándar** con esta `local_key`. Hipótesis: **control local (LAN)
+  deshabilitado** o **clave/producto desincronizados** (el `productKey` del switch en discovery ≠
+  `product_id` de nube).
+- **Nota**: la carga alta observada en `oficina` era del **pipeline de vídeo del usuario**
+  (`render_worker.py` + ffmpeg), **no** de la prueba.
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.
@@ -362,9 +378,10 @@ python3 -m venv .venv-local-tuya
 2. **Topología de red**: resuelta parcialmente — los devices están en `192.168.31.0/24` (router
    Xiaomi `Xiaomi_B04D`), alcanzables vía el vantage (§0.4/§0.5). Falta un **host Linux estable**
    en esa subred para el control (p. ej. dongle WiFi en `oficina`).
-3. **Control local (LAN)**: `local_key` **confirmada** (§0.7) pero el device **ignora** el
-   handshake. Falta el **test decisivo con la app Tuya en la misma WiFi**; si la app no controla
-   en local, es NO-GO del protocolo estándar (habría que valorar firmware alternativo).
+3. **Control local (LAN)**: `local_key` **confirmada** (§0.7) pero **dos clientes independientes**
+   (`tinytuya` y `tuyapi`) son rechazados (§0.8). Opciones: **re-emparejar** el switch para refrescar
+   la clave, confirmar en la app si hay un ajuste de **control local/LAN**, o asumir **NO-GO** del
+   protocolo estándar en ese modelo.
 4. ¿Presupuesto para un coordinador Zigbee de pruebas? (solo si P3 resultara Zigbee).
 5. **MC400D**: no aparece en la LAN del router Xiaomi (§0.4) → probable **Zigbee** u otra red/SSID;
    confirmar en consola Tuya (modelo/gateway).
