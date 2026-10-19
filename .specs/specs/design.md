@@ -5089,3 +5089,37 @@ independiente**.
 | RF-124 | §52.3 | §F88.2 | TSK-F88-04 |
 | RF-125 | §52.6 | — | TSK-F88-05 |
 | RF-126 | §52.7 | — | TSK-F88-06 |
+
+---
+
+# Anexo A — Base nueva R35D-B (pinout definitivo)
+
+> Este anexo no modifica el diseño de las fases anteriores. El firmware productivo
+> `scanner-relay-prod-12v-robusto-lowpower.ino` sigue siendo el de la base anterior
+> (GM65 por USB Host, relé GPIO16, pulsador GPIO4) y **no debe flashearse en la base
+> nueva** sin adaptar los pines.
+
+La base nueva usa **ESP32-S3-USB-OTG** y un lector **R35D-B por RS-485**. El pinout
+definitivo y las notas eléctricas están en
+[`docs/hardware/esp32-s3-r35d-pinmap.md`](../../docs/hardware/esp32-s3-r35d-pinmap.md).
+
+| GPIO | Función | Nivel / notas |
+|---|---|---|
+| 1 | LED rojo | salida; pendiente de implementar |
+| 2 | LED verde | salida; pendiente de implementar |
+| 18 | UART1 RX — lectura QR | R35D-B RS-485 |
+| 17 | UART1 TX — escritura QR | R35D-B RS-485 |
+| 7 | Dirección QR | LOW = lectura, HIGH = escritura |
+| 15 | Control de cerradura | HIGH = activado |
+| 9 | Pulsador | entrada; confirmar polaridad |
+
+Detalles de diseño:
+
+- R35D-B a **9600** (QR `R_CMD_BAUD_9600`), formato inicial **8N1**.
+- Las primeras pruebas son **solo lectura**: GPIO7 LOW y UART1 RX18/TX17.
+- El variant `esp32s3usbotg` usa GPIO17 (`LIMIT_EN`) y GPIO18 (`USB_HOST_EN`) para
+  el host USB y los pone LOW en `initVariant()`. En esta base hay que inicializar
+  `Serial1.begin(9600, SERIAL_8N1, 18, 17)` después y no habilitar el host USB.
+- El macro `LED_GREEN` del variant es GPIO15; no usarlo en este firmware.
+- La migración del firmware productivo queda **pendiente**; este anexo solo fija
+  el hardware definitivo de la base nueva.
