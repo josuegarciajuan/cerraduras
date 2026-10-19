@@ -307,6 +307,17 @@ Alimentación del módulo: `VCC` a **12 V**, `GND` común con el ESP32, señal
 `IN1 → GPIO16`. El contacto de potencia: `COM → 12 V`, `NO → cerradura`, con
 diodo flyback en paralelo con el solenoide.
 
+### Nueva base R35D-B (pinout definitivo)
+
+La base nueva usa un ESP32-S3-USB-OTG y un lector **R35D-B por RS-485** (UART1,
+9600). Su pinout es distinto al del firmware productivo anterior; el detalle
+definitivo está en
+[`docs/hardware/esp32-s3-r35d-pinmap.md`](hardware/esp32-s3-r35d-pinmap.md).
+
+> El firmware `scanner-relay-prod-12v-robusto-lowpower.ino` sigue siendo el de
+> la base anterior (GM65 por USB Host, relé GPIO16, pulsador GPIO4) y **no debe
+> flashearse en la base nueva** sin adaptar los pines.
+
 ### ESP32 + GM65 (lector QR)
 
 > El sketch productivo lee el GM65 por **USB-Host** (`EspUsbHost`), **no por UART**.
