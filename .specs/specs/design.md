@@ -5105,8 +5105,8 @@ definitivo y las notas eléctricas están en
 
 | GPIO | Función | Nivel / notas |
 |---|---|---|
-| 1 | LED rojo | salida; pendiente de implementar |
-| 2 | LED verde | salida; pendiente de implementar |
+| 1 | LED rojo | salida; validado (ON por defecto) |
+| 2 | LED verde | salida; validado (ON durante apertura) |
 | 18 | UART1 RX — lectura QR | R35D-B RS-485 |
 | 17 | UART1 TX — escritura QR | R35D-B RS-485 |
 | 7 | Dirección QR | LOW = lectura, HIGH = escritura |
@@ -5115,11 +5115,17 @@ definitivo y las notas eléctricas están en
 
 Detalles de diseño:
 
-- R35D-B a **9600** (QR `R_CMD_BAUD_9600`), formato inicial **8N1**.
-- Las primeras pruebas son **solo lectura**: GPIO7 LOW y UART1 RX18/TX17.
+- R35D-B a **9600** (QR `R_CMD_BAUD_9600`), formato confirmado **8N1**.
+- Salida del lector confirmada: **texto ASCII plano + CRLF**; **no es MODBUS**.
+- Lectura validada: GPIO7 LOW y UART1 RX18/TX17. El lector transmite solo tras
+  el escaneo; no se envían comandos en operación normal.
 - El variant `esp32s3usbotg` usa GPIO17 (`LIMIT_EN`) y GPIO18 (`USB_HOST_EN`) para
   el host USB y los pone LOW en `initVariant()`. En esta base hay que inicializar
   `Serial1.begin(9600, SERIAL_8N1, 18, 17)` después y no habilitar el host USB.
 - El macro `LED_GREEN` del variant es GPIO15; no usarlo en este firmware.
+- **Validación 2026-10-19**: `r35d-basic-test.ino` validó lectura del token de
+  prueba, rechazo de QR incorrecto/ruido, apertura con la secuencia del proveedor
+  en GPIO15 y LEDs rojo/verde. Informe:
+  [`docs/esp32-qr-reader/r35d-basic-test.md`](../../docs/esp32-qr-reader/r35d-basic-test.md).
 - La migración del firmware productivo queda **pendiente**; este anexo solo fija
   el hardware definitivo de la base nueva.
