@@ -318,6 +318,9 @@ definitivo está en
 > la base anterior (GM65 por USB Host, relé GPIO16, pulsador GPIO4) y **no debe
 > flashearse en la base nueva** sin adaptar los pines.
 
+Pruebas básicas de la nueva placa (lectura R35D-B, relé GPIO15 y LEDs):
+[`docs/esp32-qr-reader/r35d-basic-test.md`](esp32-qr-reader/r35d-basic-test.md).
+
 ### ESP32 + GM65 (lector QR)
 
 > El sketch productivo lee el GM65 por **USB-Host** (`EspUsbHost`), **no por UART**.
