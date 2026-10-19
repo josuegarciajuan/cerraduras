@@ -177,6 +177,23 @@ Consulta a la nube (solo lectura): los 3 devices existen, `online:true`, **mismo
   local (§0.5), pese a la misma cuenta y sin re-emparejar. Hipótesis: clave devuelta no vigente /
   no sincronizada, o **control local (LAN) deshabilitado** en el firmware.
 
+## 0.7 Intentos adicionales de control local (2026-10-19)
+
+- **`local_key` confirmada**: los endpoints `iot-03/devices/{id}` y `devices/{id}` devuelven la
+  misma clave y **coincide byte a byte** con la guardada; `tinytuya` la usa correctamente
+  (`real_local_key.hex()` idéntico). **No** es un problema de extracción/encoding.
+- **Variantes `tinytuya`** (switch): v3.4 `default` y `device22` → **914**; `type_0a/type_0d` no
+  existen en esta versión; v3.5 → 914; v3.3/v3.1 por TCP → sin respuesta.
+- **Transporte UDP (3.x)**: `tinytuya 1.20` es **TCP-only** (su ruta <3.4 no usa el puente UDP) y
+  el discovery reporta **3.4 (TCP)** → no aporta.
+- **Comportamiento del device**: acepta TCP 6668, **mantiene la conexión y no responde** al
+  `SESS_KEY_NEG_START` (ni con 3 s extra). El puente está **verificado íntegro** (HTTP 200 al router).
+- **Conclusión**: con clave y transporte correctos, el device **ignora el handshake de control** →
+  hipótesis principal: **control local (LAN) deshabilitado** en el firmware (o variante de
+  protocolo no estándar). **Test decisivo**: controlar el switch desde la **app Tuya con el móvil
+  en la misma WiFi**; si la app tampoco controla en local, es **NO-GO del protocolo estándar**.
+- **MC400D**: WiFi autónomo en **otra WAN/red** (`93.176.173.242`), fuera de `192.168.31.0/24`.
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.
@@ -345,9 +362,9 @@ python3 -m venv .venv-local-tuya
 2. **Topología de red**: resuelta parcialmente — los devices están en `192.168.31.0/24` (router
    Xiaomi `Xiaomi_B04D`), alcanzables vía el vantage (§0.4/§0.5). Falta un **host Linux estable**
    en esa subred para el control (p. ej. dongle WiFi en `oficina`).
-3. **`local_key` / control local**: la clave de la nube **no la aceptan** los devices (§0.5/§0.6).
-   Comprobar en la app Tuya si el dispositivo tiene el **control local/LAN habilitado**, si la
-   cuenta sin créditos afecta a la clave entregada, o re-emparejar en ventana controlada.
+3. **Control local (LAN)**: `local_key` **confirmada** (§0.7) pero el device **ignora** el
+   handshake. Falta el **test decisivo con la app Tuya en la misma WiFi**; si la app no controla
+   en local, es NO-GO del protocolo estándar (habría que valorar firmware alternativo).
 4. ¿Presupuesto para un coordinador Zigbee de pruebas? (solo si P3 resultara Zigbee).
 5. **MC400D**: no aparece en la LAN del router Xiaomi (§0.4) → probable **Zigbee** u otra red/SSID;
    confirmar en consola Tuya (modelo/gateway).
