@@ -170,6 +170,26 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F86 Puerta fiel ante reportes repetidos** | **BLOCK 59** | **Completado** |
 | **F87 Veracidad de presencia y limpieza de grabaciones** | **BLOCK 60** | **Completado** |
 | **F88 Presencia robusta por fusión de sensores** | **BLOCK 61** | **Completado** |
+| **F89 Firmware productivo base nueva R35D-B** | **Unit `R35dProductionSketchTest`** | **Completado (compilación); prueba física pendiente** |
+
+### F89 — Firmware productivo para la base nueva R35D-B (RF-127…RF-131)
+
+- **Sketch**: `docs/esp32-qr-reader/scanner-relay-prod-r35d.ino`, creado a partir de
+  `scanner-relay-prod-12v-robusto-lowpower.ino` (no reescrito desde cero).
+- **Hardware**: lector R35D-B por UART1 9600 8N1 (RX=18, TX=17, DIR=7 LOW=lectura,
+  ASCII+CRLF, no MODBUS); cerradura GPIO15 activo-alto; LEDs rojo GPIO1 / verde GPIO2;
+  pulsador GPIO9; sin host USB.
+- **Cerradura**: secuencia del proveedor (250 ms + 125×(1/1) + 30×(5/5), LOW final) en
+  una tarea FreeRTOS dedicada, no bloqueante. Solo tras HTTP 200.
+- **Producción conservada**: WiFiManager/NVS, wipe por build, `device-cred`, TLS/CA, NTP,
+  `/api/v1/qr/validate`, health, heartbeat, command-queue, identify, announce, watchdog,
+  brownout y prioridad QR. Sin cambios de contrato HTTP ni polling Tuya.
+- **QR**: pre-filtro adaptado (sin exigir 2 puntos, `QR_MIN_LEN=8`, buffer 1024 B,
+  cooldown 2 s del mismo token). El token de prueba local no está hardcodeado.
+- **LEDs**: rojo ON en reposo; verde ON 3 s al abrir. Diagnóstico de arranque por rojo.
+- **Verificación**: compila con `esp32:esp32:esp32s3usbotg`; unit
+  `api/tests/Unit/R35dProductionSketchTest.php` (32 checks). Pendiente: regresión
+  completa y validación física en la placa nueva.
 
 ### F88 — Presencia robusta del almacén por fusión de sensores (RF-122…RF-126)
 

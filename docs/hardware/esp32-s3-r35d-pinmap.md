@@ -88,9 +88,26 @@ informe [`r35d-basic-test.md`](../esp32-qr-reader/r35d-basic-test.md) validan:
 | Dirección QR | no existía | GPIO7 |
 | LEDs | LED GPIO2 | rojo GPIO1, verde GPIO2 |
 
-El firmware anterior permanece en el repositorio para la base antigua. La
-migración no está cerrada: no cambiar el pinout productivo ni flashear el
-firmware antiguo en la base nueva.
+El firmware anterior permanece en el repositorio para la base antigua. El
+firmware de la base nueva es
+[`scanner-relay-prod-r35d.ino`](../esp32-qr-reader/scanner-relay-prod-r35d.ino).
+No flashear el sketch antiguo en la base nueva ni el nuevo en la base antigua.
+
+## Firmware productivo R35D-B (F89)
+
+- Sketch: [`scanner-relay-prod-r35d.ino`](../esp32-qr-reader/scanner-relay-prod-r35d.ino).
+- Conserva WiFiManager/NVS, `device-cred`, TLS/CA, NTP, `/api/v1/qr/validate`,
+  health, heartbeat, command-queue, identify, announce, watchdog y mitigaciones
+  de brownout.
+- Lector: UART1 9600 8N1, RX=18, TX=17, DIR=7 LOW en lectura. Parser ASCII + CRLF;
+  no MODBUS. Buffer RX de 1024 B para JWT de ~200 B.
+- Cerradura: GPIO15 activo-alto con la secuencia del proveedor en una tarea
+  FreeRTOS (250 ms + 125×(1/1) + 30×(5/5), LOW final).
+- LEDs: rojo GPIO1 ON en reposo; verde GPIO2 ON durante 3 s al abrir. El LED
+  integrado de GPIO15 no es el indicador externo.
+- Pulsador: GPIO9 `INPUT_PULLUP`; identify y factory reset de WiFi al arrancar.
+- Compilación verificada: `esp32:esp32:esp32s3usbotg`.
+- Unit estático: `api/tests/Unit/R35dProductionSketchTest.php`.
 
 ## Estado de validación
 
@@ -98,5 +115,6 @@ firmware antiguo en la base nueva.
   DTR/RTS off; salida verificada.
 - **2026-10-19**: lectura del R35D-B y prueba básica de relé + LEDs superadas
   (ver `docs/esp32-qr-reader/r35d-basic-test.md`).
-- Siguiente paso: crear el sketch productivo definitivo usando como base el
-  firmware del prototipo y la referencia de hardware de `r35d-basic-test.ino`.
+- **2026-10-19 (F89)**: firmware productivo creado y compilado para
+  `esp32:esp32:esp32s3usbotg`. Pendiente la validación física del ciclo
+  productivo (QR válido/inválido, WiFi/TLS, heartbeat, command-queue, GPIO9).
