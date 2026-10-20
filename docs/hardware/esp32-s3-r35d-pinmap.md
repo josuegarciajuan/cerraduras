@@ -95,7 +95,9 @@ No flashear el sketch antiguo en la base nueva ni el nuevo en la base antigua.
 
 ## Firmware productivo R35D-B (F89)
 
-- Sketch: [`scanner-relay-prod-r35d.ino`](../esp32-qr-reader/scanner-relay-prod-r35d.ino).
+- Sketch canónico: [`scanner-relay-prod-r35d.ino`](../esp32-qr-reader/scanner-relay-prod-r35d.ino).
+- Carpeta lista para abrir en Arduino IDE (un único `.ino`):
+  [`firmware/scanner-relay-prod-r35d/`](../../firmware/scanner-relay-prod-r35d/).
 - Conserva WiFiManager/NVS, `device-cred`, TLS/CA, NTP, `/api/v1/qr/validate`,
   health, heartbeat, command-queue, identify, announce, watchdog y mitigaciones
   de brownout.
