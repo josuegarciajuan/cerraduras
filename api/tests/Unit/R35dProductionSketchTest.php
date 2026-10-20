@@ -48,6 +48,16 @@ if (!is_file($path)) {
 
 $src = (string) file_get_contents($path);
 
+// Copia lista para abrir en Arduino IDE (un único .ino en su carpeta).
+$flashPath = $root . '/firmware/scanner-relay-prod-r35d/scanner-relay-prod-r35d.ino';
+if (!is_file($flashPath)) {
+    fail("copia flash-ready no encontrada: {$flashPath}");
+} elseif (hash_file('sha256', $flashPath) === hash_file('sha256', $path)) {
+    pass('copia flash-ready idéntica al sketch canónico');
+} else {
+    fail('la copia flash-ready difiere de docs/esp32-qr-reader/scanner-relay-prod-r35d.ino');
+}
+
 $contains = static fn (string $needle): bool => str_contains($src, $needle);
 $matches  = static fn (string $pattern): bool => preg_match($pattern, $src) === 1;
 

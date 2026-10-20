@@ -175,7 +175,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 ### F89 — Firmware productivo para la base nueva R35D-B (RF-127…RF-131)
 
 - **Sketch**: `docs/esp32-qr-reader/scanner-relay-prod-r35d.ino`, creado a partir de
-  `scanner-relay-prod-12v-robusto-lowpower.ino` (no reescrito desde cero).
+  `scanner-relay-prod-12v-robusto-lowpower.ino` (no reescrito desde cero). Copia
+  lista para abrir en Arduino IDE: `firmware/scanner-relay-prod-r35d/` (idéntica,
+  verificada por el unit).
 - **Hardware**: lector R35D-B por UART1 9600 8N1 (RX=18, TX=17, DIR=7 LOW=lectura,
   ASCII+CRLF, no MODBUS); cerradura GPIO15 activo-alto; LEDs rojo GPIO1 / verde GPIO2;
   pulsador GPIO9; sin host USB.
