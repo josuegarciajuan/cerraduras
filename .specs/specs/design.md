@@ -5094,10 +5094,12 @@ independiente**.
 
 # Anexo A — Base nueva R35D-B (pinout definitivo)
 
-> Este anexo no modifica el diseño de las fases anteriores. El firmware productivo
+> Este anexo no modifica el diseño de las fases anteriores. El firmware
 > `scanner-relay-prod-12v-robusto-lowpower.ino` sigue siendo el de la base anterior
 > (GM65 por USB Host, relé GPIO16, pulsador GPIO4) y **no debe flashearse en la base
-> nueva** sin adaptar los pines.
+> nueva**. El firmware productivo de la base nueva es
+> [`scanner-relay-prod-r35d.ino`](../../docs/esp32-qr-reader/scanner-relay-prod-r35d.ino)
+> (R35D-B por RS-485, GPIO15 activo-alto, LEDs GPIO1/2, pulsador GPIO9).
 
 La base nueva usa **ESP32-S3-USB-OTG** y un lector **R35D-B por RS-485**. El pinout
 definitivo y las notas eléctricas están en
