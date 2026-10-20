@@ -210,6 +210,23 @@ Consulta a la nube (solo lectura): los 3 devices existen, `online:true`, **mismo
 - **Nota**: la carga alta observada en `oficina` era del **pipeline de vídeo del usuario**
   (`render_worker.py` + ffmpeg), **no** de la prueba.
 
+## 0.9 Revisión del puente y re-test limpio (2026-10-19)
+
+Se revisó el puente atendiendo a las dudas (preservar bytes, separar diagnóstico del binario,
+conectar cuando el cliente está listo, gestionar cierres/timeouts):
+
+- `TuyaBridge.ino`: **sin texto tras `BRIDGE`** (stream binario puro); el cierre de sesión ya no
+  inyecta `TCP_CLOSED/WAIT` en el flujo.
+- Relé: **acepta el cliente primero y conecta la ESP después**; gestiona cierre del cliente y
+  reconexión por sesión.
+- Verificado: se envía el `SESS_KEY_NEG_START` de 3.4 **íntegro (84 bytes)** y el device **no
+  responde**.
+- **24G (`192.168.31.109`) y switch (`192.168.31.249`)**: mismo comportamiento (sin respuesta);
+  `tuyapi` cierra por timeout.
+- **Conclusión**: el fallo **no es del puente**. Los devices **rechazan/ignoran** el control local
+  con la `local_key` actual. Hipótesis: **control local deshabilitado** o **`local_key` no vigente
+  en el device** (aunque la nube devuelva una clave consistente).
+
 ## 1. Objetivo y criterio de éxito
 
 - Para **cada modelo**: veredicto **GO / GO-con-condiciones / NO-GO**, documentado con datos.

@@ -80,11 +80,10 @@ void loop() {
       while (Serial.available()) tcp.write(Serial.read());
     }
     if (!tcp.connected()) {
+      // Fin de sesión: NO escribir texto (el stream serie es binario puro).
+      // El host reinicia la placa para una nueva sesión (CONNECT).
       tcp.stop();
       bridging = false;
-      Serial.println();
-      Serial.println("TCP_CLOSED");
-      Serial.println("WAIT");
     }
     delay(1);
   }
