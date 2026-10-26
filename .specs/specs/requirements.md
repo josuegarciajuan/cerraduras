@@ -4,11 +4,13 @@
 
 ---
 
-# Fase 90: Migración Zigbee local — documentación aprobada
+# Fase 90: Integración de software Zigbee local — pre-hardware
 
 ## Contexto y alcance
 
-Esta fase documenta una migración futura, no implementa cambios. Parte del antecedente
+Esta entrega implementa únicamente el software host-agnóstico previo a hardware; no instala,
+configura ni despliega el broker, Zigbee2MQTT o hardware. La validación de modelos y la migración
+física quedan para una fase posterior. Parte del antecedente
 `.specs/specs/plan-control-local.md`: la PoC previa de control local Tuya no migra producción
 y sus hallazgos no prueban capacidades de los equipos Zigbee nuevos.
 
@@ -56,6 +58,47 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   autorizado podrá instalarlo, con circuito desenergizado, verificación de ausencia de tensión y
   comprobación final conforme a normativa local. No se permiten pruebas, cableado ni cambios en
   tensión por personal no cualificado.
+
+## RF-136: Consumidor MQTT local, apagado por defecto
+
+- **RF-136.1**: Implementar un worker PHP independiente del host, configurable por variables de
+  entorno para activar/desactivar, host/puerto del broker, prefijo de topic y archivo JSON de mapa.
+  El default es `ZIGBEE_MQTT_ENABLED=false`; no se inicia desde `start-all.sh`, systemd ni cron en
+  esta entrega. Si se habilita, un mapa ausente o sin dispositivos debe hacer fallar el arranque.
+- **RF-136.2**: El transporte usa `mosquitto_sub` (cliente oficial Mosquitto, MQTT 3.1.1 o posterior)
+  con argumentos sin shell. Se elige el binario ya asociado al broker planificado en vez de añadir
+  un paquete PHP/Node o implementar el protocolo MQTT propio. La presencia del binario se valida
+  solamente al activar el worker; no se instala en este cambio.
+- **RF-136.3**: El mapa configurable relaciona topic Zigbee2MQTT con `device.external_id` y define
+  explícitamente para cada entidad estándar `contact`, `occupancy` o `state` el sensor canónico y
+  los valores admitidos. No habrá conversiones implícitas ni mappings específicos de SNZB. Los
+  mensajes `availability` solo son telemetría de disponibilidad y nunca se convierten en ABSENT.
+- **RF-136.4**: El worker resuelve el dispositivo por `external_id`, luego la habitación por el pack
+  (`device → pack → room`) y entrega cada señal válida a `IotSessionService::processEvent()`. No
+  escribe `iot_sessions`, `presence_events` ni otro estado de dominio directamente. Los eventos
+  guardan proveedor `ZIGBEE2MQTT`, hora de recepción UTC, metadatos acotados y un identificador
+  determinista por topic/mensaje/entidad/segundo de recepción para soportar reentrega QoS y
+  deduplicación existente sin colapsar transiciones posteriores al mismo valor.
+- **RF-136.5**: Mensajes malformados, topic/dispositivo desconocido, entidad sin mapping y valor no
+  permitido se descartan con diagnóstico sin mutar estado. Una desconexión/fin del cliente MQTT se
+  reintenta con backoff exponencial acotado. El worker no invoca APIs Tuya, no lee credenciales de
+  Tuya y no añade temporizadores, pollers ni lógica de sondeo cloud.
+- **RF-136.6**: Se provee modo de entrada simulada por stdin/dry-run y tests unitarios sin broker,
+  hardware, red ni base de datos para mapping, validación, deduplicación e incremento de backoff.
+  La guardia de regresión debe comprobar que el worker permanece deshabilitado por defecto y no
+  contiene una ruta de acceso a Tuya.
+- **RF-136.7**: Se amplía la enumeración de `presence_events.provider` para auditar la nueva fuente.
+  No se añaden rutas HTTP ni se cambia la forma de contratos existentes.
+- **RF-136.8**: Esta entrega no provisiona devices/packs, no decide host definitivo, autenticación,
+  TLS ni ACL del broker, no instala/configura Zigbee2MQTT/Mosquitto y no habilita servicios.
+  Esas decisiones y la comprobación de payloads reales siguen bloqueadas hasta recibir hardware.
+- **RF-136.9**: La suscripción usará QoS 1 y client id persistente configurable para permitir cola
+  MQTT durante desconexión. Es entrega al menos una vez, no exactly-once: un fallo de base de datos
+  tras la recepción puede requerir reconciliación; no se afirmará garantía superior a la del broker.
+- **RF-136.10**: El worker construirá el mismo grafo de dominio que el API mediante una fábrica
+  compartida; no duplicará reglas ni efectos post-commit. El consumidor no incorporará cliente ni
+  llamadas REST Tuya, sondeos o temporizadores. Los efectos de actuador ya existentes en
+  `IotSessionService` conservan su provider configurado para dispositivos aún no migrados.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

@@ -25,10 +25,8 @@ use App\Domain\Debts\OutboxVb6Repository;
 use App\Domain\Debts\OverstayCalculator;
 use App\Domain\Locks\AccessEventRepository;
 use App\Domain\Locks\LockService;
-use App\Domain\Presence\ExitActionService;
-use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSessionRepository;
-use App\Domain\Presence\IotSessionService;
+use App\Domain\Presence\IotSessionServiceFactory;
 use App\Domain\Presence\PresenceEventRepository;
 use App\Domain\Qr\QrCredentialRepository;
 use App\Domain\Qr\QrIssueService;
@@ -2188,15 +2186,7 @@ $anomalyPipeline   = new AnomalyPipeline($eventDetectors);
 $anomalyService    = new AnomalyService($anomalyPipeline, $anomalyRepo, $a5Detector);
 $anomalyController = new AnomalyController($anomalyService);
 
-$exitRuleEvaluator = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo, $stayRepo);
-$exitActionService = new ExitActionService(
-    $roomRepo, $iotSessionRepo, $stayStateMachine, $accessEventRepo, $switchService, $anomalyService,
-    $workerSessionRepo,
-    $stayRepo,            // F41: lockActiveForRoom() under the exit transaction
-    $exitRuleEvaluator,   // F41: re-validates the rule under the lock
-    $roomTypeRepo         // F41: cooldown config for executeIfPending()
-);
-$iotSessionService = new IotSessionService(
+$iotSessionService = IotSessionServiceFactory::create(
     $presenceEventRepo,
     $iotSessionRepo,
     $roomRepo,
@@ -2204,12 +2194,10 @@ $iotSessionService = new IotSessionService(
     $stayRepo,
     $stayStateMachine,
     $accessEventRepo,
-    $exitRuleEvaluator,
-    $switchService,    // RF-16: turn on light on door open
-    $exitActionService, // F28: shared exit action service
-    $anomalyService,    // F35: anomaly detection
-    $workerSessionRepo, // F38: worker sessions in exit rule
-    $warehouseRecordingService // F63: warehouse recording engine
+    $switchService,
+    $anomalyService,
+    $workerSessionRepo,
+    $warehouseRecordingService
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
 // room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.

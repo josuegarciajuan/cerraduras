@@ -4,35 +4,67 @@
 
 ---
 
-# Fase 90: Diseño de referencia para Zigbee local (sin implementación)
+# Fase 90: Diseño e implementación host-agnóstica Zigbee pre-hardware
 
 ## Decisión
 
 Tras el banco de oficina, se prevé operar un coordinador SONOFF Dongle-M EFR32MG24 conectado
-por PoE y Ethernet, Zigbee2MQTT y Mosquitto en local. Un adaptador MQTT futuro normalizará los
-mensajes recibidos y los entregará al `IotSessionService`; no escribirá sesiones IoT por una vía
-alternativa. Esta decisión complementa el antecedente de estudio
+por PoE y Ethernet, Zigbee2MQTT y Mosquitto en local. Se implementa ahora el consumidor software,
+sin configurar el host, broker, Zigbee2MQTT ni dispositivos. El adaptador normalizará los mensajes
+y los entregará al `IotSessionService`; no escribirá sesiones IoT por una vía alternativa. Esta
+decisión complementa el antecedente de estudio
 `.specs/specs/plan-control-local.md`; no reutiliza ni presupone que el control local Tuya sea
 viable.
 
-## Flujo previsto
+## Flujo implementado y límites pre-hardware
 
 ```text
-dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> adaptador MQTT
+dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> mosquitto_sub
+  -> worker PHP -> mapa configurable -> dispositivo -> pack -> habitación
   -> evento canónico (device -> pack -> room) -> IotSessionService -> auditoría/estado/SSE
 ```
 
-- La recepción MQTT es push; no hay temporizador ni bucle que consulte Tuya.
-- El adaptador futuro deberá aportar una identidad de fuente y un `occurred_at` obtenido del
-  mensaje o de su recepción cuando el equipo no lo proporcione. La política concreta se decide
-  tras observar los mensajes reales.
-- El pipeline existente conserva lock por habitación, orden, dedupe y auditoría. Un mensaje
-  duplicado o atrasado se registra y no revierte estado.
+- El worker se activa solo con `ZIGBEE_MQTT_ENABLED=true` (default false). No lo arranca
+  `start-all.sh`, systemd ni cron. El host (default loopback), puerto, prefijo de topic y ruta del
+  mapa se configuran por entorno. Si se habilita con mapa ausente/vacío, falla antes de iniciar
+  transporte/BD. No se conecta a ningún broker durante tests unitarios.
+- `mosquitto_sub` es el único requisito de transporte de despliegue (cliente Mosquitto, MQTT
+  3.1.1+). Está ausente en el entorno actual y no se instala aquí. Usarlo evita añadir una
+  biblioteca de aplicación y evita mantener una implementación propia de MQTT. El proceso recibe
+  topic/payload como líneas delimitadas; argumentos se pasan a `proc_open` sin shell.
+- El mapa JSON configura cada topic base, `external_id` y mapping exacto de las entidades estándar
+  `contact`, `occupancy` y `state`. Cada mapping contiene sensor canónico (`PROXIMITY` o `PRESENCE`)
+  y una tabla exhaustiva de valores admitidos (`OPEN/CLOSED` o `PRESENT/ABSENT`). Sin entrada
+  configurada, no se deduce semántica de modelo ni hay evento. No se incluye mapping para SNZB.
+- Topic `<base>/availability` se reconoce solo como diagnóstico `online|offline`; no modifica
+  presencia, conectividad persistida ni una habitación. Esto evita interpretar indisponibilidad
+  de red como salida física.
+- El payload se valida como JSON objeto, tamaño acotado y valores escalares; cada entidad mapeada
+  puede producir un evento. `occurred_at` es la hora UTC de recepción (no se presume un timestamp
+  opcional de fabricante). `source_event_id` hashea topic/payload/entidad/segundo de recepción para
+  colapsar reentregas inmediatas sin confundir una transición posterior repetida. El raw
+  guardado en auditoría se limita a los metadatos mínimos (topic/entity/value), no al payload entero.
+- El worker resuelve `external_id` vía `DeviceRepository`, obtiene room por `pack_id` y llama al
+  `IotSessionService`. API y worker compartirán `IotSessionServiceFactory` para que regla de salida,
+  luz, anomalías y motor del almacén tengan el mismo wiring. El consumidor no incorpora REST Tuya;
+  los efectos de actuador existentes conservan el provider ya configurado para dispositivos que
+  sigan en Tuya. `presence_events.provider` añade `ZIGBEE2MQTT` mediante migración aditiva; no se
+  añade ruta HTTP ni se cambia el contrato público.
+- Al salir `mosquitto_sub`, el worker reintenta con backoff 1, 2, 4… hasta 30 s; los mensajes
+  inválidos no terminan el proceso. No existe timer de sondeo cloud ni dependencia con Tuya.
+- El cliente usa QoS 1 y sesión persistente con id configurado; Mosquitto puede encolar mientras el
+  consumidor está desconectado. El CLI confirma recepción antes de que el worker termine la
+  transacción de dominio, así que no se promete atomicidad broker/BD: un fallo DB posterior al ACK
+  puede perder ese mensaje y requiere reconciliación. La auditoría/dedupe protege reentregas, no
+  sustituye un outbox de entrada.
+- Modo `--stdin --dry-run`: cada línea simulada es `topic<TAB>payload`; normaliza y muestra eventos
+  sin PDO ni conexión de red, de modo que se puede revisar un payload capturado después de recibir
+  hardware sin arrancar el broker.
 - No se declara ahora qué `exposes`, propiedades, DPs, batería, sensibilidad, alcance ni
   comandos soportan SNZB-04P, SNZB-06P o ZBMINIL2: se inventariarán desde Zigbee2MQTT después
   de la recepción.
 
-## Banco y despliegue gradual
+## Decisiones aplazadas y banco/despliegue gradual
 
 1. Inventariar hardware recibido, versión de Zigbee2MQTT y mensajes observados por equipo en la
    oficina, sin asociarlo a una room productiva.
@@ -40,6 +72,12 @@ dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> adaptador MQTT
 3. Actualizar y aprobar los cuatro documentos SDD con el contrato real.
 4. Instalar los mismos dispositivos en el almacén uno a uno, manteniendo Tuya activo para los
    roles todavía no aceptados. Tras cada aceptación, conservar un rollback operativo a Tuya.
+
+El host permanente sigue sin decidir. No se fijan ahora credenciales, TLS, ACL, IP/DNS, unit
+systemd, límites QoS en campo ni configuración de red. Antes de activar el worker en un host real
+se deberá verificar que el broker esté en una red de confianza y resolver autenticación/cifrado
+si el tráfico sale de ese límite. Esta implementación no inicia servicios ni tiene credenciales
+en el mapa de ejemplo.
 
 ## Seguridad eléctrica del relé
 
@@ -50,10 +88,12 @@ cableado ni autoriza trabajo eléctrico energizado.
 
 ## Consecuencias
 
-- Positiva: la fuente local prevista elimina la necesidad de polling Tuya para los equipos ya
-  migrados.
-- Coste/riesgo: Zigbee2MQTT, Mosquitto, adaptador y operación local requieren validación antes
-  de afectar el almacén; la coexistencia duplica temporalmente la supervisión.
+- Positiva: la recepción por push local deja al consumidor desacoplado del host; no suma coste ni
+  llamadas a la cuota cloud.
+- Coste/riesgo: se requiere `mosquitto_sub` al activar el worker; el mapa debe corresponder a
+  payloads reales. El consumidor queda deshabilitado hasta configurar mapa, host y broker.
+- Compatibilidad: la migración solo amplía el enum de proveedor. El servicio de dominio conserva
+  la misma interfaz y el API mantiene sus rutas/cuerpos existentes.
 - Rollback: ante fallo de recepción, semántica o instalación, se deja de usar el dispositivo
   Zigbee afectado y se vuelve al Tuya equivalente; no se borran eventos ni se cambia el vínculo
   canónico `device → pack → room`.

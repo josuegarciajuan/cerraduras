@@ -1,56 +1,99 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: solo documentación y listas previas; no hay implementación autorizada.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: software host-agnóstico autorizado; hardware y despliegue siguen bloqueados.
 
 ---
 
-# Fase 90: Migración Zigbee local — tareas documentales y bloqueos
+# Fase 90: Consumidor Zigbee MQTT pre-hardware y migración gradual
 
-## TSK-90.01: Registrar recepción y descubrimiento de hardware
+## TSK-90.00: Actualizar especificación del alcance pre-hardware
 
-**Trazabilidad**: RF-134.1
+**Trazabilidad**: RF-133..RF-136
 
-- [ ] Al recibir SONOFF Dongle-M EFR32MG24, SNZB-04P, SNZB-06P y ZBMINIL2, registrar modelo,
-  identificador no sensible, versión de Zigbee2MQTT y mensajes/exposiciones realmente observados.
-- [ ] No completar la lista con capacidades de catálogo no verificadas.
-- [ ] Actualizar `requirements.md`, `design.md`, `contracts.md` y esta lista, en ese orden, con
-  los hallazgos aprobados.
+- [x] Actualizar `requirements.md → design.md → contracts.md → tasks.md` con el worker software,
+  contrato de mapping, guardas de seguridad y límites pre-hardware, antes de escribir código.
+- [x] Mantener host, instalación del broker/Zigbee2MQTT, hardware, configuración de red y pruebas
+  físicas fuera de esta autorización.
+- [x] Aprobación implícita por la autorización explícita del usuario para implementar este alcance.
 
-## TSK-90.02: Lista de banco en oficina
+## TSK-90.01: Parser Zigbee2MQTT y mapa de entidades
 
-**Trazabilidad**: RF-133.1, RF-133.3, RF-134.2
+**Trazabilidad**: RF-136.3, RF-136.4, RF-136.6
 
-- [ ] Confirmar que Dongle-M usa PoE y Ethernet en el banco y registrar conectividad local.
-- [ ] Verificar recepción MQTT y reconexión de Zigbee2MQTT/Mosquitto sin consultas Tuya.
-- [ ] Para SNZB-04P, comprobar y registrar los eventos de puerta realmente recibidos.
-- [ ] Para SNZB-06P, comprobar y registrar los eventos de presencia realmente recibidos.
-- [ ] Para ZBMINIL2, limitar cualquier prueba eléctrica a electricista autorizado, con circuito
-  desenergizado y ausencia de tensión verificada; registrar solo el resultado de la prueba
-  aprobada, no instrucciones de cableado.
-- [ ] Verificar en evidencia que duplicados/orden se pueden entregar al pipeline canónico sin
-  crear una escritura paralela a `IotSessionService`.
+- [x] Añadir el parser puro de topic/payload y configuración de dispositivos por topic.
+- [x] Aceptar solo `contact`, `occupancy`, `state`; emitir únicamente los valores expresamente
+  mapeados a `PROXIMITY` o `PRESENCE`.
+- [x] Reconocer `availability` como diagnóstico sin mutación de estado; rechazar JSON inválido,
+  payload >64 KiB, valor no escalar y mapeos inválidos.
+- [x] Rechazar mapa vacío para que un worker habilitado falle cerrado antes de suscribirse.
+- [x] Probar mappings, multi-entidad, valor/topic no mapeado y source_event_id determinista.
 
-## TSK-90.03: Gate de aprobación antes del almacén
+**Verificación**: `php tests/Unit/ZigbeeMqttMessageMapperTest.php` y auto-descubrimiento unitario.
 
-**Trazabilidad**: RF-134.3, RF-135.1–RF-135.3
+## TSK-90.02: Worker de transporte opcional y entrega al dominio
 
-- [ ] Revisar y aprobar los cuatro documentos SDD actualizados con la evidencia del banco.
-- [ ] Definir para cada dispositivo la ventana, responsable, criterio de aceptación y rollback
-  hacia Tuya antes de trasladarlo al almacén.
-- [ ] Confirmar disponibilidad de electricista autorizado antes de planificar ZBMINIL2.
+**Trazabilidad**: RF-133.2, RF-133.3, RF-136.1, RF-136.2, RF-136.4, RF-136.5, RF-136.6
 
-## TSK-90.04: Implementación futura — BLOQUEADA
+- [x] Implementar proceso configurable con `mosquitto_sub`, flag disabled por defecto y sin
+  dependencia de shell; topic/payload simulados mediante `--stdin --dry-run`; suscripción QoS 1
+  con sesión persistente y client id configurable.
+- [x] Resolver device → pack → room y llamar `IotSessionService::processEvent()` como único
+  escritor mediante una fábrica compartida por API/worker. Mantener los efectos post-commit que
+  tiene el pipeline API; el consumer no agrega cliente REST Tuya ni temporizadores.
+- [x] Reintentar desconexión/fin del cliente MQTT con backoff 1–30 s; un mensaje inválido no mata
+  el proceso.
+- [x] Documentar el límite de fiabilidad: el CLI puede ACKear antes del commit a BD, por lo que no
+  se promete atomicidad entre Mosquitto y `IotSessionService`.
+- [x] Añadir pruebas de modo dry-run, configuración deshabilitada y policy de reconexión.
 
-**Bloqueada hasta**: recepción de hardware, descubrimiento documentado y aprobación explícita de
-`requirements.md → design.md → contracts.md → tasks.md`.
+**Verificación**: unit tests, `php -l` y `php bin/zigbee-mqtt-worker.php --help`; no conectar broker.
 
-- [ ] Instalar/configurar Zigbee2MQTT y Mosquitto locales.
-- [ ] Implementar el adaptador MQTT a `IotSessionService` y sus pruebas.
-- [ ] Crear/actualizar dispositivos y migrar uno por uno en el almacén.
-- [ ] Ejecutar pruebas de aceptación de cada corte y retirar Tuya solo tras aceptación.
+## TSK-90.03: Provider auditado y guardia de no-Tuya
 
-> No marcar ninguna tarea de implementación como realizada en esta fase. No ejecutar pruebas que
-> requieran hardware hasta su recepción.
+**Trazabilidad**: RF-133.4, RF-136.5, RF-136.7
+
+- [x] Añadir migración `0126` para admitir `ZIGBEE2MQTT` en
+  `presence_events.provider`, y declarar provider canónico en el modelo.
+- [x] Añadir test de guardia para default disabled y ausencia de dependencias/llamadas cloud Tuya
+  en el worker, además del caso de mapper; BLOCK 62 queda añadido al runner (no ejecutado porque
+  el runner completo no es seguro en este host).
+- [x] No añadir endpoint HTTP, claves nuevas, configuración de Tuya, unit systemd, cron ni gestión
+  desde `start-all.sh`/`stop-all.sh`.
+
+**Verificación**: tests unitarios + BLOCK 62; no aplicar migración contra BD real.
+
+## TSK-90.04: Configuración de ejemplo y regresión
+
+**Trazabilidad**: RF-136.1..RF-136.8
+
+- [x] Añadir `.env.example` sin credenciales ni datos sensibles y mapa JSON de ejemplo sin dispositivos
+  registrados ni datos sensibles.
+- [x] Ejecutar unit tests y evaluar si `bash bin/run-tests.sh` es seguro. Se ejecutaron las units;
+  los tests F90 pasan; la suite de units dio 47 scripts OK y `WorkerSessionTest.php` falló antes de
+  conectar por falta de `DB_NAME`. El runner completo se omitió porque hay servicios en 8080/3306,
+  falta `.env` del worktree y no se puede demostrar que la BD sea descartable. No arrancar broker
+  ni tocar infraestructura real.
+- [x] Comprobar diff de configuración para confirmar ausencia de claves/valores sensibles y que no hay
+  arranque automático.
+
+## TSK-90.05: Recepción, banco e instalación — BLOQUEADAS
+
+**Trazabilidad**: RF-134.1–RF-134.3, RF-135.1–RF-135.3, RF-136.8
+
+**Bloqueada hasta**: recepción de hardware, mensajes reales observados, host elegido, seguridad del
+broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos SDD actualizados.
+
+- [ ] Registrar dongle/dispositivos, versiones, exposiciones y payloads reales; no usar catálogo
+  como evidencia ni inventar capacidades.
+- [ ] Instalar/configurar Zigbee2MQTT y Mosquitto en el host que el usuario decida y validar
+  recepción/reconexión local. Ninguna acción de instalación forma parte de TSK-90.01..90.04.
+- [ ] Probar hardware en banco de oficina y verificar eventos del dominio/auditoría.
+- [ ] Migrar dispositivos del almacén uno por uno, conservar Tuya para los roles no migrados y
+  preparar rollback individual.
+- [ ] Para ZBMINIL2, intervención solo por electricista autorizado y circuito desenergizado.
+
+> No ejecutar tareas de hardware hasta su recepción y autorización específica. Esta fase no inicia
+> broker, no instala unidades ni modifica servicios reales.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

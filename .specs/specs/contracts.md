@@ -1,16 +1,60 @@
 # Contracts — Cerraduras Hotel
 
-> **F90 — Estado**: contrato de diseño pendiente de recepción de hardware; última revisión 2026-10-26.
+> **F90 — Estado**: contrato del software host-agnóstico aprobado para implementación pre-hardware; hallazgos de campo pendientes.
 
 ---
 
-# Fase 90: Contrato de integración MQTT propuesto (no implementado)
+# Fase 90: Contrato del consumidor MQTT local
 
 ## Límite de contrato
 
-Zigbee2MQTT publica en Mosquitto local y un adaptador futuro consumirá esos mensajes. No se
-publica aún una ruta HTTP ni se fija un topic, payload, propiedad o comando de fabricante: deben
-descubrirse al recibir el Dongle-M, SNZB-04P, SNZB-06P y ZBMINIL2.
+Zigbee2MQTT publica en Mosquitto y un worker PHP opcional consume mediante `mosquitto_sub`. No se
+publica ruta HTTP. El worker está **desactivado por defecto**; esta fase no instala ni inicia broker,
+Zigbee2MQTT, systemd ni hardware. El prefijo/topic del fabricante se configura tras recibir los
+equipos; no se codifican topics ni payloads de SNZB.
+
+### Configuración del proceso
+
+| Variable | Default | Regla |
+|---|---|---|
+| `ZIGBEE_MQTT_ENABLED` | `false` | Solo `true`/`1` habilita el consumo continuo. |
+| `ZIGBEE_MQTT_HOST` | `127.0.0.1` | Host del broker local; sin conexión si el worker no está habilitado. |
+| `ZIGBEE_MQTT_PORT` | `1883` | Entero 1–65535. |
+| `ZIGBEE_MQTT_TOPIC_PREFIX` | `zigbee2mqtt` | Prefijo MQTT suscrito como `<prefix>/#`. |
+| `ZIGBEE_MQTT_CLIENT_ID` | `cerraduras-zigbee-consumer` | Identificador de sesión persistente MQTT; una instancia activa por id. |
+| `ZIGBEE_MQTT_MAP_FILE` | `config/zigbee2mqtt-devices.json` | Ruta JSON local; debe existir y validar al habilitar. |
+| `MOSQUITTO_SUB_BIN` | `mosquitto_sub` | Cliente de línea de comandos Mosquitto >=1.6, validado solo al habilitar. |
+
+El archivo de ejemplo `api/config/zigbee2mqtt-devices.example.json` tiene `devices` vacío y es solo
+plantilla. Para habilitar consumo el mapa debe tener al menos un dispositivo; vacío o ausente falla
+antes de conectar a MQTT/BD. Una entrada real declara el topic base y el `external_id` ya registrado:
+
+```json
+{
+  "devices": {
+    "zigbee2mqtt/<topic-descubierto>": {
+      "external_id": "<external_id-registrado>",
+      "entities": {
+        "contact": {"sensor": "PROXIMITY", "values": {"true": "CLOSED", "false": "OPEN"}},
+        "occupancy": {"sensor": "PRESENCE", "values": {"true": "PRESENT", "false": "ABSENT"}},
+        "state": {"sensor": "PROXIMITY", "values": {"ON": "OPEN", "OFF": "CLOSED"}}
+      }
+    }
+  }
+}
+```
+
+Los valores del ejemplo son ilustrativos y solo son efectivos si se declaran por dispositivo; no
+son defaults ni afirman semántica de un modelo. Cada entidad permitida debe declarar `sensor` y
+tabla completa `values`; no se aceptan propiedades fuera de `contact`, `occupancy`, `state` ni
+valores fuera del dominio (`PROXIMITY`: `OPEN|CLOSED`; `PRESENCE`: `PRESENT|ABSENT`). El parser
+acepta valores JSON escalares solamente. `availability` en `<topic-base>/availability` admite
+`online|offline` como diagnóstico y nunca genera evento de dominio. JSON inválido, >64 KiB, topic
+no mapeado, property/value no mapeado o dispositivo desconocido se descarta sin mutación.
+
+No se configuran credenciales de broker, TLS ni ACL en esta fase; antes de desplegar fuera del host/red de
+confianza deben aprobarse junto con la ubicación definitiva del broker. No almacenar credenciales
+en el mapa ni pasar datos sensibles como argumentos de proceso.
 
 ## Entrada canónica interna prevista
 
@@ -19,27 +63,58 @@ normalizado equivalente a:
 
 ```json
 {
-  "source": "ZIGBEE2MQTT",
   "device_external_id": "<identidad-descubierta>",
   "sensor": "PROXIMITY|PRESENCE",
   "value": "OPEN|CLOSED|PRESENT|ABSENT",
-  "occurred_at": "<ISO-8601 UTC>",
-  "source_event_id": "<identidad-estable-si-el-mensaje-la-aporta>",
-  "raw": "<mensaje-MQTT-conservado-para-auditoria>"
+  "provider": "ZIGBEE2MQTT",
+  "occurred_at": "<hora-de-recepción-ISO-8601-UTC-ms>",
+  "source_event_id": "z2m-<sha256-topic-payload-entity-reception-second>",
+  "meta": {
+    "source": "zigbee2mqtt",
+    "topic": "<topic-base>"
+  }
 }
 ```
 
-- Los valores y la correspondencia desde MQTT son pendientes de descubrimiento; el ejemplo no
-  afirma que un dispositivo los produzca.
-- La resolución de `device_external_id` seguirá `device → pack → room`.
+- El mensaje de entrada se normaliza en cero o más eventos; cada entidad mapeada genera a lo sumo
+  un evento. Hora de recepción UTC se usa como `occurred_at`, ya que no se presupone timestamp.
+- `source_event_id` es SHA-256 determinista sobre topic, payload original, entidad y segundo de
+  recepción UTC, prefijado `z2m-` (longitud <128). Reentregas en el mismo segundo colapsan; una
+  transición posterior al mismo valor tiene identidad nueva. La huella del dominio sigue siendo
+  la defensa contra duplicados dentro del segundo.
+- La resolución de `device_external_id` sigue `device → pack → room`; el worker exige que `kind`
+  registrado sea compatible con el sensor canónico y descarta el mapeo incompatible.
+- `meta` conserva fuente/topic/entidad/valor mapeado, no el payload entero; el evento raw completo
+  no se guarda en `presence_events`.
 - `IotSessionService` mantiene sus garantías existentes: auditoría de todo evento, dedupe,
   orden temporal y descarte sin reversión de estado.
+- API HTTP y worker reutilizan la fábrica de dominio compartida y conservan sus efectos post-commit.
+  El worker no agrega clientes/lecturas REST Tuya; los actuadores ya configurados en Tuya siguen
+  sujetos al comportamiento existente del servicio durante la coexistencia.
+- El único proveedor nuevo es `ZIGBEE2MQTT` en `presence_events.provider` (migración aditiva).
 - No existe contrato de polling de Tuya. Los dispositivos no migrados pueden seguir usando su
   ruta Tuya temporal; los migrados reciben eventos MQTT push.
+- No cambia la forma de ninguna respuesta/ruta pública (`/live`, SSE, presencia, QR, almacén).
+
+### Interfaz de prueba sin transporte
+
+`php api/bin/zigbee-mqtt-worker.php --stdin --dry-run` consume líneas `topic<TAB>payload`, ejecuta
+el mismo parser/mapa y emite solo eventos normalizados a stdout. No abre socket, no conecta PDO,
+no requiere `mosquitto_sub` y no llama Tuya. El worker normal sin `--stdin` valida el flag disabled
+antes de iniciar dependencias de transporte/BD.
+
+### Reintento de transporte
+
+El proceso vigila la salida de `mosquitto_sub`; al terminar/rechazar conexión espera backoff
+determinista `min(2^(fallo-1), 30)` s y vuelve a ejecutarlo. El límite de 30 s evita ciclos rápidos;
+fallos de parsing individuales no reinician MQTT. La policy se expone como función pura para tests.
+La suscripción usa QoS 1 y sesión persistente (`-c` + client id); una instancia por id. El CLI puede
+ACKear antes del commit de dominio: si PDO falla después del ACK, el evento no se puede recuperar de
+la cola y requiere reconciliación. No se declara atomicidad entre broker y BD.
 
 ## Compatibilidad y rollback
 
-La forma de `/live`, SSE, QR y reglas de salida no cambia en esta fase documental. Cada
+La forma de `/live`, SSE, QR y reglas de salida no cambia en esta fase de software. Cada
 migración futura debe poder desactivar solo la fuente Zigbee del dispositivo afectado y restaurar
 la fuente Tuya anterior, conservando la evidencia recibida y el vínculo canónico.
 
