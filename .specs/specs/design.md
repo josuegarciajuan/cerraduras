@@ -1,10 +1,12 @@
 # Design — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware, al elegir host definitivo y antes de instalar en el almacén.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
+> caracterización funcional e integración pendientes. Revisar al elegir host definitivo y antes
+> de instalar en el almacén.
 
 ---
 
-# Fase 90: Diseño e implementación host-agnóstica Zigbee pre-hardware
+# Fase 90: Diseño e implementación Zigbee local — software, banco y dispositivos
 
 ## Decisión
 
@@ -203,6 +205,22 @@ binds loopback, plantillas, ausencia de secretos/rutas/IPs de oficina, `set -eu`
 wiring de arranque. BLOCK 63 del runner ejecuta ese test sin Docker, red ni hardware; además se
 valida `bash -n`, parseo YAML con Python y `shellcheck` si está instalado. Nada de esto levanta
 el proyecto ni contacta con el dongle.
+
+### Dispositivos emparejados en el banco (F90, 2026-10-26)
+
+| Dispositivo | IEEE | Modelo Z2M | Rol Z2M | Entidades observadas | Estado |
+|---|---|---|---|---|---|
+| `puerta-oficina` | `0xc09b9efffef431fb` | `SNZB-04P` | EndDevice | `contact`, `battery`, `battery_low`, `tamper`, `voltage`, `linkquality`, `update` | Emparejado y probado |
+| `presencia-oficina` | `0xa4c138b2a3c49dbe` | `ZY-M100-S_2` (`TS0601`) | Router | `presence`, `illuminance`, `target_distance`, `radar_sensitivity`, `minimum_range`, `maximum_range`, `detection_delay`, `fading_time`, `linkquality` | Emparejado; caracterización pendiente |
+| `luz-oficina` | `0xf044d3fffecd9e8e` | `ZBMINIL2` | EndDevice | `state`, `power_on_behavior`, `linkquality`, `update` | Emparejado y probado con lámpara |
+
+- El Dongle-M es el **coordinador**; `presencia-oficina` es el único Router de los tres.
+- Semántica observada del contacto: `contact=false` = cerrado, `contact=true` = abierto.
+- El ZY-M100-S_2 emitió ~75 mensajes/2 min en reposo (≈0,6 msg/s) y mantuvo `target_distance=0`;
+  no se usa todavía para decisiones de dominio.
+- El ZBMINIL2 confirmó `ON`/`OFF` por MQTT y respuesta física en 3 ciclos; `power_on_behavior=off`.
+- La evidencia y los pendientes viven en `docs/hardware/zigbee-bench-oficina.md`; el brief de
+  caracterización funcional en `docs/hardware/zigbee-capabilities-brief.md`.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

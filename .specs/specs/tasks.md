@@ -1,7 +1,7 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: banco de oficina y SNZB-04P validados;
-> SNZB-06P, relé, integración y host definitivo pendientes.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: banco de oficina y tres dispositivos
+> emparejados; caracterización funcional, integración y host definitivo pendientes.
 
 ---
 
@@ -216,6 +216,36 @@ Pendiente: sensores y migración al almacén.
 
 **Verificación**: logs de Zigbee2MQTT y `docs/hardware/zigbee-bench-oficina.md`.
 
+## TSK-90.14: Emparejar y probar ZY-M100-S_2 y ZBMINIL2 en banco
+
+**Trazabilidad**: RF-134.1, RF-134.2, RF-142.1–RF-142.5
+
+- [x] Emparejar `presencia-oficina` (`0xa4c138b2a3c49dbe`) como `ZY-M100-S_2`, renombrar y
+  desactivar `permit_join`.
+- [x] Documentar entidades, configuración inicial, LQI, `target_distance=0` y el volumen de
+  mensajes observado (~75/2 min en reposo).
+- [x] Emparejar `luz-oficina` (`0xf044d3fffecd9e8e`) como `ZBMINIL2`, renombrar y desactivar
+  `permit_join`.
+- [x] Probar 3 ciclos ON/OFF con confirmación de estado MQTT y respuesta física de la lámpara;
+  dejar el relé en OFF.
+- [x] Documentar que el ZBMINIL2 es EndDevice (no router), `S1`/`S2` libres y
+  `power_on_behavior=off`.
+- [x] Backup con los tres dispositivos y verificación de persistencia (`3 devices joined`).
+
+**Verificación**: `verify.sh` 10 OK; logs de Z2M; `docs/hardware/zigbee-bench-oficina.md`.
+
+## TSK-90.15: Caracterización funcional completa — PENDIENTE
+
+**Trazabilidad**: RF-142.2, RF-142.4, RF-142.5
+
+- [ ] Ejecutar el brief `docs/hardware/zigbee-capabilities-brief.md` en una sesión nueva.
+- [ ] Medir push/consulta, topics, comandos, latencias con marcas temporales, frecuencia en
+  reposo/actividad y límites reales de cada dispositivo.
+- [ ] Confirmar retorno a `false` del ZY-M100-S_2, falsos positivos y fiabilidad de
+  `target_distance`; probar botón físico e interruptor externo del ZBMINIL2.
+- [ ] Actualizar `docs/hardware/zigbee-capabilities.md` y revisar si procede ajustar el mapping
+  del worker antes de cualquier integración.
+
 ### Estado de ejecución (F90 — paquete de despliegue)
 
 - [x] TSK-90.06 especificación
@@ -225,7 +255,8 @@ Pendiente: sensores y migración al almacén.
 - [x] TSK-90.10 verificación final
 - [x] TSK-90.12 banco de oficina desplegado (`zigbee-local`)
 - [x] TSK-90.13 SNZB-04P emparejado y validado en banco (`puerta-oficina`)
-- [ ] SNZB-06P y ZBMINIL2 (pendiente)
+- [x] TSK-90.14 ZY-M100-S_2 y ZBMINIL2 emparejados y probados en banco
+- [ ] TSK-90.15 caracterización funcional completa (pendiente)
 - [ ] Mapa MQTT real y flujo de dominio (pendiente)
 - [ ] Traslado y validación en host definitivo (bloqueado)
 
