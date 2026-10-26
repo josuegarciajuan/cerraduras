@@ -92,6 +92,9 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
 - **RF-136.8**: Esta entrega no provisiona devices/packs, no decide host definitivo, autenticación,
   TLS ni ACL del broker, no instala/configura Zigbee2MQTT/Mosquitto y no habilita servicios.
   Esas decisiones y la comprobación de payloads reales siguen bloqueadas hasta recibir hardware.
+- **RF-136.9**: La suscripción usará QoS 1 y client id persistente configurable para permitir cola
+  MQTT durante desconexión. Es entrega al menos una vez, no exactly-once: un fallo de base de datos
+  tras la recepción puede requerir reconciliación; no se afirmará garantía superior a la del broker.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

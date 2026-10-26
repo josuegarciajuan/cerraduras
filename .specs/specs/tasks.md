@@ -34,11 +34,14 @@
 **Trazabilidad**: RF-133.2, RF-133.3, RF-136.1, RF-136.2, RF-136.4, RF-136.5, RF-136.6
 
 - [ ] Implementar proceso configurable con `mosquitto_sub`, flag disabled por defecto y sin
-  dependencia de shell; topic/payload simulados mediante `--stdin --dry-run`.
+  dependencia de shell; topic/payload simulados mediante `--stdin --dry-run`; suscripción QoS 1
+  con sesión persistente y client id configurable.
 - [ ] Resolver device → pack → room y llamar `IotSessionService::processEvent()` como único
   escritor. Mantener los efectos post-commit que tiene el pipeline API.
 - [ ] Reintentar desconexión/fin del cliente MQTT con backoff 1–30 s; un mensaje inválido no mata
   el proceso.
+- [ ] Documentar el límite de fiabilidad: el CLI puede ACKear antes del commit a BD, por lo que no
+  se promete atomicidad entre Mosquitto y `IotSessionService`.
 - [ ] Añadir pruebas de modo dry-run, configuración deshabilitada y policy de reconexión.
 
 **Verificación**: unit tests, `php -l` y `php bin/zigbee-mqtt-worker.php --help`; no conectar broker.

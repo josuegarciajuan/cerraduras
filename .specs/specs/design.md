@@ -49,6 +49,11 @@ dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> mosquitto_sub
   migración aditiva; no se añade ruta HTTP ni se cambia el contrato público.
 - Al salir `mosquitto_sub`, el worker reintenta con backoff 1, 2, 4… hasta 30 s; los mensajes
   inválidos no terminan el proceso. No existe timer de sondeo cloud ni dependencia con Tuya.
+- El cliente usa QoS 1 y sesión persistente con id configurado; Mosquitto puede encolar mientras el
+  consumidor está desconectado. El CLI confirma recepción antes de que el worker termine la
+  transacción de dominio, así que no se promete atomicidad broker/BD: un fallo DB posterior al ACK
+  puede perder ese mensaje y requiere reconciliación. La auditoría/dedupe protege reentregas, no
+  sustituye un outbox de entrada.
 - Modo `--stdin --dry-run`: cada línea simulada es `topic<TAB>payload`; normaliza y muestra eventos
   sin PDO ni conexión de red, de modo que se puede revisar un payload capturado después de recibir
   hardware sin arrancar el broker.

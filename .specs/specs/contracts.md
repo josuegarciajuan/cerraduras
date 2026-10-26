@@ -21,6 +21,7 @@ equipos; no se codifican topics ni payloads de SNZB.
 | `ZIGBEE_MQTT_HOST` | `127.0.0.1` | Host del broker local; sin conexión si el worker no está habilitado. |
 | `ZIGBEE_MQTT_PORT` | `1883` | Entero 1–65535. |
 | `ZIGBEE_MQTT_TOPIC_PREFIX` | `zigbee2mqtt` | Prefijo MQTT suscrito como `<prefix>/#`. |
+| `ZIGBEE_MQTT_CLIENT_ID` | `cerraduras-zigbee-consumer` | Identificador de sesión persistente MQTT; una instancia activa por id. |
 | `ZIGBEE_MQTT_MAP_FILE` | `config/zigbee2mqtt-devices.json` | Ruta JSON local; debe existir y validar al habilitar. |
 | `MOSQUITTO_SUB_BIN` | `mosquitto_sub` | Cliente de línea de comandos Mosquitto >=1.6, validado solo al habilitar. |
 
@@ -103,6 +104,9 @@ antes de iniciar dependencias de transporte/BD.
 El proceso vigila la salida de `mosquitto_sub`; al terminar/rechazar conexión espera backoff
 determinista `min(2^(fallo-1), 30)` s y vuelve a ejecutarlo. El límite de 30 s evita ciclos rápidos;
 fallos de parsing individuales no reinician MQTT. La policy se expone como función pura para tests.
+La suscripción usa QoS 1 y sesión persistente (`-c` + client id); una instancia por id. El CLI puede
+ACKear antes del commit de dominio: si PDO falla después del ACK, el evento no se puede recuperar de
+la cola y requiere reconciliación. No se declara atomicidad entre broker y BD.
 
 ## Compatibilidad y rollback
 
