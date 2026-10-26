@@ -361,6 +361,105 @@ if (str_contains($rollback, 'read -r answer') && str_contains($rollback, 'ROLLBA
     fail('rollback.sh no exige confirmación');
 }
 
+// ── 8b. Contenedores no-root y propietarios de data/ ─────────────────────
+$uidDefaults = [
+    'MOSQUITTO_UID=1883' => 'UID inicial de Mosquitto',
+    'MOSQUITTO_GID=1883' => 'GID inicial de Mosquitto',
+    'Z2M_UID=1000' => 'UID inicial de Zigbee2MQTT',
+    'Z2M_GID=1000' => 'GID inicial de Zigbee2MQTT',
+];
+foreach ($uidDefaults as $needle => $label) {
+    if (str_contains($envExample, $needle)) {
+        pass(".env.example documenta {$label}");
+    } else {
+        fail(".env.example no documenta {$label}");
+    }
+}
+if (preg_match('/^(?:MOSQUITTO|Z2M)_(?:UID|GID)=0\s*$/m', $envExample) === 1) {
+    fail('.env.example permite UID/GID 0');
+} else {
+    pass('.env.example no usa UID/GID 0');
+}
+$composeUsers = [
+    'user: "${MOSQUITTO_UID:-1883}:${MOSQUITTO_GID:-1883}"' => 'Mosquitto',
+    'user: "${Z2M_UID:-1000}:${Z2M_GID:-1000}"' => 'Zigbee2MQTT',
+];
+foreach ($composeUsers as $needle => $service) {
+    if (str_contains($compose, $needle)) {
+        pass("compose ejecuta {$service} con UID/GID no-root configurable");
+    } else {
+        fail("compose no ejecuta {$service} con user: no-root");
+    }
+}
+if (preg_match('/\$\{(?:MOSQUITTO|Z2M)_(?:UID|GID):-0\}/', $compose) === 1
+    || preg_match('/user:\s*["\']?(?:root|0(?::0)?)["\']?\s*$/mi', $compose) === 1) {
+    fail('compose usa root o UID/GID 0 como valor por defecto');
+} else {
+    pass('compose no usa root ni UID/GID 0');
+}
+
+foreach ([
+    'validate_nonroot_id' => 'valida UID/GID numéricos no-root',
+    'install -d -m 0700 -o "$uid" -g "$gid"' => 'crea directorios con owner no-root y 0700',
+    'ensure_passwd_owned' => 'ajusta/valida el propietario del secreto',
+    'chmod 0400' => 'deja passwd en 0400 cuando corre como root',
+    'ensure_z2m_config_owned' => 'ajusta/valida configuration.yaml de Zigbee2MQTT',
+    'id -u' => 'distingue ejecución root/no-root',
+    'stat -c' => 'verifica propietarios sin root',
+] as $needle => $label) {
+    if (str_contains($deploy, $needle)) {
+        pass("deploy.sh {$label}");
+    } else {
+        fail("deploy.sh no {$label}");
+    }
+}
+if (preg_match('/^\s*chown\s/m', $restore) === 1) {
+    fail('restore.sh no debe ejecutar chown automático');
+} else {
+    pass('restore.sh no ejecuta chown automático');
+}
+foreach (['MOSQUITTO_UID', 'MOSQUITTO_GID', 'Z2M_UID', 'Z2M_GID', 'propietario'] as $needle) {
+    if (stripos($restore, $needle) !== false) {
+        pass("restore.sh advierte sobre {$needle}");
+    } else {
+        fail("restore.sh no advierte sobre {$needle}");
+    }
+}
+foreach ([
+    'validate_nonroot_id' => 'valida UID/GID numéricos no-root',
+    'check_owner' => 'comprueba propietarios existentes',
+    'stat -c' => 'lee propietario/grupo/modo',
+    'MOSQUITTO_UID' => 'usa MOSQUITTO_UID',
+    'Z2M_UID' => 'usa Z2M_UID',
+] as $needle => $label) {
+    if (str_contains($preflight, $needle)) {
+        pass("preflight.sh {$label}");
+    } else {
+        fail("preflight.sh no {$label}");
+    }
+}
+if (preg_match('/^\s*chown\s/m', $preflight) === 1) {
+    fail('preflight.sh no debe modificar propietarios (solo lectura)');
+} else {
+    pass('preflight.sh no modifica propietarios');
+}
+
+$packageScripts = '';
+foreach (glob($pkg . '/*.sh') ?: [] as $scriptPath) {
+    $packageScripts .= (string) file_get_contents($scriptPath) . "\n";
+}
+foreach ([
+    '/\bsudo\b/' => 'sudo',
+    '/chmod\s+0?777\b/' => 'chmod 777',
+    '/\boficina\b/i' => 'referencia a oficina en scripts',
+] as $regex => $label) {
+    if (preg_match($regex, $packageScripts) === 1) {
+        fail("los scripts del paquete contienen {$label}");
+    } else {
+        pass("los scripts del paquete no contienen {$label}");
+    }
+}
+
 // ── 9. Sin wiring de arranque/systemd ─────────────────────────────────────
 $wiringFiles = [$root . '/start-all.sh', $root . '/stop-all.sh'];
 foreach (glob($root . '/docs/systemd/*') ?: [] as $unit) {

@@ -16,6 +16,8 @@ x-logging: &default-logging
 services:
   mosquitto:
     image: ${MOSQUITTO_IMAGE:?define MOSQUITTO_IMAGE con tag/digest fijo}
+    # No-root: el UID/GID debe coincidir con el propietario de data/mosquitto.
+    user: "${MOSQUITTO_UID:-1883}:${MOSQUITTO_GID:-1883}"
     restart: unless-stopped
     read_only: true
     environment:
@@ -54,6 +56,8 @@ services:
 
   zigbee2mqtt:
     image: ${Z2M_IMAGE:?define Z2M_IMAGE con tag/digest fijo}
+    # No-root: el UID/GID debe coincidir con el propietario de data/zigbee2mqtt.
+    user: "${Z2M_UID:-1000}:${Z2M_GID:-1000}"
     restart: unless-stopped
     read_only: true
     depends_on:

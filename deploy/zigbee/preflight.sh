@@ -112,10 +112,27 @@ fi
 
 # 2. Variables mínimas del proyecto.
 for var in COMPOSE_PROJECT_NAME MOSQUITTO_IMAGE Z2M_IMAGE MQTT_HOST_PORT Z2M_UI_HOST_PORT \
-           MQTT_USERNAME MQTT_PASSWORD ZIGBEE_ADAPTER_HOST ZIGBEE_ADAPTER_PORT; do
+           MQTT_USERNAME MQTT_PASSWORD ZIGBEE_ADAPTER_HOST ZIGBEE_ADAPTER_PORT \
+           MOSQUITTO_UID MOSQUITTO_GID Z2M_UID Z2M_GID; do
   if [ -z "$(value_of "$var")" ]; then
     error "falta la variable obligatoria $var en $ENV_FILE"
   fi
+done
+
+validate_nonroot_id() {
+  local name="$1" value
+  value="$(value_of "$name")"
+  case "$value" in
+    ''|*[!0-9]*) error "$name debe ser un UID/GID numérico (valor: '$value')" ;;
+    *)
+      if [ "$value" -eq 0 ]; then
+        error "$name no puede ser 0: los contenedores no deben correr como root"
+      fi
+      ;;
+  esac
+}
+for var in MOSQUITTO_UID MOSQUITTO_GID Z2M_UID Z2M_GID; do
+  validate_nonroot_id "$var"
 done
 
 PROJECT="$(value_of COMPOSE_PROJECT_NAME)"
@@ -284,9 +301,53 @@ case "$PERMS" in
   ?00|600|400) ok "permisos de .env restrictivos ($PERMS)" ;;
   *) warn ".env tiene permisos $PERMS; se recomienda 600" ;;
 esac
-if [ ! -f "$ROOT/data/mosquitto/config/passwd" ]; then
+
+# Propietario esperado de los bind mounts (no se modifica nada).
+check_owner() {
+  local path="$1" uid="$2" gid="$3" label="$4" owner group
+  if [ ! -e "$path" ]; then
+    warn "no existe $label ($path); deploy.sh lo creará con propietario $uid:$gid y modo 0700 si corre como root"
+    return
+  fi
+  owner="$(stat -c '%u' "$path" 2>/dev/null || echo '?')"
+  group="$(stat -c '%g' "$path" 2>/dev/null || echo '?')"
+  if [ "$owner" = "$uid" ] && [ "$group" = "$gid" ]; then
+    ok "$label con propietario $uid:$gid"
+  elif [ "$(id -u)" -eq 0 ]; then
+    warn "$label ($path) pertenece a $owner:$group; deploy.sh lo reajustará a $uid:$gid"
+  else
+    error "$label ($path) pertenece a $owner:$group; se espera $uid:$gid (los contenedores no corren como root)"
+  fi
+}
+
+check_owner "$ROOT/data/mosquitto/config" "$MOSQUITTO_UID" "$MOSQUITTO_GID" "data/mosquitto/config"
+check_owner "$ROOT/data/mosquitto/data" "$MOSQUITTO_UID" "$MOSQUITTO_GID" "data/mosquitto/data"
+check_owner "$ROOT/data/zigbee2mqtt" "$Z2M_UID" "$Z2M_GID" "data/zigbee2mqtt"
+
+PASSWD_FILE="$ROOT/data/mosquitto/config/passwd"
+if [ ! -f "$PASSWD_FILE" ]; then
   warn "no existe data/mosquitto/config/passwd; provisiona las credenciales MQTT antes de deploy.sh"
+else
+  check_owner "$PASSWD_FILE" "$MOSQUITTO_UID" "$MOSQUITTO_GID" "data/mosquitto/config/passwd"
+  PASSWD_MODE="$(stat -c '%a' "$PASSWD_FILE" 2>/dev/null || echo '?')"
+  case "$PASSWD_MODE" in
+    [4-7][0-7][0-7]) ok "passwd concede lectura a su propietario (modo $PASSWD_MODE)" ;;
+    *)
+      if [ "$(id -u)" -eq 0 ]; then
+        warn "passwd no concede lectura a su propietario (modo $PASSWD_MODE); deploy.sh lo reajustará a 0400 $MOSQUITTO_UID:$MOSQUITTO_GID"
+      else
+        error "passwd no concede lectura a su propietario (modo $PASSWD_MODE); se espera 0400 con propietario $MOSQUITTO_UID:$MOSQUITTO_GID"
+      fi
+      ;;
+  esac
 fi
+
+if [ "$(id -u)" -eq 0 ]; then
+  ok "preflight corre como root: deploy.sh podrá crear/ajustar los propietarios de data/"
+else
+  warn "preflight no corre como root: deploy.sh exigirá que data/ y passwd ya tengan propietario $MOSQUITTO_UID:$MOSQUITTO_GID / $Z2M_UID:$Z2M_GID; precrea los directorios o ejecuta el despliegue como root"
+fi
+
 warn "por defecto los puertos se publican solo en 127.0.0.1; no abras la UI a Internet sin TLS/ACL y firewall"
 warn "adapter=ember, baudrate=115200 y rtscts=false son valores iniciales a validar con el hardware real"
 

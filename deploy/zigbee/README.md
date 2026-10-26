@@ -80,13 +80,52 @@ Los secretos **nunca** se guardan en el repositorio. `.env`, `data/`, `backups/`
    chmod 600 data/mosquitto/config/passwd
    ```
 
-   Compose monta este fichero como secreto de solo lectura en el contenedor; el fichero del host
-   permanece con permisos 600.
+   Compose monta este fichero como secreto de solo lectura en el contenedor. Si `deploy.sh` corre
+   como root, ajusta el fichero a propietario `MOSQUITTO_UID:MOSQUITTO_GID` y modo `0400` para que
+   el proceso no-root pueda leerlo. Si no corre como root, el fichero debe estar ya legible por ese
+   UID o `deploy.sh` aborta sin cambiar propietarios.
 
    Usa la misma contraseña que `MQTT_PASSWORD` en `.env`. `deploy.sh` no crea ni sobrescribe este
    fichero: si falta, aborta con instrucciones.
 
 4. Verifica que `.env` y el fichero de contraseñas no aparecen en `git status` antes de continuar.
+
+## Propietario de `data/` y UID/GID no-root
+
+Los contenedores **no** corren como root: Compose fija `user:` con `MOSQUITTO_UID/GID` y
+`Z2M_UID/GID`. Los bind mounts (`data/mosquitto/config`, `data/mosquitto/data`,
+`data/zigbee2mqtt`) y el fichero `passwd` deben pertenecer a esos UIDs/GIDs; de lo contrario el
+contenedor arranca pero no puede leer el secreto ni escribir sus datos (SQLite, `secret.yaml`,
+`coordinator_backup.json`).
+
+Valores iniciales en `.env.example`: `MOSQUITTO_UID=1883`, `MOSQUITTO_GID=1883`, `Z2M_UID=1000`,
+`Z2M_GID=1000`. **Son valores de partida, no una garantía**: confírmalos contra las imágenes
+fijadas antes de desplegar. Si tu imagen usa otros IDs, cámbialos en `.env`; deben ser numéricos y
+distintos de `0`.
+
+```bash
+# UID/GID efectivos declarados por la imagen (si Config.User está vacío, revisa su Dockerfile)
+docker image inspect --format '{{.Config.User}}' "$MOSQUITTO_IMAGE"
+docker image inspect --format '{{.Config.User}}' "$Z2M_IMAGE"
+
+# Alternativa: ejecutar el binario id dentro de la imagen fijada
+docker run --rm --entrypoint sh "$MOSQUITTO_IMAGE" -c id
+docker run --rm --entrypoint sh "$Z2M_IMAGE" -c id
+```
+
+Dos formas válidas de preparar permisos:
+
+- **Ejecutar `deploy.sh` como root una vez** (preferido): crea o reajusta los directorios con
+  `install -d -m 0700 -o UID -g GID`, deja `passwd` en `0400 UID:GID` y
+  `configuration.yaml` de Zigbee2MQTT en `0600 Z2M_UID:Z2M_GID`.
+- **Precrear los directorios sin root**: el usuario administrador del host debe crear
+  `data/mosquitto/config`, `data/mosquitto/data` y `data/zigbee2mqtt` con propietario/grupo
+  `MOSQUITTO_UID:MOSQUITTO_GID`, `MOSQUITTO_UID:MOSQUITTO_GID` y `Z2M_UID:Z2M_GID`
+  respectivamente, modo `0700`, y dejar `passwd` legible por `MOSQUITTO_UID`. Después,
+  `deploy.sh` puede ejecutarse sin root **solo si** esas condiciones ya se cumplen; si no, aborta
+  con instrucciones y **no** intenta elevar privilegios ni cambiar propietarios.
+
+`deploy.sh` y `preflight.sh` no imprimen el contenido de secretos.
 
 ## Uso en un banco (incluido `oficina`, solo si el operador lo autoriza)
 
@@ -94,9 +133,13 @@ Esta entrega **no ejecuta** estos pasos. Si en el futuro se decide usar `oficina
 
 ```bash
 ./preflight.sh          # solo lectura; falla cerrado
-./deploy.sh             # valida, crea data/ y levanta SOLO este proyecto
+./deploy.sh             # valida, prepara data/ y levanta SOLO este proyecto
 ./verify.sh             # estado, salud, loopback, MQTT y logs
 ```
+
+`deploy.sh` debe ejecutarse como root la primera vez (para crear/ajustar propietarios de `data/`),
+o bien sobre directorios y `passwd` ya precreados con los UID/GID de `.env`. Si se ejecuta sin root
+y los propietarios no coinciden, aborta; no usa elevación automática ni `chown` silencioso.
 
 Comprobaciones de no interferencia antes/después:
 
@@ -149,6 +192,11 @@ Para promover: para el proyecto con `./rollback.sh --yes`, conserva el `data/` a
 contenido restaurado en `data/` y vuelve a ejecutar `./deploy.sh` y `./verify.sh`. Hazlo solo con
 el proyecto parado y tras revisar el backup.
 
+**Propietarios tras restaurar**: `restore.sh` no ejecuta `chown`. Antes de arrancar, el
+administrador del host debe ajustar manualmente `data/mosquitto` a `MOSQUITTO_UID:MOSQUITTO_GID`
+(incluido `passwd` en `0400`) y `data/zigbee2mqtt` a `Z2M_UID:Z2M_GID` (con
+`configuration.yaml` escribible por ese UID). Después, `deploy.sh` como root puede reafirmarlo.
+
 ## Rollback
 
 ```bash
@@ -165,8 +213,9 @@ requiere una decisión manual del operador.
 1. Clona en el servidor la versión aprobada de este repositorio (no copies el `.env` ni `data/`
    desde el banco).
 2. Crea allí `.env` y el fichero de contraseñas fuera de Git, con los valores del servidor.
-3. Restaura el backup en un destino nuevo y, con el proyecto parado, promociona los datos.
-4. Ejecuta `./preflight.sh`, `./deploy.sh` y `./verify.sh`.
+3. Restaura el backup en un destino nuevo y, con el proyecto parado, promociona los datos;
+   reajusta manualmente los propietarios de `data/` a los UID/GID de `.env` (ver arriba).
+4. Ejecuta `./preflight.sh`, `./deploy.sh` (como root la primera vez) y `./verify.sh`.
 5. Revisa firewall, autenticación y TLS **antes** de publicar el broker o la UI fuera de loopback.
 
 No se migran contenedores ni se reutiliza la configuración de red del banco. El host definitivo
@@ -185,6 +234,11 @@ sigue sin decidirse en esta fase.
   arranque del API.
 - Las comprobaciones de TCP del adaptador son de alcance de red; no validan el firmware ni el
   protocolo del dongle.
+- Los UID/GID `1883`/`1000` son valores iniciales. Deben confirmarse con la imagen fijada; el
+  acceso efectivo del contenedor al secreto y la escritura en `data/` solo se validan en el host
+  real (no en los tests estáticos).
+- `MOSQUITTO_UID/GID` y `Z2M_UID/GID` deben ser numéricos y distintos de `0`; el paquete no admite
+  ejecutar los contenedores como root.
 
 ## Tests de esta entrega
 
