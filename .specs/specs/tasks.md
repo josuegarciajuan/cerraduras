@@ -161,6 +161,25 @@ broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos
 
 **Verificación**: informe final; no se ejecuta `deploy.sh` ni comandos contra `oficina`.
 
+## TSK-90.11: Corregir propietarios para contenedores no-root
+
+**Trazabilidad**: RF-137.7, RF-138.2, RF-139.3, RF-141.1, RF-141.2
+
+- [x] Fijar `user:` no-root configurable en Compose y documentar `MOSQUITTO_UID/GID` y
+  `Z2M_UID/GID` en `.env.example` (valores iniciales a confirmar con las imágenes).
+- [x] `deploy.sh` valida UID/GID numéricos no `0`; como root crea/ajusta directorios `0700`,
+  `passwd` `0400` y `configuration.yaml` de Zigbee2MQTT `0600`; sin root valida o aborta sin
+  elevar privilegios.
+- [x] `preflight.sh` comprueba UID/GID y propietarios existentes sin modificar nada.
+- [x] `restore.sh` advierte del reajuste manual de propietarios; no ejecuta `chown`.
+- [x] README documenta ejecución como root, precreación de directorios y verificación de UIDs
+  reales de las imágenes.
+- [x] Ampliar test estático y BLOCK 63 (user no-root, UID/GID ≠ 0, propietarios, sin `sudo`,
+  sin `chmod 777`, sin referencias de ejecución a `oficina`).
+
+**Verificación**: `bash -n`, test PHP, YAML parseable y `docker compose config --quiet` con
+entorno temporal en `/tmp`; sin ejecutar deploy/preflight real ni contactar `oficina`.
+
 ### Estado de ejecución (F90 — paquete de despliegue)
 
 - [x] TSK-90.06 especificación
@@ -172,8 +191,8 @@ broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos
 
 Verificación pre-host ejecutada (2026-10-26), sin Docker de proyecto, red ni hardware:
 
-- `php api/tests/Unit/ZigbeeDeployPackageTest.php` → **234 passed, 0 failed**.
-- BLOCK 63 ejecutado de forma aislada → **32 passed, 0 failed** (el runner completo no se
+- `php api/tests/Unit/ZigbeeDeployPackageTest.php` → **264 passed, 0 failed**.
+- BLOCK 63 ejecutado de forma aislada → **41 passed, 0 failed** (el runner completo no se
   ejecutó para no tocar la BD/servicios del entorno).
 - `bash -n` de los 6 scripts → OK.
 - YAML de Compose y Zigbee2MQTT parseado con Python → OK.

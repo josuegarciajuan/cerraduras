@@ -5808,7 +5808,13 @@ for F90D_MARKER in \
     "adapter: ember" \
     "rtscts: false" \
     "cap_drop:" \
-    "no-new-privileges:true"; do
+    "no-new-privileges:true" \
+    'user: "${MOSQUITTO_UID:-1883}:${MOSQUITTO_GID:-1883}"' \
+    'user: "${Z2M_UID:-1000}:${Z2M_GID:-1000}"' \
+    "MOSQUITTO_UID=1883" \
+    "Z2M_UID=1000" \
+    'install -d -m 0700 -o "$uid" -g "$gid"' \
+    "chmod 0400"; do
     if grep -RqsF "$F90D_MARKER" "$F90D_PKG" 2>/dev/null; then
         pass "F90: marcador de paquete '$F90D_MARKER'"
     else
@@ -5817,13 +5823,22 @@ for F90D_MARKER in \
 done
 
 # Prohibiciones de seguridad.
-for F90D_FORBIDDEN in "privileged: true" "network_mode: host" "docker.sock" "down -v"; do
+for F90D_FORBIDDEN in "privileged: true" "network_mode: host" "docker.sock" "down -v" \
+                     "sudo" "chmod 777"; do
     if grep -RqsF "$F90D_FORBIDDEN" "$F90D_PKG" 2>/dev/null; then
         fail "F90: prohibido '$F90D_FORBIDDEN' en deploy/zigbee"
     else
         pass "F90: sin '$F90D_FORBIDDEN' en deploy/zigbee"
     fi
 done
+
+# No se ejecuta nada contra el host de trabajo/oficina: los scripts solo operan
+# sobre el directorio del paquete y su proyecto Compose.
+if grep -RqsF "oficina" "$F90D_PKG"/*.sh 2>/dev/null; then
+    fail "F90: scripts sin referencia a oficina" "encontrada en deploy/zigbee/*.sh"
+else
+    pass "F90: scripts sin referencia a oficina"
+fi
 
 # Scripts: sintaxis y set -eu, sin ejecutar nada real.
 for F90D_SCRIPT in preflight.sh deploy.sh verify.sh backup.sh restore.sh rollback.sh; do
