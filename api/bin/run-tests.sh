@@ -5687,6 +5687,93 @@ else
 fi
 
 # =============================================================================
+# BLOCK 62 — F90: consumidor Zigbee2MQTT local, pre-hardware
+# Trazabilidad: RF-133.1..RF-136.9, TSK-90.01..TSK-90.04
+# Sin broker, red ni hardware. Los tests son unitarios/dry-run y no usan BD.
+# =============================================================================
+block "BLOCK 62 — F90: consumidor Zigbee2MQTT local"
+
+F90_WORKER="bin/zigbee-mqtt-worker.php"
+F90_DOMAIN="src/Infrastructure/Gateways/Sensor"
+F90_GUARD_FILES=(
+    "$F90_WORKER"
+    "$F90_DOMAIN/ZigbeeMqttMessageMapper.php"
+    "$F90_DOMAIN/ZigbeeMqttEventProcessor.php"
+    "$F90_DOMAIN/ZigbeeMqttRuntimeFactory.php"
+    "src/Domain/Presence/IotSessionServiceFactory.php"
+)
+
+for F90_MARKER in \
+    "Config::getBool('ZIGBEE_MQTT_ENABLED', false)" \
+    "ZigbeeMqttReconnectBackoff::delayFor" \
+    "Ulid::generate()" \
+    "-q', '1'" \
+    "-c',"; do
+    if grep -qF "$F90_MARKER" "$F90_WORKER" 2>/dev/null; then
+        pass "F90: worker contract marker '$F90_MARKER' present"
+    else
+        fail "F90: worker contract marker '$F90_MARKER'" "missing from $F90_WORKER"
+    fi
+done
+if grep -qF 'new IotSessionService(' src/Domain/Presence/IotSessionServiceFactory.php 2>/dev/null \
+    && grep -qF 'IotSessionServiceFactory::create' "$F90_DOMAIN/ZigbeeMqttRuntimeFactory.php" 2>/dev/null \
+    && grep -qF 'IotSessionServiceFactory::create' public/index.php 2>/dev/null \
+    && grep -qF 'processEvent($event, $correlationId)' "$F90_DOMAIN/ZigbeeMqttEventProcessor.php" 2>/dev/null; then
+    pass "F90: API and worker share the sole IotSessionService writer"
+else
+    fail "F90: IotSessionService writer boundary" "shared factory or processor hook missing"
+fi
+
+for F90_SOURCE in "${F90_GUARD_FILES[@]}"; do
+    for F90_CLOUD_MARKER in "TuyaSensorIngress" "tuyaPresenceApi" "TUYA_ACCESS_ID" "openapi.tuya"; do
+        if grep -qF "$F90_CLOUD_MARKER" "$F90_SOURCE" 2>/dev/null; then
+            fail "F90: no direct cloud path in $F90_SOURCE" "found '$F90_CLOUD_MARKER'"
+        else
+            pass "F90: no '$F90_CLOUD_MARKER' in $F90_SOURCE"
+        fi
+    done
+done
+
+if grep -qF "zigbee-mqtt-worker" ../start-all.sh 2>/dev/null \
+    || grep -qF "zigbee-mqtt-worker" ../stop-all.sh 2>/dev/null \
+    || grep -qF "cerraduras-zigbee-mqtt" ../docs/systemd/cerraduras-workers.service 2>/dev/null; then
+    fail "F90: worker not auto-started" "found startup/service wiring"
+else
+    pass "F90: worker has no start-all/stop-all/systemd wiring"
+fi
+if grep -qF 'ZIGBEE_MQTT_ENABLED=false' .env.example; then
+    pass "F90: .env.example disables worker by default"
+else
+    fail "F90: safe default" "ZIGBEE_MQTT_ENABLED=false missing"
+fi
+if [ -f migrations/0126_presence_provider_zigbee2mqtt.sql ]; then
+    pass "F90: provider migration 0126 is present"
+else
+    fail "F90: provider migration 0126" "migration missing"
+fi
+
+for F90_TEST in \
+    "tests/Unit/ZigbeeMqttMessageMapperTest.php" \
+    "tests/Unit/ZigbeeMqttReconnectBackoffTest.php" \
+    "tests/Unit/ZigbeeMqttWorkerTest.php" \
+    "tests/Unit/ZigbeeProviderMigrationTest.php"; do
+    if [ -f "$F90_TEST" ]; then
+        F90_OUT=$(php "$F90_TEST" 2>&1)
+        F90_RC=$?
+        F90_SUM=$(echo "$F90_OUT" | grep -oE 'Total: [0-9]+ passed, [0-9]+ failed' | tail -1)
+        [ -z "$F90_SUM" ] && F90_SUM="exit=$F90_RC"
+        if [ "$F90_RC" -eq 0 ]; then
+            pass "F90: $(basename "$F90_TEST") ($F90_SUM)"
+        else
+            fail "F90: $(basename "$F90_TEST")" \
+                "$F90_SUM — $(echo "$F90_OUT" | grep -iE 'FAIL|❌|error' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F90: $F90_TEST" "test missing"
+    fi
+done
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
