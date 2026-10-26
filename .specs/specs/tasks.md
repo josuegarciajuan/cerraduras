@@ -1,6 +1,7 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: software y paquete de despliegue pre-host entregados; ejecución real y hardware siguen bloqueados.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: software y banco de oficina desplegados;
+> sensores, integración y host definitivo pendientes.
 
 ---
 
@@ -180,6 +181,23 @@ broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos
 **Verificación**: `bash -n`, test PHP, YAML parseable y `docker compose config --quiet` con
 entorno temporal en `/tmp`; sin ejecutar deploy/preflight real ni contactar `oficina`.
 
+## TSK-90.12: Desplegar el banco Zigbee en oficina
+
+**Trazabilidad**: RF-133.1, RF-134.2, RF-137.1, RF-138.1, RF-139.1, RF-140.1
+
+- [x] Copiar el paquete a `/opt/cerraduras-zigbee` y crear `.env` local con secretos fuera de Git.
+- [x] Crear el fichero de contraseñas de Mosquitto; validar propietarios no-root.
+- [x] Ejecutar `preflight.sh`, `deploy.sh` y `verify.sh` en `oficina`; resultado 10 OK / 0 fallos.
+- [x] Confirmar conexión de Zigbee2MQTT al Dongle-M, formación de red y reconexión tras reinicio
+  (`Adapter network matches config`).
+- [x] Probar ciclo `rollback` → `backup` → `deploy` → `verify`, conservando datos.
+- [x] Registrar versión, imágenes, rutas, puertos y resultados en
+  `docs/hardware/zigbee-bench-oficina.md`, sin secretos.
+- [x] Confirmar que no se tocaron systemd, red, firewall ni otros contenedores.
+
+**Verificación**: `verify.sh` 10 OK; logs de Zigbee2MQTT con 0 dispositivos y red recuperada.
+Pendiente: sensores y migración al almacén.
+
 ### Estado de ejecución (F90 — paquete de despliegue)
 
 - [x] TSK-90.06 especificación
@@ -187,6 +205,8 @@ entorno temporal en `/tmp`; sin ejecutar deploy/preflight real ni contactar `ofi
 - [x] TSK-90.08 scripts
 - [x] TSK-90.09 tests/runner
 - [x] TSK-90.10 verificación final
+- [x] TSK-90.12 banco de oficina desplegado (`zigbee-local`, 0 dispositivos)
+- [ ] Sensores SNZB y mapa MQTT real (bloqueado hasta emparejar)
 - [ ] Traslado y validación en host definitivo (bloqueado)
 
 Verificación pre-host ejecutada (2026-10-26), sin Docker de proyecto, red ni hardware:
