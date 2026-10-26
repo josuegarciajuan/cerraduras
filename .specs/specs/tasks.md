@@ -1,6 +1,56 @@
 # Tasks — Cerraduras Hotel
 
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: solo documentación y listas previas; no hay implementación autorizada.
+
 ---
+
+# Fase 90: Migración Zigbee local — tareas documentales y bloqueos
+
+## TSK-90.01: Registrar recepción y descubrimiento de hardware
+
+**Trazabilidad**: RF-134.1
+
+- [ ] Al recibir SONOFF Dongle-M EFR32MG24, SNZB-04P, SNZB-06P y ZBMINIL2, registrar modelo,
+  identificador no sensible, versión de Zigbee2MQTT y mensajes/exposiciones realmente observados.
+- [ ] No completar la lista con capacidades de catálogo no verificadas.
+- [ ] Actualizar `requirements.md`, `design.md`, `contracts.md` y esta lista, en ese orden, con
+  los hallazgos aprobados.
+
+## TSK-90.02: Lista de banco en oficina
+
+**Trazabilidad**: RF-133.1, RF-133.3, RF-134.2
+
+- [ ] Confirmar que Dongle-M usa PoE y Ethernet en el banco y registrar conectividad local.
+- [ ] Verificar recepción MQTT y reconexión de Zigbee2MQTT/Mosquitto sin consultas Tuya.
+- [ ] Para SNZB-04P, comprobar y registrar los eventos de puerta realmente recibidos.
+- [ ] Para SNZB-06P, comprobar y registrar los eventos de presencia realmente recibidos.
+- [ ] Para ZBMINIL2, limitar cualquier prueba eléctrica a electricista autorizado, con circuito
+  desenergizado y ausencia de tensión verificada; registrar solo el resultado de la prueba
+  aprobada, no instrucciones de cableado.
+- [ ] Verificar en evidencia que duplicados/orden se pueden entregar al pipeline canónico sin
+  crear una escritura paralela a `IotSessionService`.
+
+## TSK-90.03: Gate de aprobación antes del almacén
+
+**Trazabilidad**: RF-134.3, RF-135.1–RF-135.3
+
+- [ ] Revisar y aprobar los cuatro documentos SDD actualizados con la evidencia del banco.
+- [ ] Definir para cada dispositivo la ventana, responsable, criterio de aceptación y rollback
+  hacia Tuya antes de trasladarlo al almacén.
+- [ ] Confirmar disponibilidad de electricista autorizado antes de planificar ZBMINIL2.
+
+## TSK-90.04: Implementación futura — BLOQUEADA
+
+**Bloqueada hasta**: recepción de hardware, descubrimiento documentado y aprobación explícita de
+`requirements.md → design.md → contracts.md → tasks.md`.
+
+- [ ] Instalar/configurar Zigbee2MQTT y Mosquitto locales.
+- [ ] Implementar el adaptador MQTT a `IotSessionService` y sus pruebas.
+- [ ] Crear/actualizar dispositivos y migrar uno por uno en el almacén.
+- [ ] Ejecutar pruebas de aceptación de cada corte y retirar Tuya solo tras aceptación.
+
+> No marcar ninguna tarea de implementación como realizada en esta fase. No ejecutar pruebas que
+> requieran hardware hasta su recepción.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 
