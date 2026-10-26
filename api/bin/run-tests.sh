@@ -5774,6 +5774,98 @@ for F90_TEST in \
 done
 
 # =============================================================================
+# BLOCK 63 — F90: paquete de despliegue Zigbee aislado (pre-host)
+# Trazabilidad: RF-137..RF-141, TSK-90.06..TSK-90.10
+# Guardia estática: NO ejecuta Docker, no usa red, broker, BD ni hardware.
+# =============================================================================
+block "BLOCK 63 — F90: paquete de despliegue Zigbee aislado"
+
+F90D_ROOT="$(dirname "$PROJECT_DIR")"
+F90D_PKG="$F90D_ROOT/deploy/zigbee"
+F90D_TEST="tests/Unit/ZigbeeDeployPackageTest.php"
+
+if [ -f "$F90D_TEST" ]; then
+    F90D_OUT=$(php "$F90D_TEST" 2>&1)
+    F90D_RC=$?
+    F90D_SUM=$(echo "$F90D_OUT" | grep -oE 'Total: [0-9]+ passed, [0-9]+ failed' | tail -1)
+    [ -z "$F90D_SUM" ] && F90D_SUM="exit=$F90D_RC"
+    if [ "$F90D_RC" -eq 0 ]; then
+        pass "F90: ZigbeeDeployPackageTest estático ($F90D_SUM)"
+    else
+        fail "F90: ZigbeeDeployPackageTest" \
+            "$F90D_SUM — $(echo "$F90D_OUT" | grep -E '❌|failed' | head -3 | tr '\n' ' ')"
+    fi
+else
+    fail "F90: ZigbeeDeployPackageTest" "falta $F90D_TEST"
+fi
+
+# Marcadores de contrato del paquete (sin Docker).
+for F90D_MARKER in \
+    "COMPOSE_PROJECT_NAME" \
+    '127.0.0.1:${MQTT_HOST_PORT' \
+    '127.0.0.1:${Z2M_UI_HOST_PORT' \
+    "permit_join: false" \
+    "adapter: ember" \
+    "rtscts: false" \
+    "cap_drop:" \
+    "no-new-privileges:true"; do
+    if grep -RqsF "$F90D_MARKER" "$F90D_PKG" 2>/dev/null; then
+        pass "F90: marcador de paquete '$F90D_MARKER'"
+    else
+        fail "F90: marcador de paquete '$F90D_MARKER'" "no encontrado en deploy/zigbee"
+    fi
+done
+
+# Prohibiciones de seguridad.
+for F90D_FORBIDDEN in "privileged: true" "network_mode: host" "docker.sock" "down -v"; do
+    if grep -RqsF "$F90D_FORBIDDEN" "$F90D_PKG" 2>/dev/null; then
+        fail "F90: prohibido '$F90D_FORBIDDEN' en deploy/zigbee"
+    else
+        pass "F90: sin '$F90D_FORBIDDEN' en deploy/zigbee"
+    fi
+done
+
+# Scripts: sintaxis y set -eu, sin ejecutar nada real.
+for F90D_SCRIPT in preflight.sh deploy.sh verify.sh backup.sh restore.sh rollback.sh; do
+    F90D_PATH="$F90D_PKG/$F90D_SCRIPT"
+    if [ ! -f "$F90D_PATH" ]; then
+        fail "F90: $F90D_SCRIPT" "falta"
+        continue
+    fi
+    if bash -n "$F90D_PATH" 2>/dev/null; then
+        pass "F90: bash -n $F90D_SCRIPT"
+    else
+        fail "F90: bash -n $F90D_SCRIPT" "error de sintaxis"
+    fi
+    if grep -qE '^set -eu$' "$F90D_PATH"; then
+        pass "F90: $F90D_SCRIPT usa set -eu"
+    else
+        fail "F90: $F90D_SCRIPT" "no usa set -eu"
+    fi
+done
+
+# No interferencia: el paquete no debe engancharse al arranque ni a systemd.
+if grep -RqsF -e "deploy/zigbee" -e "zigbee-deploy" "$F90D_ROOT/start-all.sh" "$F90D_ROOT/stop-all.sh" "$F90D_ROOT/docs/systemd" 2>/dev/null; then
+    fail "F90: paquete sin wiring de arranque/systemd" "encontrado en start-all/stop-all/docs/systemd"
+else
+    pass "F90: paquete sin wiring de arranque/systemd"
+fi
+if find "$F90D_PKG" -maxdepth 3 -name '*.service' -print -quit 2>/dev/null | grep -q .; then
+    fail "F90: paquete sin unidades systemd" "hay un .service en deploy/zigbee"
+else
+    pass "F90: paquete sin unidades systemd"
+fi
+
+# Secretos/rutas de oficina y datos runtime no deben estar en el paquete.
+for F90D_LEAK in "/root/" "/home/" "192.168." "172.16." "92.113.151.136"; do
+    if grep -RqsF "$F90D_LEAK" "$F90D_PKG" 2>/dev/null; then
+        fail "F90: paquete sin '$F90D_LEAK'" "encontrado en deploy/zigbee"
+    else
+        pass "F90: paquete sin '$F90D_LEAK'"
+    fi
+done
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
