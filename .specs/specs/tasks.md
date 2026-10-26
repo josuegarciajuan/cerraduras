@@ -37,7 +37,8 @@
   dependencia de shell; topic/payload simulados mediante `--stdin --dry-run`; suscripción QoS 1
   con sesión persistente y client id configurable.
 - [ ] Resolver device → pack → room y llamar `IotSessionService::processEvent()` como único
-  escritor. Mantener los efectos post-commit que tiene el pipeline API.
+  escritor mediante una fábrica compartida por API/worker. Mantener los efectos post-commit que
+  tiene el pipeline API; el consumer no agrega cliente REST Tuya ni temporizadores.
 - [ ] Reintentar desconexión/fin del cliente MQTT con backoff 1–30 s; un mensaje inválido no mata
   el proceso.
 - [ ] Documentar el límite de fiabilidad: el CLI puede ACKear antes del commit a BD, por lo que no

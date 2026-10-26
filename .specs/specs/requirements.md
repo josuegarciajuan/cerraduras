@@ -95,6 +95,10 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
 - **RF-136.9**: La suscripción usará QoS 1 y client id persistente configurable para permitir cola
   MQTT durante desconexión. Es entrega al menos una vez, no exactly-once: un fallo de base de datos
   tras la recepción puede requerir reconciliación; no se afirmará garantía superior a la del broker.
+- **RF-136.10**: El worker construirá el mismo grafo de dominio que el API mediante una fábrica
+  compartida; no duplicará reglas ni efectos post-commit. El consumidor no incorporará cliente ni
+  llamadas REST Tuya, sondeos o temporizadores. Los efectos de actuador ya existentes en
+  `IotSessionService` conservan su provider configurado para dispositivos aún no migrados.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

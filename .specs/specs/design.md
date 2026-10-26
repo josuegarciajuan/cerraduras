@@ -44,9 +44,11 @@ dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> mosquitto_sub
   colapsar reentregas inmediatas sin confundir una transición posterior repetida. El raw
   guardado en auditoría se limita a los metadatos mínimos (topic/entity/value), no al payload entero.
 - El worker resuelve `external_id` vía `DeviceRepository`, obtiene room por `pack_id` y llama al
-  `IotSessionService`. Los mismos servicios post-commit del API (regla de salida, luz, anomalías y
-  motor del almacén) se deben conservar. `presence_events.provider` añade `ZIGBEE2MQTT` mediante
-  migración aditiva; no se añade ruta HTTP ni se cambia el contrato público.
+  `IotSessionService`. API y worker compartirán `IotSessionServiceFactory` para que regla de salida,
+  luz, anomalías y motor del almacén tengan el mismo wiring. El consumidor no incorpora REST Tuya;
+  los efectos de actuador existentes conservan el provider ya configurado para dispositivos que
+  sigan en Tuya. `presence_events.provider` añade `ZIGBEE2MQTT` mediante migración aditiva; no se
+  añade ruta HTTP ni se cambia el contrato público.
 - Al salir `mosquitto_sub`, el worker reintenta con backoff 1, 2, 4… hasta 30 s; los mensajes
   inválidos no terminan el proceso. No existe timer de sondeo cloud ni dependencia con Tuya.
 - El cliente usa QoS 1 y sesión persistente con id configurado; Mosquitto puede encolar mientras el

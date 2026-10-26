@@ -87,6 +87,9 @@ normalizado equivalente a:
   no se guarda en `presence_events`.
 - `IotSessionService` mantiene sus garantías existentes: auditoría de todo evento, dedupe,
   orden temporal y descarte sin reversión de estado.
+- API HTTP y worker reutilizan la fábrica de dominio compartida y conservan sus efectos post-commit.
+  El worker no agrega clientes/lecturas REST Tuya; los actuadores ya configurados en Tuya siguen
+  sujetos al comportamiento existente del servicio durante la coexistencia.
 - El único proveedor nuevo es `ZIGBEE2MQTT` en `presence_events.provider` (migración aditiva).
 - No existe contrato de polling de Tuya. Los dispositivos no migrados pueden seguir usando su
   ruta Tuya temporal; los migrados reciben eventos MQTT push.
