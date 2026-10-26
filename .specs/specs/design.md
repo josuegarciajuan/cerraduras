@@ -26,7 +26,8 @@ dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> mosquitto_sub
 
 - El worker se activa solo con `ZIGBEE_MQTT_ENABLED=true` (default false). No lo arranca
   `start-all.sh`, systemd ni cron. El host (default loopback), puerto, prefijo de topic y ruta del
-  mapa se configuran por entorno. No se conecta a ningún broker durante tests unitarios.
+  mapa se configuran por entorno. Si se habilita con mapa ausente/vacío, falla antes de iniciar
+  transporte/BD. No se conecta a ningún broker durante tests unitarios.
 - `mosquitto_sub` es el único requisito de transporte de despliegue (cliente Mosquitto, MQTT
   3.1.1+). Está ausente en el entorno actual y no se instala aquí. Usarlo evita añadir una
   biblioteca de aplicación y evita mantener una implementación propia de MQTT. El proceso recibe

@@ -64,7 +64,7 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
 - **RF-136.1**: Implementar un worker PHP independiente del host, configurable por variables de
   entorno para activar/desactivar, host/puerto del broker, prefijo de topic y archivo JSON de mapa.
   El default es `ZIGBEE_MQTT_ENABLED=false`; no se inicia desde `start-all.sh`, systemd ni cron en
-  esta entrega.
+  esta entrega. Si se habilita, un mapa ausente o sin dispositivos debe hacer fallar el arranque.
 - **RF-136.2**: El transporte usa `mosquitto_sub` (cliente oficial Mosquitto, MQTT 3.1.1 o posterior)
   con argumentos sin shell. Se elige el binario ya asociado al broker planificado en vez de añadir
   un paquete PHP/Node o implementar el protocolo MQTT propio. La presencia del binario se valida

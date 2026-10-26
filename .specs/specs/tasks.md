@@ -25,6 +25,7 @@
   mapeados a `PROXIMITY` o `PRESENCE`.
 - [x] Reconocer `availability` como diagnóstico sin mutación de estado; rechazar JSON inválido,
   payload >64 KiB, valor no escalar y mapeos inválidos.
+- [x] Rechazar mapa vacío para que un worker habilitado falle cerrado antes de suscribirse.
 - [x] Probar mappings, multi-entidad, valor/topic no mapeado y source_event_id determinista.
 
 **Verificación**: `php tests/Unit/ZigbeeMqttMessageMapperTest.php` y auto-descubrimiento unitario.
@@ -33,17 +34,17 @@
 
 **Trazabilidad**: RF-133.2, RF-133.3, RF-136.1, RF-136.2, RF-136.4, RF-136.5, RF-136.6
 
-- [ ] Implementar proceso configurable con `mosquitto_sub`, flag disabled por defecto y sin
+- [x] Implementar proceso configurable con `mosquitto_sub`, flag disabled por defecto y sin
   dependencia de shell; topic/payload simulados mediante `--stdin --dry-run`; suscripción QoS 1
   con sesión persistente y client id configurable.
-- [ ] Resolver device → pack → room y llamar `IotSessionService::processEvent()` como único
+- [x] Resolver device → pack → room y llamar `IotSessionService::processEvent()` como único
   escritor mediante una fábrica compartida por API/worker. Mantener los efectos post-commit que
   tiene el pipeline API; el consumer no agrega cliente REST Tuya ni temporizadores.
-- [ ] Reintentar desconexión/fin del cliente MQTT con backoff 1–30 s; un mensaje inválido no mata
+- [x] Reintentar desconexión/fin del cliente MQTT con backoff 1–30 s; un mensaje inválido no mata
   el proceso.
-- [ ] Documentar el límite de fiabilidad: el CLI puede ACKear antes del commit a BD, por lo que no
+- [x] Documentar el límite de fiabilidad: el CLI puede ACKear antes del commit a BD, por lo que no
   se promete atomicidad entre Mosquitto y `IotSessionService`.
-- [ ] Añadir pruebas de modo dry-run, configuración deshabilitada y policy de reconexión.
+- [x] Añadir pruebas de modo dry-run, configuración deshabilitada y policy de reconexión.
 
 **Verificación**: unit tests, `php -l` y `php bin/zigbee-mqtt-worker.php --help`; no conectar broker.
 
@@ -51,11 +52,12 @@
 
 **Trazabilidad**: RF-133.4, RF-136.5, RF-136.7
 
-- [ ] Añadir migración `0126` para admitir `ZIGBEE2MQTT` en
+- [x] Añadir migración `0126` para admitir `ZIGBEE2MQTT` en
   `presence_events.provider`, y declarar provider canónico en el modelo.
-- [ ] Añadir test de guardia para default disabled y ausencia de dependencias/llamadas cloud Tuya
-  en el worker, además del caso de mapper; ejecutar BLOCK 62.
-- [ ] No añadir endpoint HTTP, claves nuevas, configuración de Tuya, unit systemd, cron ni gestión
+- [x] Añadir test de guardia para default disabled y ausencia de dependencias/llamadas cloud Tuya
+  en el worker, además del caso de mapper; BLOCK 62 queda añadido al runner (no ejecutado porque
+  el runner completo no es seguro en este host).
+- [x] No añadir endpoint HTTP, claves nuevas, configuración de Tuya, unit systemd, cron ni gestión
   desde `start-all.sh`/`stop-all.sh`.
 
 **Verificación**: tests unitarios + BLOCK 62; no aplicar migración contra BD real.
@@ -64,11 +66,14 @@
 
 **Trazabilidad**: RF-136.1..RF-136.8
 
-- [ ] Añadir `.env.example` sin credenciales ni datos sensibles y mapa JSON de ejemplo sin dispositivos
+- [x] Añadir `.env.example` sin credenciales ni datos sensibles y mapa JSON de ejemplo sin dispositivos
   registrados ni datos sensibles.
-- [ ] Ejecutar unit tests y `bash bin/run-tests.sh` únicamente si se demuestra que server/BD son
-  de test descartable. No arrancar broker ni tocar infraestructura real.
-- [ ] Comprobar diff de configuración para confirmar ausencia de claves/valores sensibles y que no hay
+- [x] Ejecutar unit tests y evaluar si `bash bin/run-tests.sh` es seguro. Se ejecutaron las units;
+  los tests F90 pasan; la suite de units dio 47 scripts OK y `WorkerSessionTest.php` falló antes de
+  conectar por falta de `DB_NAME`. El runner completo se omitió porque hay servicios en 8080/3306,
+  falta `.env` del worktree y no se puede demostrar que la BD sea descartable. No arrancar broker
+  ni tocar infraestructura real.
+- [x] Comprobar diff de configuración para confirmar ausencia de claves/valores sensibles y que no hay
   arranque automático.
 
 ## TSK-90.05: Recepción, banco e instalación — BLOQUEADAS

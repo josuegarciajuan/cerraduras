@@ -25,8 +25,9 @@ equipos; no se codifican topics ni payloads de SNZB.
 | `ZIGBEE_MQTT_MAP_FILE` | `config/zigbee2mqtt-devices.json` | Ruta JSON local; debe existir y validar al habilitar. |
 | `MOSQUITTO_SUB_BIN` | `mosquitto_sub` | Cliente de línea de comandos Mosquitto >=1.6, validado solo al habilitar. |
 
-El archivo de ejemplo `api/config/zigbee2mqtt-devices.example.json` tiene `devices` vacío. Una
-entrada real declara el topic base y el `external_id` ya registrado en la BD:
+El archivo de ejemplo `api/config/zigbee2mqtt-devices.example.json` tiene `devices` vacío y es solo
+plantilla. Para habilitar consumo el mapa debe tener al menos un dispositivo; vacío o ausente falla
+antes de conectar a MQTT/BD. Una entrada real declara el topic base y el `external_id` ya registrado:
 
 ```json
 {
