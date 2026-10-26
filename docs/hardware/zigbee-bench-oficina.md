@@ -126,6 +126,99 @@ correctamente colocada. Tras reiniciar el proyecto: `Adapter network matches con
 - Pendiente: botón físico del relé, interruptor externo en `S1`/`S2` y prueba de
   `power_on_behavior` tras corte.
 
+## Caracterización funcional medida (2026-10-26, sesión de laboratorio)
+
+> Detalle completo, tablas por entidad y evidencia en
+> [`zigbee-capabilities.md`](zigbee-capabilities.md). Esta sección solo recoge hallazgos nuevos
+> respecto de lo ya documentado arriba.
+
+### Identidad y firmware observados en Zigbee2MQTT
+
+| Equipo | `software_build_id` | OTA instalada / última | `supports_ota` |
+|---|---|---|---|
+| `puerta-oficina` | `2.2.0` | `8704` / `8704` (`idle`) | sí |
+| `presencia-oficina` | `Zigbee module: 1.0.10, MCU module: 1.0.3` | — | **no** |
+| `luz-oficina` | `1.0.14` | `4110` / `4110` (`idle`) | sí |
+
+No hay actualización OTA pendiente en ninguno. El check OTA de la puerta falló porque el
+dispositivo estaba dormido (`Device didn't respond to OTA request`), no por falta de imagen.
+
+### Entidades, acceso y consulta
+
+- Puerta: `contact` es **solo push** (`access=1`); `/get {"contact":""}` devuelve
+  `No converter available`. `tamper`, `battery` y `voltage` declaran `access=5` (estado+get),
+  pero un EndDevice dormido no respondió a `battery`, `genPowerCfg` ni `ssIasZone` en 45 s.
+- Presencia: `presence`, `illuminance` y `target_distance` son **solo push**; `/get` devuelve
+  `No converter available`. Los ajustes (`radar_sensitivity`, rangos, delays, `fading_time`) son
+  `access=3` (estado+escritura) y se reflejan en cada payload; `time_start` e
+  `illuminance_calibration` son opciones de dispositivo.
+- Relé: `state` y `power_on_behavior` son `access=7`; `/get state` funciona en **440–459 ms**
+  (5 repeticiones). `/set` confirmado; cada comando produce **2–3 reportes** de estado (LQI a
+  veces distinto), por lo que hay que deduplicar.
+
+### MQTT y persistencia
+
+- `advanced.cache_state=true`, pero `retain=false` por defecto: los topics
+  `zigbee2mqtt/<dispositivo>` **no son retained**. Un suscriptor que llega tarde no recibe el
+  último estado hasta el siguiente reporte (en la puerta, hasta 1–2 h).
+- `availability.enabled=false`: **no se publican** topics `.../availability`.
+- `advanced.last_seen=disable`: no hay `last_seen` en los payloads.
+- `mqtt.version=4`; el QoS de publicación por dispositivo no está fijado (default 0), aunque la
+  suscripción sea QoS 1.
+- Estado cacheado disponible en `/app/data/state.json` (útil para arranque del worker, pero no
+  sustituye una marca de frescura).
+
+### Frecuencia y volumen medidos
+
+| Caso | Ventana | Mensajes | msg/s | Payload |
+|---|---:|---:|---:|---:|
+| Presencia `presence=true` | 298,6 s | 112 | **0,375** | 171 B |
+| Presencia `presence=false` (forzado) | 73,1 s | 77 | **1,05** | 171 B |
+| Puerta en reposo | 298,6 s | **0** | ~0 | — |
+| Relé en reposo | 298,6 s | **0** | ~0 | 287 B por comando |
+
+Proyección a 70 habitaciones solo con presencia: **26 msg/s / ~0,39 GB/día** con presencia y
+**74 msg/s / ~1,09 GB/día** sin presencia. El broker lo soporta; el riesgo es el parseo/escritura
+del worker. Filtrar ajustes del payload y deduplicar reduce CPU y bytes.
+
+### Presencia: `target_distance` y retorno a `false`
+
+- En la primera hora, con `presence=true`, `target_distance` fue **0** en todas las muestras.
+  Tras el reinicio del nodo y con movimiento real reportó **1,85–3,49 m**. Es una distancia de
+  objetivo en movimiento; **no** es fiable para presencia estática ni como única señal.
+- Forzando `maximum_range=0.15` / `minimum_range=0`, `presence` pasó a `false` en ~2,5 s
+  (incluye la aplicación del ajuste). Con los valores restaurados (`max=6`, `min=0.6`,
+  `sens=7`) volvió a `true` con movimiento. No se midió el retorno natural con sala vacía y
+  `fading_time=15`; sigue pendiente.
+
+### Incidencias de la sesión
+
+- **Interview remoto de la puerta**: se lanzó `bridge/request/device/interview` sobre el
+  EndDevice dormido; falló con `cannot get active endpoints` y dejó
+  `interview_state=FAILED` / `interview_completed=false`. La definición, endpoints y estado
+  cacheado siguen intactos. **No repetir en remoto**: despertar físicamente la puerta y
+  relanzar el interview (pulsación corta; no mantener 5 s, que entra en pairing).
+- **Reinicio del nodo `oficina`** durante la prueba de presencia forzada; el operador lo
+  recuperó. Se restauraron y verificaron los ajustes de presencia, y el relé quedó en `OFF`.
+- **Persistencia de opciones por API**: `bridge/request/options` respondió `ok`, pero Z2M
+  2.14.2 escribió `optimistic`/`state_action` en el nivel superior de `configuration.yaml` en
+  vez de bajo `devices.<ieee>`. Se eliminaron y se validó el YAML. Para fijar opciones por
+  dispositivo, editar el bloque del dispositivo (con backup) o usar la UI, y reiniciar; no
+  confiar solo en la API.
+- **Credenciales en `argv`**: las primeras capturas usaron `mosquitto_sub -P`, visible en `ps`
+  dentro del contenedor. Se abandonó; las medidas finales usan un cliente Node que lee variables
+  de entorno. No se documenta ningún valor.
+
+### Estado final
+
+- Presencia restaurada: `radar_sensitivity=7`, `minimum_range=0.6`, `maximum_range=6`,
+  `detection_delay=0.1`, `fading_time=15`; `presence=true` con movimiento.
+- Relé: `state=OFF`, `power_on_behavior=off`, opciones de vuelta a `optimistic=true` /
+  `state_action=false`; YAML limpio.
+- Puerta: `contact=true` (imán separado; puerta abierta), `tamper=false`, `battery=100`,
+  `voltage=3100`, OTA 8704/8704; interview pendiente de despertar físico.
+- `permit_join=false`; broker/UI solo en loopback; sin llamadas a Tuya ni pollers.
+
 ## Límites y pendientes
 
 - SNZB-04P validado solo en banco y a corta distancia; falta prueba de alcance/ubicación real.
@@ -154,8 +247,8 @@ restrictivos. No copiar `.env`, `data/` ni `backups/` al repositorio.
 
 ## Siguiente paso
 
-Caracterizar funcionalmente los tres dispositivos ya emparejados: topics y payloads, eventos
-push frente a consultas, comandos disponibles, latencia, frecuencia en reposo/actividad,
-falsos positivos y recuperación. El brief para esa sesión está en
-`docs/hardware/zigbee-capabilities-brief.md`. No se define aún el mapping definitivo del worker
-ni se integra en producción.
+La caracterización funcional está documentada en
+[`zigbee-capabilities.md`](zigbee-capabilities.md). Quedan pendientes las medidas con marcas
+físicas (puerta y transiciones de presencia), la prueba de sala vacía, la calibración fina y la
+recuperación del interview de la puerta. No se define aún el mapping definitivo del worker ni se
+integra en producción.
