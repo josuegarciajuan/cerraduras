@@ -1,10 +1,12 @@
 # Requirements — Cerraduras Hotel
 
-> **Última revisión de F90**: 2026-10-26 · **Cadencia**: al recibir hardware y antes de cada paso de migración.
+> **Última revisión de F90**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
+> caracterización funcional e integración pendientes. **Cadencia**: antes de cada paso de
+> migración.
 
 ---
 
-# Fase 90: Integración de software Zigbee local — pre-hardware
+# Fase 90: Integración de software Zigbee local — software, banco y dispositivos
 
 ## Contexto y alcance
 
@@ -185,6 +187,25 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   banco, traslado al host definitivo, backup/restore de la red Zigbee y rollback.
 - **RF-141.4**: La entrega no afirma haber desplegado ni validado hardware; deja explícito qué
   falta cuando exista el host definitivo.
+
+## RF-142: Inventario de los tres dispositivos validados en banco (2026-10-26)
+
+- **RF-142.1**: Se documentan como emparejados y operativos en el banco `oficina`:
+  `puerta-oficina` (SONOFF SNZB-04P, EndDevice, IEEE `0xc09b9efffef431fb`),
+  `presencia-oficina` (Tuya ZY-M100-S_2, Router, IEEE `0xa4c138b2a3c49dbe`) y
+  `luz-oficina` (SONOFF ZBMINIL2, EndDevice, IEEE `0xf044d3fffecd9e8e`).
+- **RF-142.2**: Las capacidades documentadas deben ser observadas en Zigbee2MQTT; no se
+  presuponen funciones por el nombre comercial ni por el manual del fabricante.
+- **RF-142.3**: El SNZB-04P queda validado en banco para `contact` (cerrado/abierto), `tamper`,
+  batería y persistencia tras reinicio. Su alcance/ubicación real sigue pendiente.
+- **RF-142.4**: El ZY-M100-S_2 queda emparejado y publica `presence`, `illuminance` y parámetros
+  de radar. Su retorno a `false`, falsos positivos, latencia, fiabilidad de `target_distance` y
+  volumen de mensajes quedan pendientes de caracterización.
+- **RF-142.5**: El ZBMINIL2 queda validado con lámpara en 3 ciclos ON/OFF, con confirmación de
+  estado por MQTT y respuesta física. No es router Zigbee; `S1`/`S2` quedan sin conectar en la
+  prueba. Botón físico, interruptor externo y comportamiento tras corte siguen pendientes.
+- **RF-142.6**: La documentación de banco no contiene contraseñas, claves de red ni contenido de
+  `.env`; los backups con secretos permanecen fuera de Git.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

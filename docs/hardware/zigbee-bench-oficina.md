@@ -1,6 +1,7 @@
 # Banco Zigbee local — oficina (provisional)
 
-> **Fecha**: 2026-10-26 · **Estado**: coordinador y broker desplegados; sensores pendientes.
+> **Fecha**: 2026-10-26 · **Estado**: coordinador, broker y tres dispositivos emparejados;
+> caracterización funcional pendiente.
 > **Naturaleza**: banco de pruebas, no infraestructura definitiva.
 > **Secretos**: no se documentan contraseñas, claves de red Zigbee ni contenido de `.env`.
 
@@ -29,7 +30,7 @@ Mosquitto 2.0.22 (contenedor zigbee-local-mosquitto-1)
   - `ghcr.io/koenkk/zigbee2mqtt:2.14.2@sha256:addbfb08fcef2e4477de1535636118241e10d13e898fbe4d9faba8a4d7396311`
 - Contenedores no-root: Mosquitto `1883:1883`; Zigbee2MQTT `1000:1000`.
 - Puertos publicados **solo en loopback**.
-- `permit_join: false`; **0 dispositivos emparejados** al cerrar esta etapa.
+- `permit_join: false`; **3 dispositivos emparejados**: puerta, presencia y relé.
 
 ## Estado del Dongle-M
 
@@ -45,7 +46,10 @@ Mosquitto 2.0.22 (contenedor zigbee-local-mosquitto-1)
 - `deploy.sh`: creación de configuración inicial y arranque del proyecto aislado.
 - `verify.sh`: **10 OK, 0 fallos** (contenedores, salud, loopback, MQTT y ausencia de secretos en logs).
 - Ciclo probado: `rollback.sh --yes` → `backup.sh` → `deploy.sh` → `verify.sh`.
-- Backup inicial: `backups/zigbee-backup-20261026T123101Z.tar.gz` (+ `.sha256`).
+- Backups: `zigbee-backup-20261026T123101Z`, `...T134153Z` y `...T150551Z` (+ `.sha256`);
+  el último incluye los tres dispositivos emparejados.
+- Tras el último reinicio: `Adapter network matches config`, **3 devices joined**, `verify.sh`
+  10 OK / 0 fallos.
 - `systemctl --failed` conserva las mismas 6 unidades previas a la instalación; no se modificó
   systemd, red, firewall ni otros contenedores.
 - El contenedor ajeno de `autotube-sd` no fue tocado por el despliegue.
@@ -81,10 +85,53 @@ correctamente colocada. Tras reiniciar el proyecto: `Adapter network matches con
 - Backup con el sensor ya emparejado: `backups/zigbee-backup-20261026T134153Z.tar.gz`
   (+ `.sha256`).
 
+## Sensor de presencia ZY-M100-S_2 — emparejado, caracterización pendiente
+
+- **IEEE**: `0xa4c138b2a3c49dbe` · **friendly name**: `presencia-oficina`.
+- **Modelo Z2M**: Tuya `ZY-M100-S_2` · `model_id` TS0601 · descripción «Mini human breathe
+  sensor» · tipo Zigbee **Router** (alimentado por red). La etiqueta comercial indicada por el
+  usuario es `ZY-M100-5.8G`; Zigbee2MQTT lo identifica como `ZY-M100-S_2`.
+- **Entidades reales**: `presence`, `illuminance`, `target_distance`, `radar_sensitivity`,
+  `minimum_range`, `maximum_range`, `detection_delay`, `fading_time`, `linkquality`.
+- **Configuración observada al emparejar**: `radar_sensitivity=7`, `minimum_range=0.6 m`,
+  `maximum_range=6 m`, `detection_delay=0.1 s`, `fading_time=15 s`, LQI 255.
+- **Emparejamiento**: `permit_join` 254 s, dispositivo en modo pairing; interview correcto a las
+  15:07:30; renombrado y `permit_join` desactivado.
+
+### Observaciones de presencia
+
+- En reposo publica `presence: false`, `target_distance: 0` e `illuminance` variable.
+- Durante la prueba, `presence` pasó de `false` a `true` a las **15:14:21** y siguió en `true`
+  hasta al menos las **15:15:31**. **No se confirmó** si la persona seguía dentro del área, por
+  lo que no se concluye todavía el tiempo real de retorno a `false`.
+- `target_distance` se mantuvo en `0` en todas las muestras; no se considera fiable aún.
+- Se observaron ~**75 mensajes en 2 minutos** con la sala aparentemente vacía (≈0,6 msg/s), sin
+  advertencia «spammy» específica en la ficha Z2M de este modelo. Es un dato a medir mejor.
+- Pendiente: confirmar transición a `false` y falsos positivos, medir latencia con marcas
+  temporales, ajustar `fading_time`/`detection_delay`/sensibilidad y validar alcance.
+
+## Relé ZBMINIL2 — emparejado y probado
+
+- **IEEE**: `0xf044d3fffecd9e8e` · **friendly name**: `luz-oficina`.
+- **Modelo Z2M**: SONOFF `ZBMINIL2` · descripción «Zigbee smart switch (no neutral)» · tipo
+  **EndDevice** (no es router/repetidor Zigbee).
+- **Entidades reales**: `state`, `power_on_behavior`, `linkquality`, `update`.
+- **Firmware**: `4110` (`0x100E`), sin actualización pendiente; `power_on_behavior=off`.
+- **LQI**: 156–196 en banco.
+- **Montaje**: `LIn` a fase, `LOut` al contacto central del portalámparas, neutro directo a la
+  rosca; `S1`/`S2` sin conectar. El usuario confirmó que el montaje y la prueba física fueron
+  realizados con el electricista.
+- **Prueba**: 3 ciclos `ON`/`OFF` (16:02:37–16:02:48). Zigbee2MQTT reportó `ON`/`OFF` tras cada
+  comando y la bombilla respondió físicamente en los 3 ciclos; quedó en `OFF`.
+- Pendiente: botón físico del relé, interruptor externo en `S1`/`S2` y prueba de
+  `power_on_behavior` tras corte.
+
 ## Límites y pendientes
 
 - SNZB-04P validado solo en banco y a corta distancia; falta prueba de alcance/ubicación real.
-- No se ha validado el SNZB-06P ni el relé ZBMINIL2.
+- ZY-M100-S_2: falta confirmar retorno a `false`, falsos positivos, latencia y volumen real de
+  mensajes; `target_distance` no es fiable en las muestras actuales.
+- ZBMINIL2: probado con lámpara; faltan botón físico, interruptor externo y corte de tensión.
 - `permit_join` queda desactivado.
 - La UI de Zigbee2MQTT solo escucha en loopback: se abre desde `oficina` en
   `http://127.0.0.1:8080`.
@@ -107,6 +154,8 @@ restrictivos. No copiar `.env`, `data/` ni `backups/` al repositorio.
 
 ## Siguiente paso
 
-Emparejar el sensor de presencia SNZB-06P, observar sus entidades y payloads reales
-(`occupancy`, `illuminance`, etc.), y validar falsos positivos/ausencias antes de definir el
-mapa MQTT del worker. El relé ZBMINIL2 queda para después y requiere electricista.
+Caracterizar funcionalmente los tres dispositivos ya emparejados: topics y payloads, eventos
+push frente a consultas, comandos disponibles, latencia, frecuencia en reposo/actividad,
+falsos positivos y recuperación. El brief para esa sesión está en
+`docs/hardware/zigbee-capabilities-brief.md`. No se define aún el mapping definitivo del worker
+ni se integra en producción.

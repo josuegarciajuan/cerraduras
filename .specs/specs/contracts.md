@@ -1,6 +1,7 @@
 # Contracts — Cerraduras Hotel
 
-> **F90 — Estado**: contrato del software y paquete de despliegue pre-host aprobado; ejecución real y hallazgos de campo pendientes.
+> **F90 — Estado**: software, paquete de despliegue y tres dispositivos emparejados en banco;
+> mapping definitivo, caracterización funcional e integración pendientes.
 
 ---
 
@@ -228,6 +229,32 @@ puede incluir `secret.yaml`, `database.db`, `configuration.yaml`, `coordinator_b
 fichero de contraseñas. Por ello el directorio `backups/` y los archivos `*.tar.gz`/`*.sha256`
 están ignorados por Git. El hash se calcula sobre el archivo comprimido; el restore verifica el
 hash cuando el `.sha256` acompañante existe.
+
+## Entidades MQTT observadas en el banco (F90, 2026-10-26)
+
+Este bloque es **evidencia de lo observado**, no el mapping definitivo del worker. La integración
+en el dominio sigue pendiente y no se ha añadido ninguna ruta HTTP nueva.
+
+| Dispositivo | Topic de estado | Entidades y semántica observada |
+|---|---|---|
+| `puerta-oficina` | `zigbee2mqtt/puerta-oficina` | `contact=false` cerrado, `contact=true` abierto; `tamper` tapa; `battery`, `battery_low`, `voltage`, `linkquality`, `update` |
+| `presencia-oficina` | `zigbee2mqtt/presencia-oficina` | `presence` booleano; `illuminance` lx; `target_distance` m (0 en todas las muestras); `radar_sensitivity`, `minimum_range`, `maximum_range`, `detection_delay`, `fading_time`, `linkquality` |
+| `luz-oficina` | `zigbee2mqtt/luz-oficina` | `state` `ON`/`OFF`; `power_on_behavior` `off|on|toggle|previous`; `linkquality`, `update` |
+
+Topics de comando/consulta:
+
+- Relé: `zigbee2mqtt/luz-oficina/set` con `{"state":"ON"}` o `{"state":"OFF"}`. La respuesta de
+  estado llega por el topic de estado; un `PUBACK` no prueba cambio físico.
+- Sensores: `zigbee2mqtt/<friendly_name>/get` para atributos que lo admitan; no se asume que
+  `contact` o `presence` sean consultables (la ficha Z2M indica que no lo son).
+- Disponibilidad: `zigbee2mqtt/<friendly_name>/availability` (`online`/`offline`), diagnóstico;
+  no equivale a ausencia física.
+- Emparejamiento: `zigbee2mqtt/bridge/request/permit_join` con `{"time":254}` para abrir y
+  `{"time":0}` para cerrar; renombrado con `zigbee2mqtt/bridge/request/device/rename`.
+
+El contrato de integración definitivo (mapping a `PROXIMITY`/`PRESENCE`/`SWITCH`, deduplicación,
+orden y entrega al `IotSessionService`) se aprobará tras la caracterización y no se deduce de
+esta tabla.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 
