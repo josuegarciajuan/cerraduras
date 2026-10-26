@@ -1,6 +1,61 @@
 # Requirements — Cerraduras Hotel
 
+> **Última revisión de F90**: 2026-10-26 · **Cadencia**: al recibir hardware y antes de cada paso de migración.
+
 ---
+
+# Fase 90: Migración Zigbee local — documentación aprobada
+
+## Contexto y alcance
+
+Esta fase documenta una migración futura, no implementa cambios. Parte del antecedente
+`.specs/specs/plan-control-local.md`: la PoC previa de control local Tuya no migra producción
+y sus hallazgos no prueban capacidades de los equipos Zigbee nuevos.
+
+El orden aprobado es: banco de pruebas en la oficina; tras su aceptación, los mismos equipos
+se instalarán en el almacén de bebidas del hotel. La coexistencia con Tuya será temporal y la
+migración será de un dispositivo cada vez, con rollback por dispositivo.
+
+Hardware confirmado para recepción, no para capacidades aún verificadas:
+
+| Rol previsto | Equipo |
+|---|---|
+| Coordinador | SONOFF Dongle-M EFR32MG24 con PoE y Ethernet |
+| Puerta | SONOFF SNZB-04P |
+| Presencia | SONOFF SNZB-06P |
+| Relé | SONOFF ZBMINIL2 sin neutro |
+
+## RF-133: Arquitectura local y continuidad del dominio
+
+- **RF-133.1**: La integración prevista usa Zigbee2MQTT y Mosquitto locales, seguidos por un
+  adaptador MQTT hacia el `IotSessionService` existente.
+- **RF-133.2**: El adaptador conservará el modelo canónico `device → pack → room`; no creará
+  una asociación paralela directa de dispositivo a habitación.
+- **RF-133.3**: Los cambios de puerta y presencia entrarán como eventos push. Se conservarán
+  orden por `occurred_at`, deduplicación y auditoría de eventos recibidos/aplicados/descartados.
+- **RF-133.4**: No se introducirá polling continuo de Tuya ni se reactivará ningún poller
+  eliminado. Tuya queda solo como coexistencia temporal del dispositivo aún no migrado.
+
+## RF-134: Descubrimiento y banco de pruebas
+
+- **RF-134.1**: Antes de diseñar mapeos definitivos, se descubrirán en Zigbee2MQTT las
+  exposiciones, valores, disponibilidad de batería y comportamiento de cada equipo recibido.
+  Ninguna capacidad no observada se da por garantizada en esta especificación.
+- **RF-134.2**: El banco de oficina verificará recepción MQTT, reinicio/reconexión, eventos de
+  puerta, eventos de presencia y el control previsto del relé, con evidencia fechada por equipo.
+- **RF-134.3**: No se autoriza el traslado al almacén hasta aprobar los documentos actualizados
+  de requisitos, diseño, contratos y tareas con los hallazgos reales del banco.
+
+## RF-135: Migración, seguridad y rollback
+
+- **RF-135.1**: En el almacén se migrará un único dispositivo por vez; el dispositivo Tuya
+  equivalente no se retirará hasta que se acepte la recepción del sustituto.
+- **RF-135.2**: Cada corte tendrá criterios de aceptación, ventana, responsable y rollback al
+  dispositivo Tuya anterior sin modificar el modelo de dominio.
+- **RF-135.3**: El ZBMINIL2 es trabajo eléctrico obligatorio: solo un electricista disponible y
+  autorizado podrá instalarlo, con circuito desenergizado, verificación de ausencia de tensión y
+  comprobación final conforme a normativa local. No se permiten pruebas, cableado ni cambios en
+  tensión por personal no cualificado.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

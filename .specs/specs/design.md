@@ -1,6 +1,62 @@
 # Design — Cerraduras Hotel
 
+> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware y antes de instalar en el almacén.
+
 ---
+
+# Fase 90: Diseño de referencia para Zigbee local (sin implementación)
+
+## Decisión
+
+Tras el banco de oficina, se prevé operar un coordinador SONOFF Dongle-M EFR32MG24 conectado
+por PoE y Ethernet, Zigbee2MQTT y Mosquitto en local. Un adaptador MQTT futuro normalizará los
+mensajes recibidos y los entregará al `IotSessionService`; no escribirá sesiones IoT por una vía
+alternativa. Esta decisión complementa el antecedente de estudio
+`.specs/specs/plan-control-local.md`; no reutiliza ni presupone que el control local Tuya sea
+viable.
+
+## Flujo previsto
+
+```text
+dispositivo Zigbee -> Dongle-M -> Zigbee2MQTT -> Mosquitto -> adaptador MQTT
+  -> evento canónico (device -> pack -> room) -> IotSessionService -> auditoría/estado/SSE
+```
+
+- La recepción MQTT es push; no hay temporizador ni bucle que consulte Tuya.
+- El adaptador futuro deberá aportar una identidad de fuente y un `occurred_at` obtenido del
+  mensaje o de su recepción cuando el equipo no lo proporcione. La política concreta se decide
+  tras observar los mensajes reales.
+- El pipeline existente conserva lock por habitación, orden, dedupe y auditoría. Un mensaje
+  duplicado o atrasado se registra y no revierte estado.
+- No se declara ahora qué `exposes`, propiedades, DPs, batería, sensibilidad, alcance ni
+  comandos soportan SNZB-04P, SNZB-06P o ZBMINIL2: se inventariarán desde Zigbee2MQTT después
+  de la recepción.
+
+## Banco y despliegue gradual
+
+1. Inventariar hardware recibido, versión de Zigbee2MQTT y mensajes observados por equipo en la
+   oficina, sin asociarlo a una room productiva.
+2. Ejecutar las listas de recepción y banco de `tasks.md`; documentar evidencia y límites.
+3. Actualizar y aprobar los cuatro documentos SDD con el contrato real.
+4. Instalar los mismos dispositivos en el almacén uno a uno, manteniendo Tuya activo para los
+   roles todavía no aceptados. Tras cada aceptación, conservar un rollback operativo a Tuya.
+
+## Seguridad eléctrica del relé
+
+El ZBMINIL2 solo se instala por electricista autorizado. Antes de cualquier intervención debe
+desenergizarse el circuito y verificarse ausencia de tensión; después, el electricista realiza
+la comprobación final conforme a la normativa local. Esta fase no contiene instrucciones de
+cableado ni autoriza trabajo eléctrico energizado.
+
+## Consecuencias
+
+- Positiva: la fuente local prevista elimina la necesidad de polling Tuya para los equipos ya
+  migrados.
+- Coste/riesgo: Zigbee2MQTT, Mosquitto, adaptador y operación local requieren validación antes
+  de afectar el almacén; la coexistencia duplica temporalmente la supervisión.
+- Rollback: ante fallo de recepción, semántica o instalación, se deja de usar el dispositivo
+  Zigbee afectado y se vuelve al Tuya equivalente; no se borran eventos ni se cambia el vínculo
+  canónico `device → pack → room`.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

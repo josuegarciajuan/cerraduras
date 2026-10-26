@@ -1,6 +1,47 @@
 # Contracts — Cerraduras Hotel
 
+> **F90 — Estado**: contrato de diseño pendiente de recepción de hardware; última revisión 2026-10-26.
+
 ---
+
+# Fase 90: Contrato de integración MQTT propuesto (no implementado)
+
+## Límite de contrato
+
+Zigbee2MQTT publica en Mosquitto local y un adaptador futuro consumirá esos mensajes. No se
+publica aún una ruta HTTP ni se fija un topic, payload, propiedad o comando de fabricante: deben
+descubrirse al recibir el Dongle-M, SNZB-04P, SNZB-06P y ZBMINIL2.
+
+## Entrada canónica interna prevista
+
+El adaptador solo podrá invocar el punto de entrada existente del dominio con un evento
+normalizado equivalente a:
+
+```json
+{
+  "source": "ZIGBEE2MQTT",
+  "device_external_id": "<identidad-descubierta>",
+  "sensor": "PROXIMITY|PRESENCE",
+  "value": "OPEN|CLOSED|PRESENT|ABSENT",
+  "occurred_at": "<ISO-8601 UTC>",
+  "source_event_id": "<identidad-estable-si-el-mensaje-la-aporta>",
+  "raw": "<mensaje-MQTT-conservado-para-auditoria>"
+}
+```
+
+- Los valores y la correspondencia desde MQTT son pendientes de descubrimiento; el ejemplo no
+  afirma que un dispositivo los produzca.
+- La resolución de `device_external_id` seguirá `device → pack → room`.
+- `IotSessionService` mantiene sus garantías existentes: auditoría de todo evento, dedupe,
+  orden temporal y descarte sin reversión de estado.
+- No existe contrato de polling de Tuya. Los dispositivos no migrados pueden seguir usando su
+  ruta Tuya temporal; los migrados reciben eventos MQTT push.
+
+## Compatibilidad y rollback
+
+La forma de `/live`, SSE, QR y reglas de salida no cambia en esta fase documental. Cada
+migración futura debe poder desactivar solo la fuente Zigbee del dispositivo afectado y restaurar
+la fuente Tuya anterior, conservando la evidencia recibida y el vínculo canónico.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 
