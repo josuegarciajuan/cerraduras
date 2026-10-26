@@ -1,0 +1,29 @@
+# Plantilla inicial de Zigbee2MQTT para el proyecto aislado.
+# deploy.sh la renderiza UNA sola vez en data/zigbee2mqtt/configuration.yaml;
+# después no la sobrescribe. Las credenciales MQTT llegan por variables de entorno.
+# Los valores del adaptador son iniciales y deben validarse con el Dongle-M real.
+
+permit_join: false
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://mosquitto:1883
+
+frontend:
+  enabled: true
+  port: 8080
+  host: 0.0.0.0
+
+serial:
+  adapter: ember
+  port: tcp://${ZIGBEE_ADAPTER_HOST}:${ZIGBEE_ADAPTER_PORT}
+  baudrate: 115200
+  rtscts: false
+
+advanced:
+  log_level: info
+  log_output:
+    - console
+  network_key: GENERATE
+  pan_id: GENERATE
+  ext_pan_id: GENERATE

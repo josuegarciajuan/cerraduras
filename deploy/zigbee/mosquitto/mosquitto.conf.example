@@ -1,0 +1,21 @@
+# Plantilla de Mosquitto para el proyecto aislado.
+# deploy.sh la copia una sola vez a data/mosquitto/config/mosquitto.conf.
+# El listener está dentro del contenedor; el host solo publica en loopback.
+
+listener 1883 0.0.0.0
+
+allow_anonymous false
+password_file /run/secrets/mqtt_passwd
+
+persistence true
+persistence_location /mosquitto/data/
+autosave_interval 300
+
+max_packet_size 1048576
+max_keepalive 120
+
+log_dest stdout
+log_type error
+log_type warning
+log_type notice
+connection_messages true

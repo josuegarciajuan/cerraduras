@@ -1,0 +1,92 @@
+# Proyecto Compose aislado para Mosquitto + Zigbee2MQTT.
+# TODOS los valores dependientes del host vienen de .env (nunca de este archivo).
+# No usar en producción sin revisar README.md y fijar imágenes por tag/digest.
+name: ${COMPOSE_PROJECT_NAME:?define COMPOSE_PROJECT_NAME en .env}
+
+secrets:
+  mqtt_passwd:
+    file: ./data/mosquitto/config/passwd
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mosquitto:
+    image: ${MOSQUITTO_IMAGE:?define MOSQUITTO_IMAGE con tag/digest fijo}
+    restart: unless-stopped
+    read_only: true
+    environment:
+      TZ: ${TZ:-UTC}
+      MQTT_USERNAME: ${MQTT_USERNAME:?define MQTT_USERNAME en .env}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?define MQTT_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${MQTT_HOST_PORT:-1883}:1883"
+    volumes:
+      - ./data/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./data/mosquitto/data:/mosquitto/data
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /mosquitto/log:size=16m,mode=0755
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    secrets:
+      - mqtt_passwd
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    cpus: ${MOSQUITTO_CPUS:-1.0}
+    mem_limit: ${MOSQUITTO_MEM_LIMIT:-256m}
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u \"$${MQTT_USERNAME}\" -P \"$${MQTT_PASSWORD}\" -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  zigbee2mqtt:
+    image: ${Z2M_IMAGE:?define Z2M_IMAGE con tag/digest fijo}
+    restart: unless-stopped
+    read_only: true
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-UTC}
+      # Overrides de Zigbee2MQTT: las credenciales no se escriben en configuration.yaml.
+      ZIGBEE2MQTT_CONFIG_MQTT_USER: ${MQTT_USERNAME:?define MQTT_USERNAME en .env}
+      ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD: ${MQTT_PASSWORD:?define MQTT_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${Z2M_UI_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./data/zigbee2mqtt:/app/data
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run:size=16m,mode=0755
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    cpus: ${Z2M_CPUS:-1.0}
+    mem_limit: ${Z2M_MEM_LIMIT:-512m}
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const http=require('http');http.get('http://127.0.0.1:8080/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1));\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
