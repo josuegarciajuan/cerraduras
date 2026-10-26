@@ -122,6 +122,10 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   `ZIGBEE_ADAPTER_PORT=6638`), `adapter: ember`, `baudrate: 115200` y `rtscts: false` como
   valores iniciales a validar en banco. `permit_join: false` es el default. No se asumen
   modelos, entidades ni topics SNZB.
+- **RF-137.7**: Los contenedores corren con `user:` no-root configurable
+  (`MOSQUITTO_UID/GID`, `Z2M_UID/GID`), valores numéricos distintos de `0`. Los bind mounts de
+  datos y el fichero de contraseñas pertenecen a esos UID/GID; los valores `1883`/`1000` son
+  iniciales y deben confirmarse con las imágenes fijadas en el host real.
 
 ## RF-138: Preflight de solo lectura y despliegue idempotente
 
@@ -129,9 +133,12 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   Compose, espacio libre mínimo, puertos libres, alcanzabilidad TCP del dongle y ausencia de
   otro proyecto Compose con el mismo nombre. No instala, reinicia, crea contenedores ni modifica
   el sistema; falla cerrado con diagnóstico claro.
-- **RF-138.2**: `deploy.sh` valida `.env`, plantillas y preflight antes de actuar. Crea solo
-  directorios de datos del proyecto con permisos restrictivos, no sobrescribe secretos ni
-  configuración existente, no imprime secretos y levanta únicamente su proyecto Compose.
+- **RF-138.2**: `deploy.sh` valida `.env`, plantillas, UID/GID numéricos no-root y preflight
+  antes de actuar. Como root crea/ajusta solo los directorios de datos del proyecto con modo
+  `0700` y propietario configurado, y deja `passwd` en `0400`; sin root exige que esos
+  propietarios ya sean correctos y aborta con instrucciones, sin elevar privilegios ni hacer
+  `chown` silencioso. No sobrescribe secretos ni configuración existente, no imprime secretos y
+  levanta únicamente su proyecto Compose.
 - **RF-138.3**: Los secretos (credenciales MQTT, `secret.yaml`, `database.db` y backups) se
   provisionan fuera de Git. El repositorio solo contiene plantillas con placeholders inválidos
   evidentes y documentados.
@@ -148,8 +155,10 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   cuando exista) y su `sha256`, sin imprimir contenido. Los backups son locales, restrictivos y
   quedan fuera de Git.
 - **RF-139.3**: `restore.sh` exige confirmación explícita, verifica el archivo y restaura en un
-  destino nuevo; no sobrescribe datos vivos. La promoción a producción es un paso manual del
-  operador tras parar el proyecto.
+  destino nuevo; no sobrescribe datos vivos. Advierte de que, antes de promover, el
+  administrador debe ajustar manualmente los propietarios de `data/` a los UID/GID configurados
+  (no ejecuta `chown`). La promoción a producción es un paso manual del operador tras parar el
+  proyecto.
 - **RF-139.4**: `rollback.sh` ejecuta únicamente el `down` del proyecto Compose y conserva
   volúmenes y datos. La eliminación de datos nunca es la acción por defecto.
 

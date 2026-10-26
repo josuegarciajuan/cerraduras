@@ -143,6 +143,8 @@ placeholders inválidos. No se admiten valores reales en el repositorio.
 | `MQTT_PASSWORD` | sí | — | Secreto fuera de Git; el placeholder de ejemplo es inválido. |
 | `ZIGBEE_ADAPTER_HOST` | sí | — | Host/IP del adaptador TCP; no se cablea ninguna IP. |
 | `ZIGBEE_ADAPTER_PORT` | sí | `6638` | Puerto TCP del adaptador, 1–65535. |
+| `MOSQUITTO_UID` / `MOSQUITTO_GID` | sí | `1883` / `1883` | Entero no `0`; inicial a confirmar con la imagen fijada. |
+| `Z2M_UID` / `Z2M_GID` | sí | `1000` / `1000` | Entero no `0`; inicial a confirmar con la imagen fijada. |
 | `TZ` | no | `UTC` | Zona horaria IANA de los contenedores. |
 | `MIN_FREE_DISK_MB` | no | `2048` | Umbral de preflight para el directorio de datos. |
 | `MOSQUITTO_CPUS` / `MOSQUITTO_MEM_LIMIT` | no | `1.0` / `256m` | Límites del broker. |
@@ -160,6 +162,8 @@ contraseñas no existe. No imprime valores secretos.
   `"127.0.0.1:${Z2M_UI_HOST_PORT}:8080"`.
 - `restart: unless-stopped`, `cap_drop: [ALL]`, `no-new-privileges`, límites de CPU/memoria/PIDs,
   logs `json-file` con rotación, `read_only: true` y `tmpfs` mínimos.
+- `user: "${MOSQUITTO_UID:-1883}:${MOSQUITTO_GID:-1883}"` y
+  `user: "${Z2M_UID:-1000}:${Z2M_GID:-1000}"`; nunca `root` ni UID/GID `0`.
 - Prohibidos: modo privilegiado, red del host, namespaces PID/red del host y montajes de `/`,
   `/dev`, socket Docker o home completo.
 - Los únicos bind mounts son: configuración Mosquitto en solo lectura,
@@ -199,17 +203,21 @@ de trabajo actual. Todos aceptan opcionalmente `--env-file <ruta>` donde aplica 
 valores de secretos. Códigos: `0` éxito, `1` validación/entorno, `2` uso incorrecto.
 
 - `preflight.sh`: solo lectura. Comprueba Docker y Compose v2, espacio libre, puertos host,
-  TCP del adaptador, colisión de proyecto y avisos. Falla cerrado; no instala ni reinicia nada.
-- `deploy.sh`: valida `.env`, imágenes, plantillas y contraseñas; ejecuta preflight; crea
-  directorios 700; copia plantillas solo si faltan y renderiza la configuración inicial de Zigbee
-  sin sobrescribirla; lanza únicamente `docker compose -p <proyecto> up -d`. No imprime secretos.
+  TCP del adaptador, colisión de proyecto, UID/GID numéricos no-root y propietarios esperados de
+  `data/`/`passwd`. Falla cerrado; no instala, no reinicia ni modifica propietarios.
+- `deploy.sh`: valida `.env`, imágenes, plantillas, contraseñas y UID/GID; ejecuta preflight;
+  como root crea/ajusta directorios 700 con owner configurado y `passwd` `0400`; sin root valida
+  que ya lo sean o aborta. Copia plantillas solo si faltan y renderiza la configuración inicial
+  de Zigbee sin sobrescribirla; lanza únicamente `docker compose -p <proyecto> up -d`. No imprime
+  secretos.
 - `verify.sh`: consulta estado/salud, listeners, hace una publicación/suscripción MQTT temporal
   en un topic de verificación con QoS 1 y revisa logs recientes contra el secreto. No modifica el
   sistema ni reinicia servicios.
 - `backup.sh [--output-dir DIR]`: crea `zigbee-backup-<UTC>.tar.gz` y `.sha256` con permisos
   restrictivos; incluye `data/zigbee2mqtt` y la configuración Mosquitto. No imprime contenido.
 - `restore.sh <archivo.tar.gz> <destino-nuevo>`: valida hash si existe, rechaza rutas absolutas o
-  `..`, exige confirmación explícita y extrae solo en un destino nuevo. No toca datos vivos.
+  `..`, exige confirmación explícita y extrae solo en un destino nuevo. No toca datos vivos ni
+  ejecuta `chown`; advierte de reajustar los propietarios de `data/` a los UID/GID configurados.
 - `rollback.sh [--yes]`: ejecuta el `down` del proyecto Compose y conserva volúmenes/datos. La
   eliminación de datos queda fuera del comportamiento por defecto.
 

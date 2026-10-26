@@ -138,6 +138,9 @@ contenedores ni redes ajenas. No hay unit systemd, cron ni wiring en `start-all.
 - `cap_drop: [ALL]` y únicamente `CHOWN`, `DAC_OVERRIDE`, `SETGID` y `SETUID` para que los
   entrypoints oficiales puedan ajustar permisos y ceder privilegios. Se añade
   `no-new-privileges:true`.
+- Ambos servicios fijan `user:` no-root desde `MOSQUITTO_UID/GID` y `Z2M_UID/GID` (numéricos,
+  distintos de `0`). Los valores iniciales `1883`/`1000` se confirman contra las imágenes
+  fijadas; los bind mounts y el secreto pertenecen a esos UID/GID.
 - `read_only: true`; `tmpfs` mínimos (`/tmp` y, en Mosquitto, `/mosquitto/log`) y volúmenes de
   datos explícitos. Límites de CPU, memoria y PIDs; logs `json-file` rotados por tamaño y número.
 - Las imágenes se referencian como `${MOSQUITTO_IMAGE:?...}` y `${Z2M_IMAGE:?...}`. El operador
@@ -149,7 +152,8 @@ contenedores ni redes ajenas. No hay unit systemd, cron ni wiring en `start-all.
   del adaptador y límites. `.env.example` solo contiene placeholders inválidos evidentes.
 - Mosquitto exige autenticación (`allow_anonymous false`) y lee el fichero de contraseñas de un
   secreto Compose de solo lectura. Ese fichero se provisiona fuera de Git con `mosquitto_passwd`;
-  `deploy.sh` falla si no existe y nunca lo sobrescribe.
+  `deploy.sh` falla si no existe, nunca lo sobrescribe y, como root, lo deja en `0400` con
+  propietario `MOSQUITTO_UID:MOSQUITTO_GID` (sin root exige que ya sea legible por ese UID).
 - Zigbee2MQTT recibe las credenciales MQTT por variables de entorno de Compose y no las escribe
   en `configuration.yaml`. La plantilla usa `${ZIGBEE_ADAPTER_HOST}`/`${ZIGBEE_ADAPTER_PORT}`;
   `deploy.sh` renderiza una sola vez la configuración inicial y después no la pisa.
@@ -164,16 +168,19 @@ contenedores ni redes ajenas. No hay unit systemd, cron ni wiring en `start-all.
 - `preflight.sh` no escribe: consulta Docker, `docker compose`, disco, listeners y TCP del
   dongle; comprueba colisión de nombre de proyecto. Cualquier fallo produce salida distinta de
   cero y un mensaje accionable.
-- `deploy.sh` valida variables/plantillas, ejecuta preflight, crea `data/mosquitto/config`,
-  `data/mosquitto/data` y `data/zigbee2mqtt` con modo 700, copia plantillas solo si faltan y
-  levanta `docker compose -p <proyecto> up -d`. No toca otros proyectos ni reinicia el motor.
+- `deploy.sh` valida variables/plantillas y UID/GID, ejecuta preflight, crea como root
+  `data/mosquitto/config`, `data/mosquitto/data` (owner Mosquitto) y `data/zigbee2mqtt` (owner
+  Zigbee2MQTT) con modo 700; sin root exige que ya tengan esos propietarios. Ajusta `passwd` a
+  `0400` y `configuration.yaml` a `0600` del UID de Zigbee2MQTT, copia plantillas solo si faltan
+  y levanta `docker compose -p <proyecto> up -d`. No toca otros proyectos ni reinicia el motor.
 - Los datos persistentes son `data/zigbee2mqtt` (incluye `database.db`, `configuration.yaml`,
   `secret.yaml` y `coordinator_backup.json` cuando existan), `data/mosquitto/data` y el fichero
   de contraseñas. Todos quedan fuera de Git.
 - `backup.sh` empaqueta de forma relativa con `umask 077`, genera `.tar.gz` y `.sha256`, y no
   imprime contenido. `restore.sh` verifica el hash, rechaza rutas absolutas o `..`, exige
-  confirmación y extrae en un directorio nuevo; no escribe sobre datos vivos. `rollback.sh`
-  ejecuta solo el `down` del proyecto y conserva datos/volúmenes.
+  confirmación y extrae en un directorio nuevo; no escribe sobre datos vivos y advierte de que
+  los propietarios de `data/` deben reajustarse manualmente a los UID/GID configurados (no hace
+  `chown`). `rollback.sh` ejecuta solo el `down` del proyecto y conserva datos/volúmenes.
 - El traslado al servidor definitivo es: clonar la versión aprobada, crear `.env` y secretos
   fuera de Git, restaurar backup en el destino nuevo, ejecutar preflight, deploy y verify. No se
   migran contenedores ni se copian datos de otro proyecto.
