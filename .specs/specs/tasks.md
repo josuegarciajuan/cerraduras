@@ -1,6 +1,6 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: software host-agnóstico autorizado; hardware y despliegue siguen bloqueados.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: software y paquete de despliegue pre-host entregados; ejecución real y hardware siguen bloqueados.
 
 ---
 
@@ -154,21 +154,31 @@ broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos
 
 **Trazabilidad**: RF-141.3, RF-141.4
 
-- [ ] Ejecutar `bash -n` de scripts, parseo YAML con Python y `shellcheck` si está disponible.
-- [ ] Ejecutar tests nuevos y guardias; registrar resultados.
-- [ ] Confirmar ausencia de wiring en `start-all.sh`/`stop-all.sh`/systemd y de cambios de host.
-- [ ] Informar archivos, decisiones, no interferencia, commits/merge y pendientes de host definitivo.
+- [x] Ejecutar `bash -n` de scripts, parseo YAML con Python y `shellcheck` si está disponible.
+- [x] Ejecutar tests nuevos y guardias; registrar resultados.
+- [x] Confirmar ausencia de wiring en `start-all.sh`/`stop-all.sh`/systemd y de cambios de host.
+- [x] Informar archivos, decisiones, no interferencia, commits/merge y pendientes de host definitivo.
 
 **Verificación**: informe final; no se ejecuta `deploy.sh` ni comandos contra `oficina`.
 
 ### Estado de ejecución (F90 — paquete de despliegue)
 
 - [x] TSK-90.06 especificación
-- [ ] TSK-90.07 Compose y plantillas
-- [ ] TSK-90.08 scripts
-- [ ] TSK-90.09 tests/runner
-- [ ] TSK-90.10 verificación final
+- [x] TSK-90.07 Compose y plantillas
+- [x] TSK-90.08 scripts
+- [x] TSK-90.09 tests/runner
+- [x] TSK-90.10 verificación final
 - [ ] Traslado y validación en host definitivo (bloqueado)
+
+Verificación pre-host ejecutada (2026-10-26), sin Docker de proyecto, red ni hardware:
+
+- `php api/tests/Unit/ZigbeeDeployPackageTest.php` → **234 passed, 0 failed**.
+- BLOCK 63 ejecutado de forma aislada → **32 passed, 0 failed** (el runner completo no se
+  ejecutó para no tocar la BD/servicios del entorno).
+- `bash -n` de los 6 scripts → OK.
+- YAML de Compose y Zigbee2MQTT parseado con Python → OK.
+- `docker compose config --quiet` con un `.env` temporal en `/tmp` → OK (sin crear proyecto).
+- `shellcheck` no está instalado; no se instaló nada y la comprobación se omitió.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

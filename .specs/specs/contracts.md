@@ -1,6 +1,6 @@
 # Contracts — Cerraduras Hotel
 
-> **F90 — Estado**: contrato del software host-agnóstico aprobado para implementación pre-hardware; hallazgos de campo pendientes.
+> **F90 — Estado**: contrato del software y paquete de despliegue pre-host aprobado; ejecución real y hallazgos de campo pendientes.
 
 ---
 
@@ -162,7 +162,7 @@ contraseñas no existe. No imprime valores secretos.
   logs `json-file` con rotación, `read_only: true` y `tmpfs` mínimos.
 - Prohibidos: modo privilegiado, red del host, namespaces PID/red del host y montajes de `/`,
   `/dev`, socket Docker o home completo.
-- Los únicos bind mounts son: configuración Mosquitto y contraseñas en solo lectura,
+- Los únicos bind mounts son: configuración Mosquitto en solo lectura,
   `./data/mosquitto/data`, y `./data/zigbee2mqtt`.
 - Healthchecks propios: Mosquitto responde en su listener; Zigbee2MQTT responde en su UI local.
   No se usan healthchecks que muten datos de dominio.
@@ -170,7 +170,7 @@ contraseñas no existe. No imprime valores secretos.
 ### Contrato de las plantillas
 
 `mosquitto/mosquitto.conf.example` declara `persistence true`, autenticación obligatoria,
-`password_file /mosquitto/config/passwd`, listener interno y `log_dest stdout`.
+`password_file /run/secrets/mqtt_passwd`, listener interno y `log_dest stdout`.
 
 `zigbee2mqtt/configuration.yaml.example` declara:
 

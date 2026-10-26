@@ -1,6 +1,6 @@
 # Design — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware y antes de instalar en el almacén.
+> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware, al elegir host definitivo y antes de instalar en el almacén.
 
 ---
 
@@ -148,7 +148,7 @@ contenedores ni redes ajenas. No hay unit systemd, cron ni wiring en `start-all.
 - `.env` (ignorado por Git) define proyecto, imágenes, puertos, credenciales MQTT, host/puerto
   del adaptador y límites. `.env.example` solo contiene placeholders inválidos evidentes.
 - Mosquitto exige autenticación (`allow_anonymous false`) y lee el fichero de contraseñas de un
-  bind mount de solo lectura. Ese fichero se provisiona fuera de Git con `mosquitto_passwd`;
+  secreto Compose de solo lectura. Ese fichero se provisiona fuera de Git con `mosquitto_passwd`;
   `deploy.sh` falla si no existe y nunca lo sobrescribe.
 - Zigbee2MQTT recibe las credenciales MQTT por variables de entorno de Compose y no las escribe
   en `configuration.yaml`. La plantilla usa `${ZIGBEE_ADAPTER_HOST}`/`${ZIGBEE_ADAPTER_PORT}`;
