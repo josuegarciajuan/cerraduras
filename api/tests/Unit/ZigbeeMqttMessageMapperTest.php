@@ -130,5 +130,12 @@ try {
     pass('F90: non-standard entity mapping is rejected');
 }
 
+try {
+    new ZigbeeMqttMessageMapper(['devices' => []], 'zigbee2mqtt');
+    fail('F90: empty live device map is rejected');
+} catch (InvalidArgumentException) {
+    pass('F90: empty live device map is rejected');
+}
+
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n\n";
 exit($FAIL === 0 ? 0 : 1);

@@ -8,7 +8,7 @@ namespace App\Domain\Presence;
  *
  * sensor:  PROXIMITY (door open/closed) | PRESENCE (body detected/absent).
  * value:   OPEN | CLOSED | PRESENT | ABSENT.
- * provider: TUYA | SIMULATED.
+ * provider: TUYA | ESP32 | LOCAL | SIMULATED | ZIGBEE2MQTT.
  *
  * source_event_id is the external identifier from Tuya (or simulator); used
  * for idempotent inserts via the UNIQUE DB constraint.
@@ -27,6 +27,7 @@ final class PresenceEvent
 
     public const PROVIDER_TUYA      = 'TUYA';
     public const PROVIDER_SIMULATED = 'SIMULATED';
+    public const PROVIDER_ZIGBEE2MQTT = 'ZIGBEE2MQTT';
 
     public int $id;
     public int $roomId;

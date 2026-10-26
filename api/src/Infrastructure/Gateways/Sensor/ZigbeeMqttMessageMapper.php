@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Gateways\Sensor;
 
+use App\Domain\Presence\PresenceEvent;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -19,7 +20,7 @@ final class ZigbeeMqttMessageMapper
 {
     public const MAX_PAYLOAD_BYTES = 65536;
     private const ENTITIES = ['contact', 'occupancy', 'state'];
-    private const PROVIDER = 'ZIGBEE2MQTT';
+    private const PROVIDER = PresenceEvent::PROVIDER_ZIGBEE2MQTT;
 
     /** @var array<string,array{external_id:string,entities:array<string,array{sensor:string,values:array<string,string>}>}> */
     private array $devices;
@@ -30,9 +31,7 @@ final class ZigbeeMqttMessageMapper
             throw new InvalidArgumentException('Invalid MQTT topic prefix');
         }
         if (!isset($config['devices']) || !is_array($config['devices']) || $config['devices'] === []) {
-            if (($config['devices'] ?? null) !== []) {
-                throw new InvalidArgumentException('Device map must contain a devices object');
-            }
+            throw new InvalidArgumentException('Device map must contain at least one device');
         }
 
         $this->devices = [];
