@@ -1,0 +1,10 @@
+# Secretos y datos de ejecución del proyecto: nunca commitear.
+.env
+.env.*
+!.env.example
+data/
+backups/
+*.tar.gz
+*.sha256
+*.log
+run/

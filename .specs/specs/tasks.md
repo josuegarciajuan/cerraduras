@@ -1,6 +1,6 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: software host-agnóstico autorizado; hardware y despliegue siguen bloqueados.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: software y paquete de despliegue pre-host entregados; ejecución real y hardware siguen bloqueados.
 
 ---
 
@@ -94,6 +94,91 @@ broker aprobada, mapa por equipo revisado y aprobación de los cuatro documentos
 
 > No ejecutar tareas de hardware hasta su recepción y autorización específica. Esta fase no inicia
 > broker, no instala unidades ni modifica servicios reales.
+
+## TSK-90.06: Especificar el paquete de despliegue aislado
+
+**Trazabilidad**: RF-137..RF-141
+
+- [x] Ampliar `requirements.md`, `design.md`, `contracts.md` y `tasks.md` con el paquete
+  Compose aislado, contrato de scripts, variables, invariantes de seguridad y límites.
+- [x] Dejar explícito que no se ejecuta en `oficina` ni se toca Docker/red/firewall/systemd del
+  host de banco.
+- [x] Mantener bloqueadas las tareas de hardware, host definitivo y validación física.
+
+**Verificación**: revisión de los cuatro documentos y ausencia de secretos/IPs/rutas de oficina.
+
+## TSK-90.07: Paquete Compose y plantillas
+
+**Trazabilidad**: RF-137.1..RF-137.6, RF-139.2
+
+- [x] Crear `deploy/zigbee/` con `docker-compose.yml`, `.env.example`, `.gitignore`,
+  `mosquitto/mosquitto.conf.example` y `zigbee2mqtt/configuration.yaml.example`.
+- [x] Fijar imágenes por variables obligatorias sin `latest`, puertos loopback por defecto,
+  `restart: unless-stopped`, `read_only`, `tmpfs`, `cap_drop: [ALL]`, capabilities mínimas,
+  `no-new-privileges`, límites y logs acotados.
+- [x] Configurar adaptador TCP mediante variables, `adapter: ember`, `baudrate: 115200`,
+  `rtscts: false` documentados como iniciales y `permit_join: false`.
+- [x] Sin privileged, host network, namespaces del host, socket Docker ni montajes peligrosos.
+
+**Verificación**: YAML parseable y revisión estática de invariantes.
+
+## TSK-90.08: Scripts operativos
+
+**Trazabilidad**: RF-138.1..RF-138.4, RF-139.1..RF-139.4, RF-140.1
+
+- [x] `preflight.sh` de solo lectura con Docker/Compose, disco, puertos, TCP del dongle y
+  colisión de proyecto; sin instalar ni reiniciar.
+- [x] `deploy.sh` idempotente y fail-closed que valida `.env`, imágenes, placeholders, plantillas
+  y contraseñas; crea solo directorios del proyecto y levanta solo su proyecto Compose.
+- [x] `verify.sh` con estado, salud, listeners loopback, MQTT controlado y revisión de logs sin
+  secretos.
+- [x] `backup.sh` con tar+sha256, `restore.sh` con confirmación y destino nuevo, y
+  `rollback.sh` con down del proyecto conservando datos.
+- [x] README operativo con banco, secretos fuera de Git, traslado al host definitivo, backup,
+  restore y rollback, dejando claro que no se desplegó ni tocó `oficina`.
+
+**Verificación**: `bash -n` de todos los scripts; ninguna ejecución de deploy ni contacto con el dongle.
+
+## TSK-90.09: Tests estáticos y guardia del runner
+
+**Trazabilidad**: RF-141.1, RF-141.2
+
+- [x] Añadir `api/tests/Unit/ZigbeeDeployPackageTest.php` con checks de archivos, prohibiciones,
+  loopback, `permit_join`, imágenes, secretos/IPs/rutas, `set -eu` y falta de wiring.
+- [x] Añadir BLOCK 63 al runner con marcadores F90 y guardias de no interferencia, sin requerir
+  Docker, red ni hardware.
+
+**Verificación**: `php tests/Unit/ZigbeeDeployPackageTest.php` y ejecución aislada del bloque.
+
+## TSK-90.10: Verificación final y entrega pre-host
+
+**Trazabilidad**: RF-141.3, RF-141.4
+
+- [x] Ejecutar `bash -n` de scripts, parseo YAML con Python y `shellcheck` si está disponible.
+- [x] Ejecutar tests nuevos y guardias; registrar resultados.
+- [x] Confirmar ausencia de wiring en `start-all.sh`/`stop-all.sh`/systemd y de cambios de host.
+- [x] Informar archivos, decisiones, no interferencia, commits/merge y pendientes de host definitivo.
+
+**Verificación**: informe final; no se ejecuta `deploy.sh` ni comandos contra `oficina`.
+
+### Estado de ejecución (F90 — paquete de despliegue)
+
+- [x] TSK-90.06 especificación
+- [x] TSK-90.07 Compose y plantillas
+- [x] TSK-90.08 scripts
+- [x] TSK-90.09 tests/runner
+- [x] TSK-90.10 verificación final
+- [ ] Traslado y validación en host definitivo (bloqueado)
+
+Verificación pre-host ejecutada (2026-10-26), sin Docker de proyecto, red ni hardware:
+
+- `php api/tests/Unit/ZigbeeDeployPackageTest.php` → **234 passed, 0 failed**.
+- BLOCK 63 ejecutado de forma aislada → **32 passed, 0 failed** (el runner completo no se
+  ejecutó para no tocar la BD/servicios del entorno).
+- `bash -n` de los 6 scripts → OK.
+- YAML de Compose y Zigbee2MQTT parseado con Python → OK.
+- `docker compose config --quiet` con un `.env` temporal en `/tmp` → OK (sin crear proyecto).
+- `shellcheck` no está instalado; no se instaló nada y la comprobación se omitió.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

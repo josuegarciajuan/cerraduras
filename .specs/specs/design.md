@@ -1,6 +1,6 @@
 # Design — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware y antes de instalar en el almacén.
+> **F90 — Última revisión**: 2026-10-26 · **Revisar**: al recibir hardware, al elegir host definitivo y antes de instalar en el almacén.
 
 ---
 
@@ -97,6 +97,105 @@ cableado ni autoriza trabajo eléctrico energizado.
 - Rollback: ante fallo de recepción, semántica o instalación, se deja de usar el dispositivo
   Zigbee afectado y se vuelve al Tuya equivalente; no se borran eventos ni se cambia el vínculo
   canónico `device → pack → room`.
+
+## Paquete de despliegue aislado Mosquitto + Zigbee2MQTT (F90, 2026-10-26)
+
+### Decisión
+
+Se entrega un proyecto Compose **independiente** en `deploy/zigbee/` para el banco y el futuro
+servidor. No sustituye, envuelve ni modifica el despliegue de la aplicación hotelera. El paquete
+se puede clonar en cualquier host con Docker Engine + Compose v2 y no contiene datos del host
+origen. No se ejecuta en `oficina` como parte de esta entrega.
+
+```text
+deploy/zigbee/
+├── docker-compose.yml          # proyecto aislado, puertos loopback, límites y hardening
+├── .env.example                # variables y placeholders; sin secretos reales
+├── .gitignore                  # .env, data/, backups y secretos locales
+├── mosquitto/mosquitto.conf.example
+├── zigbee2mqtt/configuration.yaml.example
+├── preflight.sh                # solo lectura, falla cerrado
+├── deploy.sh                   # idempotente, valida y levanta solo este proyecto
+├── verify.sh                   # estado/salud/listeners/MQTT/logs (sin cambios de sistema)
+├── backup.sh                   # tar.gz + sha256 de config/datos Zigbee
+├── restore.sh                  # confirmación + destino nuevo
+├── rollback.sh                 # down del proyecto; conserva volúmenes/datos
+└── README.md                   # operación, banco, traslado, backup y límites
+```
+
+El nombre de proyecto Compose es configurable (`COMPOSE_PROJECT_NAME`) y se usa en todos los
+comandos. Red, contenedores, puertos y bind mounts quedan bajo ese proyecto; no se reutilizan
+contenedores ni redes ajenas. No hay unit systemd, cron ni wiring en `start-all.sh`/`stop-all.sh`.
+
+### Aislamiento y superficie de ataque
+
+- Los puertos por defecto se publican como `127.0.0.1:<host>:<contenedor>`; no hay bind a
+  `0.0.0.0` ni exposición a Internet. Abrir la UI o el broker a la LAN es una decisión explícita
+  del operador del host definitivo, con firewall y autenticación revisados.
+- El contenedor no es privilegiado, no comparte el namespace de red/PID del host y no monta el
+  socket del motor Docker, `/`, `/dev` ni el home. Los bind mounts se limitan a configuración
+  de solo lectura y a dos directorios de datos del proyecto.
+- `cap_drop: [ALL]` y únicamente `CHOWN`, `DAC_OVERRIDE`, `SETGID` y `SETUID` para que los
+  entrypoints oficiales puedan ajustar permisos y ceder privilegios. Se añade
+  `no-new-privileges:true`.
+- `read_only: true`; `tmpfs` mínimos (`/tmp` y, en Mosquitto, `/mosquitto/log`) y volúmenes de
+  datos explícitos. Límites de CPU, memoria y PIDs; logs `json-file` rotados por tamaño y número.
+- Las imágenes se referencian como `${MOSQUITTO_IMAGE:?...}` y `${Z2M_IMAGE:?...}`. El operador
+  debe fijar tags/digests concretos; no se acepta `latest` y no se inventan versiones.
+
+### Configuración y secretos
+
+- `.env` (ignorado por Git) define proyecto, imágenes, puertos, credenciales MQTT, host/puerto
+  del adaptador y límites. `.env.example` solo contiene placeholders inválidos evidentes.
+- Mosquitto exige autenticación (`allow_anonymous false`) y lee el fichero de contraseñas de un
+  secreto Compose de solo lectura. Ese fichero se provisiona fuera de Git con `mosquitto_passwd`;
+  `deploy.sh` falla si no existe y nunca lo sobrescribe.
+- Zigbee2MQTT recibe las credenciales MQTT por variables de entorno de Compose y no las escribe
+  en `configuration.yaml`. La plantilla usa `${ZIGBEE_ADAPTER_HOST}`/`${ZIGBEE_ADAPTER_PORT}`;
+  `deploy.sh` renderiza una sola vez la configuración inicial y después no la pisa.
+- `permit_join: false` por defecto; la UI escucha dentro del contenedor y se publica solo en
+  loopback. `adapter: ember`, `baudrate: 115200` y `rtscts: false` son valores iniciales a
+  validar con el Dongle-M real; no se afirman capacidades ni modelos SNZB.
+- Los logs de ambos servicios van a stdout/stderr; no se montan logs del host. `verify.sh`
+  revisa que los logs recientes no contengan el valor de las credenciales MQTT.
+
+### Ciclo de vida y datos
+
+- `preflight.sh` no escribe: consulta Docker, `docker compose`, disco, listeners y TCP del
+  dongle; comprueba colisión de nombre de proyecto. Cualquier fallo produce salida distinta de
+  cero y un mensaje accionable.
+- `deploy.sh` valida variables/plantillas, ejecuta preflight, crea `data/mosquitto/config`,
+  `data/mosquitto/data` y `data/zigbee2mqtt` con modo 700, copia plantillas solo si faltan y
+  levanta `docker compose -p <proyecto> up -d`. No toca otros proyectos ni reinicia el motor.
+- Los datos persistentes son `data/zigbee2mqtt` (incluye `database.db`, `configuration.yaml`,
+  `secret.yaml` y `coordinator_backup.json` cuando existan), `data/mosquitto/data` y el fichero
+  de contraseñas. Todos quedan fuera de Git.
+- `backup.sh` empaqueta de forma relativa con `umask 077`, genera `.tar.gz` y `.sha256`, y no
+  imprime contenido. `restore.sh` verifica el hash, rechaza rutas absolutas o `..`, exige
+  confirmación y extrae en un directorio nuevo; no escribe sobre datos vivos. `rollback.sh`
+  ejecuta solo el `down` del proyecto y conserva datos/volúmenes.
+- El traslado al servidor definitivo es: clonar la versión aprobada, crear `.env` y secretos
+  fuera de Git, restaurar backup en el destino nuevo, ejecutar preflight, deploy y verify. No se
+  migran contenedores ni se copian datos de otro proyecto.
+
+### Riesgos y mitigaciones
+
+- **Dongle TCP inalcanzable**: preflight falla antes de crear contenedores; el adaptador es
+  configurable y no se cablea ninguna IP.
+- **Imagen no fijada**: Compose falla cerrado por variable obligatoria; no hay `latest`.
+- **Colisión de puertos/proyecto**: preflight y nombre de proyecto exclusivo lo detectan antes.
+- **Fuga de secretos**: `.env`, contraseñas y backups están ignorados; deploy/verify no imprimen
+  valores y los logs se revisan.
+- **Interferencia con el host de trabajo**: el paquete no modifica red, firewall, systemd,
+  servicios ni Docker preexistente, y no se ejecuta en `oficina` en esta entrega.
+
+### Verificación pre-host
+
+`api/tests/Unit/ZigbeeDeployPackageTest.php` comprueba estáticamente archivos, prohibiciones,
+binds loopback, plantillas, ausencia de secretos/rutas/IPs de oficina, `set -eu` y falta de
+wiring de arranque. BLOCK 63 del runner ejecuta ese test sin Docker, red ni hardware; además se
+valida `bash -n`, parseo YAML con Python y `shellcheck` si está instalado. Nada de esto levanta
+el proyecto ni contacta con el dongle.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

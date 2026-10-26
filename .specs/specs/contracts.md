@@ -1,6 +1,6 @@
 # Contracts — Cerraduras Hotel
 
-> **F90 — Estado**: contrato del software host-agnóstico aprobado para implementación pre-hardware; hallazgos de campo pendientes.
+> **F90 — Estado**: contrato del software y paquete de despliegue pre-host aprobado; ejecución real y hallazgos de campo pendientes.
 
 ---
 
@@ -117,6 +117,109 @@ la cola y requiere reconciliación. No se declara atomicidad entre broker y BD.
 La forma de `/live`, SSE, QR y reglas de salida no cambia en esta fase de software. Cada
 migración futura debe poder desactivar solo la fuente Zigbee del dispositivo afectado y restaurar
 la fuente Tuya anterior, conservando la evidencia recibida y el vínculo canónico.
+
+## Contrato del paquete de despliegue aislado (F90)
+
+### Límite
+
+`deploy/zigbee/` es un proyecto Compose autónomo para Mosquitto y Zigbee2MQTT. No publica rutas
+HTTP de la aplicación, no se integra en `start-all.sh`/`stop-all.sh`, no crea units systemd y no
+se ejecuta en `oficina` como parte de esta entrega. Su salida pública es el propio paquete y su
+README; no hay endpoint ni comando administrativo nuevo de la API hotelera.
+
+### Variables de entorno
+
+Todas viven en `deploy/zigbee/.env` (ignorado por Git) y se documentan en `.env.example` con
+placeholders inválidos. No se admiten valores reales en el repositorio.
+
+| Variable | Obligatoria | Default | Regla |
+|---|---|---|---|
+| `COMPOSE_PROJECT_NAME` | sí | — | Nombre único; usado por todos los comandos. |
+| `MOSQUITTO_IMAGE` | sí | — | Imagen con tag o digest fijo; prohibido `latest`. |
+| `Z2M_IMAGE` | sí | — | Imagen con tag o digest fijo; prohibido `latest`. |
+| `MQTT_HOST_PORT` | sí | `1883` | Puerto host 1–65535, publicado solo en loopback. |
+| `Z2M_UI_HOST_PORT` | sí | `8080` | Puerto host 1–65535, publicado solo en loopback. |
+| `MQTT_USERNAME` | sí | — | Usuario MQTT no vacío. |
+| `MQTT_PASSWORD` | sí | — | Secreto fuera de Git; el placeholder de ejemplo es inválido. |
+| `ZIGBEE_ADAPTER_HOST` | sí | — | Host/IP del adaptador TCP; no se cablea ninguna IP. |
+| `ZIGBEE_ADAPTER_PORT` | sí | `6638` | Puerto TCP del adaptador, 1–65535. |
+| `TZ` | no | `UTC` | Zona horaria IANA de los contenedores. |
+| `MIN_FREE_DISK_MB` | no | `2048` | Umbral de preflight para el directorio de datos. |
+| `MOSQUITTO_CPUS` / `MOSQUITTO_MEM_LIMIT` | no | `1.0` / `256m` | Límites del broker. |
+| `Z2M_CPUS` / `Z2M_MEM_LIMIT` | no | `1.0` / `512m` | Límites de Zigbee2MQTT. |
+
+`deploy.sh` aborta si falta una variable obligatoria, si una imagen es `latest`, si el password
+sigue siendo el placeholder, si el adaptador es el placeholder o si una plantilla/fichero de
+contraseñas no existe. No imprime valores secretos.
+
+### Invariantes del Compose
+
+- `services` contiene exactamente `mosquitto` y `zigbee2mqtt`; el proyecto solo se invoca con
+  `-p "$COMPOSE_PROJECT_NAME"`.
+- Puertos publicados por defecto: `"127.0.0.1:${MQTT_HOST_PORT}:1883"` y
+  `"127.0.0.1:${Z2M_UI_HOST_PORT}:8080"`.
+- `restart: unless-stopped`, `cap_drop: [ALL]`, `no-new-privileges`, límites de CPU/memoria/PIDs,
+  logs `json-file` con rotación, `read_only: true` y `tmpfs` mínimos.
+- Prohibidos: modo privilegiado, red del host, namespaces PID/red del host y montajes de `/`,
+  `/dev`, socket Docker o home completo.
+- Los únicos bind mounts son: configuración Mosquitto en solo lectura,
+  `./data/mosquitto/data`, y `./data/zigbee2mqtt`.
+- Healthchecks propios: Mosquitto responde en su listener; Zigbee2MQTT responde en su UI local.
+  No se usan healthchecks que muten datos de dominio.
+
+### Contrato de las plantillas
+
+`mosquitto/mosquitto.conf.example` declara `persistence true`, autenticación obligatoria,
+`password_file /run/secrets/mqtt_passwd`, listener interno y `log_dest stdout`.
+
+`zigbee2mqtt/configuration.yaml.example` declara:
+
+```yaml
+permit_join: false
+mqtt:
+  server: mqtt://mosquitto:1883
+serial:
+  adapter: ember
+  port: tcp://${ZIGBEE_ADAPTER_HOST}:${ZIGBEE_ADAPTER_PORT}
+  baudrate: 115200
+  rtscts: false
+frontend:
+  port: 8080
+  host: 0.0.0.0
+```
+
+`host: 0.0.0.0` es solo dentro del contenedor; la publicación en el host sigue siendo loopback.
+No se incluyen modelos, entidades ni topics de dispositivos. `permit_join` debe permanecer en
+`false` salvo emparejamiento explícito y temporal del operador.
+
+### Contrato de los scripts
+
+Todos usan `set -eu`, resuelven su raíz desde su propio directorio y no dependen del directorio
+de trabajo actual. Todos aceptan opcionalmente `--env-file <ruta>` donde aplica y nunca imprimen
+valores de secretos. Códigos: `0` éxito, `1` validación/entorno, `2` uso incorrecto.
+
+- `preflight.sh`: solo lectura. Comprueba Docker y Compose v2, espacio libre, puertos host,
+  TCP del adaptador, colisión de proyecto y avisos. Falla cerrado; no instala ni reinicia nada.
+- `deploy.sh`: valida `.env`, imágenes, plantillas y contraseñas; ejecuta preflight; crea
+  directorios 700; copia plantillas solo si faltan y renderiza la configuración inicial de Zigbee
+  sin sobrescribirla; lanza únicamente `docker compose -p <proyecto> up -d`. No imprime secretos.
+- `verify.sh`: consulta estado/salud, listeners, hace una publicación/suscripción MQTT temporal
+  en un topic de verificación con QoS 1 y revisa logs recientes contra el secreto. No modifica el
+  sistema ni reinicia servicios.
+- `backup.sh [--output-dir DIR]`: crea `zigbee-backup-<UTC>.tar.gz` y `.sha256` con permisos
+  restrictivos; incluye `data/zigbee2mqtt` y la configuración Mosquitto. No imprime contenido.
+- `restore.sh <archivo.tar.gz> <destino-nuevo>`: valida hash si existe, rechaza rutas absolutas o
+  `..`, exige confirmación explícita y extrae solo en un destino nuevo. No toca datos vivos.
+- `rollback.sh [--yes]`: ejecuta el `down` del proyecto Compose y conserva volúmenes/datos. La
+  eliminación de datos queda fuera del comportamiento por defecto.
+
+### Formato de backup
+
+El archivo contiene rutas relativas (`data/zigbee2mqtt/...`, `data/mosquitto/config/...`) y
+puede incluir `secret.yaml`, `database.db`, `configuration.yaml`, `coordinator_backup.json` y el
+fichero de contraseñas. Por ello el directorio `backups/` y los archivos `*.tar.gz`/`*.sha256`
+están ignorados por Git. El hash se calcula sobre el archivo comprimido; el restore verifica el
+hash cuando el `.sha256` acompañante existe.
 
 # Fase 1: Robustez firmware ESP32 QR Reader
 

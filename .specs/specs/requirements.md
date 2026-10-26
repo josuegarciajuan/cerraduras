@@ -100,6 +100,83 @@ Hardware confirmado para recepción, no para capacidades aún verificadas:
   llamadas REST Tuya, sondeos o temporizadores. Los efectos de actuador ya existentes en
   `IotSessionService` conservan su provider configurado para dispositivos aún no migrados.
 
+## RF-137: Paquete de despliegue reproducible y aislado
+
+- **RF-137.1**: Se entrega `deploy/zigbee/` como proyecto Compose propio con nombre de proyecto,
+  red, puertos, volúmenes y directorios de datos exclusivos. No forma parte del despliegue de la
+  aplicación hotelera ni se enlaza desde sus scripts de arranque.
+- **RF-137.2**: El paquete es host-agnóstico: no contiene IPs de `oficina`, rutas absolutas de
+  `oficina`, nombres de usuario del host ni referencias al árbol de trabajo local. Todo lo
+  dependiente del host se declara en `.env`, con `.env.example` sin secretos.
+- **RF-137.3**: Las imágenes de Mosquitto y Zigbee2MQTT se fijan obligatoriamente por variables
+  (`MOSQUITTO_IMAGE`, `Z2M_IMAGE`). El despliegue falla cerrado si no están definidas o si usan
+  `latest`; no se inventan versiones no verificables.
+- **RF-137.4**: Por defecto los puertos publicados se ligan a `127.0.0.1` (broker MQTT y UI de
+  Zigbee2MQTT), sin exposición a Internet. El cambio de bind requiere edición explícita y
+  revisión de firewall por el operador del host definitivo.
+- **RF-137.5**: El paquete no usa `privileged`, `network_mode: host`, namespaces PID/red del
+  host ni montajes de `/`, `/dev`, del socket de Docker o del home completo. Aplica
+  `cap_drop: [ALL]`, solo las capabilities imprescindibles, `no-new-privileges`, límites de
+  CPU/memoria/PIDs, `read_only` donde sea viable, `tmpfs` mínimos y logs acotados.
+- **RF-137.6**: Zigbee2MQTT se configura para adaptador TCP (`ZIGBEE_ADAPTER_HOST`,
+  `ZIGBEE_ADAPTER_PORT=6638`), `adapter: ember`, `baudrate: 115200` y `rtscts: false` como
+  valores iniciales a validar en banco. `permit_join: false` es el default. No se asumen
+  modelos, entidades ni topics SNZB.
+
+## RF-138: Preflight de solo lectura y despliegue idempotente
+
+- **RF-138.1**: `preflight.sh` es estrictamente de solo lectura: comprueba Docker y Docker
+  Compose, espacio libre mínimo, puertos libres, alcanzabilidad TCP del dongle y ausencia de
+  otro proyecto Compose con el mismo nombre. No instala, reinicia, crea contenedores ni modifica
+  el sistema; falla cerrado con diagnóstico claro.
+- **RF-138.2**: `deploy.sh` valida `.env`, plantillas y preflight antes de actuar. Crea solo
+  directorios de datos del proyecto con permisos restrictivos, no sobrescribe secretos ni
+  configuración existente, no imprime secretos y levanta únicamente su proyecto Compose.
+- **RF-138.3**: Los secretos (credenciales MQTT, `secret.yaml`, `database.db` y backups) se
+  provisionan fuera de Git. El repositorio solo contiene plantillas con placeholders inválidos
+  evidentes y documentados.
+- **RF-138.4**: Un fallo de validación, preflight o provisión deja el host sin contenedores
+  nuevos del proyecto y sin cambios en servicios existentes.
+
+## RF-139: Verificación, backup, restore y rollback
+
+- **RF-139.1**: `verify.sh` comprueba estado y salud de los contenedores del proyecto, que los
+  listeners estén ligados a loopback por defecto, una prueba MQTT controlada con el topic de
+  verificación y que los logs recientes no contengan secretos. No modifica servicios del sistema.
+- **RF-139.2**: `backup.sh` genera un `tar.gz` con configuración y datos de Zigbee2MQTT
+  (incluyendo `database.db`, `configuration.yaml`, `secret.yaml` y `coordinator_backup.json`
+  cuando exista) y su `sha256`, sin imprimir contenido. Los backups son locales, restrictivos y
+  quedan fuera de Git.
+- **RF-139.3**: `restore.sh` exige confirmación explícita, verifica el archivo y restaura en un
+  destino nuevo; no sobrescribe datos vivos. La promoción a producción es un paso manual del
+  operador tras parar el proyecto.
+- **RF-139.4**: `rollback.sh` ejecuta únicamente el `down` del proyecto Compose y conserva
+  volúmenes y datos. La eliminación de datos nunca es la acción por defecto.
+
+## RF-140: No interferencia con el host de banco
+
+- **RF-140.1**: El paquete no modifica red, Docker preexistente, firewall, systemd, servicios del
+  sistema, escritorio ni agentes de cámara. No se añaden unidades, cron ni wiring en
+  `start-all.sh`/`stop-all.sh`.
+- **RF-140.2**: `oficina` se considera banco de pruebas y ordenador de trabajo: no se ejecuta el
+  despliegue ni se toca su Docker, red o servicios como parte de esta entrega.
+- **RF-140.3**: La verificación de no interferencia se realiza con tests estáticos: no se
+  requieren Docker, red, broker ni hardware para aprobar la entrega.
+
+## RF-141: Pruebas y entrega pre-host
+
+- **RF-141.1**: Se añade `api/tests/Unit/ZigbeeDeployPackageTest.php` auto-descubierto con
+  comprobaciones de archivos, prohibiciones de seguridad, binds loopback, `permit_join: false`,
+  imágenes sin `latest`, ausencia de secretos/IPs/rutas de `oficina`, `set -eu` en scripts y
+  ausencia de wiring en arranque/systemd.
+- **RF-141.2**: Se añade BLOCK 63 al runner con marcadores F90 y guardias de no interferencia,
+  sin Docker, red ni hardware.
+- **RF-141.3**: La validación incluye `bash -n` de todos los scripts, parseo YAML con Python y
+  `shellcheck` cuando esté disponible. El README declara requisitos, provisión de secretos,
+  banco, traslado al host definitivo, backup/restore de la red Zigbee y rollback.
+- **RF-141.4**: La entrega no afirma haber desplegado ni validado hardware; deja explícito qué
+  falta cuando exista el host definitivo.
+
 # Fase 1: Robustez firmware ESP32 QR Reader
 
 ## RF-1: Watchdog Timer
