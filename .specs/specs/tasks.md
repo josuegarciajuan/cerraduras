@@ -1,7 +1,7 @@
 # Tasks — Cerraduras Hotel
 
-> **F90 — Última revisión**: 2026-10-26 · **Estado**: software y banco de oficina desplegados;
-> sensores, integración y host definitivo pendientes.
+> **F90 — Última revisión**: 2026-10-26 · **Estado**: banco de oficina y SNZB-04P validados;
+> SNZB-06P, relé, integración y host definitivo pendientes.
 
 ---
 
@@ -198,6 +198,24 @@ entorno temporal en `/tmp`; sin ejecutar deploy/preflight real ni contactar `ofi
 **Verificación**: `verify.sh` 10 OK; logs de Zigbee2MQTT con 0 dispositivos y red recuperada.
 Pendiente: sensores y migración al almacén.
 
+## TSK-90.13: Emparejar y validar SNZB-04P en banco
+
+**Trazabilidad**: RF-134.1, RF-134.2, RF-136.3
+
+- [x] Emparejar `puerta-oficina` (`0xc09b9efffef431fb`) con `permit_join` temporal y
+  `permit_join` desactivado al terminar.
+- [x] Documentar entidades reales (`contact`, `battery`, `battery_low`, `tamper`, `voltage`,
+  `linkquality`, `update`), firmware y botones correctos.
+- [x] Verificar 5 aperturas/cierres = 10 transiciones sin duplicados; `contact:false` cerrado y
+  `contact:true` abierto; `tamper:false` con tapa colocada.
+- [x] Comprobar persistencia tras reinicio (`1 device joined`, red recuperada).
+- [x] Crear backup con el dispositivo emparejado
+  (`zigbee-backup-20261026T134153Z.tar.gz`).
+- [ ] Medir alcance/ubicación real y latencia con marcas temporales (pendiente).
+- [ ] Definir el mapping del worker y probar el flujo de dominio (pendiente).
+
+**Verificación**: logs de Zigbee2MQTT y `docs/hardware/zigbee-bench-oficina.md`.
+
 ### Estado de ejecución (F90 — paquete de despliegue)
 
 - [x] TSK-90.06 especificación
@@ -205,8 +223,10 @@ Pendiente: sensores y migración al almacén.
 - [x] TSK-90.08 scripts
 - [x] TSK-90.09 tests/runner
 - [x] TSK-90.10 verificación final
-- [x] TSK-90.12 banco de oficina desplegado (`zigbee-local`, 0 dispositivos)
-- [ ] Sensores SNZB y mapa MQTT real (bloqueado hasta emparejar)
+- [x] TSK-90.12 banco de oficina desplegado (`zigbee-local`)
+- [x] TSK-90.13 SNZB-04P emparejado y validado en banco (`puerta-oficina`)
+- [ ] SNZB-06P y ZBMINIL2 (pendiente)
+- [ ] Mapa MQTT real y flujo de dominio (pendiente)
 - [ ] Traslado y validación en host definitivo (bloqueado)
 
 Verificación pre-host ejecutada (2026-10-26), sin Docker de proyecto, red ni hardware:

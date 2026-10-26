@@ -50,10 +50,42 @@ Mosquitto 2.0.22 (contenedor zigbee-local-mosquitto-1)
   systemd, red, firewall ni otros contenedores.
 - El contenedor ajeno de `autotube-sd` no fue tocado por el despliegue.
 
+## Sensor de puerta SNZB-04P — emparejado y probado
+
+- **IEEE**: `0xc09b9efffef431fb` · **friendly name**: `puerta-oficina`.
+- **Modelo**: SONOFF SNZB-04P · `model_id` SNZB-04P · fabricante `eWeLink`.
+- **Fecha de fabricación**: `20230927` · **software build**: `2.2.0` ·
+  firmware instalado reportado: `8704` (`0x2200`), sin actualización pendiente.
+- **Batería**: 100 % · **voltaje**: 3100 mV · **LQI**: 52–132 en banco.
+- **Entidades reales**: `contact`, `battery`, `battery_low`, `tamper`, `voltage`,
+  `linkquality`, `update`.
+- **Botones**: el ovalado superior (junto al QR) es el botón de emparejamiento/reset; el
+  alargado trasero es el pulsador de tapa/antimanipulación. No se usó eWeLink.
+- **Emparejamiento**: `permit_join` 254 s; pulsación de 5 s del botón superior; parpadeo lento
+  de 180 s; `Device joined` a las 14:03:15 e interview correcto a las 14:03:21. Después se
+  renombró y se desactivó `permit_join`.
+
+### Semántica observada de `contact`
+
+| Payload | Significado físico |
+|---|---|
+| `contact: false` | imán junto al transmisor → **cerrado** |
+| `contact: true` | imán separado → **abierto** |
+
+Prueba de 5 aperturas/cierres: **10 transiciones**, una por cambio, sin duplicados. Los
+eventos llegaron en 1–4 s según la manipulación manual; no se midió latencia con marcas
+temporales. `tamper` alternó mientras se manipulaba la tapa y quedó en `false` con la tapa
+correctamente colocada. Tras reiniciar el proyecto: `Adapter network matches config`,
+`1 device joined`, `contact: true`, `tamper: false`.
+
+- Backup con el sensor ya emparejado: `backups/zigbee-backup-20261026T134153Z.tar.gz`
+  (+ `.sha256`).
+
 ## Límites y pendientes
 
-- No se ha validado ningún sensor SNZB-04P, SNZB-06P ni el relé ZBMINIL2.
-- No se ha emparejado ningún dispositivo; `permit_join` sigue desactivado.
+- SNZB-04P validado solo en banco y a corta distancia; falta prueba de alcance/ubicación real.
+- No se ha validado el SNZB-06P ni el relé ZBMINIL2.
+- `permit_join` queda desactivado.
 - La UI de Zigbee2MQTT solo escucha en loopback: se abre desde `oficina` en
   `http://127.0.0.1:8080`.
 - El host definitivo, TLS/ACL del broker, firewall y backup fuera del nodo siguen pendientes.
@@ -75,5 +107,6 @@ restrictivos. No copiar `.env`, `data/` ni `backups/` al repositorio.
 
 ## Siguiente paso
 
-Emparejar un único dispositivo (empezando por el sensor de puerta), observar las entidades y
-payloads reales de Zigbee2MQTT, y documentarlos antes de definir el mapa MQTT del worker.
+Emparejar el sensor de presencia SNZB-06P, observar sus entidades y payloads reales
+(`occupancy`, `illuminance`, etc.), y validar falsos positivos/ausencias antes de definir el
+mapa MQTT del worker. El relé ZBMINIL2 queda para después y requiere electricista.
