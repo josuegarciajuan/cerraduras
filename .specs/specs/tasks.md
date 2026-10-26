@@ -20,12 +20,12 @@
 
 **Trazabilidad**: RF-136.3, RF-136.4, RF-136.6
 
-- [ ] Añadir el parser puro de topic/payload y configuración de dispositivos por topic.
-- [ ] Aceptar solo `contact`, `occupancy`, `state`; emitir únicamente los valores expresamente
+- [x] Añadir el parser puro de topic/payload y configuración de dispositivos por topic.
+- [x] Aceptar solo `contact`, `occupancy`, `state`; emitir únicamente los valores expresamente
   mapeados a `PROXIMITY` o `PRESENCE`.
-- [ ] Reconocer `availability` como diagnóstico sin mutación de estado; rechazar JSON inválido,
+- [x] Reconocer `availability` como diagnóstico sin mutación de estado; rechazar JSON inválido,
   payload >64 KiB, valor no escalar y mapeos inválidos.
-- [ ] Probar mappings, multi-entidad, valor/topic no mapeado y source_event_id determinista.
+- [x] Probar mappings, multi-entidad, valor/topic no mapeado y source_event_id determinista.
 
 **Verificación**: `php tests/Unit/ZigbeeMqttMessageMapperTest.php` y auto-descubrimiento unitario.
 
