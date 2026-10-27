@@ -68,11 +68,11 @@ tareas. Sin cambios de código.
 
 **Trazabilidad**: RF-143.1..RF-143.7
 
-- [ ] Crear `api/bin/provision-zigbee-almacen.php` con `--dry-run` y `--apply`.
-- [ ] Verificar `ALMACEN_BEBIDAS`; crear `PACK_ZIGBEE`, `almacenZigbee` y los tres dispositivos
+- [x] Crear `api/bin/provision-zigbee-almacen.php` con `--dry-run` y `--apply`.
+- [x] Verificar `ALMACEN_BEBIDAS`; crear `PACK_ZIGBEE`, `almacenZigbee` y los tres dispositivos
   con IEEE, etiquetas y `transport=ZIGBEE2MQTT`.
-- [ ] Rechazar colisiones y no modificar otras salas; no habilitar MQTT ni servicios.
-- [ ] Test de idempotencia y de aislamiento del almacén existente.
+- [x] Rechazar colisiones y no modificar otras salas; no habilitar MQTT ni servicios.
+- [x] Test de idempotencia y de aislamiento del almacén existente.
 
 **Verificación**: `--dry-run` sobre base descartable, `--apply`, segunda ejecución sin cambios,
 consulta de topología.
@@ -201,7 +201,7 @@ consulta de topología.
 - [x] TSK-91.01 esquema
 - [x] TSK-91.02 API
 - [x] TSK-91.03 panel de alta
-- [ ] TSK-91.04 provisión
+- [x] TSK-91.04 provisión
 - [ ] TSK-91.05 ingreso MQTT
 - [ ] TSK-91.06 consumidor y mapa v2
 - [ ] TSK-91.07 presencia por radar

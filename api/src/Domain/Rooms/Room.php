@@ -36,6 +36,8 @@ final class Room
     public ?string $notes;
     public ?string $cooldownUntil;
     public ?int $presenceCheckSeconds;
+    /** F91: per-room override of room_types.presence_mode (null = inherit). */
+    public ?string $presenceModeOverride;
 
     public function __construct(
         int $id,
@@ -46,7 +48,8 @@ final class Room
         ?bool $simulatedOverride,
         ?string $cooldownUntil,
         ?string $notes = null,
-        ?int $presenceCheckSeconds = null
+        ?int $presenceCheckSeconds = null,
+        ?string $presenceModeOverride = null
     ) {
         $this->id = $id;
         $this->code = $code;
@@ -57,6 +60,7 @@ final class Room
         $this->cooldownUntil = $cooldownUntil;
         $this->notes = $notes;
         $this->presenceCheckSeconds = $presenceCheckSeconds;
+        $this->presenceModeOverride = $presenceModeOverride;
     }
 
     /** @return array<string,mixed> */
@@ -72,6 +76,7 @@ final class Room
             'cooldown_until' => $this->cooldownUntil,
             'notes' => $this->notes,
             'presence_check_seconds' => $this->presenceCheckSeconds,
+            'presence_mode_override' => $this->presenceModeOverride,
         ];
     }
 }

@@ -113,6 +113,22 @@ final class RoomService
             $v = $fields['presence_check_seconds'];
             $updates['presence_check_seconds'] = $v === null || $v === '' ? null : (int) $v;
         }
+        if (array_key_exists('presence_mode_override', $fields)) {
+            $v = $fields['presence_mode_override'];
+            if ($v === null || $v === '') {
+                $updates['presence_mode_override'] = null;
+            } else {
+                $mode = (string) $v;
+                if (!RoomType::isValidPresenceMode($mode)) {
+                    throw new UnprocessableException(
+                        'invalid_presence_mode',
+                        'presence_mode_override is not supported',
+                        ['field' => 'presence_mode_override', 'allowed' => RoomType::presenceModes()]
+                    );
+                }
+                $updates['presence_mode_override'] = $mode;
+            }
+        }
 
         // RF-21: detect pack removal to trigger room reset
         $packRemoved = array_key_exists('pack_id', $fields)
