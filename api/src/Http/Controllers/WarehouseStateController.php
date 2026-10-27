@@ -147,6 +147,10 @@ final class WarehouseStateController
             'door_state' => 'UNKNOWN',
             'presence_state' => 'UNKNOWN',
             'switch_state' => 'UNKNOWN',
+            'switch_transport' => null,
+            'switch_pending' => null,
+            'switch_pending_age_seconds' => null,
+            'switch_unconfirmed' => false,
             'last_open_at' => null,
             'last_close_at' => null,
             'last_absent_since' => null,
@@ -205,11 +209,13 @@ final class WarehouseStateController
         $live['motion_active'] = $motion['active'];
         $live['motion_age_seconds'] = $motion['age'];
         $swStmt = $this->pdo->prepare(
-            "SELECT d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+            "SELECT d.meta_json, d.transport FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind='SWITCH' LIMIT 1"
         );
         $swStmt->execute([':rid' => $roomId]);
-        $swMeta = json_decode((string) ($swStmt->fetchColumn() ?: ''), true) ?: [];
+        $swRow = $swStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $swMeta = json_decode((string) ($swRow['meta_json'] ?? ''), true) ?: [];
+        $live['switch_transport'] = $swRow['transport'] ?? null;
         if (isset($swMeta['switch_state']) && is_string($swMeta['switch_state']) && $swMeta['switch_state'] !== '') {
             $live['switch_state'] = $swMeta['switch_state'];
         } else {
@@ -218,6 +224,19 @@ final class WarehouseStateController
             $cmd = strtoupper((string) ($swMeta['last_command'] ?? ''));
             if ($cmd === 'ON' || $cmd === 'OFF') {
                 $live['switch_state_inferred'] = $cmd;
+            }
+        }
+        $lastCommand = strtoupper((string) ($swMeta['last_command'] ?? ''));
+        if (($lastCommand === 'ON' || $lastCommand === 'OFF') && $live['switch_state'] !== $lastCommand) {
+            $live['switch_pending'] = $lastCommand;
+            $commandedAt = (string) ($swMeta['commanded_at'] ?? '');
+            if ($commandedAt !== '') {
+                $cmdTs = strtotime($commandedAt . ' UTC');
+                if ($cmdTs !== false) {
+                    $live['switch_pending_age_seconds'] = max(0, $nowTs - $cmdTs);
+                    $timeout = (int) (\App\Support\Config::getInt('ZIGBEE_SWITCH_TIMEOUT_SECONDS', 5) ?? 5);
+                    $live['switch_unconfirmed'] = $live['switch_pending_age_seconds'] > max(1, $timeout);
+                }
             }
         }
 
