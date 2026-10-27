@@ -72,11 +72,13 @@ final class DeviceService
         ?string $label,
         ?int $apiClientId,
         ?array $meta,
-        ?string $subtype = null
+        ?string $subtype = null,
+        ?string $transport = null
     ): Device {
         $this->validateKind($kind);
         $this->validateSubtype($kind, $subtype);
         $this->validateExternalId($externalId);
+        $this->validateTransport($transport);
 
         if ($this->devices->findByKindAndExternalId($kind, $externalId) !== null) {
             throw new ConflictException(
@@ -86,7 +88,16 @@ final class DeviceService
             );
         }
 
-        $id = $this->devices->insert($packId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
+        $id = $this->devices->insert(
+            $packId,
+            $kind,
+            $externalId,
+            $label,
+            $apiClientId,
+            $meta,
+            $subtype,
+            Device::normalizeTransport($transport)
+        );
         $device = $this->devices->findById($id);
         if ($device === null) {
             throw new \RuntimeException('Device not found after insert');
@@ -108,7 +119,8 @@ final class DeviceService
         ?string $label,
         ?int $apiClientId,
         ?array $meta,
-        ?string $subtype = null
+        ?string $subtype = null,
+        ?string $transport = null
     ): Device {
         $room = $this->rooms->findById($roomId);
         if ($room === null) {
@@ -121,7 +133,16 @@ final class DeviceService
                 ['room_id' => $roomId]
             );
         }
-        return $this->create($room->packId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
+        return $this->create(
+            $room->packId,
+            $kind,
+            $externalId,
+            $label,
+            $apiClientId,
+            $meta,
+            $subtype,
+            $transport
+        );
     }
 
     /**
@@ -173,6 +194,11 @@ final class DeviceService
             $st = $fields['subtype'] === null ? null : (string) $fields['subtype'];
             $this->validateSubtype($current->kind, $st);
             $sanitized['subtype'] = $st;
+        }
+        if (array_key_exists('transport', $fields)) {
+            $tr = $fields['transport'] === null ? null : (string) $fields['transport'];
+            $this->validateTransport($tr);
+            $sanitized['transport'] = Device::normalizeTransport($tr);
         }
         if (!empty($sanitized)) {
             $this->devices->update($id, $sanitized);
@@ -231,6 +257,18 @@ final class DeviceService
             'subtype_not_allowed',
             'Solo las cámaras admiten subtipo',
             ['field' => 'subtype']
+        );
+    }
+
+    private function validateTransport(?string $transport): void
+    {
+        if (Device::isValidTransport($transport)) {
+            return;
+        }
+        throw new UnprocessableException(
+            'invalid_transport',
+            'Unsupported device transport',
+            ['field' => 'transport', 'allowed' => Device::transports()]
         );
     }
 

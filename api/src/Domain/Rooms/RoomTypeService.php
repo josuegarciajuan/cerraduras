@@ -40,6 +40,22 @@ final class RoomTypeService
     private const MIN_WH_MARGIN  = 0;   // seconds
     private const MAX_WH_MARGIN  = 60;
 
+    // F91/RF-148 presence evidence ranges.
+    private const MIN_PRESENCE_REPORTS = 1;
+    private const MAX_PRESENCE_REPORTS = 20;
+    private const MIN_PRESENCE_CONFIRM_WINDOW = 1;
+    private const MAX_PRESENCE_CONFIRM_WINDOW = 300;
+    private const MIN_PRESENCE_MIN_SPAN = 0;
+    private const MAX_PRESENCE_MIN_SPAN = 300;
+    private const MIN_PRESENCE_HOLD = 0;
+    private const MAX_PRESENCE_HOLD = 600;
+    private const MIN_PRESENCE_ABSENT_WINDOW = 1;
+    private const MAX_PRESENCE_ABSENT_WINDOW = 600;
+    private const MIN_PRESENCE_DOOR_WINDOW = 0;
+    private const MAX_PRESENCE_DOOR_WINDOW = 600;
+    private const MIN_PRESENCE_STALE = 30;
+    private const MAX_PRESENCE_STALE = 86400;
+
     public function __construct(RoomTypeRepositoryInterface $repo)
     {
         $this->repo = $repo;
@@ -73,12 +89,32 @@ final class RoomTypeService
         int $presenceEntryWindowSeconds = 90,
         int $exitCheckSeconds = 40,
         int $warehouseConfirmSeconds = 40,
-        int $warehouseExteriorMarginSeconds = 5
+        int $warehouseExteriorMarginSeconds = 5,
+        string $presenceMode = RoomType::PRESENCE_MODE_CAMERA_FUSION,
+        int $presenceConfirmReports = 3,
+        int $presenceConfirmWindowSeconds = 12,
+        int $presenceMinSpanSeconds = 6,
+        int $presenceHoldSeconds = 20,
+        int $presenceAbsentReports = 3,
+        int $presenceAbsentWindowSeconds = 30,
+        int $presenceDoorWindowSeconds = 90,
+        int $presenceStaleSeconds = 180
     ): RoomType {
         $code = trim($code);
         $name = trim($name);
         $this->validateCode($code);
         $this->validateName($name);
+        $this->validatePresenceConfig(
+            $presenceMode,
+            $presenceConfirmReports,
+            $presenceConfirmWindowSeconds,
+            $presenceMinSpanSeconds,
+            $presenceHoldSeconds,
+            $presenceAbsentReports,
+            $presenceAbsentWindowSeconds,
+            $presenceDoorWindowSeconds,
+            $presenceStaleSeconds
+        );
         $this->validateRanges(
             $graceMinutes,
             $exitPresenceGapSeconds,
@@ -108,7 +144,16 @@ final class RoomTypeService
             $presenceEntryWindowSeconds,
             $exitCheckSeconds,
             $warehouseConfirmSeconds,
-            $warehouseExteriorMarginSeconds
+            $warehouseExteriorMarginSeconds,
+            $presenceMode,
+            $presenceConfirmReports,
+            $presenceConfirmWindowSeconds,
+            $presenceMinSpanSeconds,
+            $presenceHoldSeconds,
+            $presenceAbsentReports,
+            $presenceAbsentWindowSeconds,
+            $presenceDoorWindowSeconds,
+            $presenceStaleSeconds
         );
 
         return $this->getOrFail($id);
@@ -150,15 +195,48 @@ final class RoomTypeService
         $exitChk = $fields['exit_check_seconds'] ?? $current->exitCheckSeconds;
         $whConfirm = $fields['warehouse_confirm_seconds'] ?? $current->warehouseConfirmSeconds;
         $whMargin = $fields['warehouse_exterior_margin_seconds'] ?? $current->warehouseExteriorMarginSeconds;
+        $presenceMode = $fields['presence_mode'] ?? $current->presenceMode;
+        $presenceReports = $fields['presence_confirm_reports'] ?? $current->presenceConfirmReports;
+        $presenceWindow = $fields['presence_confirm_window_seconds'] ?? $current->presenceConfirmWindowSeconds;
+        $presenceSpan = $fields['presence_min_span_seconds'] ?? $current->presenceMinSpanSeconds;
+        $presenceHold = $fields['presence_hold_seconds'] ?? $current->presenceHoldSeconds;
+        $presenceAbsentReports = $fields['presence_absent_reports'] ?? $current->presenceAbsentReports;
+        $presenceAbsentWindow = $fields['presence_absent_window_seconds'] ?? $current->presenceAbsentWindowSeconds;
+        $presenceDoorWindow = $fields['presence_door_window_seconds'] ?? $current->presenceDoorWindowSeconds;
+        $presenceStale = $fields['presence_stale_seconds'] ?? $current->presenceStaleSeconds;
+
         $this->validateRanges(
             (int) $grace, (int) $gap, (int) $cool, (int) $qr,
             (int) $entryWin, (int) $exitChk, (int) $whConfirm, (int) $whMargin
+        );
+        $this->validatePresenceConfig(
+            (string) $presenceMode,
+            (int) $presenceReports,
+            (int) $presenceWindow,
+            (int) $presenceSpan,
+            (int) $presenceHold,
+            (int) $presenceAbsentReports,
+            (int) $presenceAbsentWindow,
+            (int) $presenceDoorWindow,
+            (int) $presenceStale
         );
 
         foreach ([
             'grace_minutes','exit_presence_gap_seconds','reentry_cooldown_seconds','qr_usage_window_minutes',
             'presence_entry_window_seconds','exit_check_seconds',
             'warehouse_confirm_seconds','warehouse_exterior_margin_seconds',
+        ] as $k) {
+            if (array_key_exists($k, $fields) && $fields[$k] !== null) {
+                $sanitized[$k] = (int) $fields[$k];
+            }
+        }
+        if (array_key_exists('presence_mode', $fields) && $fields['presence_mode'] !== null) {
+            $sanitized['presence_mode'] = (string) $fields['presence_mode'];
+        }
+        foreach ([
+            'presence_confirm_reports','presence_confirm_window_seconds','presence_min_span_seconds',
+            'presence_hold_seconds','presence_absent_reports','presence_absent_window_seconds',
+            'presence_door_window_seconds','presence_stale_seconds',
         ] as $k) {
             if (array_key_exists($k, $fields) && $fields[$k] !== null) {
                 $sanitized[$k] = (int) $fields[$k];
@@ -201,6 +279,45 @@ final class RoomTypeService
         }
         if (mb_strlen($name) > 128) {
             throw new UnprocessableException('invalid_name', 'name must be <= 128 chars');
+        }
+    }
+
+    private function validatePresenceConfig(
+        string $mode,
+        int $confirmReports,
+        int $confirmWindow,
+        int $minSpan,
+        int $hold,
+        int $absentReports,
+        int $absentWindow,
+        int $doorWindow,
+        int $stale
+    ): void {
+        if (!RoomType::isValidPresenceMode($mode)) {
+            throw new UnprocessableException(
+                'invalid_presence_mode',
+                'presence_mode is not supported',
+                ['field' => 'presence_mode', 'allowed' => RoomType::presenceModes()]
+            );
+        }
+        $checks = [
+            ['presence_confirm_reports', $confirmReports, self::MIN_PRESENCE_REPORTS, self::MAX_PRESENCE_REPORTS],
+            ['presence_confirm_window_seconds', $confirmWindow, self::MIN_PRESENCE_CONFIRM_WINDOW, self::MAX_PRESENCE_CONFIRM_WINDOW],
+            ['presence_min_span_seconds', $minSpan, self::MIN_PRESENCE_MIN_SPAN, self::MAX_PRESENCE_MIN_SPAN],
+            ['presence_hold_seconds', $hold, self::MIN_PRESENCE_HOLD, self::MAX_PRESENCE_HOLD],
+            ['presence_absent_reports', $absentReports, self::MIN_PRESENCE_REPORTS, self::MAX_PRESENCE_REPORTS],
+            ['presence_absent_window_seconds', $absentWindow, self::MIN_PRESENCE_ABSENT_WINDOW, self::MAX_PRESENCE_ABSENT_WINDOW],
+            ['presence_door_window_seconds', $doorWindow, self::MIN_PRESENCE_DOOR_WINDOW, self::MAX_PRESENCE_DOOR_WINDOW],
+            ['presence_stale_seconds', $stale, self::MIN_PRESENCE_STALE, self::MAX_PRESENCE_STALE],
+        ];
+        foreach ($checks as [$field, $value, $min, $max]) {
+            if ($value < $min || $value > $max) {
+                throw new UnprocessableException(
+                    'invalid_range',
+                    $field . ' out of range',
+                    ['field' => $field, 'min' => $min, 'max' => $max]
+                );
+            }
         }
     }
 
