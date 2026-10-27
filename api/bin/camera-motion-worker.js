@@ -21,6 +21,7 @@
  *
  * Variables de entorno:
  *   CAMERA_MOTION_API          (def: http://127.0.0.1:8080)
+ *   ALMACEN_MOTION_TOKEN        (opcional; header X-Almacen-Motion-Token)
  *   CAMERA_MOTION_ROOM_ID      (vacío/0: se descubre vía /almacen-api/state)
  *   CAMERA_MOTION_RTSP_BASE    (def: rtsp://127.0.0.1:8554)
  *   CAMERA_MOTION_FFMPEG       (def: ffmpeg)
