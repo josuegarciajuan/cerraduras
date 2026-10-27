@@ -16,6 +16,7 @@ use App\Domain\Crm\CrmUserRepository;
 use App\Domain\Crm\CrmUserService;
 use App\Domain\Devices\ApplyPackService;
 use App\Domain\Devices\DevicePackRepository;
+use App\Domain\Devices\DeviceIntegrationStatusService;
 use App\Domain\Devices\DeviceRepository;
 use App\Domain\Devices\DeviceService;
 use App\Domain\Devices\SwitchService;
@@ -145,6 +146,18 @@ $logger = new Logger(
 
 $pdoProvider = static function (): \PDO {
     return PdoFactory::make();
+};
+
+// F91: provisioning/health status derived from persisted data only (no probes).
+$deviceStatusFactory = static function (): DeviceIntegrationStatusService {
+    static $service = null;
+    if ($service === null) {
+        $mapFile = Config::get('ZIGBEE_MAP_FILE');
+        $spoolDir = Config::get('ZIGBEE_SPOOL_DIR');
+        $stale = (int) (Config::get('ZIGBEE_PRESENCE_STALE_SECONDS', '300') ?? 300);
+        $service = new DeviceIntegrationStatusService($mapFile, $spoolDir, $stale);
+    }
+    return $service;
 };
 
 // --- Router with global middlewares ---
@@ -1170,7 +1183,7 @@ $router->post(
 // GET /dashboard-api/pack-detail?pack_id=N — devices in a pack with online status
 $router->get(
     '/dashboard-api/pack-detail',
-    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
+    function (\App\Http\Request $request) use ($pdoProvider, $deviceStatusFactory): \App\Http\Response {
         $packId = (int) ($request->query['pack_id'] ?? 0);
         if ($packId <= 0) {
             return \App\Http\Response::json(400, ['error' => 'pack_id required']);
@@ -1185,7 +1198,7 @@ $router->get(
         }
         // Devices of the pack with online status (canonical F30: device → pack).
         $devStmt = $pdo->prepare(
-            "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at, d.battery_pct,
+            "SELECT d.id, d.pack_id, d.kind, d.external_id, d.label, d.transport, d.meta_json, d.last_seen_at, d.battery_pct,
                       (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
               FROM devices d
               WHERE d.pack_id = :pid
@@ -1196,7 +1209,10 @@ $router->get(
         foreach ($devices as &$d) {
             $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
             unset($d['meta_json']);
+            $d['transport'] = $d['transport'] ?? 'UNKNOWN';
+            $d['integration_status'] = $deviceStatusFactory()->forRow($d);
         }
+        unset($d);
         return \App\Http\Response::json(200, $devices);
     }
 );
@@ -1252,7 +1268,7 @@ $roomStateService = new RoomStateService($roomRepo);
 $deviceRepo = new DeviceRepository($pdo);
 $deviceService = new DeviceService($deviceRepo, $roomRepo);
 $switchService = new SwitchService($deviceRepo, $roomRepo);
-$deviceController = new DeviceController($deviceService);
+$deviceController = new DeviceController($deviceService, $deviceStatusFactory());
 $qrRejectionController = new QrRejectionController($pdo);
 $commandQueueRepo = new \App\Domain\Devices\CommandQueueRepository($pdo);
 
@@ -1260,7 +1276,7 @@ $commandQueueRepo = new \App\Domain\Devices\CommandQueueRepository($pdo);
 $devicePackRepo     = new DevicePackRepository($pdo);
 $qrTokenizer        = new QrTokenizer(Config::getRequired('QR_SIGNING_SECRET'));
 $applyPackService   = new ApplyPackService($devicePackRepo, $deviceRepo, $roomRepo, $pdo);
-$devicePackController = new DevicePackController($devicePackRepo, $applyPackService);
+$devicePackController = new DevicePackController($devicePackRepo, $applyPackService, $deviceStatusFactory());
 
 // POST /dashboard-api/apply-pack — assign a pack to a room via ApplyPackService
 // (movido aquí tras init de $applyPackService — corrección de scope)
@@ -1562,7 +1578,7 @@ $router->post(
 // GET /dashboard-api/device-status?room_id=N — device liveness (online/offline)
 $router->get(
     '/dashboard-api/device-status',
-    function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
+    function (\App\Http\Request $request) use ($pdo, $deviceStatusFactory): \App\Http\Response {
         $roomId = (int) ($request->query['room_id'] ?? 0);
         if ($roomId <= 0) {
             return \App\Http\Response::json(400, ['error' => 'room_id required']);
@@ -1583,7 +1599,7 @@ $router->get(
         // Use MySQL DATE_SUB for consistent timezone. The SQL `online` column is a
         // freshness hint used ONLY for ESP32/local devices (last_seen heartbeat).
         $rows = $pdo->prepare(
-            "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at,
+            "SELECT d.id, d.pack_id, d.kind, d.external_id, d.label, d.transport, d.meta_json, d.last_seen_at,
                     d.online_state, d.online_probed_at, d.battery_pct,
                     (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
               FROM devices d
@@ -1607,6 +1623,8 @@ $router->get(
             $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
             unset($d['meta_json']);
 
+            $d['transport'] = $d['transport'] ?? 'UNKNOWN';
+            $d['integration_status'] = $deviceStatusFactory()->forRow($d);
             $d['tuya_cloud'] = deviceIsTuyaCloud($d);
 
             if (deviceIsTuyaCloud($d)) {

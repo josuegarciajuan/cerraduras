@@ -56,7 +56,7 @@ final class DevicePackRepository
     private function resolveDevices(int $packId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, kind, external_id, label, meta_json, battery_pct FROM devices WHERE pack_id = :pid ORDER BY kind'
+            'SELECT id, kind, external_id, label, transport, last_seen_at, meta_json, battery_pct FROM devices WHERE pack_id = :pid ORDER BY kind'
         );
         $stmt->bindValue(':pid', $packId, PDO::PARAM_INT);
         $stmt->execute();

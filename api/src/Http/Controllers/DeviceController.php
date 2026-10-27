@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Domain\Devices\DeviceIntegrationStatusService;
 use App\Domain\Devices\DeviceService;
 use App\Http\Request;
 use App\Http\Response;
@@ -22,10 +23,20 @@ use App\Support\Json\JsonBody;
 final class DeviceController
 {
     private DeviceService $devices;
+    private DeviceIntegrationStatusService $status;
 
-    public function __construct(DeviceService $devices)
+    public function __construct(DeviceService $devices, ?DeviceIntegrationStatusService $status = null)
     {
         $this->devices = $devices;
+        $this->status = $status ?? new DeviceIntegrationStatusService();
+    }
+
+    /** @return array<string,mixed> */
+    private function serialize(\App\Domain\Devices\Device $device): array
+    {
+        $data = $device->toArray();
+        $data['integration_status'] = $this->status->forDevice($device);
+        return $data;
     }
 
     /**
@@ -37,7 +48,7 @@ final class DeviceController
     {
         $list = $this->devices->listAll();
         return Response::json(200, [
-            'items' => array_map(static function ($d) { return $d->toArray(); }, $list),
+            'items' => array_map(fn($d) => $this->serialize($d), $list),
         ]);
     }
 
@@ -46,7 +57,7 @@ final class DeviceController
         $roomId = (int) $request->routeParam('id');
         $list = $this->devices->listForRoom($roomId);
         return Response::json(200, [
-            'items' => array_map(static function ($d) { return $d->toArray(); }, $list),
+            'items' => array_map(fn($d) => $this->serialize($d), $list),
         ]);
     }
 
@@ -64,6 +75,7 @@ final class DeviceController
         $label = isset($body['label']) && $body['label'] !== '' ? (string) $body['label'] : null;
         $apiClientId = JsonBody::intOpt($body, 'api_client_id', 1);
         $subtype = isset($body['subtype']) && $body['subtype'] !== '' ? (string) $body['subtype'] : null;
+        $transport = isset($body['transport']) && $body['transport'] !== '' ? (string) $body['transport'] : null;
         $meta = null;
         if (array_key_exists('meta', $body)) {
             $m = $body['meta'];
@@ -72,8 +84,8 @@ final class DeviceController
             }
             $meta = $m;
         }
-        $device = $this->devices->createInRoom($roomId, $kind, $externalId, $label, $apiClientId, $meta, $subtype);
-        return Response::json(201, $device->toArray());
+        $device = $this->devices->createInRoom($roomId, $kind, $externalId, $label, $apiClientId, $meta, $subtype, $transport);
+        return Response::json(201, $this->serialize($device));
     }
 
     public function update(Request $request): Response
@@ -99,8 +111,11 @@ final class DeviceController
         if (array_key_exists('subtype', $body)) {
             $fields['subtype'] = $body['subtype'];
         }
+        if (array_key_exists('transport', $body)) {
+            $fields['transport'] = $body['transport'];
+        }
         $device = $this->devices->update($id, $fields);
-        return Response::json(200, $device->toArray());
+        return Response::json(200, $this->serialize($device));
     }
 
     public function delete(Request $request): Response
@@ -125,6 +140,7 @@ final class DeviceController
         $externalId = JsonBody::string($body, 'external_id', 128);
         $apiClientId = JsonBody::intOpt($body, 'api_client_id', 1);
         $subtype = isset($body['subtype']) && $body['subtype'] !== '' ? (string) $body['subtype'] : null;
+        $transport = isset($body['transport']) && $body['transport'] !== '' ? (string) $body['transport'] : null;
         $meta = null;
         if (array_key_exists('meta', $body)) {
             $m = $body['meta'];
@@ -133,8 +149,8 @@ final class DeviceController
             }
             $meta = $m;
         }
-        $device = $this->devices->create($packId, $kind, $externalId, null, $apiClientId, $meta, $subtype);
-        return Response::json(201, $device->toArray());
+        $device = $this->devices->create($packId, $kind, $externalId, null, $apiClientId, $meta, $subtype, $transport);
+        return Response::json(201, $this->serialize($device));
     }
 
     /**

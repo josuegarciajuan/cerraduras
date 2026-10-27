@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Domain\Devices\ApplyPackService;
+use App\Domain\Devices\Device;
+use App\Domain\Devices\DeviceIntegrationStatusService;
 use App\Domain\Devices\DevicePackRepository;
 use App\Http\Request;
 use App\Http\Response;
@@ -13,18 +15,33 @@ final class DevicePackController
 {
     private DevicePackRepository $packRepo;
     private ApplyPackService $applyPackService;
+    private DeviceIntegrationStatusService $status;
 
     public function __construct(
         DevicePackRepository $packRepo,
-        ApplyPackService $applyPackService
+        ApplyPackService $applyPackService,
+        ?DeviceIntegrationStatusService $status = null
     ) {
         $this->packRepo         = $packRepo;
         $this->applyPackService = $applyPackService;
+        $this->status           = $status ?? new DeviceIntegrationStatusService();
+    }
+
+    /** @return array<string,mixed> */
+    private function serialize(\App\Domain\Devices\DevicePack $pack): array
+    {
+        $data = $pack->toArray();
+        foreach ($data['devices'] as &$device) {
+            $device['transport'] = $device['transport'] ?? Device::TRANSPORT_UNKNOWN;
+            $device['integration_status'] = $this->status->forRow($device);
+        }
+        unset($device);
+        return $data;
     }
 
     public function index(Request $request): Response
     {
-        $packs = array_map(fn($p) => $p->toArray(), $this->packRepo->findAll());
+        $packs = array_map(fn($p) => $this->serialize($p), $this->packRepo->findAll());
         return Response::json(200, ['items' => $packs]);
     }
 
@@ -33,7 +50,7 @@ final class DevicePackController
         $id = (int) $request->routeParam('id');
         $pack = $this->packRepo->findById($id);
         if (!$pack) throw new ApiException(404, 'not_found', 'Pack no encontrado');
-        return Response::json(200, $pack->toArray());
+        return Response::json(200, $this->serialize($pack));
     }
 
     public function create(Request $request): Response
@@ -47,7 +64,7 @@ final class DevicePackController
 
         $id = $this->packRepo->insert($code, $name);
         $pack = $this->packRepo->findById($id);
-        return Response::json(201, $pack->toArray());
+        return Response::json(201, $this->serialize($pack));
     }
 
     public function update(Request $request): Response
@@ -64,7 +81,7 @@ final class DevicePackController
         if ($byCode && $byCode->id !== $id) throw new ApiException(409, 'conflict', 'Ya existe otro pack con ese código');
 
         $this->packRepo->update($id, $code, $name);
-        return Response::json(200, $this->packRepo->findById($id)->toArray());
+        return Response::json(200, $this->serialize($this->packRepo->findById($id)));
     }
 
     public function delete(Request $request): Response
