@@ -160,13 +160,13 @@ consulta de topología.
 
 **Trazabilidad**: RF-150.1, RF-150.7
 
-- [ ] Añadir tests unitarios, HTTP y Node de todas las piezas nuevas.
-- [ ] Añadir bloque de runner con marcadores F91 y guardias F74/F78/F90.
-- [ ] Verificar que no hay poller, `setInterval` de sondeo, REST Tuya ni servicios eliminados.
-- [ ] Ejecutar `bash api/bin/run-tests.sh` con 0 fallos en entorno seguro.
-- [ ] Documentar resultados y limitaciones.
+- [x] Añadir tests unitarios, HTTP y Node de todas las piezas nuevas.
+- [x] Añadir bloque de runner con marcadores F91 y guardias F74/F78/F90.
+- [x] Verificar que no hay poller, `setInterval` de sondeo, REST Tuya ni servicios eliminados.
+- [x] Ejecutar `bash api/bin/run-tests.sh` con 0 fallos en entorno seguro.
+- [x] Documentar resultados y limitaciones.
 
-**Verificación**: regresión completa y guardias en verde.
+**Verificación**: regresión completa 2026-10-27 → 726 passed, 0 failed, 5 skipped; BLOCK 64 y guardias F74/F78/F90 en verde.
 
 ## TSK-91.12: Aceptación física en banco
 
@@ -208,7 +208,7 @@ consulta de topología.
 - [x] TSK-91.08 luz operativa
 - [x] TSK-91.09 panel del almacén
 - [x] TSK-91.10 endurecimiento
-- [ ] TSK-91.11 pruebas y regresión
+- [x] TSK-91.11 pruebas y regresión
 - [ ] TSK-91.12 aceptación física
 - [ ] TSK-91.13 despliegue y rollback
 

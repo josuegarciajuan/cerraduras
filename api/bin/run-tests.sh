@@ -5709,7 +5709,7 @@ for F90_MARKER in \
     "Ulid::generate()" \
     "-q', '1'" \
     "-c',"; do
-    if grep -qF "$F90_MARKER" "$F90_WORKER" 2>/dev/null; then
+    if grep -qF -- "$F90_MARKER" "$F90_WORKER" 2>/dev/null; then
         pass "F90: worker contract marker '$F90_MARKER' present"
     else
         fail "F90: worker contract marker '$F90_MARKER'" "missing from $F90_WORKER"
@@ -5879,6 +5879,190 @@ for F90D_LEAK in "/root/" "/home/" "192.168." "172.16." "92.113.151.136"; do
         pass "F90: paquete sin '$F90D_LEAK'"
     fi
 done
+
+# =============================================================================
+# BLOCK 64 — F91: integración Zigbee aislada de almacenZigbee
+# Trazabilidad: RF-143..RF-151, TSK-91.05..TSK-91.11
+# Sin broker, MQTT real ni hardware. Verifica contratos, guardias y units.
+# =============================================================================
+block "BLOCK 64 — F91: integración Zigbee aislada"
+
+# --- 64.1 Archivos y migraciones -------------------------------------------
+for F91_FILE in \
+    "bin/provision-zigbee-almacen.php" \
+    "bin/zigbee-spool-worker.php" \
+    "bin/zigbee-ingress/index.js" \
+    "bin/zigbee-ingress/ingress.js" \
+    "bin/zigbee-ingress/spool.js" \
+    "bin/zigbee-ingress/publish.js" \
+    "src/Domain/Presence/RadarPresenceDecision.php" \
+    "src/Infrastructure/Gateways/Sensor/ZigbeeSwitchStateService.php" \
+    "src/Infrastructure/Gateways/Switch/ZigbeeSwitchGateway.php" \
+    "src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php" \
+    "config/zigbee2mqtt-devices.json" \
+    "migrations/0127_device_transport.sql" \
+    "migrations/0128_room_type_presence_modes.sql" \
+    "migrations/0129_room_presence_mode_override.sql"; do
+    if [ -f "$F91_FILE" ]; then
+        pass "F91: existe $F91_FILE"
+    else
+        fail "F91: falta $F91_FILE"
+    fi
+done
+
+# --- 64.2 Sintaxis ---------------------------------------------------------
+for F91_PHP in \
+    "bin/provision-zigbee-almacen.php" \
+    "bin/zigbee-spool-worker.php" \
+    "src/Domain/Presence/RadarPresenceDecision.php" \
+    "src/Infrastructure/Gateways/Sensor/ZigbeeSwitchStateService.php" \
+    "src/Infrastructure/Gateways/Switch/ZigbeeSwitchGateway.php" \
+    "src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php"; do
+    if php -l "$F91_PHP" >/dev/null 2>&1; then
+        pass "F91: php -l $F91_PHP"
+    else
+        fail "F91: php -l $F91_PHP"
+    fi
+done
+for F91_JS in \
+    "bin/zigbee-ingress/index.js" \
+    "bin/zigbee-ingress/ingress.js" \
+    "bin/zigbee-ingress/spool.js" \
+    "bin/zigbee-ingress/publish.js"; do
+    if node --check "$F91_JS" >/dev/null 2>&1; then
+        pass "F91: node --check $F91_JS"
+    else
+        fail "F91: node --check $F91_JS"
+    fi
+done
+
+# --- 64.3 Guardias F74/F78: sin pollers ni consultas Tuya ------------------
+for F91_BAD_FILE in bin/tuya-presence-poller.js bin/presence-poller-manager.sh bin/wrapper-poller.sh; do
+    if [ -e "$F91_BAD_FILE" ]; then
+        fail "F91/F78: poller prohibido presente" "$F91_BAD_FILE"
+    else
+        pass "F91/F78: sin $F91_BAD_FILE"
+    fi
+done
+if pgrep -f "[t]uya-presence-poller\.js" >/dev/null 2>&1; then
+    fail "F91/F78: proceso de poller Tuya activo"
+else
+    pass "F91/F78: sin proceso de poller Tuya"
+fi
+F91_CLOUD_MARKERS="TuyaSensorIngress tuyaPresenceApi TUYA_ACCESS_ID openapi.tuya"
+for F91_SRC in \
+    bin/zigbee-spool-worker.php \
+    bin/zigbee-ingress/index.js \
+    bin/zigbee-ingress/ingress.js \
+    src/Infrastructure/Gateways/Sensor/ZigbeeMqttMessageMapper.php \
+    src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php \
+    src/Infrastructure/Gateways/Sensor/ZigbeeSwitchStateService.php \
+    src/Infrastructure/Gateways/Switch/ZigbeeSwitchGateway.php \
+    src/Domain/Presence/RadarPresenceDecision.php; do
+    for F91_MARK in $F91_CLOUD_MARKERS; do
+        if grep -qF "$F91_MARK" "$F91_SRC" 2>/dev/null; then
+            fail "F91: sin '$F91_MARK' en $F91_SRC"
+        else
+            pass "F91: sin '$F91_MARK' en $F91_SRC"
+        fi
+    done
+done
+if grep -RqsE "setInterval|while *\( *true *\)" bin/zigbee-ingress 2>/dev/null; then
+    fail "F91: ingress sin bucles de sondeo" "setInterval/while(true) encontrado"
+else
+    pass "F91: ingress sin bucles de sondeo"
+fi
+
+# --- 64.4 Guardias de contrato y seguridad ---------------------------------
+if grep -qF '"version": 2' config/zigbee2mqtt-devices.json \
+    && ! grep -qE 'oficina' config/zigbee2mqtt-devices.json; then
+    pass "F91: mapa v2 sin topics *-oficina"
+else
+    fail "F91: mapa v2" "version o topics de oficina inválidos"
+fi
+if grep -qF "contact" config/zigbee2mqtt-devices.json \
+    && grep -qF "presence" config/zigbee2mqtt-devices.json \
+    && grep -qF "state" config/zigbee2mqtt-devices.json; then
+    pass "F91: mapa declara contact/presence/state"
+else
+    fail "F91: mapa incompleto"
+fi
+if grep -qF "ALMACEN_MOTION_TOKEN" public/index.php \
+    && grep -qF "X-Almacen-Motion-Token" bin/camera-motion-worker.js; then
+    pass "F91: motion autenticado por token/loopback"
+else
+    fail "F91: motion sin guardia de autenticación"
+fi
+if grep -qF -- "--requeue requiere --yes" bin/zigbee-spool-worker.php \
+    && grep -qF "replay.log" src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php; then
+    pass "F91: replay exige confirmación y audita"
+else
+    fail "F91: replay sin confirmación/auditoría"
+fi
+if grep -qF "ZIGBEE_INGRESS_ENABLED=false" .env.example; then
+    pass "F91: ingress deshabilitado por defecto"
+else
+    fail "F91: ingress no está deshabilitado por defecto"
+fi
+if grep -RqsF -e "zigbee-ingress" -e "zigbee-spool" ../start-all.sh ../stop-all.sh ../docs/systemd 2>/dev/null; then
+    fail "F91: sin wiring de arranque/systemd todavía"
+else
+    pass "F91: sin wiring de arranque/systemd"
+fi
+
+# --- 64.5 Provisión en seco (solo lectura) ---------------------------------
+F91_PROV_OUT=$(php bin/provision-zigbee-almacen.php 2>&1)
+F91_PROV_RC=$?
+if [ "$F91_PROV_RC" -eq 0 ] && echo "$F91_PROV_OUT" | grep -q "dry-run: no se escribe nada"; then
+    pass "F91: provisioning dry-run es idempotente y no escribe"
+else
+    fail "F91: provisioning dry-run" "exit=$F91_PROV_RC — $(echo "$F91_PROV_OUT" | tail -2 | tr '\n' ' ')"
+fi
+
+# --- 64.6 Tests unitarios F91 ----------------------------------------------
+for F91_TEST in \
+    "tests/Unit/ZigbeeTransportPresenceConfigTest.php" \
+    "tests/Unit/DeviceIntegrationStatusTest.php" \
+    "tests/Unit/PanelProvisioningUiTest.php" \
+    "tests/Unit/ZigbeeProvisioningTest.php" \
+    "tests/Unit/RadarPresenceDecisionTest.php" \
+    "tests/Unit/ZigbeeMqttV2MapperTest.php" \
+    "tests/Unit/ZigbeeSpoolQueueTest.php" \
+    "tests/Unit/ZigbeeSpoolWorkerTest.php" \
+    "tests/Unit/ZigbeeSwitchGatewayTest.php" \
+    "tests/Unit/SwitchGatewayFactoryZigbeeTest.php" \
+    "tests/Unit/ZigbeeSwitchStateServiceTest.php" \
+    "tests/Unit/PanelAlmacenZigbeeUiTest.php" \
+    "tests/Unit/MotionEndpointHardeningTest.php"; do
+    if [ -f "$F91_TEST" ]; then
+        F91_OUT=$(php "$F91_TEST" 2>&1)
+        F91_RC=$?
+        F91_SUM=$(echo "$F91_OUT" | grep -oE '(Total|Results): [0-9]+ passed, [0-9]+ failed' | tail -1)
+        [ -z "$F91_SUM" ] && F91_SUM="exit=$F91_RC"
+        if [ "$F91_RC" -eq 0 ]; then
+            pass "F91: $(basename "$F91_TEST") ($F91_SUM)"
+        else
+            fail "F91: $(basename "$F91_TEST")" \
+                "$F91_SUM — $(echo "$F91_OUT" | grep -E '❌|FAIL|failed' | head -3 | tr '\n' ' ')"
+        fi
+    else
+        fail "F91: $F91_TEST" "test missing"
+    fi
+done
+
+F91_JS_TEST="tests/Unit/zigbee-ingress.test.js"
+if [ -f "$F91_JS_TEST" ]; then
+    F91_JS_OUT=$(node "$F91_JS_TEST" 2>&1)
+    F91_JS_RC=$?
+    F91_JS_SUM=$(echo "$F91_JS_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    if [ "$F91_JS_RC" -eq 0 ]; then
+        pass "F91: zigbee-ingress.test.js ($F91_JS_SUM)"
+    else
+        fail "F91: zigbee-ingress.test.js" "$F91_JS_SUM"
+    fi
+else
+    fail "F91: $F91_JS_TEST" "test missing"
+fi
 
 # =============================================================================
 # RESUMEN
