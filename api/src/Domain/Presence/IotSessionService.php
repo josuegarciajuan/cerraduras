@@ -123,6 +123,59 @@ final class IotSessionService
         }
 
         // --- 2. (A) Raw audit outside the state transaction (RF-44.3) ---
+        // F91/RF-148: decide Zigbee radar presence from persisted history BEFORE
+        // inserting the raw event. The decision is stored in meta for audit.
+        $radarDecision = null;
+        if ($provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
+            && $sensor === PresenceEvent::SENSOR_PRESENCE
+            && $this->isWarehouseRoom($room)
+        ) {
+            $roomType = $this->roomTypes->findById($room->roomTypeId);
+            $mode = $room->presenceModeOverride ?? ($roomType?->presenceMode ?? RadarPresenceDecision::MODE_CAMERA_FUSION);
+            if ($roomType !== null && in_array($mode, RadarPresenceDecision::modes(), true)) {
+                $history = [];
+                foreach ($this->presenceEvents->listForRoom($roomId, 500) as $h) {
+                    $history[] = [
+                        'sensor' => $h->sensor,
+                        'value' => $h->value,
+                        'provider' => $h->provider,
+                        'occurred_at' => $h->occurredAt,
+                        'source_event_id' => $h->sourceEventId,
+                    ];
+                }
+                $history[] = [
+                    'sensor' => $sensor,
+                    'value' => $value,
+                    'provider' => $provider,
+                    'occurred_at' => $occurredAt,
+                    'source_event_id' => $sourceEvtId,
+                ];
+                $preSession = $this->iotSessions->findByRoomId($roomId);
+                $physical = false;
+                if ($mode === RadarPresenceDecision::MODE_CAMERA_FUSION && $preSession !== null) {
+                    $physical = $this->warehousePhysicalEvidence($room, $preSession, Clock::nowUtc());
+                }
+                $radarDecision = RadarPresenceDecision::decide(
+                    $history,
+                    Clock::nowUtc(),
+                    [
+                        'mode' => $mode,
+                        'confirm_reports' => $roomType->presenceConfirmReports,
+                        'confirm_window_seconds' => $roomType->presenceConfirmWindowSeconds,
+                        'min_span_seconds' => $roomType->presenceMinSpanSeconds,
+                        'hold_seconds' => $roomType->presenceHoldSeconds,
+                        'absent_reports' => $roomType->presenceAbsentReports,
+                        'absent_window_seconds' => $roomType->presenceAbsentWindowSeconds,
+                        'door_window_seconds' => $roomType->presenceDoorWindowSeconds,
+                        'stale_seconds' => $roomType->presenceStaleSeconds,
+                    ],
+                    $physical
+                );
+                $meta = is_array($meta) ? $meta : [];
+                $meta['radar_decision'] = $radarDecision;
+            }
+        }
+
         $raw       = $this->presenceEvents->insertOrGet(
             $roomId, $sensor, $value, $provider, $occurredAt, $sourceEvtId, $meta
         );
@@ -144,6 +197,22 @@ final class IotSessionService
             try {
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
+
+                // F91/RF-148.9: a Zigbee PRESENT that does not reach evidence is
+                // audited as candidate/uncorroborated and produces no effects.
+                if ($isNewFact
+                    && $radarDecision !== null
+                    && ($radarDecision['raw'] ?? null) === PresenceEvent::VALUE_PRESENT
+                    && ($radarDecision['apply'] ?? false) !== true
+                ) {
+                    $this->presenceEvents->markAudit(
+                        $rawEvent->id,
+                        false,
+                        (string) ($radarDecision['discard_reason'] ?? 'candidate')
+                    );
+                    $this->iotSessions->commit();
+                    break;
+                }
 
                 // F48 (RF-57): contexto para la credibilidad de presencia. Solo se
                 // calcula para PRESENT de presencia (evita consultas en el resto).
