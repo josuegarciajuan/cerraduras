@@ -1,9 +1,216 @@
 # Tasks — Cerraduras Hotel
 
+> **F91 — Última revisión**: 2026-10-27 · **Estado**: TSK-91.00 completada; resto pendiente.
 > **F90 — Última revisión**: 2026-10-26 · **Estado**: banco de oficina y tres dispositivos
 > emparejados; caracterización funcional, integración y host definitivo pendientes.
 
 ---
+
+# Fase 91: Integración Zigbee aislada en `almacenZigbee`
+
+## TSK-91.00: Especificación y diseño de la fase
+
+**Trazabilidad**: RF-143..RF-151
+
+- [x] Actualizar `requirements.md` con la provisión aislada, distinción de transporte en el panel,
+  ingesta MQTT, buffer con ACK posterior a persistencia, luz operativa, algoritmo de presencia,
+  panel del almacén, aceptación y endurecimiento.
+- [x] Actualizar `design.md` con arquitectura, modelo de datos, spool, mapa v2, máquina de estados
+  de presencia, modos y conservación del algoritmo de cámara.
+- [x] Actualizar `contracts.md` con variables, mapa v2, registro de spool, evento canónico,
+  decisión de presencia, campos aditivos, endpoint de luz y errores.
+- [x] Actualizar `tasks.md` con el desglose por fases y criterios de verificación.
+- [x] Mantener implementación, migraciones, provisioning y hardware fuera de esta tarea.
+
+**Verificación**: revisión de los cuatro documentos y coherencia entre RF, diseño, contratos y
+tareas. Sin cambios de código.
+
+## TSK-91.01: Esquema de transporte y configuración de presencia
+
+**Trazabilidad**: RF-143.1..RF-143.7, RF-144.4, RF-144.5, RF-148.4
+
+- [ ] Añadir migración aditiva `devices.transport` (`VARCHAR(16) NULL`) y su presentación
+  `UNKNOWN`; sin backfill heurístico.
+- [ ] Añadir migración aditiva de columnas de presencia a `room_types` con los defaults del
+  contrato y validación de rangos.
+- [ ] Actualizar `Device`, `DeviceRepository`, `DeviceService` y `RoomType` para leer/escribir los
+  nuevos campos sin romper payloads existentes.
+- [ ] Tests unitarios de valores admitidos, defaults, rangos y ausencia de inferencia.
+
+**Verificación**: `php -l`, tests unitarios y migración aplicada en base descartable.
+
+## TSK-91.02: API de transporte y estado de provisión
+
+**Trazabilidad**: RF-144.3..RF-144.7
+
+- [ ] Exponer `transport` e `integration_status` de forma aditiva en dispositivos, packs y detalle
+  de sala.
+- [ ] Aceptar `transport` en alta y edición de dispositivos; default `UNKNOWN`.
+- [ ] Calcular `integration_status` sin sondeo: mapa, último evento, frescura y salud del spool.
+- [ ] Tests HTTP de compatibilidad: clientes antiguos siguen funcionando; campos nuevos correctos.
+
+**Verificación**: tests unitarios/HTTP y regresión de contratos existentes.
+
+## TSK-91.03: Flujo de alta en `/panel`
+
+**Trazabilidad**: RF-144.1, RF-144.2, RF-144.6..RF-144.8
+
+- [ ] Añadir alta/edición de habitaciones con código, tipo, notas y pack.
+- [ ] Añadir acción “Asignar pack” usando `POST /api/v1/rooms/{id}/apply-pack/{pack_id}`.
+- [ ] Añadir insignia de transporte y estado de provisión en dispositivos y packs.
+- [ ] Exigir pack en el alta de dispositivo y evitar el estado “Sin pack” inválido.
+- [ ] Etiquetar `almacenZigbee` como piloto Zigbee y no confundirlo con el almacén actual.
+- [ ] Accesibilidad: diálogo semántico, foco, Escape, teclado y `aria-live`.
+
+**Verificación**: prueba manual en `/panel` y tests de lógica de estados.
+
+## TSK-91.04: Provisión idempotente de pack, sala y dispositivos
+
+**Trazabilidad**: RF-143.1..RF-143.7
+
+- [ ] Crear `api/bin/provision-zigbee-almacen.php` con `--dry-run` y `--apply`.
+- [ ] Verificar `ALMACEN_BEBIDAS`; crear `PACK_ZIGBEE`, `almacenZigbee` y los tres dispositivos
+  con IEEE, etiquetas y `transport=ZIGBEE2MQTT`.
+- [ ] Rechazar colisiones y no modificar otras salas; no habilitar MQTT ni servicios.
+- [ ] Test de idempotencia y de aislamiento del almacén existente.
+
+**Verificación**: `--dry-run` sobre base descartable, `--apply`, segunda ejecución sin cambios,
+consulta de topología.
+
+## TSK-91.05: Ingreso MQTT con ACK posterior a persistencia
+
+**Trazabilidad**: RF-145.1..RF-145.10, RF-146.1..RF-146.9
+
+- [ ] Crear `api/bin/zigbee-ingress/` con cliente MQTT, `manualAcks`, QoS y sesión persistente.
+- [ ] Persistir el sobre en spool con `fsync` y `rename` atómico antes de confirmar.
+- [ ] Aplicar backpressure y no confirmar si el spool falla o está lleno.
+- [ ] Estado operativo en `api/run/zigbee-ingress-status.json` sin secretos.
+- [ ] Tests: ACK después de persistir, fallo de disco sin ACK, reconexión, límites y credenciales
+  fuera de `argv`.
+
+**Verificación**: tests Node con broker simulado y spool temporal; sin broker real.
+
+## TSK-91.06: Consumidor de spool, mapa v2 y entrega al dominio
+
+**Trazabilidad**: RF-145.2..RF-145.9, RF-146.3..RF-146.7
+
+- [ ] Implementar `api/bin/zigbee-spool-worker.php` con orden, reintento, cuarentena, métricas y
+  replay manual auditado.
+- [ ] Implementar mapa v2: `contact`, `presence` y `state` con sensores `PROXIMITY`, `PRESENCE` y
+  `SWITCH`; rechazar topics `*-oficina` en producción.
+- [ ] Marcar `bootstrap` sin transición; ignorar `availability` como ausencia.
+- [ ] Entregar puerta/presencia a `IotSessionService` y luz al manejador de switch.
+- [ ] Tests de mapping, inversión de contacto, duplicados, eventos parciales, bootstrap,
+  cuarentena y replay sin doble efecto.
+
+**Verificación**: tests unitarios/integración y dry-run con payloads reales del banco.
+
+## TSK-91.07: Algoritmo de presencia por radar y conservación de cámara
+
+**Trazabilidad**: RF-148.1..RF-148.12, RF-149.2..RF-149.4
+
+- [ ] Implementar `RadarPresenceDecision` con modos `camera_fusion`, `radar_door`,
+  `radar_only_shadow` y `radar_only`.
+- [ ] Implementar máquina de estados, evidencia temporal, histéresis, frescura y ausencia.
+- [ ] Integrar solo `PRESENT_CONFIRMED` con el motor; candidatos y stale no producen efectos.
+- [ ] Conservar `PresenceEvidence`/cámara sin cambios y usarlos como referencia/rollback.
+- [ ] Tests de entrada, permanencia, salida, huecos, duplicados, 24 h simuladas, sala vacía,
+  sensor stale y discrepancia shadow.
+
+**Verificación**: tests unitarios deterministas y simulación temporal; sin hardware.
+
+## TSK-91.08: Luz Zigbee operativa y control manual
+
+**Trazabilidad**: RF-147.1..RF-147.8, RF-149.5
+
+- [ ] Implementar `ZigbeeSwitchGateway` y seleccionarlo por `transport=ZIGBEE2MQTT`.
+- [ ] Publicar `ON`/`OFF` QoS 1, sin `TOGGLE`, con auditoría y timeout acotado.
+- [ ] Confirmar por estado push; deduplicar 2–3 reportes; marcar `unconfirmed` sin bucle.
+- [ ] Añadir `POST /almacen-api/switch` con autorización, errores 404/409/503 y auditoría.
+- [ ] Tests: confirmación, timeout, duplicados, cambio manual y transporte no soportado.
+
+**Verificación**: tests unitarios/HTTP y prueba en banco con lámpara.
+
+## TSK-91.09: Panel `/almacen` para `almacenZigbee`
+
+**Trazabilidad**: RF-149.1..RF-149.7
+
+- [ ] Distinguir la sala piloto del almacén actual en el selector y la cabecera.
+- [ ] Mostrar presencia confirmada/candidata/stale, puerta, luz y frescura con texto y color.
+- [ ] Mostrar evidencia, motivo de descarte y salud del buffer.
+- [ ] Añadir control manual de luz con estado confirmado/pendiente/error.
+- [ ] Ocultar acciones de refresco Tuya para dispositivos Zigbee.
+- [ ] Mantener SSE y accesibilidad; sin polling web nuevo.
+
+**Verificación**: prueba manual y tests de lógica de presentación.
+
+## TSK-91.10: Endurecimiento del canal local
+
+**Trazabilidad**: RF-151.1..RF-151.5
+
+- [ ] Restringir `POST /almacen-api/motion` a loopback, worker autenticado o proxy de confianza.
+- [ ] Revisar credenciales MQTT fuera de `argv`, logs, mapas y spool.
+- [ ] Añadir permisos restrictivos y exclusión de Git para spool y backups.
+- [ ] Replay de spool con confirmación y auditoría.
+- [ ] Tests de acceso no autorizado y de ausencia de secretos en logs.
+
+**Verificación**: tests HTTP/estáticos y revisión de permisos.
+
+## TSK-91.11: Pruebas, regresión y guardias
+
+**Trazabilidad**: RF-150.1, RF-150.7
+
+- [ ] Añadir tests unitarios, HTTP y Node de todas las piezas nuevas.
+- [ ] Añadir bloque de runner con marcadores F91 y guardias F74/F78/F90.
+- [ ] Verificar que no hay poller, `setInterval` de sondeo, REST Tuya ni servicios eliminados.
+- [ ] Ejecutar `bash api/bin/run-tests.sh` con 0 fallos en entorno seguro.
+- [ ] Documentar resultados y limitaciones.
+
+**Verificación**: regresión completa y guardias en verde.
+
+## TSK-91.12: Aceptación física en banco
+
+**Trazabilidad**: RF-150.2..RF-150.4
+
+- [ ] Renombrar los dispositivos a los nombres definitivos y actualizar el mapa.
+- [ ] Puerta: 10 ciclos OPEN/CLOSED, orden, deduplicación y semántica.
+- [ ] Presencia: entrada, permanencia, salida, sala vacía y ocupación continua ≥24 h.
+- [ ] Luz: ciclos ON/OFF, confirmación, cambio manual y reinicio.
+- [ ] Caídas de ingreso, broker, consumidor y BD; recuperación del spool.
+- [ ] Comparar `radar_only_shadow` con la referencia y registrar falsos positivos, entradas
+  perdidas y efectos falsos.
+- [ ] Decidir con evidencia si se promueve `radar_only` o se mantiene `radar_door`/`camera_fusion`.
+
+**Verificación**: informe fechado con evidencia y actualización de los cuatro documentos.
+
+## TSK-91.13: Despliegue gradual y rollback
+
+**Trazabilidad**: RF-150.5, RF-150.6, RF-150.8
+
+- [ ] Instalar y aceptar puerta Zigbee; conservar rollback.
+- [ ] Instalar y aceptar presencia con el modo aprobado; conservar cámara como referencia.
+- [ ] Instalar la luz con electricista autorizado y aceptación.
+- [ ] Probar rollback por dispositivo sin borrar auditoría, spool ni topología.
+- [ ] Informar cambios, verificación y siguiente fase al cerrar cada paso.
+
+**Verificación**: aceptación por dispositivo, rollback probado y regresión final.
+
+### Estado de ejecución (F91)
+
+- [x] TSK-91.00 especificación y diseño
+- [ ] TSK-91.01 esquema
+- [ ] TSK-91.02 API
+- [ ] TSK-91.03 panel de alta
+- [ ] TSK-91.04 provisión
+- [ ] TSK-91.05 ingreso MQTT
+- [ ] TSK-91.06 consumidor y mapa v2
+- [ ] TSK-91.07 presencia por radar
+- [ ] TSK-91.08 luz operativa
+- [ ] TSK-91.09 panel del almacén
+- [ ] TSK-91.10 endurecimiento
+- [ ] TSK-91.11 pruebas y regresión
+- [ ] TSK-91.12 aceptación física
+- [ ] TSK-91.13 despliegue y rollback
 
 # Fase 90: Consumidor Zigbee MQTT pre-hardware y migración gradual
 

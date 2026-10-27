@@ -1,10 +1,249 @@
 # Requirements — Cerraduras Hotel
 
+> **Última revisión de F91**: 2026-10-27 · **Estado**: especificación aprobada para integrar los
+> tres dispositivos Zigbee en un pack y una sala de almacén aislados. Implementación pendiente.
 > **Última revisión de F90**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
 > caracterización funcional e integración pendientes. **Cadencia**: antes de cada paso de
 > migración.
 
 ---
+
+# Fase 91: Integración Zigbee aislada en `almacenZigbee`
+
+## Contexto y decisiones aprobadas
+
+Los tres dispositivos validados en el banco se integrarán en una topología nueva y aislada, sin
+modificar el almacén de bebidas existente ni reactivar ningún poller o lectura periódica de Tuya.
+La fuente de señal es exclusivamente MQTT push local (Zigbee2MQTT → Mosquitto).
+
+Decisiones del operador que esta fase debe cumplir:
+
+- Pack nuevo `Pack Zigbee` (`PACK_ZIGBEE`) y sala nueva `almacenZigbee` de tipo
+  `ALMACEN_BEBIDAS`, independientes del almacén actual.
+- El relé será **luz operativa**, controlable por la coreografía y manualmente desde el panel.
+- Se intentará un algoritmo de presencia basado solo en el radar; el algoritmo de fusión con
+  cámara **no se elimina** y queda seleccionable como salvaguarda.
+- Los nombres MQTT `*-oficina` no se usarán en producción; se sustituyen por nombres definitivos.
+- Objetivo de aceptación: **cero efectos falsos** (visitas, grabaciones, aperturas o luces
+  provocadas por presencia no confirmada). No se promete que el radar físico nunca emita una
+  señal errónea; se exige que el sistema no actúe sobre ella.
+- La detección no puede depender de que la sala esté vacía un tiempo mínimo ni de que exista una
+  ventana sin ocupación: debe soportar ocupación continua de 24 h o más.
+- Ninguna decisión de esta fase puede introducir polling Tuya. F74/RF-87 y F78/RF-101 siguen
+  vigentes sin excepción.
+
+### Identidad de la provisión
+
+| Elemento | Valor obligatorio |
+|---|---|
+| Tipo de sala | `ALMACEN_BEBIDAS` existente (no se crea otro tipo) |
+| Código de sala | `almacenZigbee` |
+| Nombre del pack | `Pack Zigbee` |
+| Código del pack | `PACK_ZIGBEE` |
+| Puerta | `PROXIMITY`, IEEE `0xc09b9efffef431fb`, etiqueta `Zigbee · Puerta · almacenZigbee` |
+| Presencia | `PRESENCE`, IEEE `0xa4c138b2a3c49dbe`, etiqueta `Zigbee · Presencia · almacenZigbee` |
+| Luz | `SWITCH`, IEEE `0xf044d3fffecd9e8e`, etiqueta `Zigbee · Luz · almacenZigbee` |
+| Nombres MQTT | `almacen-zb-puerta`, `almacen-zb-presencia`, `almacen-zb-luz` |
+
+## RF-143: Provisión aislada de pack, sala y dispositivos
+
+- **RF-143.1**: Debe existir una sala nueva con código exacto `almacenZigbee` y tipo
+  `ALMACEN_BEBIDAS`. No se reutiliza ni se renombra la sala del almacén actual.
+- **RF-143.2**: Debe existir un pack nuevo `Pack Zigbee` con código `PACK_ZIGBEE`, asociado
+  exclusivamente a `almacenZigbee`.
+- **RF-143.3**: La sala se vincula al pack mediante el flujo canónico
+  `device → pack → room`; no se crea una relación directa dispositivo-habitación.
+- **RF-143.4**: Se registran exactamente los tres dispositivos de la tabla de identidad, con
+  `external_id` igual al IEEE estable y sin duplicar los dispositivos del banco.
+- **RF-143.5**: El provisioning es idempotente y falla cerrado ante colisiones de código, pack o
+  `(kind, external_id)`; no modifica otras salas, packs ni dispositivos.
+- **RF-143.6**: La provisión no habilita MQTT, no arranca workers, no instala systemd y no
+  contacta con Tuya ni con el broker.
+- **RF-143.7**: `almacenZigbee` debe funcionar sin cámaras. La ausencia de cámara es un estado
+  válido y visible, no un error de configuración.
+
+## RF-144: Alta y distinción de dispositivos en `/panel`
+
+- **RF-144.1**: El panel debe permitir crear y editar habitaciones con código, tipo, notas y pack
+  asignado; la asignación de pack usa el endpoint canónico `apply-pack`.
+- **RF-144.2**: El panel debe permitir crear el pack, editarlo y añadir dispositivos dentro de él.
+- **RF-144.3**: El alta de un dispositivo exige un pack seleccionado; no se ofrece un guardado que
+  el contrato vaya a rechazar. “Sin pack” solo puede existir en inventario importado o edición
+  explícita.
+- **RF-144.4**: Cada dispositivo debe declarar un atributo explícito `transport` con valores
+  `TUYA`, `ZIGBEE2MQTT`, `LOCAL`, `SIMULATED` o `UNKNOWN`. Los dispositivos se distinguen por
+  `kind` (función) y `transport` (origen), no por el nombre del pack ni por heurísticas.
+- **RF-144.5**: `transport` se expone de forma aditiva en las respuestas de dispositivos, pack y
+  detalle de sala. Las filas existentes sin clasificar se muestran como `UNKNOWN` (“origen sin
+  declarar”); no se infiere Tuya ni Zigbee a partir de `kind`, `external_id` o metadatos.
+- **RF-144.6**: El panel muestra una insignia visible de transporte y una etiqueta de estado de
+  provisión: borrador, asociado, pendiente de mapping, esperando primera señal, operativo,
+  degradado o atención.
+- **RF-144.7**: La sala `almacenZigbee` se presenta como piloto Zigbee independiente y no se
+  confunde visualmente con el almacén existente.
+- **RF-144.8**: Los formularios nuevos deben ser operables por teclado, con diálogo accesible,
+  foco gestionado y anuncios `aria-live` para asociaciones y errores.
+
+## RF-145: Ingesta MQTT definitiva de puerta y presencia
+
+- **RF-145.1**: Los topics definitivos son `zigbee2mqtt/almacen-zb-puerta`,
+  `zigbee2mqtt/almacen-zb-presencia` y `zigbee2mqtt/almacen-zb-luz`. El mapa productivo no puede
+  contener nombres `*-oficina`.
+- **RF-145.2**: La puerta mapea `contact=true → OPEN` y `contact=false → CLOSED`. Esta semántica
+  debe probarse explícitamente para evitar una inversión que afecte a coreografía, luz y salidas.
+- **RF-145.3**: La presencia mapea `presence=true → PRESENT` y `presence=false → ABSENT`.
+  `illuminance`, `target_distance`, `linkquality`, ajustes de radar, `update` y metadatos OTA no
+  generan eventos de dominio.
+- **RF-145.4**: `availability` es solo telemetría de disponibilidad. `offline` no equivale a
+  ausencia, no cierra estancia, no apaga la luz y no crea un evento de salida.
+- **RF-145.5**: Todo evento se audita con `provider=ZIGBEE2MQTT`, topic, entidad, valor,
+  `received_at` UTC con milisegundos y motivo de aplicación o descarte. No se guarda el payload
+  completo si contiene datos innecesarios.
+- **RF-145.6**: El orden y la deduplicación siguen siendo responsabilidad del dominio. Una
+  reentrega MQTT no puede producir una segunda transición; una transición real posterior con el
+  mismo valor sí debe aplicarse.
+- **RF-145.7**: El arranque tardío del consumidor no puede convertir un estado retenido o cacheado
+  en una transición nueva. Los estados de arranque se etiquetan como `bootstrap`, con edad, y solo
+  actualizan el último valor conocido.
+- **RF-145.8**: La configuración MQTT recomendada es QoS 1 para puerta y relé, QoS 0 para el
+  radar, `retain=true` solo para puerta y relé, y filtrado de atributos del radar no usados. Cualquier
+  cambio debe quedar documentado por dispositivo.
+- **RF-145.9**: El consumidor no ejecuta `/get`, interview remoto ni ninguna lectura bajo demanda
+  sobre `contact` o `presence`; ambos son push-only.
+- **RF-145.10**: El flujo Zigbee no importa, instancia ni invoca clientes, credenciales, URLs o
+  temporizadores de Tuya. Una guardia automática debe impedirlo.
+
+## RF-146: Buffer de entrada duradero con ACK posterior a persistencia
+
+- **RF-146.1**: Se sustituye el consumo directo con `mosquitto_sub` por un ingreso MQTT que
+  confirma QoS 1 **solo después** de persistir el mensaje en un spool local duradero. No se
+  confirma al broker un evento que todavía no está en disco.
+- **RF-146.2**: Cada registro del spool contiene versión de esquema, topic, payload, hash,
+  `received_at`, QoS, flag de duplicado y estado de procesamiento. La escritura usa fichero
+  temporal, `fsync` del fichero y del directorio, y `rename` atómico.
+- **RF-146.3**: Un consumidor de dominio separado procesa el spool en orden, normaliza y entrega a
+  `IotSessionService`. No se elimina ni marca como completado un registro antes de confirmar el
+  procesamiento del dominio.
+- **RF-146.4**: La garantía contratada es **at-least-once desde el broker hasta el spool** más
+  idempotencia de dominio. No se declara exactly-once ni atomicidad entre broker y base de datos.
+- **RF-146.5**: Ante fallo de dominio se aplica reintento con backoff acotado y, tras el límite,
+  cuarentena con diagnóstico. Un registro corrupto no bloquea el resto.
+- **RF-146.6**: El spool tiene límites de antigüedad, número y tamaño. Al alcanzarlos se aplica
+  backpressure o se detiene el ACK; nunca se descartan silenciosamente eventos para “seguir
+  consumiendo”.
+- **RF-146.7**: Existe una herramienta de inspección y replay manual del spool. El replay no
+  consulta sensores, no usa Tuya y no duplica efectos gracias a la deduplicación de dominio.
+- **RF-146.8**: Se exponen métricas operativas: pendientes, procesados, cuarentena, antigüedad del
+  más antiguo, última recepción y última entrega al dominio.
+- **RF-146.9**: El spool vive fuera de Git, con permisos restrictivos, y no contiene credenciales
+  MQTT ni datos de Tuya.
+
+## RF-147: Luz Zigbee operativa y control manual
+
+- **RF-147.1**: El ZBMINIL2 se integra como `SWITCH` operativo, no como mera telemetría. La
+  coreografía existente puede encenderlo y apagarlo.
+- **RF-147.2**: Las órdenes se publican en `zigbee2mqtt/almacen-zb-luz/set` con
+  `{"state":"ON"}` o `{"state":"OFF"}` y QoS 1. No se usa `TOGGLE` ni se hacen lecturas repetidas.
+- **RF-147.3**: Una orden solo se considera aplicada cuando llega un reporte de estado MQTT con el
+  valor solicitado. El PUBACK del broker solo prueba entrega al broker, no cambio físico.
+- **RF-147.4**: Si no llega confirmación dentro de un timeout configurable, el estado queda
+  `unconfirmed` con auditoría y el panel lo muestra. No hay reintentos infinitos ni polling.
+- **RF-147.5**: Zigbee2MQTT debe configurarse con `optimistic:false` y `power_on_behavior:off`
+  para este dispositivo. Los 2–3 reportes por orden se deduplican.
+- **RF-147.6**: El panel permite control manual `ON`/`OFF` con la misma autorización que las
+  acciones del almacén. La acción manual queda auditada con usuario, hora y resultado.
+- **RF-147.7**: Un cambio manual físico del interruptor actualiza el panel por push, sin sondeo.
+- **RF-147.8**: La instalación eléctrica del relé la realiza únicamente un electricista autorizado,
+  con circuito desenergizado y comprobación final. El software no sustituye ninguna medida de
+  seguridad eléctrica.
+
+## RF-148: Algoritmo de presencia por radar con cámara conservada como respaldo
+
+- **RF-148.1**: Deben existir modos de decisión por sala configurables:
+  `camera_fusion` (comportamiento F88 actual), `radar_door` (radar con corroboración de puerta, sin
+  cámara), `radar_only_shadow` (calcula radar-only pero no actúa) y `radar_only` (radar como
+  decisión principal, sin cámara ni requisito de puerta).
+- **RF-148.2**: El modo por defecto de `almacenZigbee` será `radar_door` hasta completar la
+  aceptación; `radar_only` solo se activa tras aprobación explícita. El modo `camera_fusion` se
+  conserva intacto para las salas actuales y como rollback.
+- **RF-148.3**: El algoritmo parte de los eventos push recibidos, no de lecturas adicionales. Cada
+  episodio de presencia se evalúa con evidencia temporal: número de reportes, separación entre
+  ellos, duración del episodio, transición de subida, huecos y corroboración de puerta si el modo
+  la admite.
+- **RF-148.4**: La presencia candidata se confirma al alcanzar el umbral configurado. La
+  configuración mínima por tipo de sala incluye: reportes de confirmación, ventana de confirmación,
+  duración mínima del episodio, tiempo de sostenimiento ante huecos, reportes de ausencia, ventana
+  de ausencia, ventana de puerta y antigüedad máxima.
+- **RF-148.5**: `ABSENT` explícito se aplica siempre y no puede quedar bloqueado por un filtro de
+  ruido. La ausencia se confirma con los reportes configurados o con la combinación equivalente que
+  se apruebe en diseño; la falta de reportes por sí sola **no** confirma ausencia.
+- **RF-148.6**: Un sensor que deja de reportar se marca `stale`/`sin datos`, conserva el último
+  estado confirmado y no simula una salida. La interfaz no pinta ocupación confirmada con datos
+  vencidos.
+- **RF-148.7**: La confirmación de presencia nunca se basa en `target_distance`, iluminancia ni
+  LQI. `target_distance` puede mostrarse como diagnóstico.
+- **RF-148.8**: El algoritmo debe soportar ocupación continua de 24 h o más sin exigir una sala
+  vacía previa, sin cierres automáticos por tiempo y sin degradar una presencia sostenida.
+- **RF-148.9**: Un `PRESENT` que no alcanza evidencia suficiente se audita como
+  `uncorroborated`/`candidate` y no crea visita, grabación, apertura ni luz. El objetivo de
+  aceptación es cero efectos falsos, aunque el sensor emita señales erróneas.
+- **RF-148.10**: En `radar_only_shadow` se registran en paralelo la decisión radar y la decisión de
+  referencia (cámara o puerta) para medir discrepancias, sin cambiar el comportamiento operativo.
+- **RF-148.11**: El algoritmo de cámara de F88 no se elimina ni se desactiva globalmente. Sigue
+  disponible por configuración y se usa como referencia/rollback.
+- **RF-148.12**: La decisión final, el modo, la evidencia, el motivo de descarte y las marcas de
+  frescura se exponen de forma aditiva al panel y a la auditoría.
+
+## RF-149: Panel del almacén Zigbee
+
+- **RF-149.1**: `/almacen` debe poder operar la sala `almacenZigbee` sin mezclarla con el almacén
+  actual; la selección de sala y el título deben identificar el piloto Zigbee.
+- **RF-149.2**: El panel muestra para cada sensor: transporte, valor confirmado, edad del último
+  evento, estado `stale`, modo de presencia y motivo de descarte cuando aplique.
+- **RF-149.3**: Se distingue visualmente presencia confirmada, presencia candidata/no corroborada y
+  ausencia confirmada. No se usa el mismo indicador para las tres.
+- **RF-149.4**: Se muestra la salud del buffer: pendientes, cuarentena, antigüedad y última entrega.
+- **RF-149.5**: El panel permite controlar la luz Zigbee y muestra el resultado confirmado, la orden
+  pendiente o el fallo, sin polling.
+- **RF-149.6**: El panel no ofrece “refrescar sensores” ni ninguna acción que pueda derivar en una
+  lectura Tuya para los dispositivos Zigbee.
+- **RF-149.7**: Los estados de transporte, provisión y frescura se comunican con texto además de
+  color y son accesibles por teclado y lector de pantalla.
+
+## RF-150: Aceptación, despliegue gradual y rollback
+
+- **RF-150.1**: Antes de activar producción deben pasar las pruebas unitarias, de integración y la
+  regresión completa `bash api/bin/run-tests.sh` con 0 fallos.
+- **RF-150.2**: La aceptación física incluye: 10 ciclos de puerta con orden y deduplicación;
+  entrada, permanencia y salida real; ocupación continua prolongada; periodos de sala vacía sin
+  efectos falsos; ciclos de luz con confirmación; reinicio de worker, broker y base de datos; y
+  recuperación del spool.
+- **RF-150.3**: La aceptación de presencia exige cero visitas, grabaciones, luces o aperturas
+  provocadas por presencia no confirmada, y cero entradas reales perdidas en el guion de pruebas.
+  Los falsos `PRESENT` crudos se documentan y deben quedar descartados por el algoritmo.
+- **RF-150.4**: La validación debe cubrir tanto actividad como ocupación continua de al menos 24 h;
+  no se exige que la sala esté vacía durante un tiempo predeterminado.
+- **RF-150.5**: La migración es por dispositivo: puerta, presencia y luz. Cada una tiene criterio de
+  aceptación, ventana, responsable y rollback individual.
+- **RF-150.6**: El rollback desactiva solo la fuente Zigbee del dispositivo afectado, restaura la
+  fuente anterior si existe y conserva auditoría, spool y topología. No borra datos.
+- **RF-150.7**: Las guardias F74/F78 deben demostrar que no aparece ningún poller, temporizador,
+  REST Tuya ni servicio eliminado. BLOCK 35 y las guardias F90 siguen en verde.
+- **RF-150.8**: El cierre de cada fase debe informar cambios, verificación y siguiente fase, y
+  actualizar los cuatro documentos SDD con los resultados reales.
+
+## RF-151: Endurecimiento del canal local
+
+- **RF-151.1**: El broker MQTT y la UI de Zigbee2MQTT permanecen en loopback o red de confianza,
+  con autenticación y ACL aprobadas antes de exponerse fuera de ese límite.
+- **RF-151.2**: Las credenciales MQTT no se pasan como argumentos de proceso ni se escriben en
+  logs, mapas o spool. El ingreso las lee de entorno o fichero restringido.
+- **RF-151.3**: `POST /almacen-api/motion` se restringe a loopback, worker autenticado o proxy de
+  confianza; no puede aceptar movimiento arbitrario desde la LAN sin control.
+- **RF-151.4**: Las herramientas de replay e inspección del spool son de solo lectura por defecto;
+  el replay requiere confirmación explícita y deja auditoría.
+- **RF-151.5**: Los backups de Zigbee2MQTT y del spool no se versionan y conservan permisos
+  restrictivos.
 
 # Fase 90: Integración de software Zigbee local — software, banco y dispositivos
 

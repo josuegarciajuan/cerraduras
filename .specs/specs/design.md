@@ -1,10 +1,315 @@
 # Design — Cerraduras Hotel
 
+> **F91 — Última revisión**: 2026-10-27 · **Estado**: diseño aprobado; implementación pendiente.
 > **F90 — Última revisión**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
 > caracterización funcional e integración pendientes. Revisar al elegir host definitivo y antes
 > de instalar en el almacén.
 
 ---
+
+# Fase 91: Diseño de la integración Zigbee aislada en `almacenZigbee`
+
+## Decisión
+
+Se crea una topología paralela y aislada:
+
+```text
+Zigbee (SNZB-04P, ZY-M100-S_2, ZBMINIL2)
+  -> Dongle-M -> Zigbee2MQTT -> Mosquitto (loopback/red de confianza)
+  -> ingreso MQTT con ACK manual y spool duradero
+  -> consumidor de spool (PHP) -> mapa v2 -> IotSessionService / SwitchStateService
+  -> BD + auditoría + SSE -> /dashboard, /almacen, /panel
+```
+
+- La sala es `almacenZigbee` (`ALMACEN_BEBIDAS`) y el pack es `PACK_ZIGBEE` (`Pack Zigbee`).
+  Ningún dispositivo, pack, sala o cámara del almacén actual se modifica.
+- `almacenZigbee` puede operar sin cámaras. La cámara no es un requisito de la nueva sala.
+- El flujo Zigbee no contiene cliente, credenciales, URL ni temporizador de Tuya. La única
+  relación con Tuya es la coexistencia de otras salas, que conservan su comportamiento actual.
+- No se hace polling de nada: puerta y presencia son push; el relé confirma por un nuevo mensaje
+  de estado. Las “lecturas repetidas” se sustituyen por un **buffer de eventos push** y una
+  decisión con evidencia temporal.
+
+## Modelo de datos y provisión
+
+### Transporte explícito
+
+Se añade de forma aditiva `devices.transport` (`VARCHAR(16) NULL`), con valores de aplicación
+`TUYA`, `ZIGBEE2MQTT`, `LOCAL`, `SIMULATED`, `UNKNOWN`.
+
+- Las filas existentes quedan `NULL` y la API las presenta como `UNKNOWN` (“origen sin declarar”).
+  No se infiere el transporte por `kind`, `external_id`, etiqueta o pack.
+- El panel permite clasificar manualmente un dispositivo existente.
+- `transport` se incluye en el payload de dispositivo y en el detalle de pack/sala.
+- Los tres dispositivos nuevos se crean con `transport=ZIGBEE2MQTT`.
+
+### Provisión
+
+Comando `api/bin/provision-zigbee-almacen.php`:
+
+- `--dry-run` por defecto; `--apply` para escribir.
+- Verifica que `ALMACEN_BEBIDAS` existe y es único; no crea un tipo nuevo.
+- Rechaza colisiones de `almacenZigbee`, `PACK_ZIGBEE` o `(kind, external_id)` salvo que la fila
+  sea idéntica (idempotencia).
+- Crea en una transacción: pack, sala, asociación mediante la lógica de `ApplyPackService` y los
+  tres dispositivos.
+- No habilita MQTT, no arranca servicios, no toca otras salas y no escribe secretos.
+- La migración solo añade columnas/índices; los datos operativos se crean con el comando
+  explícito, nunca de forma implícita al desplegar.
+
+### Estado de provisión en el panel
+
+La API de dispositivos añade `integration_status`:
+
+```json
+{
+  "status": "draft|associated|pending_mapping|waiting_signal|operational|degraded|attention",
+  "mapping_configured": true,
+  "last_signal_at": "2026-10-27T09:00:00.000Z",
+  "last_signal_age_seconds": 12,
+  "reason": "stale|quarantine|unknown_transport|null"
+}
+```
+
+Se calcula sin sondeo: mapa cargado, último evento persistido, frescura y salud del spool.
+
+## Ingesta MQTT con ACK posterior a persistencia
+
+### Proceso de ingreso
+
+Nuevo proceso aislado `api/bin/zigbee-ingress/` (Node.js, dependencia `mqtt` fijada por versión y
+lockfile):
+
+- Suscripción QoS 1 a `zigbee2mqtt/#`, `manualAcks: true`, sesión persistente con client id.
+- Al recibir un mensaje: valida tamaño/forma mínima, escribe el sobre en el spool con `fsync` de
+  fichero y directorio y `rename` atómico; **solo entonces** confirma el mensaje.
+- Si el spool está lleno o no se puede escribir, no confirma y aplica backpressure/desconexión
+  controlada. Nunca descarta en silencio.
+- No interpreta semántica de dominio ni escribe en la base de datos.
+- Credenciales por entorno o fichero restringido; nunca por `argv`.
+
+### Spool
+
+Directorio `api/run/zigbee-spool/` (fuera de Git, `0700`):
+
+```text
+incoming/  <epoch-ms>-<seq>-<sha256>.json   # recién persistido
+processing/                                  # tomado por el consumidor
+processed/                                   # dominio confirmado
+quarantine/                                  # fallo tras reintentos
+```
+
+Registro:
+
+```json
+{
+  "schema": 1,
+  "topic": "zigbee2mqtt/almacen-zb-puerta",
+  "payload": "{\"contact\":true,...}",
+  "payload_sha256": "<hex>",
+  "qos": 1,
+  "dup": false,
+  "received_at": "2026-10-27T09:00:00.000Z",
+  "attempts": 0
+}
+```
+
+- El consumidor PHP toma en orden, procesa y mueve a `processed/` solo tras confirmar el dominio.
+- Fallo de dominio: reintento con backoff y luego `quarantine/`; un registro corrupto no bloquea.
+- Límites: antigüedad máxima, número máximo y bytes máximos configurables. Al alcanzarlos se
+  detiene el ACK; no hay descarte silencioso.
+- Replay manual mueve una copia a `incoming/` con marca de replay; la deduplicación de dominio
+  evita efectos duplicados.
+- Garantía: at-least-once broker→spool + idempotencia de dominio. No exactly-once.
+
+## Nombres, mapa y semántica MQTT
+
+Topics definitivos:
+
+| Dispositivo | Topic estado | Topic comando | QoS estado | Retain |
+|---|---|---|---|---|
+| Puerta | `zigbee2mqtt/almacen-zb-puerta` | — | 1 | sí |
+| Presencia | `zigbee2mqtt/almacen-zb-presencia` | — | 0 | no |
+| Luz | `zigbee2mqtt/almacen-zb-luz` | `.../almacen-zb-luz/set` | 1 | sí |
+
+Mapa v2 (reemplaza el ejemplo invertido de F90):
+
+```json
+{
+  "version": 2,
+  "devices": {
+    "zigbee2mqtt/almacen-zb-puerta": {
+      "external_id": "0xc09b9efffef431fb",
+      "entities": {
+        "contact": {"sensor": "PROXIMITY", "values": {"true": "OPEN", "false": "CLOSED"}}
+      }
+    },
+    "zigbee2mqtt/almacen-zb-presencia": {
+      "external_id": "0xa4c138b2a3c49dbe",
+      "entities": {
+        "presence": {"sensor": "PRESENCE", "values": {"true": "PRESENT", "false": "ABSENT"}}
+      }
+    },
+    "zigbee2mqtt/almacen-zb-luz": {
+      "external_id": "0xf044d3fffecd9e8e",
+      "entities": {
+        "state": {"sensor": "SWITCH", "values": {"ON": "ON", "OFF": "OFF"}}
+      }
+    }
+  }
+}
+```
+
+- El parser debe aceptar `presence` como entidad de `PRESENCE` (hueco de F90) y `SWITCH` como
+  sensor de estado, sin reutilizar la máquina de puerta.
+- `contact` y `presence` no admiten `/get`; no se intenta.
+- Atributos no mapeados se ignoran; `availability` se registra como diagnóstico y nunca genera
+  `ABSENT`.
+- Mensajes retenidos al arrancar se marcan `bootstrap` y no crean transición. Solo actualizan el
+  último valor conocido con edad.
+- Zigbee2MQTT: `optimistic:false` y `power_on_behavior:off` para la luz; `filtered_attributes`
+  para el radar (solo `presence` en el flujo de dominio); `last_seen` opcional para diagnóstico.
+
+## Presencia: modos y algoritmo
+
+### Modos
+
+| Modo | Uso | Decisión operativa |
+|---|---|---|
+| `camera_fusion` | Salas actuales | F88 sin cambios: radar + movimiento de cámara/puerta |
+| `radar_door` | `almacenZigbee` inicial | Radar + corroboración de puerta; sin cámara |
+| `radar_only_shadow` | Validación | Radar-only se calcula y audita, pero no actúa |
+| `radar_only` | Tras aceptación | Radar-only decide; sin cámara ni puerta obligatoria |
+
+`camera_fusion` no se elimina ni se desactiva globalmente. Es el rollback de presencia.
+
+### Máquina de estados
+
+```text
+UNKNOWN --PRESENT--> CANDIDATE_PRESENT --evidencia--> PRESENT_CONFIRMED
+ABSENT_CONFIRMED --PRESENT--> CANDIDATE_PRESENT
+PRESENT_CONFIRMED --ABSENT--> CANDIDATE_ABSENT --evidencia--> ABSENT_CONFIRMED
+CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
+```
+
+- `STALE` es una marca de frescura, no un estado que implique ausencia.
+- Cada `PRESENT`/`ABSENT` se cuenta como reporte distinto por `received_at` (ms) y
+  `source_event_id`; los duplicados no suman evidencia.
+- `CANDIDATE_PRESENT` se confirma si:
+  - el modo admite puerta y hay `OPEN` aplicado dentro de `presence_door_window_seconds`; o
+  - hay al menos `presence_confirm_reports` reportes distintos dentro de
+    `presence_confirm_window_seconds` y el episodio abarca al menos
+    `presence_min_span_seconds`; y
+  - no hay un hueco de `ABSENT` superior a `presence_hold_seconds`.
+- `PRESENT_CONFIRMED` se mantiene mientras lleguen reportes y los huecos no superen
+  `presence_hold_seconds`. No hay cierre por tiempo ni por hora del día.
+- `CANDIDATE_ABSENT` vuelve a confirmado si llega `PRESENT`; pasa a `ABSENT_CONFIRMED` con
+  `presence_absent_reports` distintos dentro de `presence_absent_window_seconds`.
+- La falta de reportes durante `presence_stale_seconds` marca `stale` y conserva el último estado
+  confirmado; no confirma ausencia ni dispara salida.
+- `radar_door`: sin puerta reciente, un `PRESENT` puede quedar candidato indefinidamente y no
+  produce efectos. `radar_only`: la confirmación depende solo de la evidencia del radar.
+- `radar_only_shadow`: se ejecuta la misma máquina y se guarda `shadow_decision` junto a la
+  decisión operativa; las discrepancias se auditan.
+- `target_distance`, iluminancia y LQI no intervienen en la decisión.
+
+### Integración con el motor del almacén
+
+- Solo una decisión `PRESENT_CONFIRMED` puede generar `EV_PRESENT` en modos radar. Una decisión
+  candidata, stale o `uncorroborated` no crea visita, no inicia grabación, no enciende luz y no
+  abre puerta.
+- La puerta y el QR conservan sus disparadores actuales. La presencia confirmada puede completar
+  la corroboración y la coreografía, pero no sustituye la evidencia de puerta cuando el modo la
+  exige.
+- `ABSENT_CONFIRMED` se aplica sin bloqueo y permite la salida normal.
+- La decisión expone `mode`, `raw`, `confirmed`, `state`, `evidence_score`, `reports`,
+  `span_seconds`, `door_corroborated`, `stale`, `discard_reason` y `decided_at`.
+
+### Criterio de cero efectos falsos
+
+El objetivo no es que el radar deje de emitir falsos `PRESENT`, sino que ninguno produzca efectos.
+La aceptación compara:
+
+- visitas, grabaciones, luces y aperturas iniciadas;
+- entradas reales del guion físico;
+- falsos `PRESENT` crudos y su clasificación;
+- discrepancias `radar_only` vs referencia;
+- comportamiento con ocupación continua ≥24 h y con sala vacía.
+
+`radar_only` solo se promueve si el conjunto de aceptación no registra efectos falsos ni entradas
+perdidas. Si no lo consigue, `radar_door` o `camera_fusion` siguen siendo los modos operativos.
+
+## Luz operativa y control manual
+
+- `ZigbeeSwitchGateway` implementa el contrato de `SwitchGateway` y se selecciona por
+  `device.transport=ZIGBEE2MQTT`.
+- Publica `ON`/`OFF` en `<topic>/set` con QoS 1; nunca `TOGGLE`.
+- La orden se audita como `pending`; pasa a `applied` cuando llega un estado `ON`/`OFF`
+  coincidente por push, y a `unconfirmed` si vence el timeout. Un `PUBACK` no confirma el cambio.
+- No hay reintento infinito: como máximo un reintento acotado y luego estado degradado visible.
+- `POST /almacen-api/switch` (nuevo, aditivo) recibe `{state:"ON|OFF"}` para la sala activa,
+  resuelve el único `SWITCH` de su pack y usa el gateway de su transporte. Responde 404 si no hay
+  switch y 409 si el transporte no está soportado. Requiere la misma autorización que las acciones
+  del almacén y deja auditoría.
+- Un cambio físico manual llega por push y actualiza el panel sin sondeo.
+
+## Panel
+
+### `/panel`
+
+- Vista Habitaciones: alta/edición con código, tipo, notas; detalle con pack y acción “Asignar
+  pack” usando `apply-pack`.
+- Vista Packs: crear/editar `Pack Zigbee`, añadir dispositivos; el alta exige pack.
+- Dispositivos: selector de `transport`, insignia visible y estado de provisión.
+- `almacenZigbee` se muestra como “Almacén Zigbee · piloto”, con aviso de que no sustituye al
+  almacén actual.
+- Accesibilidad: botones semánticos, diálogo con `role="dialog"`/`aria-modal`, foco atrapado,
+  Escape, `aria-live` para asociación/errores y acciones visibles en táctil.
+
+### `/almacen`
+
+- Selector de sala con etiqueta de transporte; `almacenZigbee` claramente separado.
+- Croquis: presencia confirmada, candidata y sin datos con texto y color; puerta con frescura.
+- Luz: estado confirmado, orden pendiente y error; control manual `ON`/`OFF`.
+- Evidencia plegable: transporte, topic, último evento aplicado/descartado y motivo.
+- Buffer: pendientes, cuarentena, antigüedad y última entrega.
+- Sin botón de refresco Tuya para dispositivos Zigbee.
+- SSE sigue siendo la vía principal; sin polling web adicional.
+
+## Seguridad y operación
+
+- Broker/UI en loopback o red de confianza, autenticación y ACL antes de exponer.
+- Credenciales fuera de Git, de `argv` y de logs.
+- `POST /almacen-api/motion` restringido a loopback, worker autenticado o proxy de confianza.
+- Replay del spool con confirmación y auditoría.
+- Backups de Zigbee2MQTT y spool fuera de Git, permisos restrictivos.
+- El relé lo instala un electricista autorizado; el software no altera las medidas eléctricas.
+
+## Despliegue gradual y rollback
+
+1. Especificación y provisión seca (`--dry-run`).
+2. Migración de esquema y `provision --apply`; verificar topología aislada.
+3. Ingesta y spool en modo observación; sin efectos de dominio.
+4. Puerta Zigbee con aceptación de 10 ciclos.
+5. Presencia en `radar_door` y luego `radar_only_shadow`; comparar con la referencia.
+6. Promoción a `radar_only` solo si se cumple cero efectos falsos.
+7. Luz operativa con aceptación y confirmación.
+8. Rollback por dispositivo: desactivar su mapping/gateway, restaurar la fuente anterior y
+   conservar auditoría, spool y topología.
+
+## Riesgos y mitigaciones
+
+- **Radar con falsos positivos persistentes**: el modo candidato no produce efectos; se conserva
+  `radar_door`/`camera_fusion`.
+- **Pérdida entre broker y spool**: ACK posterior a `fsync` reduce la ventana; no se promete
+  exactly-once.
+- **Spool lleno o corrupto**: backpressure, cuarentena y métricas; nunca descarte silencioso.
+- **Inversión de `contact`**: prueba obligatoria de semántica antes de activar.
+- **Dos fuentes para la misma sala**: una sola fuente activa por dispositivo; Zigbee y Tuya no
+  escriben el mismo sensor.
+- **Relé sin confirmación**: estado `unconfirmed` visible, sin reintentos infinitos.
+- **Ocupación de 24 h**: sin cierres por tiempo; solo `ABSENT` explícito o evidencia de salida.
+- **Regresión Tuya**: guardias estáticas y de runtime contra clientes, pollers y temporizadores.
 
 # Fase 90: Diseño e implementación Zigbee local — software, banco y dispositivos
 
