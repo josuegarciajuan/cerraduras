@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "devices": {
+    "zigbee2mqtt/almacen-zb-puerta": {
+      "external_id": "0xc09b9efffef431fb",
+      "entities": {
+        "contact": {
+          "sensor": "PROXIMITY",
+          "values": {
+            "true": "OPEN",
+            "false": "CLOSED"
+          }
+        }
+      }
+    },
+    "zigbee2mqtt/almacen-zb-presencia": {
+      "external_id": "0xa4c138b2a3c49dbe",
+      "entities": {
+        "presence": {
+          "sensor": "PRESENCE",
+          "values": {
+            "true": "PRESENT",
+            "false": "ABSENT"
+          }
+        }
+      }
+    },
+    "zigbee2mqtt/almacen-zb-luz": {
+      "external_id": "0xf044d3fffecd9e8e",
+      "entities": {
+        "state": {
+          "sensor": "SWITCH",
+          "values": {
+            "ON": "ON",
+            "OFF": "OFF"
+          }
+        }
+      }
+    }
+  }
+}

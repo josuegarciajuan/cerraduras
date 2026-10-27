@@ -94,13 +94,13 @@ consulta de topología.
 
 **Trazabilidad**: RF-145.2..RF-145.9, RF-146.3..RF-146.7
 
-- [ ] Implementar `api/bin/zigbee-spool-worker.php` con orden, reintento, cuarentena, métricas y
+- [x] Implementar `api/bin/zigbee-spool-worker.php` con orden, reintento, cuarentena, métricas y
   replay manual auditado.
-- [ ] Implementar mapa v2: `contact`, `presence` y `state` con sensores `PROXIMITY`, `PRESENCE` y
+- [x] Implementar mapa v2: `contact`, `presence` y `state` con sensores `PROXIMITY`, `PRESENCE` y
   `SWITCH`; rechazar topics `*-oficina` en producción.
-- [ ] Marcar `bootstrap` sin transición; ignorar `availability` como ausencia.
-- [ ] Entregar puerta/presencia a `IotSessionService` y luz al manejador de switch.
-- [ ] Tests de mapping, inversión de contacto, duplicados, eventos parciales, bootstrap,
+- [x] Marcar `bootstrap` sin transición; ignorar `availability` como ausencia.
+- [x] Entregar puerta/presencia a `IotSessionService` y luz al manejador de switch.
+- [x] Tests de mapping, inversión de contacto, duplicados, eventos parciales, bootstrap,
   cuarentena y replay sin doble efecto.
 
 **Verificación**: tests unitarios/integración y dry-run con payloads reales del banco.
@@ -203,7 +203,7 @@ consulta de topología.
 - [x] TSK-91.03 panel de alta
 - [x] TSK-91.04 provisión
 - [x] TSK-91.05 ingreso MQTT
-- [ ] TSK-91.06 consumidor y mapa v2
+- [x] TSK-91.06 consumidor y mapa v2
 - [ ] TSK-91.07 presencia por radar
 - [ ] TSK-91.08 luz operativa
 - [ ] TSK-91.09 panel del almacén

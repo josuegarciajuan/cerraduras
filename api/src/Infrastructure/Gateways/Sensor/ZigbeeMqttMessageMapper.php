@@ -19,8 +19,10 @@ use JsonException;
 final class ZigbeeMqttMessageMapper
 {
     public const MAX_PAYLOAD_BYTES = 65536;
-    private const ENTITIES = ['contact', 'occupancy', 'state'];
+    private const ENTITIES = ['contact', 'occupancy', 'presence', 'state'];
     private const PROVIDER = PresenceEvent::PROVIDER_ZIGBEE2MQTT;
+
+    private int $version;
 
     /** @var array<string,array{external_id:string,entities:array<string,array{sensor:string,values:array<string,string>}>}> */
     private array $devices;
@@ -30,6 +32,11 @@ final class ZigbeeMqttMessageMapper
         if (!$this->isValidTopic($topicPrefix)) {
             throw new InvalidArgumentException('Invalid MQTT topic prefix');
         }
+        $version = $config['version'] ?? 1;
+        if (!is_int($version) || !in_array($version, [1, 2], true)) {
+            throw new InvalidArgumentException('Unsupported device map version');
+        }
+        $this->version = $version;
         if (!isset($config['devices']) || !is_array($config['devices']) || $config['devices'] === []) {
             throw new InvalidArgumentException('Device map must contain at least one device');
         }
@@ -51,6 +58,10 @@ final class ZigbeeMqttMessageMapper
                 throw new InvalidArgumentException('Device mapping requires external_id and entities');
             }
 
+            if ($this->version === 2 && str_ends_with(strtolower($topic), '-oficina')) {
+                throw new InvalidArgumentException('Production map cannot use *-oficina topics');
+            }
+
             $normalizedEntities = [];
             foreach ($entities as $entity => $mapping) {
                 if (!is_string($entity) || !in_array($entity, self::ENTITIES, true)
@@ -61,10 +72,20 @@ final class ZigbeeMqttMessageMapper
 
                 $sensor = $mapping['sensor'] ?? null;
                 $values = $mapping['values'] ?? null;
-                $allowedValues = $sensor === 'PROXIMITY' ? ['OPEN', 'CLOSED']
-                    : ($sensor === 'PRESENCE' ? ['PRESENT', 'ABSENT'] : []);
+                $allowedValues = self::allowedValuesForSensor($sensor);
                 if ($allowedValues === [] || !is_array($values) || $values === []) {
                     throw new InvalidArgumentException('Invalid canonical sensor mapping');
+                }
+                if ($this->version === 2) {
+                    $expectedSensor = match ($entity) {
+                        'contact' => 'PROXIMITY',
+                        'occupancy', 'presence' => 'PRESENCE',
+                        'state' => 'SWITCH',
+                        default => null,
+                    };
+                    if ($sensor !== $expectedSensor) {
+                        throw new InvalidArgumentException('Entity/sensor mismatch in v2 map');
+                    }
                 }
 
                 $normalizedValues = [];
@@ -102,7 +123,7 @@ final class ZigbeeMqttMessageMapper
      *   discard_reason:string|null
      * }
      */
-    public function mapMessage(string $topic, string $payload, ?DateTimeInterface $receivedAt = null): array
+    public function mapMessage(string $topic, string $payload, ?DateTimeInterface $receivedAt = null, bool $bootstrap = false): array
     {
         $empty = ['events' => [], 'diagnostic' => null, 'discard_reason' => null];
         if (strlen($payload) > self::MAX_PAYLOAD_BYTES) {
@@ -144,6 +165,7 @@ final class ZigbeeMqttMessageMapper
             : DateTimeImmutable::createFromInterface($receivedAt)->setTimezone(new DateTimeZone('UTC'));
         $occurredAt = $receivedAt->format('Y-m-d\TH:i:s.v\Z');
         $receivedSecond = $receivedAt->format('Y-m-d\TH:i:s\Z');
+        $identityTime = $this->version === 2 ? $occurredAt : $receivedSecond;
 
         $events = [];
         $unmappedValue = false;
@@ -170,12 +192,13 @@ final class ZigbeeMqttMessageMapper
                 'value' => $canonicalValue,
                 'provider' => self::PROVIDER,
                 'occurred_at' => $occurredAt,
-                'source_event_id' => 'z2m-' . hash('sha256', $topic . "\0" . $payload . "\0" . $entity . "\0" . $receivedSecond),
+                'source_event_id' => 'z2m-' . hash('sha256', $topic . "\0" . $payload . "\0" . $entity . "\0" . $identityTime),
                 'meta' => [
                     'source' => 'zigbee2mqtt',
                     'topic' => $baseTopic,
                     'entity' => $entity,
                     'zigbee_value' => $rawValue,
+                    'bootstrap' => $bootstrap,
                 ],
             ];
         }
@@ -186,6 +209,17 @@ final class ZigbeeMqttMessageMapper
         }
         $empty['events'] = $events;
         return $empty;
+    }
+
+    /** @return list<string> */
+    private static function allowedValuesForSensor(mixed $sensor): array
+    {
+        return match ($sensor) {
+            'PROXIMITY' => ['OPEN', 'CLOSED'],
+            'PRESENCE' => ['PRESENT', 'ABSENT'],
+            'SWITCH' => ['ON', 'OFF'],
+            default => [],
+        };
     }
 
     private function isValidTopic(string $topic): bool
