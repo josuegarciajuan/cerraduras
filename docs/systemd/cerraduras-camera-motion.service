@@ -9,6 +9,8 @@ Type=simple
 WorkingDirectory=/root/cerraduras/api
 Environment=CAMERA_MOTION_API=http://127.0.0.1:8080
 Environment=CAMERA_MOTION_RTSP_BASE=rtsp://127.0.0.1:8554
+# Sala cuyas cámaras RTSP se vigilan: almacenZigbee (rooms.id=14).
+Environment=CAMERA_MOTION_ROOM_ID=14
 Environment=CAMERA_MOTION_FPS=3
 Environment=CAMERA_MOTION_SCALE=160:120
 Environment=CAMERA_MOTION_THRESHOLD=25

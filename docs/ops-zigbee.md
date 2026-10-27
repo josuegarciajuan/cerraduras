@@ -58,6 +58,20 @@ Renombrar (sin re-emparejar) a:
 
 El mapa `api/config/zigbee2mqtt-devices.json` ya usa esos topics.
 
+## Cámaras RTSP del piloto
+
+Las dos cámaras de `almacenZigbee` (room `14`) son **RTSP**, no dispositivos
+Zigbee: siguen con `kind=CAMERA` y `transport` sin declarar, y solo se asociaron
+a `PACK_ZIGBEE` para que la sala las resuelva por pack (F30).
+
+- `cerraduras-cameras-live.service` sirve MJPEG con `CAMERAS_LIVE_ROOM_ID=14`.
+- `cerraduras-camera-motion.service` vigila la cámara INTERIOR con
+  `CAMERA_MOTION_ROOM_ID=14`.
+- go2rtc registra `almacen_14_EXTERIOR` y `almacen_14_INTERIOR`; los antiguos
+  `almacen_12_*` de PROTO2 se retiraron al mover las cámaras.
+- La grabación se controla por cámara (`meta_json.record_enabled`) y el recorder
+  escribe en `data/cameras/14/`.
+
 ## Modo de presencia
 
 `almacenZigbee` usa `mixed`:

@@ -10,6 +10,9 @@ WorkingDirectory=/root/cerraduras/api
 # Escucha SOLO en loopback; se expone al navegador por Apache (/almacen-live).
 Environment=CAMERAS_LIVE_HOST=127.0.0.1
 Environment=CAMERAS_LIVE_PORT=8086
+# Sala servida por MJPEG: almacenZigbee (rooms.id=14). Sus cámaras son RTSP,
+# no dispositivos Zigbee; solo comparten el pack de la sala.
+Environment=CAMERAS_LIVE_ROOM_ID=14
 Environment=CAMERAS_LIVE_FPS=5
 Environment=CAMERAS_LIVE_SCALE=640:-2
 Environment=CAMERAS_LIVE_QUALITY=6
