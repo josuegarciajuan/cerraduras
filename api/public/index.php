@@ -959,9 +959,12 @@ $router->get(
     function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
         $pdo = $pdoProvider();
         $rows = $pdo->query(
-            "SELECT r.id, r.code, r.status, r.pack_id, dp.name AS pack_name
+            "SELECT r.id, r.code, r.status, r.pack_id, r.room_type_id,
+                    rt.code AS room_type_code, rt.name AS room_type_name,
+                    dp.name AS pack_name
              FROM rooms r
              LEFT JOIN device_packs dp ON dp.id = r.pack_id
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
              ORDER BY r.code ASC"
         )->fetchAll(\PDO::FETCH_ASSOC);
 

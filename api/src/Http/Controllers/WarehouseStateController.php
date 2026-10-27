@@ -40,7 +40,8 @@ final class WarehouseStateController
         $room = null;
         if ($roomId > 0) {
             $stmt = $this->pdo->prepare(
-                "SELECT r.id, r.code, r.room_type_id FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+                "SELECT r.id, r.code, r.room_type_id, r.presence_mode_override, rt.presence_mode
+                 FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
                  WHERE r.id = :id AND rt.code = 'ALMACEN_BEBIDAS' LIMIT 1"
             );
             $stmt->execute([':id' => $roomId]);
@@ -48,7 +49,8 @@ final class WarehouseStateController
         }
         if ($room === null) {
             $room = $this->pdo->query(
-                "SELECT r.id, r.code, r.room_type_id FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+                "SELECT r.id, r.code, r.room_type_id, r.presence_mode_override, rt.presence_mode
+                 FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
                  WHERE rt.code = 'ALMACEN_BEBIDAS' ORDER BY r.id ASC LIMIT 1"
             )->fetch(PDO::FETCH_ASSOC) ?: null;
         }
@@ -239,6 +241,41 @@ final class WarehouseStateController
                 }
             }
         }
+        $live['switch'] = [
+            'state' => $live['switch_state'],
+            'state_at' => $swMeta['switch_state_at'] ?? null,
+            'transport' => $live['switch_transport'],
+            'confirmed' => in_array($live['switch_state'], ['ON', 'OFF'], true),
+            'pending_command' => $live['switch_pending'],
+            'unconfirmed' => $live['switch_unconfirmed'],
+        ];
+
+        // F91/RF-149.2: transportes por sensor (sin sondas) para distinguir Zigbee.
+        $trStmt = $this->pdo->prepare(
+            "SELECT d.kind, d.transport FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+             WHERE r.id = :rid AND d.kind IN ('PROXIMITY','PRESENCE','SWITCH')"
+        );
+        $trStmt->execute([':rid' => $roomId]);
+        $transports = [];
+        foreach ($trStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $t) {
+            $transports[(string) $t['kind']] = $t['transport'] !== null ? (string) $t['transport'] : 'UNKNOWN';
+        }
+        $live['transports'] = $transports;
+        $live['is_zigbee'] = in_array('ZIGBEE2MQTT', $transports, true);
+        $live['presence_mode'] = $room['presence_mode_override'] ?? $room['presence_mode'] ?? 'camera_fusion';
+
+        // F91/RF-149.2: última decisión del radar Zigbee (incluye candidatos y
+        // descartes) tal como quedó auditada en presence_events.meta_json.
+        $pdStmt = $this->pdo->prepare(
+            "SELECT meta_json FROM presence_events
+             WHERE room_id = :r AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+             ORDER BY id DESC LIMIT 1"
+        );
+        $pdStmt->execute([':r' => $roomId]);
+        $pdMeta = json_decode((string) ($pdStmt->fetchColumn() ?: ''), true) ?: [];
+        $live['presence_decision'] = is_array($pdMeta['radar_decision'] ?? null)
+            ? $pdMeta['radar_decision']
+            : null;
 
         // F80/RF-103.3: últimos eventos de presencia aplicados (auditoría F41/F44
         // marca `applied=1`). Alimenta las fases del monigote en el croquis.
@@ -276,7 +313,12 @@ final class WarehouseStateController
         $live['presence_known'] = $presenceKnown;
 
         return [
-            'room' => ['id' => $roomId, 'code' => (string) $room['code'], 'room_type_id' => (int) $room['room_type_id']],
+            'room' => [
+                'id' => $roomId,
+                'code' => (string) $room['code'],
+                'room_type_id' => (int) $room['room_type_id'],
+                'presence_mode' => $live['presence_mode'],
+            ],
             'warehouse' => [
                 'state' => (string) $wsRow['state'],
                 'occupied' => $occupied,
@@ -287,6 +329,7 @@ final class WarehouseStateController
             'cameras' => $cams,
             'recordings_active' => $activeRecs,
             'retention' => $this->retentionInfo(),
+            'buffer' => $this->bufferStatus(),
             'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ];
     }
@@ -296,6 +339,31 @@ final class WarehouseStateController
      * Se construye desde `CAMERAS_LIVE_BASE_URL` (p. ej.
      * `https://cerraduras.josue.ink/almacen-live`); null si no está configurada.
      */
+    /**
+     * F91/RF-149.4: salud del spool de ingreso Zigbee (solo lectura local).
+     * @return array<string,mixed>|null
+     */
+    private function bufferStatus(): ?array
+    {
+        $file = dirname(__DIR__, 3) . '/run/zigbee-spool-status.json';
+        if (!is_file($file)) {
+            return null;
+        }
+        $raw = @file_get_contents($file);
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($data)) {
+            return null;
+        }
+        return [
+            'pending' => (int) ($data['counts']['incoming'] ?? 0)
+                + (int) ($data['counts']['processing'] ?? 0),
+            'quarantined' => (int) ($data['counts']['quarantine'] ?? 0),
+            'processed' => (int) ($data['counts']['processed'] ?? 0),
+            'last_processed_at' => $data['last_processed_at'] ?? null,
+            'updated_at' => $data['updated_at'] ?? null,
+        ];
+    }
+
     private function mjpegUrl(int $deviceId): ?string
     {
         $base = trim((string) (\App\Support\Config::get('CAMERAS_LIVE_BASE_URL', '') ?? ''));

@@ -135,14 +135,14 @@ consulta de topología.
 
 **Trazabilidad**: RF-149.1..RF-149.7
 
-- [ ] Distinguir la sala piloto del almacén actual en el selector y la cabecera.
-- [ ] Mostrar presencia confirmada/candidata/stale, puerta, luz y frescura con texto y color.
-- [ ] Mostrar evidencia, motivo de descarte y salud del buffer.
-- [ ] Añadir control manual de luz con estado confirmado/pendiente/error.
-- [ ] Ocultar acciones de refresco Tuya para dispositivos Zigbee.
-- [ ] Mantener SSE y accesibilidad; sin polling web nuevo.
+- [x] Distinguir la sala piloto del almacén actual en el selector y la cabecera.
+- [x] Mostrar presencia confirmada/candidata/stale, puerta, luz y frescura con texto y color.
+- [x] Mostrar evidencia, motivo de descarte y salud del buffer.
+- [x] Añadir control manual de luz con estado confirmado/pendiente/error.
+- [x] Ocultar acciones de refresco Tuya para dispositivos Zigbee.
+- [x] Mantener SSE y accesibilidad; sin polling web nuevo.
 
-**Verificación**: prueba manual y tests de lógica de presentación.
+**Verificación**: tests de lógica de presentación, contrato estático y endpoint real; revisión visual en navegador pendiente.
 
 ## TSK-91.10: Endurecimiento del canal local
 
@@ -206,7 +206,7 @@ consulta de topología.
 - [x] TSK-91.06 consumidor y mapa v2
 - [x] TSK-91.07 presencia por radar
 - [x] TSK-91.08 luz operativa
-- [ ] TSK-91.09 panel del almacén
+- [x] TSK-91.09 panel del almacén
 - [ ] TSK-91.10 endurecimiento
 - [ ] TSK-91.11 pruebas y regresión
 - [ ] TSK-91.12 aceptación física
