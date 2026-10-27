@@ -90,6 +90,23 @@ const presenceOnly = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 
 check('presence PRESENT sin visita → personInside=true', presenceOnly.personInside === true);
 check('presence PRESENT → chip PRESENCIA warn', presenceOnly.chips.presence.text === 'PRESENCIA' && presenceOnly.chips.presence.mod === 'warn');
 
+// F91/RF-149.3: distinguir presencia confirmada, candidata y ausente.
+const candidate = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'ABSENT',
+  presence_decision: { state: 'CANDIDATE_PRESENT', discard_reason: 'uncorroborated' },
+}, false), BASE);
+check('F91 candidato → chip PRESENCIA NO CONFIRMADA warn',
+  candidate.chips.presence.text === 'PRESENCIA NO CONFIRMADA' && candidate.chips.presence.mod === 'warn');
+check('F91 candidato no pinta persona dentro', candidate.personInside === false);
+const confirmed = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'PRESENT',
+  presence_decision: { state: 'PRESENT_CONFIRMED' },
+}, false), BASE);
+check('F91 confirmado → chip PRESENCIA CONFIRMADA',
+  confirmed.chips.presence.text === 'PRESENCIA CONFIRMADA' && confirmed.chips.presence.mod === 'warn');
+
 // ─── 7. Vacío ──────────────────────────────────────────────────────────
 const empty = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'ABSENT' }, false), BASE);
 check('vacío → personInside=false', empty.personInside === false);

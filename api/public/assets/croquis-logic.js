@@ -129,6 +129,9 @@
     // un PRESENT viejo NO acredita presencia. La visita del motor no se cierra,
     // pero el panel no debe afirmar "dentro".
     var presenceStale = live.presence_stale === true;
+    var presenceDecision = live.presence_decision || null;
+    var presenceDecisionState = presenceDecision && presenceDecision.state
+      ? String(presenceDecision.state) : '';
 
     // F83/RF-106.1/106.2: el radar manda. ABSENT gana sobre la visita enlazada
     // y sobre cualquier PRESENT anterior; UNKNOWN (el radar no ha reportado) no
@@ -171,9 +174,15 @@
     if (presenceStale) {
       // F87/RF-116.2: el último PRESENT es viejo; no es prueba de nadie dentro.
       presenceChip = chip('PRESENCIA SIN DATOS', 'warn');
-    } else if (presence === 'PRESENT') {
-      presenceChip = chip('PRESENCIA', 'warn');
-    } else if (presence === 'ABSENT') {
+    } else if (presenceDecisionState === 'CANDIDATE_PRESENT') {
+      // F91/RF-149.3: radar con evidencia insuficiente. No es ocupación.
+      presenceChip = chip('PRESENCIA NO CONFIRMADA', 'warn');
+    } else if (presenceDecisionState === 'PRESENT_CONFIRMED' || presence === 'PRESENT') {
+      presenceChip = chip(presenceDecisionState === 'PRESENT_CONFIRMED'
+        ? 'PRESENCIA CONFIRMADA' : 'PRESENCIA', 'warn');
+    } else if (presenceDecisionState === 'CANDIDATE_ABSENT') {
+      presenceChip = chip('AUSENCIA NO CONFIRMADA', 'dim');
+    } else if (presence === 'ABSENT' || presenceDecisionState === 'ABSENT_CONFIRMED') {
       presenceChip = chip('VACÍO', 'dim');
     } else {
       presenceChip = chip('SIN DATOS', 'dim');
@@ -194,6 +203,7 @@
       : door === 'CLOSED' ? 'Puerta cerrada'
       : 'Puerta sin datos';
     var presenceText = presenceStale ? 'Presencia sin datos'
+      : presenceDecisionState === 'CANDIDATE_PRESENT' ? 'Presencia no confirmada (sin evidencia suficiente)'
       : personInside ? 'Persona dentro' : 'Almacén vacío';
     var desc = doorText + '. ' + presenceText
       + '. Luz ' + (light === 'ON' ? 'encendida' : light === 'OFF' ? 'apagada' : 'sin datos') + '.';

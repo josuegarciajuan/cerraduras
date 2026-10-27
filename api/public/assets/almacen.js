@@ -35,6 +35,11 @@
     });
   }
 
+  // F91/RF-149: el piloto Zigbee no admite refresco Tuya ni usa esa ruta.
+  function isZigbeeRoom() {
+    return !!(state && state.live && state.live.is_zigbee === true);
+  }
+
   // ---- render -------------------------------------------------------------
   function renderHeader() {
     var wh = state && state.warehouse;
@@ -44,9 +49,15 @@
       badge.className = 'badge off';
       badge.textContent = 'sin configurar';
       $('wh-visit').textContent = '';
+      var pilot0 = $('wh-pilot'); if (pilot0) { pilot0.hidden = true; }
       return;
     }
-    $('wh-name').textContent = 'Almacén ' + state.room.code;
+    var sel = $('wh-room-select');
+    if (sel && ROOM_ID) { sel.value = String(ROOM_ID); }
+    var pilot = $('wh-pilot');
+    var zigbee = isZigbeeRoom();
+    if (pilot) { pilot.hidden = !zigbee; }
+    $('wh-name').textContent = (zigbee ? 'Almacén Zigbee: ' : 'Almacén ') + state.room.code;
     // F83/RF-106: el badge refleja el estado real del almacén; la salida en
     // curso (EXIT_PENDING / visita ya cerrada) es "SALIENDO", no "LIBRE".
     if (wh && wh.occupied) {
@@ -73,6 +84,101 @@
     $('wh-retention').textContent = ret.auto
       ? ('retención ' + ret.days + ' d' + (ret.disk_used_pct != null ? ' · disco ' + ret.disk_used_pct + '%' : ''))
       : 'retención: sin borrado';
+
+    var refresh = $('btn-refresh');
+    if (refresh) {
+      refresh.hidden = zigbee;
+      refresh.title = zigbee
+        ? 'No aplica: los sensores Zigbee llegan por push, sin consultas Tuya'
+        : 'Relee el estado real de los sensores (1 consulta puntual a Tuya)';
+    }
+    renderEvidence();
+    renderBuffer();
+    renderLightControls();
+  }
+
+  // F91/RF-149.2: evidencia y motivo de la última decisión del radar.
+  function renderEvidence() {
+    var el = $('croquis-evidence');
+    if (!el) { return; }
+    if (!state || !isZigbeeRoom()) { el.textContent = ''; return; }
+    var live = state.live || {};
+    var pd = live.presence_decision || null;
+    var mode = live.presence_mode || '—';
+    if (!pd) {
+      el.textContent = 'Modo ' + mode + ' · sin decisión de radar todavía';
+      return;
+    }
+    var bits = [
+      'Modo ' + mode,
+      String(pd.state || '—'),
+      (pd.reports != null ? pd.reports + ' reportes' : null),
+      (pd.span_seconds != null ? pd.span_seconds + ' s' : null),
+      (pd.door_corroborated ? 'puerta reciente' : null),
+      (pd.discard_reason ? 'motivo: ' + pd.discard_reason : null)
+    ].filter(Boolean);
+    el.innerHTML = bits.map(function (b, i) {
+      return i === 0 ? b : '<b>' + esc(b) + '</b>';
+    }).join(' · ');
+    if (pd.state === 'CANDIDATE_PRESENT' || pd.discard_reason) {
+      el.innerHTML += ' <span class="warn">(sin efectos)</span>';
+    }
+  }
+
+  // F91/RF-149.4: salud del spool de ingreso Zigbee (solo datos locales).
+  function renderBuffer() {
+    var el = $('croquis-buffer');
+    if (!el) { return; }
+    if (!state || !isZigbeeRoom()) { el.textContent = ''; return; }
+    var b = state.buffer;
+    if (!b) {
+      el.textContent = 'buffer Zigbee: worker sin estado';
+      return;
+    }
+    el.textContent = 'buffer Zigbee: ' + (b.pending || 0) + ' pendientes'
+      + ' · ' + (b.quarantined || 0) + ' en cuarentena'
+      + (b.last_processed_at ? ' · última entrega ' + fmtClock(b.last_processed_at) : '');
+  }
+
+  // F91/RF-149.5: control manual de la luz Zigbee con estado confirmado/pendiente.
+  function renderLightControls() {
+    var box = $('croquis-light-controls');
+    var out = $('croquis-light-result');
+    var btnOn = $('btn-light-on');
+    var btnOff = $('btn-light-off');
+    if (!box || !out) { return; }
+    var show = !!(state && isZigbeeRoom() && state.live
+      && state.live.switch_transport === 'ZIGBEE2MQTT');
+    box.hidden = !show;
+    if (!show) { return; }
+    var sw = (state.live && state.live.switch) || {};
+    var st = sw.state || state.live.switch_state || 'UNKNOWN';
+    out.className = 'result';
+    if (sw.unconfirmed) {
+      out.textContent = 'sin confirmar (' + (state.live.switch_pending_age_seconds || '?') + ' s)';
+      out.className = 'result bad';
+    } else if (sw.pending_command) {
+      out.textContent = 'pendiente ' + sw.pending_command;
+      out.className = 'result pending';
+    } else if (st === 'ON' || st === 'OFF') {
+      out.textContent = 'confirmada ' + st;
+    } else {
+      out.textContent = 'sin datos';
+    }
+    if (btnOn) { btnOn.disabled = (st === 'ON'); }
+    if (btnOff) { btnOff.disabled = (st === 'OFF'); }
+  }
+
+  function setLight(target) {
+    if (!state || !state.room) { return; }
+    if (!isZigbeeRoom()) { toast('Luz: solo disponible para Zigbee'); return; }
+    api('/almacen-api/switch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room_id: state.room.id, state: target })
+    }).then(function (j) {
+      toast(j.confirmed ? ('Luz ' + target + ' confirmada') : ('Orden ' + target + ' enviada; esperando confirmación'));
+      pollState();
+    }).catch(function (e) { toast('Luz: ' + e.message); });
   }
 
   function renderCameras() {
@@ -713,6 +819,7 @@
   }
 
   // ---- data flow ----------------------------------------------------------
+  var firstRefreshRequested = false;
   function applyState(s) {
     var first = state === null;
     state = s;
@@ -725,6 +832,10 @@
     if (state && state.room) {
       loadAccess(false);
       if (first) { loadVisits(); }
+      if (first && !isZigbeeRoom() && !firstRefreshRequested) {
+        firstRefreshRequested = true;
+        refreshSensors(true);
+      }
     }
     maybeRecoverDoor();
   }
@@ -738,6 +849,10 @@
   // F75/RF-88: relectura puntual de sensores (UNA llamada Tuya con cooldown en
   // servidor). No es periódica: se invoca al abrir el panel y con el botón.
   function refreshSensors(silent) {
+    if (isZigbeeRoom()) {
+      if (!silent) { toast('Zigbee: no se consulta Tuya'); }
+      return Promise.resolve({ reason: 'zigbee_no_tuya' });
+    }
     return api('/almacen-api/sensors/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -758,6 +873,7 @@
   // cuando la puerta deja de estar stale (llega un evento o la sonda la resuelve).
   var doorStaleProbed = false;
   function maybeRecoverDoor() {
+    if (isZigbeeRoom()) { return; }
     var stale = !!(state && state.live && state.live.door_stale === true);
     if (!stale) { doorStaleProbed = false; return; }
     if (doorStaleProbed) { return; }
@@ -789,6 +905,48 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
+  // F91/RF-149.1: selector de almacén (piloto vs. actual) sin rutas nuevas.
+  function loadRooms() {
+    return api('/dashboard-api/rooms').then(function (rows) {
+      var list = (rows || []).filter(function (r) { return r.room_type_code === 'ALMACEN_BEBIDAS'; });
+      if (!list.length && (rows || []).some(function (r) { return r.room_type_code === undefined; })) {
+        list = rows || [];
+      }
+      var sel = $('wh-room-select');
+      if (!sel) { return; }
+      if (!list.length) {
+        sel.innerHTML = '<option value="">Sin almacenes</option>';
+        return;
+      }
+      sel.innerHTML = list.map(function (r) {
+        var pilot = r.code === 'almacenZigbee' ? ' · Zigbee' : '';
+        return '<option value="' + r.id + '">' + esc(r.code) + pilot + '</option>';
+      }).join('');
+      if (!ROOM_ID) { ROOM_ID = parseInt(list[0].id, 10) || 0; }
+      if (ROOM_ID) { sel.value = String(ROOM_ID); }
+    }).catch(function () {
+      var sel = $('wh-room-select');
+      if (sel) { sel.innerHTML = '<option value="">Error de salas</option>'; }
+    });
+  }
+
+  function switchRoom(id) {
+    id = parseInt(id, 10) || 0;
+    if (!id || id === ROOM_ID) { return; }
+    ROOM_ID = id;
+    try { history.replaceState(null, '', '?room=' + id); } catch (e) {}
+    stopPlaybackIfAny();
+    if (sse) { try { sse.close(); } catch (e) {} sse = null; }
+    stopPolling();
+    state = null;
+    access = null;
+    selectedVisitId = null;
+    firstRefreshRequested = false;
+    doorStaleProbed = false;
+    pollState();
+    connectSSE();
+  }
+
   window.Almacen = {
     selectVisit: selectVisit, toggleRole: toggleRole, setWorker: setWorker,
     openDoor: openDoor, syncCameras: syncCameras, loadVisits: loadVisits,
@@ -796,7 +954,8 @@
     playVisit: playVisit, exitPlayback: exitPlayback, togglePlay: togglePlay,
     setSpeed: setSpeed, seekToMs: seekToMs,
     goLive: goLive, ensureCamerasLive: ensureCamerasLive,
-    refreshSensors: refreshSensors
+    refreshSensors: refreshSensors, setLight: setLight,
+    switchRoom: switchRoom, loadRooms: loadRooms
   };
 
   var range = $('play-range');
@@ -807,11 +966,11 @@
     });
   }
 
-  pollState();
-  connectSSE();
-  // F75/RF-88: UNA lectura de sensores al abrir el panel (cooldown en servidor).
-  refreshSensors(true);
-  setInterval(function () { if (state && state.room) { loadVisits(); } }, 15000);
+  // F91/RF-149.1: primero las salas, para que el selector y ROOM_ID coincidan.
+  loadRooms().then(function () {
+    pollState();
+    connectSSE();
+  });
   // F67/RF-77: el segundero de "tiempo dentro" avanza sin recargar; solo
   // reescribe el texto de #croquis-meta (fuera del aria-live). En reproducción
   // el reloj lo gobierna `tick()`.
