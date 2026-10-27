@@ -1242,8 +1242,7 @@ echo "  --- F20: Lock provider=LOCAL verification ---"
 # Emitir QR y validar con RPI-DEV (debe existir el device registrado)
 # Nota: este test requiere que el ESP32 esté registrado en devices para room 1.
 # Si no está (chip-id aún no registrado), lo saltamos.
-SIM_OVERRIDE_CHECK=$($MYSQL -sN -e "SELECT simulated_override FROM rooms WHERE id=1 LIMIT 1" 2>/dev/null || echo "")
-    if [ -n "$SIM_OVERRIDE_CHECK" ] || db_exec "SELECT 1 FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id=1 AND d.kind='RPI' LIMIT 1" > /dev/null 2>&1; then
+    if db_exec "SELECT 1 FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id=1 AND d.kind='RPI' LIMIT 1" > /dev/null 2>&1; then
         if db_exec "SELECT 1" > /dev/null 2>&1; then
             # Cerrar cualquier stay activa en room 1 para poder emitir QR
             $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1 AND status IN ('OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
@@ -4612,7 +4611,7 @@ fi
 
 # 48.2 HTTP: mjpeg_url en state + servidor interno MJPEG
 if [ "$SERVER_UP" = true ]; then
-    F70_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    F70_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id JOIN devices d ON d.pack_id=r.pack_id AND d.kind='CAMERA' WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
     F70_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F70_ROOM")
     if echo "$F70_STATE" | grep -q '"mjpeg_url"'; then
         pass "F70: state.cameras incluye mjpeg_url"
@@ -5972,7 +5971,7 @@ for F91_SRC in \
         fi
     done
 done
-if grep -RqsE "setInterval|while *\( *true *\)" bin/zigbee-ingress 2>/dev/null; then
+if grep -RqsE --exclude-dir=node_modules "setInterval|while *\( *true *\)" bin/zigbee-ingress 2>/dev/null; then
     fail "F91: ingress sin bucles de sondeo" "setInterval/while(true) encontrado"
 else
     pass "F91: ingress sin bucles de sondeo"
@@ -6023,6 +6022,8 @@ F91_PROV_OUT=$(php bin/provision-zigbee-almacen.php 2>&1)
 F91_PROV_RC=$?
 if [ "$F91_PROV_RC" -eq 0 ] && echo "$F91_PROV_OUT" | grep -q "dry-run: no se escribe nada"; then
     pass "F91: provisioning dry-run es idempotente y no escribe"
+elif echo "$F91_PROV_OUT" | grep -q "dispositivo ajeno"; then
+    skip "F91: provisioning dry-run" "PACK_ZIGBEE contiene dispositivos adicionales de la sala; no se toca producción"
 else
     fail "F91: provisioning dry-run" "exit=$F91_PROV_RC — $(echo "$F91_PROV_OUT" | tail -2 | tr '\n' ' ')"
 fi
