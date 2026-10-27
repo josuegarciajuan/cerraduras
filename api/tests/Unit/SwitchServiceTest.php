@@ -97,6 +97,7 @@ final class FakeDeviceRepoForSwitch implements DeviceRepositoryInterface
     public function markIdentified(string $externalId, bool $state): ?Device { return null; }
     public function findIdentified(): array { return []; }
     public function updateLastSeen(int $deviceId): void {}
+    public function updateOnlineState(int $deviceId, bool $online): void {}
     public function updateBattery(int $deviceId, ?int $pct): void {}
     public function resolveRoomId(int $deviceId): ?int { return null; }
     public function findByPackAndKind(int $packId, string $kind): array

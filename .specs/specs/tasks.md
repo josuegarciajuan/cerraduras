@@ -1,8 +1,101 @@
 # Tasks — Cerraduras Hotel
 
+> **F92 — Última revisión**: 2026-10-27 · **Estado**: en ejecución.
 > **F91 — Última revisión**: 2026-10-27 · **Estado**: TSK-91.00 completada; resto pendiente.
 > **F90 — Última revisión**: 2026-10-26 · **Estado**: banco de oficina y tres dispositivos
 > emparejados; caracterización funcional, integración y host definitivo pendientes.
+
+---
+
+# Fase 92: Estado de conectividad por transporte
+
+## TSK-92.00: Especificación de la liveness por transporte
+
+**Trazabilidad**: RF-152..RF-157
+
+- [x] Actualizar `requirements.md`, `design.md`, `contracts.md` y `tasks.md` con la decisión.
+- [x] Documentar la semántica de `tuya_cloud`, `state` y `online_probed_at`.
+- [x] Documentar el límite de availability en dispositivos de batería.
+
+**Verificación**: revisión de los cuatro documentos y coherencia entre ellos.
+
+## TSK-92.01: Política pura de liveness
+
+**Trazabilidad**: RF-152, RF-153, RF-154
+
+- [x] Crear `api/src/Domain/Devices/DeviceLivenessService.php` con categorías
+  `camera|zigbee|tuya|local|other` y resolución por transporte.
+- [x] Mantener compatibilidad legacy para `transport=NULL`.
+- [x] Exponer `source` y `reason` para el panel.
+- [x] Unit `DeviceLivenessServiceTest.php`.
+
+**Verificación**: unit sin red; casos Zigbee operational/degraded, cámara, Tuya y legacy.
+
+## TSK-92.02: Sonda de cámara
+
+**Trazabilidad**: RF-154
+
+- [x] Crear `api/src/Domain/Devices/CameraReachabilityProbe.php`.
+- [x] Parseo RTSP sin credenciales y sonda ffprobe/TCP con timeout.
+- [x] Persistir `online_state`/`online_probed_at` solo bajo demanda.
+- [x] Unit de parseo y fallback sin red.
+
+**Verificación**: unit; sonda manual con las cámaras de la sala 14.
+
+## TSK-92.03: Endpoints y rutas laterales
+
+**Trazabilidad**: RF-152, RF-155
+
+- [x] `device-status` usa la política nueva y añade `liveness_source`/`liveness_reason`.
+- [x] `ping-all-devices` añade `verify_cameras` y ramas Zigbee/CAMERA.
+- [x] `probeTuyaOnlineOnce` y `tuya-quota` respetan el transporte.
+- [x] Reset/apply-pack y `resolvePresenceDeviceForRoom` excluyen Zigbee.
+- [x] `tuya_cloud` se calcula por categoría.
+
+**Verificación**: HTTP contra sala 14; sin llamadas Tuya para Zigbee.
+
+## TSK-92.04: Availability Zigbee
+
+**Trazabilidad**: RF-153.3, RF-153.4
+
+- [x] Añadir `device_external_id` al diagnóstico de availability.
+- [x] Persistir availability en `online_state`/`online_probed_at`.
+- [x] No tocar el pipeline de presencia ni crear eventos de dominio.
+- [x] Tests de mapper/processor.
+
+**Verificación**: unit del mapper y del processor; sin broker real.
+
+## TSK-92.05: Panel `/dashboard`
+
+**Trazabilidad**: RF-156
+
+- [x] `devIsTuyaCloud` basado en `d.tuya_cloud`/transporte.
+- [x] Etiquetas Zigbee/Cámara y motivos de `unknown`.
+- [x] `verify_cameras` en autoPing y botón «Comprobar».
+- [x] Título del botón sin referencia exclusiva a Tuya.
+
+**Verificación**: revisión estática y manual en navegador.
+
+## TSK-92.06: Pruebas y regresión
+
+**Trazabilidad**: RF-157
+
+- [x] Actualizar BLOCK 30 para no asumir Tuya por `kind`.
+- [x] Añadir BLOCK F92 con sala 14 y guardias de cuota.
+- [x] Ejecutar `bash api/bin/run-tests.sh`.
+- [x] Verificación manual del pack `Pack Zigbee` en verde.
+
+**Verificación**: 0 failures y captura/JSON de sala 14.
+
+## Estado de ejecución (F92)
+
+- [x] TSK-92.00 especificación
+- [x] TSK-92.01 política
+- [x] TSK-92.02 cámara
+- [x] TSK-92.03 endpoints
+- [x] TSK-92.04 availability
+- [x] TSK-92.05 panel
+- [x] TSK-92.06 pruebas
 
 ---
 

@@ -34,6 +34,7 @@ final class FakeDeviceRepoForZigbeeSwitch implements DeviceRepositoryInterface
     public function markIdentified(string $externalId, bool $state): ?Device { return null; }
     public function findIdentified(): array { return []; }
     public function updateLastSeen(int $deviceId): void { $this->lastSeen++; }
+    public function updateOnlineState(int $deviceId, bool $online): void {}
     public function touchPackKind(int $packId, string $kind): int { return 0; }
     public function resolveRoomId(int $deviceId): ?int { return null; }
     public function updateBattery(int $deviceId, ?int $pct): void {}

@@ -187,6 +187,10 @@ function processPending(
 
             if ($mapped['diagnostic'] !== null) {
                 logLine('availability ' . json_encode($mapped['diagnostic']));
+                $availability = $processor->applyAvailability($mapped);
+                if (($availability['status'] ?? '') !== 'processed') {
+                    logLine("availability discarded: " . (string) ($availability['reason'] ?? 'unknown'));
+                }
             }
             if ($mapped['events'] === []) {
                 $counters['discarded']++;

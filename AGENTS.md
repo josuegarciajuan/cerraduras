@@ -171,6 +171,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F87 Veracidad de presencia y limpieza de grabaciones** | **BLOCK 60** | **Completado** |
 | **F88 Presencia robusta por fusión de sensores** | **BLOCK 61** | **Completado** |
 | **F89 Firmware productivo base nueva R35D-B** | **Unit `R35dProductionSketchTest`** | **Completado (compilación); prueba física pendiente** |
+| **F92 Estado de conectividad por transporte (Zigbee/cámaras)** | **BLOCK 65 + units F92** | **Completado** |
 
 ### F89 — Firmware productivo para la base nueva R35D-B (RF-127…RF-131)
 

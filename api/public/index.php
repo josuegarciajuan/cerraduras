@@ -16,7 +16,9 @@ use App\Domain\Crm\CrmUserRepository;
 use App\Domain\Crm\CrmUserService;
 use App\Domain\Devices\ApplyPackService;
 use App\Domain\Devices\DevicePackRepository;
+use App\Domain\Devices\CameraReachabilityProbe;
 use App\Domain\Devices\DeviceIntegrationStatusService;
+use App\Domain\Devices\DeviceLivenessService;
 use App\Domain\Devices\DeviceRepository;
 use App\Domain\Devices\DeviceService;
 use App\Domain\Devices\SwitchService;
@@ -726,33 +728,63 @@ function tuyaPresenceApi(string $method, string $path, ?string $body, bool $igno
 const DEVICE_KIND_ESP32 = ['RPI', 'SCANNER', 'LOCK'];
 /** @var list<string> Dispositivos Tuya cloud (cuota → sondear solo bajo demanda). */
 const DEVICE_KIND_TUYA  = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
-/** Cuántos segundos conserva una sonda Tuya real antes de considerarse "sin verificar". */
+/** Cuántos segundos conserva una verificación de conectividad antes de caducar. */
 const TUYA_PROBE_TTL_SECONDS = 600;
 
+/** Política pura de liveness (F92/RF-152..RF-155). */
+function deviceLivenessService(): DeviceLivenessService {
+    static $service = null;
+    return $service ??= new DeviceLivenessService();
+}
+
+function deviceCategory(array $dev): string {
+    return deviceLivenessService()->category($dev);
+}
+
 function deviceIsEsp32(array $dev): bool {
-    return in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_ESP32, true);
+    return deviceCategory($dev) === DeviceLivenessService::CATEGORY_LOCAL
+        && in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_ESP32, true);
 }
 
 function deviceIsTuyaCloud(array $dev): bool {
-    return in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_TUYA, true);
+    return deviceLivenessService()->isTuyaCloud($dev);
+}
+
+/** Persiste el resultado de una verificación de conectividad (Tuya, Zigbee availability o cámara). */
+function persistDeviceOnlineProbe(\PDO $pdo, int $deviceId, ?bool $online): void {
+    if ($online === null) {
+        return;
+    }
+    $stmt = $pdo->prepare(
+        'UPDATE devices SET online_state = :st, online_probed_at = UTC_TIMESTAMP(3) WHERE id = :did'
+    );
+    $stmt->execute([':st' => $online ? 1 : 0, ':did' => $deviceId]);
 }
 
 /**
  * Sonda real de conectividad de un dispositivo Tuya cloud (GET /devices/{id}).
  * Devuelve true/false si la API respondió con un result.online válido, o null
  * si Tuya no pudo confirmar (error HTTP/red/cuota). NO debe llamarse en polls.
+ * F92: los dispositivos con transporte declarado distinto de TUYA nunca llegan
+ * a la red (defensa en profundidad contra gasto de cuota).
  */
 function probeTuyaOnlineOnce(\PDO $pdo, int $deviceId, string $externalId): ?bool {
     if ($externalId === '') {
         return null;
     }
-    // F46+: los devices con `presence_source='disabled'` NO se sondean (0 cuota).
+    // F92: no sondear Zigbee/local/cámara contra Tuya. F46+: disabled tampoco.
     try {
-        $m = $pdo->prepare('SELECT meta_json FROM devices WHERE id = :id');
+        $m = $pdo->prepare('SELECT meta_json, transport FROM devices WHERE id = :id');
         $m->execute([':id' => $deviceId]);
-        $mj = $m->fetchColumn();
-        if (is_string($mj) && $mj !== '') {
-            $meta = json_decode($mj, true);
+        $row = $m->fetch(\PDO::FETCH_ASSOC);
+        if (is_array($row)) {
+            $transport = strtoupper(trim((string) ($row['transport'] ?? '')));
+            if ($transport !== '' && $transport !== \App\Domain\Devices\Device::TRANSPORT_TUYA) {
+                return null;
+            }
+            $meta = is_string($row['meta_json'] ?? null) && $row['meta_json'] !== ''
+                ? json_decode((string) $row['meta_json'], true)
+                : null;
             if (is_array($meta) && (($meta['presence_source'] ?? null) === 'disabled')) {
                 return null;
             }
@@ -771,58 +803,41 @@ function probeTuyaOnlineOnce(\PDO $pdo, int $deviceId, string $externalId): ?boo
     if ($online === null) {
         return null;
     }
-    $state = $online ? 1 : 0;
-    $stmt = $pdo->prepare(
-        'UPDATE devices SET online_state = :st, online_probed_at = UTC_TIMESTAMP(3) WHERE id = :did'
-    );
-    $stmt->execute([':st' => $state, ':did' => $deviceId]);
+    persistDeviceOnlineProbe($pdo, $deviceId, $online);
     return $online;
 }
 
 /**
- * @return array{state:string, online:bool|null} estado verídico de un dispositivo
- *   (usado por /dashboard-api/device-status). Nunca devuelve online=true sin una
- *   señal real (heartbeat/check para ESP32, sonda Tuya fresca para Tuya cloud).
+ * Carga la fila mínima de liveness de un dispositivo. Usada por ping-all-devices
+ * para no depender de la forma reducida de Device.
+ *
+ * @return array<string,mixed>|null
+ */
+function loadDeviceLivenessRow(\PDO $pdo, int $deviceId): ?array {
+    $stmt = $pdo->prepare(
+        'SELECT id, pack_id, kind, transport, external_id, label, last_seen_at,
+                online_state, online_probed_at, meta_json
+           FROM devices WHERE id = :id LIMIT 1'
+    );
+    $stmt->execute([':id' => $deviceId]);
+    $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return null;
+    }
+    $row['meta'] = is_string($row['meta_json'] ?? null) && $row['meta_json'] !== ''
+        ? json_decode((string) $row['meta_json'], true)
+        : null;
+    unset($row['meta_json']);
+    return $row;
+}
+
+/**
+ * @return array{state:string, online:bool|null, source:string, reason:?string}
+ *   estado verídico de un dispositivo (usado por /dashboard-api/device-status).
+ *   Nunca devuelve online=true sin una señal real: push/heartbeat/sonda frescos.
  */
 function resolveDeviceOnlineState(array $dev, int $probeTtlSeconds): array {
-    $kind = (string) ($dev['kind'] ?? '');
-    if (!deviceIsTuyaCloud(['kind' => $kind])) {
-        // ESP32/local: estado desde last_seen_at (heartbeat/check) fresco.
-        if (($dev['last_seen_at'] ?? null) === null) {
-            return ['state' => 'unknown', 'online' => null];
-        }
-        $online = (bool) ($dev['online'] ?? false); // SQL ya calcula la ventana de 10 min
-        return ['state' => $online ? 'online' : 'offline', 'online' => $online];
-    }
-
-    // F46++: dispositivos con PUSH de Tuya (PROXIMITY siempre; PRESENCE con
-    // presence_source='push'): un `last_seen_at` fresco es señal REAL de
-    // conectividad (el dispositivo acaba de enviar un mensaje por Pulsar).
-    // Evita el "desconocido" permanente cuando la sonda Tuya no está disponible
-    // (p. ej. cuota IoT Core agotada) sin falsear verde: si deja de reportar,
-    // last_seen envejece y vuelve a 'unknown'.
-    $meta   = is_array($dev['meta'] ?? null) ? $dev['meta'] : [];
-    $isPush = ($kind === 'PROXIMITY') || (($meta['presence_source'] ?? null) === 'push');
-    if ($isPush && !empty($dev['online'])) {
-        return ['state' => 'online', 'online' => true];
-    }
-
-    // Tuya cloud: estado desde la última SONDA real, si no está caducada.
-    $probedAt = $dev['online_probed_at'] ?? null;
-    $stateRaw = $dev['online_state'] ?? null;
-    $fresh = false;
-    if ($probedAt !== null) {
-        $probedTs = strtotime((string) $probedAt . ' UTC');
-        if ($probedTs === false) {
-            $probedTs = strtotime((string) $probedAt);
-        }
-        $fresh = $probedTs !== false && (time() - $probedTs) <= $probeTtlSeconds;
-    }
-    if ($stateRaw === null || !$fresh) {
-        return ['state' => 'unknown', 'online' => null]; // no verificado aún o sonda vieja
-    }
-    $online = ((int) $stateRaw === 1);
-    return ['state' => $online ? 'online' : 'offline', 'online' => $online];
+    return deviceLivenessService()->resolve($dev, time(), $probeTtlSeconds);
 }
 
 /**
@@ -840,6 +855,7 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
            JOIN rooms r ON r.pack_id = d.pack_id
           WHERE r.id = :rid AND d.kind = 'PRESENCE'
             AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(d.meta_json,'\$.presence_source')),'') <> 'disabled'
+            AND (d.transport IS NULL OR UPPER(d.transport) <> 'ZIGBEE2MQTT')
           LIMIT 1"
     );
     $stmt->execute([':rid' => $roomId]);
@@ -1411,7 +1427,7 @@ $router->post(
 // Recibe {device_id: N, room_id: N}
 $router->post(
     '/dashboard-api/assign-and-reset',
-    function (\App\Http\Request $request) use ($pdo, $deviceRepo): \App\Http\Response {
+    function (\App\Http\Request $request) use ($pdo, $deviceRepo, $deviceStatusFactory): \App\Http\Response {
         $body = $request->jsonBody ?? [];
         $deviceId = (int) ($body['device_id'] ?? 0);
         $roomId   = (int) ($body['room_id'] ?? 0);
@@ -1474,7 +1490,8 @@ $router->post(
 
             // Ping all devices in the pack to verify liveness (one-shot, user-triggered)
             $devsStmt = $pdo->prepare(
-                "SELECT id, kind, external_id, last_seen_at FROM devices WHERE pack_id = :pid ORDER BY kind"
+                "SELECT id, kind, transport, external_id, last_seen_at, online_state, online_probed_at, meta_json
+                   FROM devices WHERE pack_id = :pid ORDER BY kind"
             );
             $devsStmt->execute([':pid' => $packId]);
             $packDevices = $devsStmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -1484,9 +1501,17 @@ $router->post(
             // F33: get RPI external_id from the pack for command queuing
             $rpiExtId = $rpi->externalId;
             foreach ($packDevices as $dev) {
+                // F92: categoría por transporte; cámara y Zigbee no tocan Tuya.
+                $dev['meta'] = is_string($dev['meta_json'] ?? null) && $dev['meta_json'] !== ''
+                    ? json_decode((string) $dev['meta_json'], true)
+                    : null;
+                unset($dev['meta_json']);
+                $dev['integration_status'] = $deviceStatusFactory()->forRow($dev);
+                $category = deviceCategory($dev);
+
                 // F33: Skip RPI, SCANNER, and LOCK — all ESP32-connected, no Tuya
                 $esp32Kinds = ['RPI', 'SCANNER', 'LOCK'];
-                if (in_array($dev['kind'], $esp32Kinds, true)) {
+                if ($category === DeviceLivenessService::CATEGORY_LOCAL && in_array($dev['kind'], $esp32Kinds, true)) {
                     if ($dev['kind'] === 'RPI') {
                         $deviceChecks[] = [
                             'device_id' => (int)$dev['id'],
@@ -1521,6 +1546,49 @@ $router->post(
 
                 if (!$first) usleep(200_000);
                 $first = false;
+
+                if ($category === DeviceLivenessService::CATEGORY_CAMERA) {
+                    $deviceChecks[] = [
+                        'device_id' => (int) $dev['id'],
+                        'kind' => $dev['kind'],
+                        'external_id' => $dev['external_id'],
+                        'online' => null,
+                        'state' => 'unknown',
+                        'error' => 'sonda de cámara omitida en reset',
+                        'last_seen_at' => $dev['last_seen_at'],
+                        'checked_via' => 'CAMERA',
+                    ];
+                    continue;
+                }
+
+                if ($category === DeviceLivenessService::CATEGORY_ZIGBEE) {
+                    $st = resolveDeviceOnlineState($dev, TUYA_PROBE_TTL_SECONDS);
+                    $deviceChecks[] = [
+                        'device_id' => (int) $dev['id'],
+                        'kind' => $dev['kind'],
+                        'external_id' => $dev['external_id'],
+                        'online' => $st['online'],
+                        'state' => $st['state'],
+                        'error' => $st['reason'],
+                        'last_seen_at' => $dev['last_seen_at'],
+                        'checked_via' => 'ZIGBEE',
+                    ];
+                    continue;
+                }
+
+                if ($category !== DeviceLivenessService::CATEGORY_TUYA) {
+                    $deviceChecks[] = [
+                        'device_id' => (int) $dev['id'],
+                        'kind' => $dev['kind'],
+                        'external_id' => $dev['external_id'],
+                        'online' => null,
+                        'state' => 'unknown',
+                        'error' => 'transporte sin sonda',
+                        'last_seen_at' => $dev['last_seen_at'],
+                        'checked_via' => 'NONE',
+                    ];
+                    continue;
+                }
 
                 // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda real de conectividad.
                 $online = probeTuyaOnlineOnce($pdo, (int)$dev['id'], (string)$dev['external_id']);
@@ -1630,28 +1698,22 @@ $router->get(
             $d['integration_status'] = $deviceStatusFactory()->forRow($d);
             $d['tuya_cloud'] = deviceIsTuyaCloud($d);
 
-            if (deviceIsTuyaCloud($d)) {
-                // Tuya cloud: estado verídico desde la sonda real (online_state/probed_at).
-                $st = resolveDeviceOnlineState($d, TUYA_PROBE_TTL_SECONDS);
-                $d['state']  = $st['state'];
-                $d['online'] = $st['online'];
-                $d['online_state']     = ($d['online_state'] ?? null);
-                $d['online_probed_at'] = ($d['online_probed_at'] ?? null);
-                continue;
-            }
-
-            // ESP32 / local: estado desde last_seen (heartbeat/check fresco).
+            // F92: la política resuelve cámara, Zigbee, Tuya y ESP32 por transporte.
+            // No hay ninguna sonda de red aquí: solo se leen señales/probes persistidos.
             $st = resolveDeviceOnlineState($d, TUYA_PROBE_TTL_SECONDS);
             $d['state']  = $st['state'];
             $d['online'] = $st['online'];
-            $d['online_state']     = null;
-            $d['online_probed_at'] = null;
+            $d['liveness_source'] = $st['source'];
+            $d['liveness_reason'] = $st['reason'];
 
             // Heredar liveness del RPI a sub-dispositivos ESP32 del mismo hardware
             // (solo marcador informativo; LOCK/SCANNER además se confirman por pull).
             if ($rpiOnline && in_array($d['kind'], $inheritOnlineKinds, true) && !$d['online'] && $d['kind'] !== 'RPI') {
                 $d['online'] = true;
+                $d['state'] = 'online';
                 $d['_inherited'] = true;
+                $d['liveness_source'] = 'esp32_heartbeat';
+                $d['liveness_reason'] = null;
             }
         }
         unset($d);
@@ -1816,18 +1878,20 @@ $router->post(
 );
 
 // POST /dashboard-api/ping-all-devices — on-demand verification of a room's devices.
-// For pull ESP32 sub-devices (SCANNER/LOCK) it enqueues a `check` command for the
-// owner chip and reports _pending_check. RPI and non-pull devices report online.
-// Body: {"device_ids":[<int>,...]}
+// F92: la rama se decide por transporte. Zigbee nunca toca Tuya; la cámara usa
+// sonda RTSP solo si el cliente envía verify_cameras=true.
+// Body: {"device_ids":[<int>,...],"verify_tuya":true,"verify_cameras":true}
 $router->post(
     '/dashboard-api/ping-all-devices',
-    function (\App\Http\Request $request) use ($pdo, $deviceRepo, $commandQueueRepo, $resolveOwnerChip): \App\Http\Response {
+    function (\App\Http\Request $request) use ($pdo, $deviceRepo, $deviceStatusFactory, $commandQueueRepo, $resolveOwnerChip): \App\Http\Response {
         $body = $request->jsonBody ?? [];
         $ids = $body['device_ids'] ?? null;
         // Solo se sondea Tuya cloud (consume cuota) cuando el cliente lo pide
         // explícitamente (carga del panel / botón "Comprobar"). Sin la flag no se
         // quema cuota: los dispositivos Tuya se devuelven como 'unknown' (sin verificar).
         $verifyTuya = !empty($body['verify_tuya']);
+        // La sonda de cámara también es bajo demanda y con timeout acotado.
+        $verifyCameras = !empty($body['verify_cameras']);
         if (!is_array($ids) || $ids === []) {
             return \App\Http\Response::json(400, ['error' => 'device_ids array required']);
         }
@@ -1835,8 +1899,8 @@ $router->post(
         $results = [];
         foreach ($ids as $rawId) {
             $deviceId = (int) $rawId;
-            $dev = $deviceRepo->findById($deviceId);
-            if ($dev === null) {
+            $row = loadDeviceLivenessRow($pdo, $deviceId);
+            if ($row === null) {
                 $results[] = [
                     'device_id' => $deviceId,
                     'online' => null,
@@ -1847,13 +1911,80 @@ $router->post(
                 continue;
             }
 
-            $kind = (string) $dev->kind;
-            $isPullKind = in_array($kind, [
-                \App\Domain\Devices\Device::KIND_SCANNER,
-                \App\Domain\Devices\Device::KIND_LOCK,
-            ], true);
+            $row['integration_status'] = $deviceStatusFactory()->forRow($row);
+            $category = deviceCategory($row);
+            $kind = (string) $row['kind'];
 
-            if (deviceIsTuyaCloud(['kind' => $kind])) {
+            if ($category === DeviceLivenessService::CATEGORY_CAMERA) {
+                $meta = is_array($row['meta'] ?? null) ? $row['meta'] : [];
+                $enabled = ($meta['enabled'] ?? true) !== false;
+                $rtsp = is_string($meta['rtsp_url'] ?? null) ? trim((string) $meta['rtsp_url']) : '';
+
+                if (!$verifyCameras) {
+                    $results[] = [
+                        'device_id' => $deviceId,
+                        'found' => true,
+                        'online' => null,
+                        'state' => 'unknown',
+                        'checked_via' => 'CAMERA',
+                        '_pending_check' => false,
+                        'error' => 'no verificado (sonda de cámara omitida)',
+                        'liveness_source' => DeviceLivenessService::SOURCE_CAMERA_PROBE,
+                        'liveness_reason' => 'not_probed',
+                    ];
+                    continue;
+                }
+
+                $probe = null;
+                if ($enabled && $rtsp !== '') {
+                    $probe = (new CameraReachabilityProbe())->probe($rtsp);
+                    if ($probe !== null) {
+                        persistDeviceOnlineProbe($pdo, $deviceId, $probe);
+                    }
+                }
+
+                $state = $probe === null ? 'unknown' : ($probe ? 'online' : 'offline');
+                $error = null;
+                if (!$enabled) {
+                    $error = 'cámara deshabilitada';
+                } elseif ($rtsp === '') {
+                    $error = 'cámara sin rtsp_url';
+                } elseif ($probe === null) {
+                    $error = 'sonda de cámara no concluyente';
+                }
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'found' => true,
+                    'online' => $probe,
+                    'state' => $state,
+                    'checked_via' => 'CAMERA',
+                    '_pending_check' => false,
+                    'error' => $error,
+                    'liveness_source' => DeviceLivenessService::SOURCE_CAMERA_PROBE,
+                    'liveness_reason' => $state === 'unknown' ? ($error ?? 'not_probed') : null,
+                ];
+                continue;
+            }
+
+            if ($category === DeviceLivenessService::CATEGORY_ZIGBEE) {
+                // Zigbee: estado por push/availability persistida; sin red.
+                $st = resolveDeviceOnlineState($row, TUYA_PROBE_TTL_SECONDS);
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'found' => true,
+                    'online' => $st['online'],
+                    'state' => $st['state'],
+                    'tuya_cloud' => false,
+                    'checked_via' => 'ZIGBEE',
+                    '_pending_check' => false,
+                    'error' => $st['reason'],
+                    'liveness_source' => $st['source'],
+                    'liveness_reason' => $st['reason'],
+                ];
+                continue;
+            }
+
+            if ($category === DeviceLivenessService::CATEGORY_TUYA) {
                 if (!$verifyTuya) {
                     // Sin verificación explícita → no quemar cuota: estado 'unknown'.
                     $results[] = [
@@ -1865,13 +1996,15 @@ $router->post(
                         '_pending_check' => false,
                         'checked_via' => 'TUYA',
                         'error' => 'no verificado (sonda Tuya omitida)',
+                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
+                        'liveness_reason' => 'not_probed',
                     ];
                     continue;
                 }
                 // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda REAL de conectividad.
                 // Consume cuota Tuya → este endpoint solo lo invocan la carga del panel
                 // y el botón "Comprobar dispositivos", nunca el poll automático.
-                $probe = probeTuyaOnlineOnce($pdo, $deviceId, (string) $dev->externalId);
+                $probe = probeTuyaOnlineOnce($pdo, $deviceId, (string) $row['external_id']);
                 if ($probe === null) {
                     $results[] = [
                         'device_id' => $deviceId,
@@ -1882,6 +2015,8 @@ $router->post(
                         '_pending_check' => false,
                         'checked_via' => 'TUYA',
                         'error' => 'Tuya no pudo confirmar conectividad',
+                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
+                        'liveness_reason' => 'no_signal',
                     ];
                 } else {
                     $results[] = [
@@ -1892,14 +2027,21 @@ $router->post(
                         'tuya_cloud' => true,
                         '_pending_check' => false,
                         'checked_via' => 'TUYA',
+                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
+                        'liveness_reason' => null,
                     ];
                 }
                 continue;
             }
 
+            $isPullKind = in_array($kind, [
+                \App\Domain\Devices\Device::KIND_SCANNER,
+                \App\Domain\Devices\Device::KIND_LOCK,
+            ], true) && $category === DeviceLivenessService::CATEGORY_LOCAL;
+
             if ($isPullKind) {
                 // Enqueue a check for the owner chip (fallback: this row's external_id).
-                $owner = $resolveOwnerChip($deviceRepo, $dev->packId, $dev->externalId);
+                $owner = $resolveOwnerChip($deviceRepo, $row['pack_id'] !== null ? (int) $row['pack_id'] : null, (string) $row['external_id']);
                 $queuedId = null;
                 if ($owner !== null) {
                     $queuedId = $commandQueueRepo->enqueue($owner, 'check');
@@ -1912,20 +2054,39 @@ $router->post(
                     '_pending_check' => $queuedId !== null,
                     'checked_via' => 'PULL',
                     'external_id' => $owner,
+                    'liveness_source' => DeviceLivenessService::SOURCE_ESP32_HEARTBEAT,
+                    'liveness_reason' => 'pending_check',
                 ];
-            } else {
-                // RPI: self-beacons vía /dashboard-api/device-heartbeat. No hay comando
-                // que encolar; se reporta online (heartbeat) y el poll de device-status
-                // reconcilia con last_seen real en segundos.
+                continue;
+            }
+
+            if ($category === DeviceLivenessService::CATEGORY_LOCAL) {
+                // RPI/ESP32: estado desde el heartbeat persistido (sin red).
+                $st = resolveDeviceOnlineState($row, TUYA_PROBE_TTL_SECONDS);
                 $results[] = [
                     'device_id' => $deviceId,
-                    'online' => true,
-                    'state' => 'online',
+                    'online' => $st['online'],
+                    'state' => $st['state'],
                     'found' => true,
                     '_pending_check' => false,
                     'checked_via' => 'HEARTBEAT',
+                    'liveness_source' => $st['source'],
+                    'liveness_reason' => $st['reason'],
                 ];
+                continue;
             }
+
+            $results[] = [
+                'device_id' => $deviceId,
+                'online' => null,
+                'state' => 'unknown',
+                'found' => true,
+                '_pending_check' => false,
+                'checked_via' => 'NONE',
+                'error' => 'transporte sin sonda',
+                'liveness_source' => DeviceLivenessService::SOURCE_NONE,
+                'liveness_reason' => 'unknown_transport',
+            ];
         }
 
         return \App\Http\Response::json(200, ['ok' => true, 'results' => $results]);
@@ -1975,6 +2136,10 @@ $router->post(
         $dev = $deviceRepo->findById($deviceId);
         if ($dev === null) {
             return \App\Http\Response::json(404, ['error' => 'Device not found']);
+        }
+        // F92: la batería solo se consulta a Tuya para dispositivos Tuya.
+        if (!deviceIsTuyaCloud(['kind' => $dev->kind, 'transport' => $dev->transport])) {
+            return \App\Http\Response::json(400, ['error' => 'not a Tuya cloud device']);
         }
 
         $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($dev->externalId) . '/status', null);
@@ -2037,13 +2202,16 @@ $router->get(
             if ($dev === null) {
                 return \App\Http\Response::json(404, ['error' => 'Device not found']);
             }
-            if (!deviceIsTuyaCloud(['kind' => $dev->kind])) {
+            if (!deviceIsTuyaCloud(['kind' => $dev->kind, 'transport' => $dev->transport])) {
                 return \App\Http\Response::json(400, ['error' => 'external_id is not a Tuya cloud device']);
             }
         } else {
             $dev      = null;
             $fallback = null;
             foreach ($deviceRepo->findAll() as $candidate) {
+                if (!deviceIsTuyaCloud(['kind' => $candidate->kind, 'transport' => $candidate->transport])) {
+                    continue;
+                }
                 if ($candidate->kind === \App\Domain\Devices\Device::KIND_SWITCH) {
                     $dev = $candidate;
                     break;

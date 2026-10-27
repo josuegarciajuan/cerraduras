@@ -250,6 +250,14 @@ final class DeviceRepository implements DeviceRepositoryInterface
         $stmt->execute([':id' => $deviceId]);
     }
 
+    public function updateOnlineState(int $deviceId, bool $online): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE devices SET online_state = :st, online_probed_at = UTC_TIMESTAMP(3) WHERE id = :id'
+        );
+        $stmt->execute([':st' => $online ? 1 : 0, ':id' => $deviceId]);
+    }
+
     /**
      * Refresh last_seen_at for every device of a given kind inside a pack.
      * Used by the ESP32 heartbeat to mark its sub-devices online without

@@ -1,9 +1,66 @@
 # Contracts — Cerraduras Hotel
 
+> **F92 — Estado**: aprobado; implementación en curso.
 > **F91 — Estado**: contratos aprobados para provisión aislada, ingesta con ACK posterior a
 > persistencia, presencia por radar y luz operativa. Implementación pendiente.
 > **F90 — Estado**: software, paquete de despliegue y tres dispositivos emparejados en banco;
 > mapping definitivo, caracterización funcional e integración pendientes.
+
+---
+
+# Fase 92: Contratos del estado de conectividad por transporte
+
+## `GET /dashboard-api/device-status?room_id=N`
+
+Sin cambios de forma; semántica actualizada:
+
+- `tuya_cloud`: `true` solo para `transport=TUYA`, o para filas legacy `transport=NULL` con
+  `kind` en `PRESENCE|PROXIMITY|SWITCH`.
+- `state`: `online|offline|unknown` (se mantiene).
+- `online`: `true|false|null` (se mantiene).
+- Aditivo por dispositivo:
+  - `liveness_source`: `camera_probe|zigbee_availability|zigbee_push|tuya_probe|tuya_push|
+    esp32_heartbeat|none`.
+  - `liveness_reason`: `not_probed|stale|no_signal|missing_mapping|quarantine|unknown_transport|
+    null`.
+- `online_probed_at` pasa a significar «última verificación de conectividad» para cámara/Zigbee
+  (Tuya conserva su semántica).
+
+## `POST /dashboard-api/ping-all-devices`
+
+Cuerpo:
+
+```json
+{"device_ids":[1,2,3],"verify_tuya":true,"verify_cameras":true}
+```
+
+- `verify_tuya` (existente): solo afecta a dispositivos de categoría Tuya.
+- `verify_cameras` (nuevo, default `false`): ejecuta la sonda RTSP de las cámaras indicadas.
+- Resultado por dispositivo (misma forma, valores nuevos):
+  - Zigbee: `checked_via="ZIGBEE"`, estado calculado sin red.
+  - Cámara: `checked_via="CAMERA"`, `state` = `online|offline|unknown`.
+  - Tuya: `checked_via="TUYA"` (solo categoría Tuya).
+  - ESP32: `checked_via="PULL"|"HEARTBEAT"`.
+- Ningún dispositivo con `transport` distinto de Tuya ejecuta `GET /v1.0/iot-03/devices/{id}`.
+
+## Availability Zigbee
+
+- Topic: `<base>/availability`, payload `online|offline`.
+- Persistencia: `devices.online_state` (`1|0`) y `devices.online_probed_at` (UTC).
+- No genera evento de dominio ni modifica `iot_sessions`.
+
+## Sonda de cámara
+
+- Entrada: `meta_json.rtsp_url`.
+- Sin `rtsp_url`, con `meta.enabled=false` o URL inválida → `unknown`, sin red.
+- Timeout máximo: 3 s por cámara; fallback TCP 2 s si `ffprobe` no está disponible.
+- Las credenciales de la URL no se incluyen en logs, errores ni respuestas.
+
+## Errores
+
+- `400` si falta `device_ids`.
+- Un fallo de sonda no es error HTTP: se devuelve `state="unknown"` con `error` descriptivo.
+- No se crean rutas nuevas.
 
 ---
 

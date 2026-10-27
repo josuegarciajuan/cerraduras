@@ -58,6 +58,12 @@ interface DeviceRepositoryInterface
     public function updateLastSeen(int $deviceId): void;
 
     /**
+     * Persist the last connectivity verification (F92/RF-153.3). Used by Zigbee
+     * availability messages; it does not change last_seen_at or domain state.
+     */
+    public function updateOnlineState(int $deviceId, bool $online): void;
+
+    /**
      * Refresh last_seen_at for every device of a given kind inside a pack
      * (ESP32 heartbeat sub-device liveness, F33).
      *
