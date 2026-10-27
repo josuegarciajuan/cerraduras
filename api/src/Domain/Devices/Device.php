@@ -54,6 +54,8 @@ final class Device
     public ?array $meta;
     /** null = not classified; API presents it as UNKNOWN. */
     public ?string $transport;
+    /** Last received event (UTC DB datetime), not a probe. */
+    public ?string $lastSeenAt;
     public ?int $batteryPct = null;
     public bool $isIdentified;
     public ?string $identifiedAt;
@@ -73,7 +75,8 @@ final class Device
         bool $isIdentified = false,
         ?string $identifiedAt = null,
         ?string $subtype = null,
-        ?string $transport = null
+        ?string $transport = null,
+        ?string $lastSeenAt = null
     ) {
         $this->id = $id;
         $this->packId = $packId;
@@ -87,6 +90,7 @@ final class Device
         $this->isIdentified = $isIdentified;
         $this->identifiedAt = $identifiedAt;
         $this->transport = self::normalizeTransport($transport);
+        $this->lastSeenAt = $lastSeenAt;
     }
 
     /** @return array<string,mixed> */

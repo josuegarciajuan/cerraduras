@@ -29,13 +29,13 @@ tareas. Sin cambios de código.
 
 **Trazabilidad**: RF-143.1..RF-143.7, RF-144.4, RF-144.5, RF-148.4
 
-- [ ] Añadir migración aditiva `devices.transport` (`VARCHAR(16) NULL`) y su presentación
+- [x] Añadir migración aditiva `devices.transport` (`VARCHAR(16) NULL`) y su presentación
   `UNKNOWN`; sin backfill heurístico.
-- [ ] Añadir migración aditiva de columnas de presencia a `room_types` con los defaults del
+- [x] Añadir migración aditiva de columnas de presencia a `room_types` con los defaults del
   contrato y validación de rangos.
-- [ ] Actualizar `Device`, `DeviceRepository`, `DeviceService` y `RoomType` para leer/escribir los
+- [x] Actualizar `Device`, `DeviceRepository`, `DeviceService` y `RoomType` para leer/escribir los
   nuevos campos sin romper payloads existentes.
-- [ ] Tests unitarios de valores admitidos, defaults, rangos y ausencia de inferencia.
+- [x] Tests unitarios de valores admitidos, defaults, rangos y ausencia de inferencia.
 
 **Verificación**: `php -l`, tests unitarios y migración aplicada en base descartable.
 
@@ -43,11 +43,11 @@ tareas. Sin cambios de código.
 
 **Trazabilidad**: RF-144.3..RF-144.7
 
-- [ ] Exponer `transport` e `integration_status` de forma aditiva en dispositivos, packs y detalle
+- [x] Exponer `transport` e `integration_status` de forma aditiva en dispositivos, packs y detalle
   de sala.
-- [ ] Aceptar `transport` en alta y edición de dispositivos; default `UNKNOWN`.
-- [ ] Calcular `integration_status` sin sondeo: mapa, último evento, frescura y salud del spool.
-- [ ] Tests HTTP de compatibilidad: clientes antiguos siguen funcionando; campos nuevos correctos.
+- [x] Aceptar `transport` en alta y edición de dispositivos; default `UNKNOWN`.
+- [x] Calcular `integration_status` sin sondeo: mapa, último evento, frescura y salud del spool.
+- [x] Tests HTTP de compatibilidad: clientes antiguos siguen funcionando; campos nuevos correctos.
 
 **Verificación**: tests unitarios/HTTP y regresión de contratos existentes.
 
@@ -198,8 +198,8 @@ consulta de topología.
 ### Estado de ejecución (F91)
 
 - [x] TSK-91.00 especificación y diseño
-- [ ] TSK-91.01 esquema
-- [ ] TSK-91.02 API
+- [x] TSK-91.01 esquema
+- [x] TSK-91.02 API
 - [ ] TSK-91.03 panel de alta
 - [ ] TSK-91.04 provisión
 - [ ] TSK-91.05 ingreso MQTT
