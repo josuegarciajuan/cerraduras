@@ -1242,7 +1242,8 @@ echo "  --- F20: Lock provider=LOCAL verification ---"
 # Emitir QR y validar con RPI-DEV (debe existir el device registrado)
 # Nota: este test requiere que el ESP32 esté registrado en devices para room 1.
 # Si no está (chip-id aún no registrado), lo saltamos.
-    if db_exec "SELECT 1 FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id=1 AND d.kind='RPI' LIMIT 1" > /dev/null 2>&1; then
+    RPI_PRESENT=$($MYSQL -sN -e "SELECT d.external_id FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id=1 AND d.kind='RPI' LIMIT 1" 2>/dev/null || echo "")
+    if [ -n "$RPI_PRESENT" ]; then
         if db_exec "SELECT 1" > /dev/null 2>&1; then
             # Cerrar cualquier stay activa en room 1 para poder emitir QR
             $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1 AND status IN ('OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
