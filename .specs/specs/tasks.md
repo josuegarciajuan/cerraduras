@@ -148,13 +148,13 @@ consulta de topología.
 
 **Trazabilidad**: RF-151.1..RF-151.5
 
-- [ ] Restringir `POST /almacen-api/motion` a loopback, worker autenticado o proxy de confianza.
-- [ ] Revisar credenciales MQTT fuera de `argv`, logs, mapas y spool.
-- [ ] Añadir permisos restrictivos y exclusión de Git para spool y backups.
-- [ ] Replay de spool con confirmación y auditoría.
-- [ ] Tests de acceso no autorizado y de ausencia de secretos en logs.
+- [x] Restringir `POST /almacen-api/motion` a loopback, worker autenticado o proxy de confianza.
+- [x] Revisar credenciales MQTT fuera de `argv`, logs, mapas y spool.
+- [x] Añadir permisos restrictivos y exclusión de Git para spool y backups.
+- [x] Replay de spool con confirmación y auditoría.
+- [x] Tests de acceso no autorizado y de ausencia de secretos en logs.
 
-**Verificación**: tests HTTP/estáticos y revisión de permisos.
+**Verificación**: tests HTTP/estáticos, permisos y auditoría de replay; sin broker real.
 
 ## TSK-91.11: Pruebas, regresión y guardias
 
@@ -207,7 +207,7 @@ consulta de topología.
 - [x] TSK-91.07 presencia por radar
 - [x] TSK-91.08 luz operativa
 - [x] TSK-91.09 panel del almacén
-- [ ] TSK-91.10 endurecimiento
+- [x] TSK-91.10 endurecimiento
 - [ ] TSK-91.11 pruebas y regresión
 - [ ] TSK-91.12 aceptación física
 - [ ] TSK-91.13 despliegue y rollback

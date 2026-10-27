@@ -34,7 +34,7 @@ const MAX_ATTEMPTS = 3;
 
 $opts = parseArgs($argv);
 if (isset($opts['help'])) {
-    echo "Uso: php bin/zigbee-spool-worker.php [--limit=N] [--watch] [--dry-run] [--requeue=FILE] [--help]\n";
+    echo "Uso: php bin/zigbee-spool-worker.php [--limit=N] [--watch] [--dry-run] [--requeue=FILE --yes] [--help]\n";
     exit(0);
 }
 
@@ -65,6 +65,10 @@ try {
 $queue = new ZigbeeSpoolQueue($spoolDir);
 
 if (isset($opts['requeue'])) {
+    if (!isset($opts['yes'])) {
+        fwrite(STDERR, "[zigbee-spool] --requeue requiere --yes para confirmar el replay\n");
+        exit(2);
+    }
     $name = $queue->requeue((string) $opts['requeue']);
     if ($name === null) {
         fwrite(STDERR, "[zigbee-spool] no se pudo reencolar {$opts['requeue']}\n");

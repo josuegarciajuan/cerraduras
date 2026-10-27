@@ -279,6 +279,17 @@ Request:
   `candidate`, `quarantine`.
 - Ningún diagnóstico expone credenciales, payload completo de configuración ni claves de red.
 
+## Endurecimiento del canal local (F91)
+
+- `ALMACEN_MOTION_TOKEN` (vacío por defecto): si está configurado, `POST /almacen-api/motion`
+  exige `X-Almacen-Motion-Token` y responde `403 motion_forbidden` si falta o no coincide.
+- Sin token, solo se admite una petición directa desde `127.0.0.1`/`::1` sin
+  `X-Forwarded-For`/`X-Real-IP`; en caso contrario `403 motion_auth_required`. Con reverse proxy
+  debe configurarse el token.
+- El spool usa directorios `0700` y ficheros `0600`. `--requeue` exige `--yes` y escribe
+  `replay.log` con origen, destino, usuario y hash.
+- Las credenciales MQTT no se pasan como argumentos ni se escriben en mapas, spool o logs.
+
 ## Compatibilidad y rollback
 
 - El contrato F90 sigue válido para el worker legacy; F91 lo sustituye por ingreso con ACK

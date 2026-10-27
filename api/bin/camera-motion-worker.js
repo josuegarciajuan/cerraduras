@@ -38,6 +38,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 
 const API = (process.env.CAMERA_MOTION_API || 'http://127.0.0.1:8080').replace(/\/+$/, '');
+const MOTION_TOKEN = process.env.ALMACEN_MOTION_TOKEN || '';
 const ROOM_ID_ENV = parseInt(process.env.CAMERA_MOTION_ROOM_ID || '0', 10) || 0;
 const RTSP_BASE = (process.env.CAMERA_MOTION_RTSP_BASE || 'rtsp://127.0.0.1:8554').replace(/\/+$/, '');
 const FFMPEG = process.env.CAMERA_MOTION_FFMPEG || 'ffmpeg';
@@ -136,7 +137,10 @@ function postJson(path, obj) {
         port: u.port,
         path: u.pathname,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': data.length },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json', 'Content-Length': data.length },
+          MOTION_TOKEN ? { 'X-Almacen-Motion-Token': MOTION_TOKEN } : {}
+        ),
         timeout: 5000,
       },
       (res) => {

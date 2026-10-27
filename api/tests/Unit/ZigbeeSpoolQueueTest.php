@@ -86,7 +86,10 @@ check('requeue creates incoming copy', is_string($requeued) && is_file($dir . '/
 $replayed = json_decode(file_get_contents($dir . '/incoming/' . $requeued), true);
 same('requeue resets attempts', $replayed['attempts'], 0);
 same('requeue marks replay', $replayed['replay'], true);
+same('requeue records source', $replayed['replayed_from'], '0000000000003-00000003-cccccccccccccccc.json');
+check('requeue records actor', isset($replayed['replayed_by']) && $replayed['replayed_by'] !== '');
 check('requeue keeps original quarantine', is_file($dir . '/quarantine/0000000000003-00000003-cccccccccccccccc.json'));
+check('replay audit log written', is_file($dir . '/replay.log') && str_contains((string) file_get_contents($dir . '/replay.log'), '0000000000003-00000003-cccccccccccccccc.json'));
 
 same('validateRecord accepts valid record', ZigbeeSpoolQueue::validateRecord(rec()), null);
 same('validateRecord rejects schema', ZigbeeSpoolQueue::validateRecord(array_merge(rec(), ['schema' => 2])), 'schema_mismatch');

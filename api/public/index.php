@@ -2675,6 +2675,25 @@ $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sy
 $router->post(
     '/almacen-api/motion',
     function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
+        // F91/RF-151.3: no aceptar movimiento arbitrario desde la LAN.
+        // - Con ALMACEN_MOTION_TOKEN configurado, se exige el header secreto.
+        // - Sin token, solo se admite una petición directa desde loopback y sin
+        //   cabeceras de proxy (si hay reverse proxy, configura el token).
+        $motionToken = (string) (\App\Support\Config::get('ALMACEN_MOTION_TOKEN', '') ?? '');
+        if ($motionToken !== '') {
+            $given = (string) ($request->header('x-almacen-motion-token') ?? '');
+            if ($given === '' || !hash_equals($motionToken, $given)) {
+                return \App\Http\Response::json(403, ['ok' => false, 'error' => 'motion_forbidden']);
+            }
+        } else {
+            $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+            $proxied = (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '')
+                . (string) ($_SERVER['HTTP_X_REAL_IP'] ?? '');
+            if (!in_array($remote, ['127.0.0.1', '::1'], true) || $proxied !== '') {
+                return \App\Http\Response::json(403, ['ok' => false, 'error' => 'motion_auth_required']);
+            }
+        }
+
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         $deviceId = (int) ($body['device_id'] ?? ($request->query['device_id'] ?? 0));
         if ($deviceId <= 0) {
