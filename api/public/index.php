@@ -2115,7 +2115,7 @@ $router->get(
     }
 );
 
-$roomController = new RoomController($roomService, $roomStateService, $deviceService);
+$roomController = new RoomController($roomService, $roomStateService, $deviceService, $deviceStatusFactory());
 
 $stayRepo = new StayRepository($pdo);
 $stayService = new StayService($stayRepo);

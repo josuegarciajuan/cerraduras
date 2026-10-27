@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 
 use App\Domain\Rooms\RoomService;
 use App\Domain\Rooms\RoomStateService;
+use App\Domain\Devices\Device;
+use App\Domain\Devices\DeviceIntegrationStatusService;
 use App\Domain\Devices\DeviceService;
 use App\Http\Request;
 use App\Http\Response;
@@ -24,15 +26,26 @@ final class RoomController
     private RoomService $rooms;
     private RoomStateService $state;
     private DeviceService $devices;
+    private DeviceIntegrationStatusService $deviceStatus;
 
     public function __construct(
         RoomService $rooms,
         RoomStateService $state,
-        DeviceService $devices
+        DeviceService $devices,
+        ?DeviceIntegrationStatusService $deviceStatus = null
     ) {
         $this->rooms = $rooms;
         $this->state = $state;
         $this->devices = $devices;
+        $this->deviceStatus = $deviceStatus ?? new DeviceIntegrationStatusService();
+    }
+
+    /** @return array<string,mixed> */
+    private function serializeDevice(Device $device): array
+    {
+        $data = $device->toArray();
+        $data['integration_status'] = $this->deviceStatus->forDevice($device);
+        return $data;
     }
 
     public function index(Request $request): Response
@@ -62,7 +75,7 @@ final class RoomController
         $room = $this->rooms->getOrFail($id);
         $devices = $this->devices->listForRoom($id);
         $payload = $room->toArray();
-        $payload['devices'] = array_map(static function ($d) { return $d->toArray(); }, $devices);
+        $payload['devices'] = array_map(fn($d) => $this->serializeDevice($d), $devices);
         return Response::json(200, $payload);
     }
 
