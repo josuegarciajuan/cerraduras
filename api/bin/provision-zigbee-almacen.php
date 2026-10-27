@@ -28,6 +28,7 @@ Config::load(__DIR__ . '/../.env');
 
 const ROOM_CODE = 'almacenZigbee';
 const ROOM_TYPE_CODE = 'ALMACEN_BEBIDAS';
+const NORMAL_TYPE_CODE = 'TIPO_NORMAL';
 const PACK_CODE = 'PACK_ZIGBEE';
 const PACK_NAME = 'Pack Zigbee';
 const ROOM_NOTES = 'Piloto Zigbee. No sustituye al almacén actual.';
@@ -127,11 +128,26 @@ if ($pack !== null) {
     }
 }
 
-$stmt = $pdo->prepare('SELECT id, code, room_type_id, pack_id FROM rooms WHERE code = :c LIMIT 1');
+$stmt = $pdo->prepare(
+    'SELECT r.id, r.code, r.room_type_id, r.pack_id, rt.code AS room_type_code
+       FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+      WHERE r.code = :c LIMIT 1'
+);
 $stmt->execute([':c' => ROOM_CODE]);
 $room = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 if ($room !== null) {
     if ((int) $room['room_type_id'] !== $roomTypeId) {
+        // El piloto puede estar en modo normal para probar /dashboard. En ese
+        // estado el provisioning no debe reescribir la sala por sorpresa: el
+        // dry-run lo informa y termina en verde; --apply exige restaurar el tipo.
+        $actualType = (string) ($room['room_type_code'] ?? ('id ' . $room['room_type_id']));
+        if ($actualType === NORMAL_TYPE_CODE) {
+            if (!$apply) {
+                $log('la sala ' . ROOM_CODE . ' está en modo normal de pruebas (tipo ' . NORMAL_TYPE_CODE . '); --dry-run: no se escribe nada. Restaura ' . ROOM_TYPE_CODE . ' antes de --apply.');
+                exit(0);
+            }
+            $fail('la sala ' . ROOM_CODE . ' está en modo normal de pruebas (tipo ' . NORMAL_TYPE_CODE . '); restaura ' . ROOM_TYPE_CODE . ' antes de --apply');
+        }
         $fail('la sala ' . ROOM_CODE . ' existe con otro tipo (' . $room['room_type_id'] . ')');
     }
     if ($room['pack_id'] !== null && $pack !== null && (int) $room['pack_id'] !== (int) $pack['id']) {

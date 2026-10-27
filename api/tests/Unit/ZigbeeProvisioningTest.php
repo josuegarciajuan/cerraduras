@@ -42,6 +42,8 @@ echo str_repeat("=", 60) . "\n\n";
 $checks = [
     ['sala exacta', "const ROOM_CODE = 'almacenZigbee';"],
     ['tipo de almacén reutilizado', "const ROOM_TYPE_CODE = 'ALMACEN_BEBIDAS';"],
+    ['modo normal de pruebas tolerado', "const NORMAL_TYPE_CODE = 'TIPO_NORMAL';"],
+    ['dry-run en modo normal', 'está en modo normal de pruebas'],
     ['pack exacto', "const PACK_CODE = 'PACK_ZIGBEE';"],
     ['nombre del pack', "const PACK_NAME = 'Pack Zigbee';"],
     ['puerta IEEE', "'0xc09b9efffef431fb'"],
