@@ -52,7 +52,16 @@ final class RoomTypeController
             JsonBody::intOpt($body, 'presence_entry_window_seconds', 1, 600) ?? 90,
             JsonBody::intOpt($body, 'exit_check_seconds', 1, 600) ?? 40,
             JsonBody::intOpt($body, 'warehouse_confirm_seconds', 10, 600) ?? 40,
-            JsonBody::intOpt($body, 'warehouse_exterior_margin_seconds', 0, 60) ?? 5
+            JsonBody::intOpt($body, 'warehouse_exterior_margin_seconds', 0, 60) ?? 5,
+            JsonBody::stringOpt($body, 'presence_mode', 24) ?? 'camera_fusion',
+            JsonBody::intOpt($body, 'presence_confirm_reports', 1, 20) ?? 3,
+            JsonBody::intOpt($body, 'presence_confirm_window_seconds', 1, 300) ?? 12,
+            JsonBody::intOpt($body, 'presence_min_span_seconds', 0, 300) ?? 6,
+            JsonBody::intOpt($body, 'presence_hold_seconds', 0, 600) ?? 20,
+            JsonBody::intOpt($body, 'presence_absent_reports', 1, 20) ?? 3,
+            JsonBody::intOpt($body, 'presence_absent_window_seconds', 1, 600) ?? 30,
+            JsonBody::intOpt($body, 'presence_door_window_seconds', 0, 600) ?? 90,
+            JsonBody::intOpt($body, 'presence_stale_seconds', 30, 86400) ?? 180
         );
         return Response::json(201, $rt->toArray());
     }
@@ -74,6 +83,15 @@ final class RoomTypeController
             'exit_check_seconds',
             'warehouse_confirm_seconds',
             'warehouse_exterior_margin_seconds',
+            'presence_mode',
+            'presence_confirm_reports',
+            'presence_confirm_window_seconds',
+            'presence_min_span_seconds',
+            'presence_hold_seconds',
+            'presence_absent_reports',
+            'presence_absent_window_seconds',
+            'presence_door_window_seconds',
+            'presence_stale_seconds',
         ] as $k) {
             if (array_key_exists($k, $body)) {
                 $fields[$k] = $body[$k];
