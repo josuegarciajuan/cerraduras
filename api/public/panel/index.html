@@ -84,6 +84,8 @@ tr:hover td{background:rgba(108,142,224,.05)}
 .pack-name{font-size:15px;font-weight:600;margin-top:6px}
 .room-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--accent);background:rgba(108,142,224,.13);border:1px solid rgba(108,142,224,.35);border-radius:20px;padding:3px 10px;white-space:nowrap;flex:none}
 .room-pill--none{color:var(--warning);background:rgba(224,185,78,.1);border:1px dashed rgba(224,185,78,.5)}
+.tchip{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.5px;color:var(--tc);background:var(--tcbg);border:1px solid color-mix(in srgb,var(--tc) 32%,transparent);border-radius:4px;padding:2px 6px;white-space:nowrap;flex:none}
+.pchip{display:inline-flex;align-items:center;font-size:10px;font-weight:600;color:var(--pc);background:var(--pcbg);border:1px solid color-mix(in srgb,var(--pc) 30%,transparent);border-radius:10px;padding:2px 8px;white-space:nowrap;flex:none}
 .pack-sig{display:flex;gap:4px;height:14px;align-items:flex-end;padding:0 2px;animation:sigIn .5s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i)*60ms + 80ms)}
 .pack-sig i{width:4px;border-radius:1px;height:12px;opacity:.9}
 .pack-sig i:first-child{height:7px}.pack-sig i:last-child{height:9px}
@@ -173,28 +175,28 @@ tr:hover td{background:rgba(108,142,224,.05)}
 <aside class="sidebar">
   <div class="sidebar-header"><h2>🔐 Cerraduras</h2><div class="ui" x-text="user?.display_name||user?.username||'...'"></div></div>
   <nav>
-    <a :class="{active:p==='db'}" @click="nav('db')"><span class="ic">📊</span>Dashboard</a>
-    <a :class="{active:p==='ro'}" @click="nav('ro')"><span class="ic">🚪</span>Habitaciones</a>
-    <a :class="{active:p==='pk'}" @click="nav('pk')"><span class="ic">📦</span>Packs</a>
-    <a :class="{active:p==='dv'}" @click="nav('dv')"><span class="ic">🔌</span>Dispositivos</a>
-    <a :class="{active:p==='st'}" @click="nav('st')"><span class="ic">⏱️</span>Estancias</a>
-    <a :class="{active:p==='qr'}" @click="nav('qr')"><span class="ic">🎫</span>QRs</a>
-    <a :class="{active:p==='dbts'}" @click="nav('dbts')"><span class="ic">💰</span>Deudas</a>
-     <a :class="{active:p==='w'}" @click="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
-     <a :class="{active:p==='fd'}" @click="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
-    <a :class="{active:p==='wr'}" @click="nav('wr')"><span class="ic">🏷️</span>Roles</a>
-    <a :class="{active:p==='mon'}" @click="nav('mon')"><span class="ic">📋</span>Monitor</a>
-    <a :class="{active:p==='us'}" @click="nav('us')"><span class="ic">👥</span>Usuarios</a>
-    <a :class="{active:p==='cl'}" @click="nav('cl')"><span class="ic">🔑</span>API Clients</a>
-    <a :class="{active:p==='an'}" @click="nav('an')"><span class="ic">⚠️</span>Anomalías<span x-show="anomalyCount>0" class="sidebar-badge" x-text="anomalyCount"></span></a>
-    <a :class="{active:p==='he'}" @click="nav('he')"><span class="ic">❤️</span>Salud</a>
-    <a :class="{active:p==='cfg'}" @click="nav('cfg')"><span class="ic">⚙️</span>Configuración</a>
+    <a :class="{active:p==='db'}" role="button" tabindex="0" @click="nav('db')" @keydown.enter="nav('db')" @keydown.space.prevent="nav('db')"><span class="ic">📊</span>Dashboard</a>
+    <a :class="{active:p==='ro'}" role="button" tabindex="0" @click="nav('ro')" @keydown.enter="nav('ro')" @keydown.space.prevent="nav('ro')"><span class="ic">🚪</span>Habitaciones</a>
+    <a :class="{active:p==='pk'}" role="button" tabindex="0" @click="nav('pk')" @keydown.enter="nav('pk')" @keydown.space.prevent="nav('pk')"><span class="ic">📦</span>Packs</a>
+    <a :class="{active:p==='dv'}" role="button" tabindex="0" @click="nav('dv')" @keydown.enter="nav('dv')" @keydown.space.prevent="nav('dv')"><span class="ic">🔌</span>Dispositivos</a>
+    <a :class="{active:p==='st'}" role="button" tabindex="0" @click="nav('st')" @keydown.enter="nav('st')" @keydown.space.prevent="nav('st')"><span class="ic">⏱️</span>Estancias</a>
+    <a :class="{active:p==='qr'}" role="button" tabindex="0" @click="nav('qr')" @keydown.enter="nav('qr')" @keydown.space.prevent="nav('qr')"><span class="ic">🎫</span>QRs</a>
+    <a :class="{active:p==='dbts'}" role="button" tabindex="0" @click="nav('dbts')" @keydown.enter="nav('dbts')" @keydown.space.prevent="nav('dbts')"><span class="ic">💰</span>Deudas</a>
+     <a :class="{active:p==='w'}" role="button" tabindex="0" @click="nav('w')" @keydown.enter="nav('w')" @keydown.space.prevent="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
+     <a :class="{active:p==='fd'}" role="button" tabindex="0" @click="nav('fd')" @keydown.enter="nav('fd')" @keydown.space.prevent="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
+    <a :class="{active:p==='wr'}" role="button" tabindex="0" @click="nav('wr')" @keydown.enter="nav('wr')" @keydown.space.prevent="nav('wr')"><span class="ic">🏷️</span>Roles</a>
+    <a :class="{active:p==='mon'}" role="button" tabindex="0" @click="nav('mon')" @keydown.enter="nav('mon')" @keydown.space.prevent="nav('mon')"><span class="ic">📋</span>Monitor</a>
+    <a :class="{active:p==='us'}" role="button" tabindex="0" @click="nav('us')" @keydown.enter="nav('us')" @keydown.space.prevent="nav('us')"><span class="ic">👥</span>Usuarios</a>
+    <a :class="{active:p==='cl'}" role="button" tabindex="0" @click="nav('cl')" @keydown.enter="nav('cl')" @keydown.space.prevent="nav('cl')"><span class="ic">🔑</span>API Clients</a>
+    <a :class="{active:p==='an'}" role="button" tabindex="0" @click="nav('an')" @keydown.enter="nav('an')" @keydown.space.prevent="nav('an')"><span class="ic">⚠️</span>Anomalías<span x-show="anomalyCount>0" class="sidebar-badge" x-text="anomalyCount"></span></a>
+    <a :class="{active:p==='he'}" role="button" tabindex="0" @click="nav('he')" @keydown.enter="nav('he')" @keydown.space.prevent="nav('he')"><span class="ic">❤️</span>Salud</a>
+    <a :class="{active:p==='cfg'}" role="button" tabindex="0" @click="nav('cfg')" @keydown.enter="nav('cfg')" @keydown.space.prevent="nav('cfg')"><span class="ic">⚙️</span>Configuración</a>
   </nav>
   <div class="sidebar-footer"><button @click="logout">Cerrar sesión</button></div>
 </aside>
 <main class="main"><div x-html="render() || ''"></div></main>
-<div x-show="toast.show" class="toast" :class="'toast-'+toast.type" x-text="toast.msg || ''" @click="toast.show=false" style="cursor:pointer"></div>
-<div x-show="modal.show" class="modal-overlay" @click.self="modal.show=false"><div class="modal"><div x-html="modal.content"></div></div></div>
+<div x-show="toast.show" class="toast" role="status" aria-live="polite" :class="'toast-'+toast.type" x-text="toast.msg || ''" @click="toast.show=false" style="cursor:pointer"></div>
+<div x-show="modal.show" class="modal-overlay" @click.self="modal.show=false" @keydown.escape.window="modal.show=false"><div class="modal" role="dialog" aria-modal="true" aria-label="Diálogo del panel" tabindex="-1"><div x-html="modal.content"></div></div></div>
 
 <script>
 function crm(){return{
@@ -203,7 +205,7 @@ function crm(){return{
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,_factoryTimer:null,
   deviceStatus:{},deviceStatusTick:0,
-  devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',external_id:'',label:'',pack_id:null,meta:{}},
+  devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',external_id:'',label:'',pack_id:null,transport:'UNKNOWN',meta:{}},roomForm:{code:'',room_type_id:null,notes:'',pack_id:null},
 
   async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);setInterval(()=>{this.checkAnomalyAlerts();this.computeWorkerAlerts()},15000)}catch(e){window.location.href='/panel/login'}},
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
@@ -345,14 +347,73 @@ function crm(){return{
   async loadHealth(){try{this.health=await this.api('/api/v1/health/deep')}catch(e){this.health={status:'error',checks:{},time:new Date().toISOString()}}},
 
   // (remaining pages kept for compatibility — rooms, stays, QRs, etc.)
-  roomsPage(){return'<div class="ph"><h1>🚪 Habitaciones</h1><p>'+this.rooms.length+'</p></div><table><tr><th>Nº</th><th>Estado</th><th>Notas</th><th></th></tr>'+this.rooms.map(function(r){return'<tr><td style="font-weight:700">'+this.esc(r.code)+'</td><td>'+this.statusBadge(r.status)+'</td><td>'+this.esc(r.notes||'')+'</td><td><button class="btn btn-o btn-sm" @click="openRoomDetail('+r.id+')">Ver</button></td></tr>'}.bind(this)).join('')+'</table>';},
-  openRoomDetail(id){let r=this.rooms.find(function(x){return x.id===id});if(!r)return;let that=this;let devs=[];if(r.pack_id){let pack=this.packs.find(function(p){return p.id===r.pack_id});devs=pack?pack.devices:[]}let html='<h2>🚪 Nº '+this.esc(r.code)+' '+this.statusBadge(r.status)+'</h2>'+'<p>📦 '+(r.pack_id?this.esc(this.packs.find(function(p){return p.id===r.pack_id})?.name||'Pack'):'<span style="color:var(--danger)">Sin pack</span>')+'</p>';
+  roomsPage(){
+    let that=this;
+    let typeName=function(id){let t=that.roomTypes.find(function(x){return x.id===id});return t?t.name:('Tipo '+id)};
+    let packName=function(id){let p=that.packs.find(function(x){return x.id===id});return p?p.name:'—'};
+    let rows=this.rooms.map(function(r){
+      let pilot=r.code==='almacenZigbee'?' <span class="tchip" style="--tc:#8aa4ff;--tcbg:rgba(108,142,224,.16)">ZIGBEE · PILOTO</span>':'';
+      return '<tr><td style="font-weight:700">'+that.esc(r.code)+pilot+'</td><td>'+that.esc(typeName(r.room_type_id))+'</td><td>'+that.statusBadge(r.status)+'</td><td>'+(r.pack_id?that.esc(packName(r.pack_id)):'<span class="dim">Sin pack</span>')+'</td><td>'+that.esc(r.notes||'')+'</td><td style="white-space:nowrap"><button class="btn btn-o btn-sm" @click="openRoomDetail('+r.id+')">Ver</button> <button class="btn btn-o btn-sm" @click="openRoomForm('+r.id+')">Editar</button></td></tr>';
+    }).join('');
+    return '<div class="ph"><h1>🚪 Habitaciones</h1><p>'+this.rooms.length+' · <button class="btn btn-p btn-sm" @click="openRoomForm()">+ Nueva sala</button></p></div>'
+      +(this.rooms.length?'<table><tr><th>Nº</th><th>Tipo</th><th>Estado</th><th>Pack</th><th>Notas</th><th></th></tr>'+rows+'</table>':'<div class="empty"><h2>No hay habitaciones</h2><p>Crea la primera sala y asígnale un pack.</p><button class="btn btn-p" @click="openRoomForm()">+ Nueva sala</button></div>');
+  },
+  async openRoomForm(id){
+    await this.loadRoomTypes();
+    await this.loadPacks();
+    let that=this;
+    let r=id?this.rooms.find(function(x){return x.id===id}):null;
+    this.roomForm={code:r?r.code:'',room_type_id:r?r.room_type_id:(this.roomTypes[0]?this.roomTypes[0].id:null),notes:r?(r.notes||''):'',pack_id:r?r.pack_id:null};
+    let typeOpts=this.roomTypes.map(function(t){return'<option value="'+t.id+'"'+(that.roomForm.room_type_id===t.id?' selected':'')+'>'+that.esc(t.name)+' ('+that.esc(t.code)+')</option>'}).join('');
+    let packOpts='<option value="">Sin pack</option>'+this.packs.map(function(p){return'<option value="'+p.id+'"'+(that.roomForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>'}).join('');
+    this.modal.content='<h2 id="modal-title">'+(r?'Editar':'Nueva')+' sala</h2>'
+      +'<div class="field"><label for="rmf_code">Código</label><input id="rmf_code" x-model="roomForm.code" placeholder="almacenZigbee" autocomplete="off"><p class="field-hint">Identificador único de la sala. Para el piloto Zigbee usa exactamente <code>almacenZigbee</code>.</p></div>'
+      +'<div class="field"><label for="rmf_type">Tipo de sala</label><select id="rmf_type" x-model="roomForm.room_type_id">'+typeOpts+'</select><p class="field-hint">El tipo <b>Almacén de bebidas</b> activa el motor de almacén.</p></div>'
+      +'<div class="field"><label for="rmf_pack">Pack</label><select id="rmf_pack" x-model="roomForm.pack_id">'+packOpts+'</select><p class="field-hint">La asignación se guarda con <code>apply-pack</code>. Un pack solo puede pertenecer a una sala.</p></div>'
+      +'<div class="field"><label for="rmf_notes">Notas</label><textarea id="rmf_notes" x-model="roomForm.notes" placeholder="Piloto Zigbee, no sustituye al almacén actual"></textarea></div>'
+      +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveRoom('+(r?r.id:0)+')">Guardar sala</button></div>';
+    this.modal.show=true;
+    if(this.$nextTick){this.$nextTick(function(){let el=document.getElementById('rmf_code');if(el)el.focus()})}
+  },
+  async saveRoom(id){
+    let f=this.roomForm;
+    if(!f.code||!f.code.trim()){this.toastErr('El código es obligatorio');return}
+    if(!f.room_type_id){this.toastErr('Selecciona un tipo de sala');return}
+    let that=this;
+    try{
+      let current=id?this.rooms.find(function(r){return r.id===id}):null;
+      let body={code:f.code.trim(),room_type_id:parseInt(f.room_type_id),notes:f.notes&&f.notes.trim()?f.notes.trim():null};
+      let room;
+      if(id){room=await this.api('/api/v1/rooms/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+      else{room=await this.api('/api/v1/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+      let desired=f.pack_id?parseInt(f.pack_id):null;
+      let currentPack=current?current.pack_id:null;
+      if(desired){
+        if(desired!==currentPack){await this.api('/api/v1/rooms/'+room.id+'/apply-pack/'+desired,{method:'POST'})}
+      }else if(currentPack){
+        await this.api('/api/v1/rooms/'+room.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pack_id:null})});
+      }
+      this.modal.show=false;
+      await this.loadDashboard();await this.loadPacks();
+      this.toastOk(id?'Sala actualizada':'Sala creada');
+    }catch(e){this.toastErr(e.message)}
+  },
+  openRoomDetail(id){
+    let r=this.rooms.find(function(x){return x.id===id});if(!r)return;
+    let that=this;
+    let type=(this.roomTypes.find(function(t){return t.id===r.room_type_id})||{}).name||('Tipo '+r.room_type_id);
+    let pack=r.pack_id?(this.packs.find(function(p){return p.id===r.pack_id})||{}):null;
+    let pilot=r.code==='almacenZigbee'?'<span class="tchip" style="--tc:#8aa4ff;--tcbg:rgba(108,142,224,.16)">ZIGBEE · PILOTO</span>':'';
+    let html='<h2>🚪 Nº '+this.esc(r.code)+' '+this.statusBadge(r.status)+' '+pilot+'</h2>'
+      +'<p class="dim">Tipo: <b>'+this.esc(type)+'</b> · Pack: <b>'+(pack?this.esc(pack.name):'Sin pack')+'</b></p>'
+      +'<p>📦 '+(r.pack_id?this.esc(pack?.name||'Pack'):'<span style="color:var(--danger)">Sin pack</span>')+'</p>';
     if(r.pack_id){html+='<h3 style="font-size:14px;margin:12px 0 6px">📶 Dispositivos del pack (estado real)</h3><div id="rmdev-'+id+'" style="font-size:12px;margin-bottom:8px"><span class="dim">Comprobando...</span></div>';}
     html+='<h3 style="font-size:14px;margin:12px 0 8px">🧹 Historial de servicio hoy</h3>';
-    this.api('/api/v1/workers/1/sessions?room_id='+id+'&limit=20').then(function(d){let s=d.data||[];let sh=s.length?s.map(function(s){return'<div style="padding:4px 0">🕐 '+new Date(s.entered_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'})+(s.exited_at?' → '+new Date(s.exited_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'}):' (activo)')+' · '+(s.duration_minutes!=null?s.duration_minutes+'m':'—')+'</div>'}).join(''):'<p class="dim">Sin servicio hoy</p>';document.getElementById('wd-service-'+id).innerHTML=sh}).catch(function(){});
     html+='<div id="wd-service-'+id+'"><span class="dim">Cargando...</span></div>';
-    html+='<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
-    this.modal.content=html;this.modal.show=true;this.roomDevicesStatus(id);
+    html+='<div class="actions"><button class="btn btn-p btn-sm" @click="openRoomForm('+id+')">Editar / asignar pack</button><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
+    this.modal.content=html;this.modal.show=true;
+    this.api('/api/v1/workers/1/sessions?room_id='+id+'&limit=20').then(function(d){let s=d.data||[];let sh=s.length?s.map(function(s){return'<div style="padding:4px 0">🕐 '+new Date(s.entered_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'})+(s.exited_at?' → '+new Date(s.exited_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'}):' (activo)')+' · '+(s.duration_minutes!=null?s.duration_minutes+'m':'—')+'</div>'}).join(''):'<p class="dim">Sin servicio hoy</p>';let el=document.getElementById('wd-service-'+id);if(el)el.innerHTML=sh}).catch(function(){});
+    this.roomDevicesStatus(id);
   },
   deviceStatusDot(d){let st=d.state||(d.online?'online':d.online===null?'unknown':'offline');if(st==='online')return'<span class="dot" style="background:#00e676;display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>'+this.esc(d.label||d.kind);if(st==='offline')return'<span class="dot" style="background:#ff5252;display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>'+this.esc(d.label||d.kind)+' <span class="dim">(offline)</span>';return'<span class="dot" style="background:#f0a030;display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>'+this.esc(d.label||d.kind)+' <span class="dim">(sin verificar)</span>';},
   async roomDevicesStatus(id){if(!id)return;try{let ds=await this.api('/dashboard-api/device-status?room_id='+id);let el=document.getElementById('rmdev-'+id);if(!el)return;let devs=ds.devices||[];if(!devs.length){el.innerHTML='<span class="dim">Sin dispositivos</span>';return}let that=this;el.innerHTML=devs.map(function(d){return'<div style="padding:2px 0">'+that.deviceStatusDot(d)+'</div>'}).join('')+'<div class="dim" style="font-size:11px;margin-top:4px">🟢 '+(ds.online||0)+' online · 🔴 '+(ds.offline||0)+' offline · 🟠 '+(ds.unknown||0)+' sin verificar</div>'}catch(e){let el=document.getElementById('rmdev-'+id);if(el)el.innerHTML='<span class="dim">No disponible</span>'}},
@@ -497,6 +558,19 @@ function crm(){return{
   boxSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>'},
   plugSvg(){return'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M7 8h10v4a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>'},
   kindChip(k){let c=this.KIND_COLOR[k]||'#8b8fa3',bg=this.KIND_BG[k]||'rgba(139,143,163,.12)';return'<span class="kchip" style="--c:'+c+';--c-bg:'+bg+'">'+k+'</span>'},
+  transportBadge(t){
+    let v=(t||'UNKNOWN').toUpperCase();
+    let m={ZIGBEE2MQTT:['ZIGBEE','#8aa4ff','rgba(108,142,224,.14)'],TUYA:['TUYA','#e0904f','rgba(224,144,79,.14)'],LOCAL:['LOCAL','#62c99b','rgba(98,201,155,.14)'],SIMULATED:['SIM','#a8b2c3','rgba(168,178,195,.14)'],UNKNOWN:['SIN ORIGEN','#8b8fa3','rgba(139,143,163,.12)']};
+    let x=m[v]||m.UNKNOWN;
+    return'<span class="tchip" style="--tc:'+x[1]+';--tcbg:'+x[2]+'" title="Transporte: '+this.esc(v)+'">'+x[0]+'</span>';
+  },
+  provBadge(s){
+    let st=(s&&s.status)||'draft';
+    let m={draft:['BORRADOR','#8b8fa3','rgba(139,143,163,.12)'],associated:['ASOCIADO','#8b8fa3','rgba(139,143,163,.12)'],pending_mapping:['SIN MAPPING','#e0b94e','rgba(224,185,78,.12)'],waiting_signal:['ESPERANDO SEÑAL','#6c8ee0','rgba(108,142,224,.12)'],operational:['OPERATIVO','#4caf93','rgba(76,175,147,.12)'],degraded:['DEGRADADO','#e0904f','rgba(224,144,79,.12)'],attention:['ATENCIÓN','#e0556a','rgba(224,85,106,.12)']};
+    let x=m[st]||m.draft;
+    let reason=s&&s.reason?' · '+s.reason:'';
+    return'<span class="pchip" style="--pc:'+x[1]+';--pcbg:'+x[2]+'" title="Provisión: '+this.esc(st+reason)+'">'+x[0]+'</span>';
+  },
   battHtml(pct,showPct){
     if(pct===null||pct===undefined){
       return showPct?'<span class="batt batt--unknown" title="Sin datos de batería">'+this.boltSvg()+'<i class="batt-track"></i><em class="mono">--</em></span>':'';
@@ -520,7 +594,7 @@ function crm(){return{
   },
   packDevRow(d){
     let c=this.KIND_COLOR[d.kind]||'#8b8fa3',bg=this.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
-    return'<li class="pdev"><span class="pdev-ic" style="--c:'+c+';--c-bg:'+bg+'">'+this.glyph(d.kind)+'</span><span class="pdev-txt"><span class="pdev-lb">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+'</span><span class="pdev-id mono">'+this.esc(d.external_id||'')+'</span></span>'+this.kindChip(d.kind)+this.battHtml(d.battery_pct,false)+'</li>';
+    return'<li class="pdev"><span class="pdev-ic" style="--c:'+c+';--c-bg:'+bg+'">'+this.glyph(d.kind)+'</span><span class="pdev-txt"><span class="pdev-lb">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+'</span><span class="pdev-id mono">'+this.esc(d.external_id||'')+'</span></span>'+this.kindChip(d.kind)+this.transportBadge(d.transport)+this.provBadge(d.integration_status)+this.battHtml(d.battery_pct,false)+'</li>';
   },
   devCard(d,idx){
     let c=this.KIND_COLOR[d.kind]||'#8b8fa3',bg=this.KIND_BG[d.kind]||'rgba(139,143,163,.12)';
@@ -529,14 +603,14 @@ function crm(){return{
     else if(d.kind==='PROXIMITY')batt=this.battHtml(null,true);
     let loc=d.kind==='RPI'?'<button class="icon-btn" title="Localizar (parpadeo LED)" @click="identifyDevice('+d.id+')">'+this.crosshairSvg()+'</button>':'';
     let acts='<div class="dv-acts">'+loc+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
-    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
+    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
   },
   deriveDevices(){
     let out=[];
     (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
     this.devices=out;
   },
-   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:null,pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null)}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
+   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:null,pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null),transport:x.transport||'UNKNOWN',integration_status:x.integration_status||null}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
   packPage(){
     let q=(this.pkQ||'').toLowerCase();
     let packs=this.packs.filter(p=>{
@@ -553,10 +627,11 @@ function crm(){return{
     let body=packs.length
       ?'<div class="packs-grid">'+packs.map((p,i)=>{
         let room=p.room_id?'<span class="room-pill">'+this.esc(this.roomCodeById(p.room_id))+'</span>':'<span class="room-pill room-pill--none" title="Asigna este pack desde la vista Habitaciones">Sin asignar</span>';
+        let pilot=p.code==='PACK_ZIGBEE'?'<span class="tchip" style="--tc:#8aa4ff;--tcbg:rgba(108,142,224,.16)">ZIGBEE</span>':'';
         let devs=p.devices||[];
         let list=devs.length?'<ul class="pack-devs">'+devs.map(d=>this.packDevRow(d)).join('')+'</ul>':'<div class="pdev pdev--empty">Ningún dispositivo en este pack · <button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Añadir</button></div>';
         let up=(p.updated_at||'').replace('T',' ').substring(0,16);
-        return'<article class="pack-card" style="--i:'+i+'"><header class="pack-head"><div class="pack-id"><span class="pack-code mono">'+this.esc(p.code)+'</span><h3 class="pack-name">'+this.esc(p.name)+'</h3></div>'+room+'</header>'+this.packSigHtml(p)+list+'<footer class="pack-foot"><span class="mono">'+devs.length+' dispositivo'+(devs.length===1?'':'s')+'</span><span class="dim">'+up+'</span><span class="pack-acts"><button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Editar</button><button class="btn btn-d btn-xs" @click="deletePack('+p.id+')">Eliminar</button></span></footer></article>';
+        return'<article class="pack-card" style="--i:'+i+'"><header class="pack-head"><div class="pack-id"><span class="pack-code mono">'+this.esc(p.code)+'</span> <h3 class="pack-name">'+this.esc(p.name)+'</h3>'+pilot+'</div>'+room+'</header>'+this.packSigHtml(p)+list+'<footer class="pack-foot"><span class="mono">'+devs.length+' dispositivo'+(devs.length===1?'':'s')+'</span><span class="dim">'+up+'</span><span class="pack-acts"><button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Editar</button><button class="btn btn-d btn-xs" @click="deletePack('+p.id+')">Eliminar</button></span></footer></article>';
       }).join('')+'</div>'
       :'<div class="empty"><div class="empty-glyph">'+this.boxSvg()+'</div><h2>No hay packs todavía</h2><p>Crea tu primer pack para agrupar los dispositivos de una habitación.</p><button class="btn btn-p" @click="openPackForm()">+ Nuevo pack</button></div>';
     return'<div class="ph"><h1>Packs de dispositivos</h1><p>Agrupaciones de hardware instalado por habitación</p></div>'
@@ -632,16 +707,19 @@ function crm(){return{
     try{await this.api('/api/v1/device-packs/'+id,{method:'DELETE'});this.modal.show=false;await this.loadPacks();this.toastOk('Pack eliminado')}
     catch(e){this.toastErr(e.message)}
   },
-  openDeviceForm(id,presetPackId){
+  async openDeviceForm(id,presetPackId){
+    await this.loadPacks();
     let d=id?this.devices.find(x=>x.id===id):null;
     let kind=d?d.kind:'RPI';
-    this.devForm={kind:kind,external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),meta:d&&d.meta?Object.assign({},d.meta):{}};
+    this.devForm={kind:kind,external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),transport:d?(d.transport||'UNKNOWN'):'UNKNOWN',meta:d&&d.meta?Object.assign({},d.meta):{}};
     let that=this;
     let seg=this.DEV_KINDS.map(k=>{
       let dis=d?' disabled':'';
       return'<button type="button" class="seg-btn'+(kind===k?' act':'')+'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
     }).join('');
-    let packOpts='<option value="">Sin pack</option>'+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
+    let packOpts=(d?'<option value="">Sin pack</option>':'')+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
+    if(!this.packs.length&&!d){packOpts='<option value="">Primero crea un pack</option>'}
+    let transportOpts=[['UNKNOWN','Sin declarar'],['ZIGBEE2MQTT','Zigbee2MQTT local'],['TUYA','Tuya cloud'],['LOCAL','ESP32 / local'],['SIMULATED','Simulado']].map(function(x){return'<option value="'+x[0]+'"'+(that.devForm.transport===x[0]?' selected':'')+'>'+x[1]+'</option>'}).join('');
     let metaBlocks=this.DEV_KINDS.map(k=>{
       let fields=that.KIND_META[k]||{};
       return Object.keys(fields).map(key=>{
@@ -650,11 +728,12 @@ function crm(){return{
       }).join('');
     }).join('');
     let hint=d?'<p class="field-hint">El tipo no se puede cambiar: es la identidad física del hardware.</p>':'<p class="field-hint">'+that.KIND_HINT[kind]+'</p>';
-    this.modal.content='<h2>'+(d?'Editar dispositivo':'Nuevo dispositivo')+'</h2>'
+    this.modal.content='<h2 id="modal-title">'+(d?'Editar dispositivo':'Nuevo dispositivo')+'</h2>'
       +'<div class="field"><label>Tipo de dispositivo</label><div class="seg" role="radiogroup" aria-label="Tipo de dispositivo">'+seg+'</div>'+hint+'</div>'
-      +'<div class="field field--mono"><label for="dvf_ext">ID externo</label><input id="dvf_ext" x-model="devForm.external_id" placeholder="wbr3-2f01" autocomplete="off"><p class="field-hint">Identificador físico del dispositivo (chip, MAC o ID de Tuya).</p></div>'
-      +'<div class="field"><label for="dvf_label">Etiqueta</label><input id="dvf_label" x-model="devForm.label" placeholder="Cerradura puerta 201" autocomplete="off"><p class="field-hint">Opcional. Nombre legible para el personal.</p></div>'
-      +'<div class="field"><label for="dvf_pack">Pack</label><select id="dvf_pack" x-model="devForm.pack_id">'+packOpts+'</select></div>'
+      +'<div class="field field--mono"><label for="dvf_ext">ID externo</label><input id="dvf_ext" x-model="devForm.external_id" placeholder="wbr3-2f01" autocomplete="off"><p class="field-hint">Identificador físico estable: chip, MAC o IEEE del dispositivo.</p></div>'
+      +'<div class="field"><label for="dvf_label">Etiqueta</label><input id="dvf_label" x-model="devForm.label" placeholder="Zigbee · Puerta · almacenZigbee" autocomplete="off"><p class="field-hint">Opcional. Nombre legible para el personal.</p></div>'
+      +'<div class="field"><label for="dvf_transport">Origen / transporte</label><select id="dvf_transport" x-model="devForm.transport">'+transportOpts+'</select><p class="field-hint">Se declara explícitamente; no se infiere del tipo ni del nombre. Para el pack Zigbee usa <b>Zigbee2MQTT local</b>.</p></div>'
+      +'<div class="field"><label for="dvf_pack">Pack</label><select id="dvf_pack" x-model="devForm.pack_id">'+packOpts+'</select><p class="field-hint">Un dispositivo debe pertenecer a un pack. La sala se resuelve por <code>pack → room</code>.</p></div>'
       +'<div id="dv-meta-fields">'+metaBlocks+'</div>'
       +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveDevice('+(d?d.id:0)+')">Guardar dispositivo</button></div>';
     this.modal.show=true;
@@ -663,18 +742,22 @@ function crm(){return{
   async saveDevice(id){
     let f=this.devForm,k=f.kind;
     if(!f.external_id||!f.external_id.trim()){this.toastErr('El ID externo es obligatorio');return}
+    if(!id&&!f.pack_id){this.toastErr('Selecciona un pack antes de crear el dispositivo');return}
     let meta={};
     Object.keys(this.KIND_META[k]||{}).forEach(key=>{let v=(f.meta||{})[key];if(v!==undefined&&v!==null&&String(v).trim()!=='')meta[key]=String(v).trim()});
+    let transport=(f.transport||'UNKNOWN').toUpperCase();
     try{
       if(id){
-        let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,meta:meta};
+        let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,transport:transport,meta:meta};
         await this.api('/api/v1/devices/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       }else{
-        let body={kind:k,external_id:f.external_id.trim(),pack_id:f.pack_id?parseInt(f.pack_id):null,meta:meta};
+        let body={kind:k,external_id:f.external_id.trim(),pack_id:parseInt(f.pack_id),transport:transport,meta:meta};
         let d=await this.api('/api/v1/devices/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(f.label&&f.label.trim()){await this.api('/api/v1/devices/'+d.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:f.label.trim()})})}
       }
-      this.modal.show=false;await this.loadPacks();this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
+      this.modal.show=false;await this.loadPacks();
+      if(this.p==='dv'){await this.loadDevices()}
+      this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
     }catch(e){this.toastErr(e.message)}
   },
   async deleteDevice(id){
