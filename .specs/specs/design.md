@@ -80,7 +80,7 @@ Se calcula sin sondeo: mapa cargado, último evento persistido, frescura y salud
 Nuevo proceso aislado `api/bin/zigbee-ingress/` (Node.js, dependencia `mqtt` fijada por versión y
 lockfile):
 
-- Suscripción QoS 1 a `zigbee2mqtt/#`, `manualAcks: true`, sesión persistente con client id.
+- Suscripción QoS 1 a `zigbee2mqtt/#`, MQTT 5 con `customHandleAcks` (ACK manual), sesión persistente con client id.
 - Al recibir un mensaje: valida tamaño/forma mínima, escribe el sobre en el spool con `fsync` de
   fichero y directorio y `rename` atómico; **solo entonces** confirma el mensaje.
 - Si el spool está lleno o no se puede escribir, no confirma y aplica backpressure/desconexión

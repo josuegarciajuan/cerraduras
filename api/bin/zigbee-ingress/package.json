@@ -1,0 +1,16 @@
+{
+  "name": "cerraduras-zigbee-ingress",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MQTT ingress with manual ACK after durable spool persistence (F91)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.1"
+  }
+}
