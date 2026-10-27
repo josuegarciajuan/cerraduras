@@ -210,7 +210,8 @@ CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
 - `radar_door`: sin puerta reciente, un `PRESENT` puede quedar candidato indefinidamente y no
   produce efectos. `radar_only`: la confirmación depende solo de la evidencia del radar.
 - `radar_only_shadow`: se ejecuta la misma máquina y se guarda `shadow_decision` junto a la
-  decisión operativa; las discrepancias se auditan.
+  decisión operativa; la operación usa `radar_door` como referencia segura y las discrepancias
+  se auditan.
 - `target_distance`, iluminancia y LQI no intervienen en la decisión.
 
 ### Integración con el motor del almacén

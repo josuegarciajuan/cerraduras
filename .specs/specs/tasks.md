@@ -109,12 +109,12 @@ consulta de topología.
 
 **Trazabilidad**: RF-148.1..RF-148.12, RF-149.2..RF-149.4
 
-- [ ] Implementar `RadarPresenceDecision` con modos `camera_fusion`, `radar_door`,
+- [x] Implementar `RadarPresenceDecision` con modos `camera_fusion`, `radar_door`,
   `radar_only_shadow` y `radar_only`.
-- [ ] Implementar máquina de estados, evidencia temporal, histéresis, frescura y ausencia.
-- [ ] Integrar solo `PRESENT_CONFIRMED` con el motor; candidatos y stale no producen efectos.
-- [ ] Conservar `PresenceEvidence`/cámara sin cambios y usarlos como referencia/rollback.
-- [ ] Tests de entrada, permanencia, salida, huecos, duplicados, 24 h simuladas, sala vacía,
+- [x] Implementar máquina de estados, evidencia temporal, histéresis, frescura y ausencia.
+- [x] Integrar solo `PRESENT_CONFIRMED` con el motor; candidatos y stale no producen efectos.
+- [x] Conservar `PresenceEvidence`/cámara sin cambios y usarlos como referencia/rollback.
+- [x] Tests de entrada, permanencia, salida, huecos, duplicados, 24 h simuladas, sala vacía,
   sensor stale y discrepancia shadow.
 
 **Verificación**: tests unitarios deterministas y simulación temporal; sin hardware.
@@ -204,7 +204,7 @@ consulta de topología.
 - [x] TSK-91.04 provisión
 - [x] TSK-91.05 ingreso MQTT
 - [x] TSK-91.06 consumidor y mapa v2
-- [ ] TSK-91.07 presencia por radar
+- [x] TSK-91.07 presencia por radar
 - [ ] TSK-91.08 luz operativa
 - [ ] TSK-91.09 panel del almacén
 - [ ] TSK-91.10 endurecimiento
