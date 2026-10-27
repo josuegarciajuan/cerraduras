@@ -82,6 +82,31 @@ a `PACK_ZIGBEE` para que la sala las resuelva por pack (F30).
 `radar_only_shadow` calcula radar-only sin actuar; `radar_only` decide solo con
 el radar.
 
+## Estado de conectividad en `/dashboard` (F92)
+
+El panel decide la liveness por transporte, no por `kind`:
+
+- Zigbee usa `availability` de Zigbee2MQTT si está fresca; si no, el estado de
+  integración (`operational`/`degraded`) y el último push.
+- Las cámaras usan una sonda RTSP bajo demanda (ffprobe con fallback TCP) al
+  cargar el panel o pulsar **Comprobar dispositivos**. No hay polling.
+- Zigbee y cámaras nunca llaman a la API de Tuya.
+
+Para detección real de `offline` en Zigbee, activar en Zigbee2MQTT:
+
+```yaml
+availability:
+  enabled: true
+  active: { timeout: 10 }
+  passive: { timeout: 1500 }
+```
+
+- `active` aplica a routers/alimentados (la luz). `passive` aplica a batería
+  (la puerta): un dispositivo silencioso puede tardar en marcar `offline`; es el
+  límite físico de un end-device dormido.
+- Los mensajes `<topic>/availability` solo actualizan conectividad; no cambian
+  presencia, puerta, visitas ni grabaciones.
+
 ## Rollback
 
 - Poner los flags a `false` y ejecutar `bash stop-all.sh`.

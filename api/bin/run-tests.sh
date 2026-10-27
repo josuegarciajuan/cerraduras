@@ -6074,6 +6074,122 @@ else
 fi
 
 # =============================================================================
+# BLOCK 65 — F92: estado de conectividad por transporte (Zigbee y cámaras)
+# Trazabilidad: RF-152..RF-157
+# =============================================================================
+block "BLOCK 65 — F92: conectividad por transporte"
+
+F92_ROOM=$($MYSQL -sN -e "SELECT id FROM rooms WHERE code='almacenZigbee' LIMIT 1" 2>/dev/null)
+if [ -z "$F92_ROOM" ]; then
+    skip "F92 sala almacenZigbee" "No existe la sala almacenZigbee"
+else
+    F92_DS=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=$F92_ROOM")
+    F92_RESULT=$(echo "$F92_DS" | python3 -c "
+import sys, json
+try:
+    d=json.load(sys.stdin)
+except Exception as e:
+    print('ERR '+str(e)); sys.exit(0)
+devs=d.get('devices') or []
+valid={'online','offline','unknown'}
+bad=[]
+zig=0; cams=0
+for x in devs:
+    st=x.get('state')
+    if st not in valid:
+        bad.append(str(x.get('id'))+':state='+str(st))
+    t=str(x.get('transport') or '').upper()
+    if t=='ZIGBEE2MQTT':
+        zig+=1
+        if x.get('tuya_cloud') is not False:
+            bad.append(str(x.get('id'))+':zigbee_tuya_cloud')
+        if (x.get('integration_status') or {}).get('status')=='operational' and st!='online':
+            bad.append(str(x.get('id'))+':zigbee_operational_no_online')
+    if x.get('kind')=='CAMERA':
+        cams+=1
+        if x.get('tuya_cloud') is not False:
+            bad.append(str(x.get('id'))+':camera_tuya_cloud')
+cnt=(d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
+if zig<1 or cams<1:
+    bad.append('pack_sin_zigbee_o_camara')
+ok=cnt and not bad
+print(('OK ' if ok else 'FAIL ')+('zigbee='+str(zig)+' cameras='+str(cams)+' sum='+str(cnt)+' bad='+str(bad)))
+" 2>/dev/null)
+    case "$F92_RESULT" in
+        OK*) pass "F92: device-status clasifica Zigbee/cámara sin Tuya ($F92_RESULT)" ;;
+        FAIL*) fail "F92: device-status por transporte" "${F92_RESULT#FAIL }" ;;
+        *) fail "F92: device-status parse" "${F92_RESULT:-respuesta vacía}" ;;
+    esac
+
+    F92_ZIG_IDS=$(echo "$F92_DS" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(','.join(str(x['id']) for x in (d.get('devices') or []) if str(x.get('transport') or '').upper()=='ZIGBEE2MQTT'))
+")
+    if [ -z "$F92_ZIG_IDS" ]; then
+        skip "F92 ping Zigbee" "Sin dispositivos Zigbee en la sala"
+    else
+        F92_ZIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_ZIG_IDS'.split(',')], 'verify_tuya': True, 'verify_cameras': False}))")
+        F92_ZIG_PING=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "$F92_ZIG_BODY")
+        F92_ZIG_RESULT=$(echo "$F92_ZIG_PING" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception as e: print('ERR '+str(e)); sys.exit(0)
+bad=[]
+for r in d.get('results') or []:
+    if r.get('checked_via')!='ZIGBEE': bad.append(str(r.get('device_id'))+':via='+str(r.get('checked_via')))
+    if r.get('state') not in ('online','offline','unknown'): bad.append(str(r.get('device_id'))+':state')
+print(('OK ' if not bad else 'FAIL ')+str(bad))
+" 2>/dev/null)
+        case "$F92_ZIG_RESULT" in
+            OK*) pass "F92: ping Zigbee no usa Tuya ($F92_ZIG_RESULT)" ;;
+            FAIL*) fail "F92: ping Zigbee sin Tuya" "${F92_ZIG_RESULT#FAIL }" ;;
+            *) fail "F92: ping Zigbee parse" "${F92_ZIG_RESULT:-respuesta vacía}" ;;
+        esac
+    fi
+
+    F92_CAM_IDS=$(echo "$F92_DS" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(','.join(str(x['id']) for x in (d.get('devices') or []) if x.get('kind')=='CAMERA'))
+")
+    if [ -z "$F92_CAM_IDS" ]; then
+        skip "F92 ping cámara" "Sin cámaras en la sala"
+    else
+        F92_CAM_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_CAM_IDS'.split(',')], 'verify_tuya': False, 'verify_cameras': True}))")
+        F92_CAM_PING=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "$F92_CAM_BODY")
+        F92_CAM_RESULT=$(echo "$F92_CAM_PING" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception as e: print('ERR '+str(e)); sys.exit(0)
+bad=[]
+for r in d.get('results') or []:
+    if r.get('checked_via')!='CAMERA': bad.append(str(r.get('device_id'))+':via='+str(r.get('checked_via')))
+    if r.get('state') not in ('online','offline','unknown'): bad.append(str(r.get('device_id'))+':state')
+print(('OK ' if not bad else 'FAIL ')+str(bad))
+" 2>/dev/null)
+        case "$F92_CAM_RESULT" in
+            OK*) pass "F92: ping cámara con rama propia ($F92_CAM_RESULT)" ;;
+            FAIL*) fail "F92: ping cámara" "${F92_CAM_RESULT#FAIL }" ;;
+            *) fail "F92: ping cámara parse" "${F92_CAM_RESULT:-respuesta vacía}" ;;
+        esac
+    fi
+fi
+
+# Guardias estáticas: la política y la sonda existen y no hay inferencia Tuya por kind.
+if [ -f src/Domain/Devices/DeviceLivenessService.php ] && [ -f src/Domain/Devices/CameraReachabilityProbe.php ]; then
+    pass "F92: política y sonda de cámara presentes"
+else
+    fail "F92: clases de liveness" "faltan DeviceLivenessService/CameraReachabilityProbe"
+fi
+if grep -q "deviceIsTuyaCloud(\['kind' => \$dev->kind, 'transport' => \$dev->transport\])" public/index.php \
+    && grep -q "applyAvailability" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
+    pass "F92: clasificación por transporte y availability cableadas"
+else
+    fail "F92: cableado" "falta guardia de transporte/availability"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

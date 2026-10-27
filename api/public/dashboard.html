@@ -526,7 +526,7 @@
   <div id="zone4">
     <div class="panel-card" id="devices-panel">
       <h3>📊 Dispositivos</h3>
-      <button id="btn-refresh-devices" onclick="refreshDeviceStatus()" title="Consultar estado real de los dispositivos (vía Tuya API)" style="display:none;width:100%;padding:6px 10px;margin:4px 0 8px 0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:500;transition:all 0.2s">🔄 Comprobar dispositivos</button>
+      <button id="btn-refresh-devices" onclick="refreshDeviceStatus()" title="Consultar estado real de los dispositivos (Tuya, Zigbee y cámaras)" style="display:none;width:100%;padding:6px 10px;margin:4px 0 8px 0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:500;transition:all 0.2s">🔄 Comprobar dispositivos</button>
       <div id="devices-content" class="devices-list">Cargando...</div>
     </div>
     <div class="panel-card" id="qr-test-panel">
@@ -653,8 +653,46 @@ let _offlineDeviceIds = new Set(); // device IDs currently being polled every 10
 // se verifica gratis por heartbeat/command-queue y sí se re-comprueba periódicamente.
 const TUYA_CLOUD_KINDS = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
 const ESP32_KINDS      = ['RPI', 'SCANNER', 'LOCK'];
+function devTransport(d) {
+  return String((d && d.transport) || '').toUpperCase();
+}
+// F92: el backend decide la categoría por transporte. `tuya_cloud` es la fuente
+// de verdad; el fallback por kind solo aplica a filas legacy sin transporte.
 function devIsTuyaCloud(d) {
-  return !!(d && (d.tuya_cloud || TUYA_CLOUD_KINDS.indexOf(d.kind) >= 0));
+  if (!d) return false;
+  if (typeof d.tuya_cloud === 'boolean') return d.tuya_cloud;
+  const t = devTransport(d);
+  if (t === 'TUYA') return true;
+  if (t && t !== 'UNKNOWN') return false;
+  return TUYA_CLOUD_KINDS.indexOf(d.kind) >= 0;
+}
+function devIsZigbee(d) { return devTransport(d) === 'ZIGBEE2MQTT'; }
+function devIsCamera(d) { return !!(d && d.kind === 'CAMERA'); }
+function devViaLabel(d) {
+  if (devIsCamera(d)) return 'Cámara';
+  if (devIsZigbee(d)) return 'Zigbee2MQTT';
+  if (devIsTuyaCloud(d)) return 'Tuya';
+  if (ESP32_KINDS.indexOf(d && d.kind) >= 0) return 'ESP32';
+  return 'sin transporte';
+}
+function devUnknownLabel(d) {
+  const reason = d && d.liveness_reason ? String(d.liveness_reason) : '';
+  const labels = {
+    stale: 'sin señal reciente',
+    no_signal: 'sin señal',
+    not_probed: 'sin verificar · pulsa Comprobar',
+    missing_mapping: 'pendiente de mapping',
+    quarantine: 'en cuarentena',
+    no_pack: 'sin pack',
+    disabled: 'desactivada',
+    no_rtsp_url: 'sin rtsp_url',
+    unknown_transport: 'origen sin declarar',
+    pending_check: 'comprobando',
+  };
+  if (labels[reason]) return labels[reason];
+  if (devIsCamera(d)) return 'sin verificar · pulsa Comprobar';
+  if (devIsZigbee(d)) return 'sin señal reciente';
+  return 'no verificado';
 }
 // Estado normalizado: 'online' | 'offline' | 'unknown'. Prefiere d.state (que el
 // backend calcula con verdad: sonda Tuya real o heartbeat/check ESP32), con fallback.
@@ -1491,7 +1529,7 @@ let modalPackName = '';
 // mode: 'checking' | 'done' | 'error'
 // resultsMap: { device_id: { online, kind, checked_via, error } }
 function renderModalDevices(devices, mode, resultsMap) {
-  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
   if (mode === 'checking') {
     return devices.map(d => {
       return `<div class="pack-item"><span class="check" style="color:var(--text-dim)">⏳</span> ${kindName(d.kind)} <span style="font-size:0.6rem;color:var(--text-dim)">⏱ comprobando...</span></div>`;
@@ -1828,7 +1866,7 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true, verify_cameras: true }),
     });
     const pingData = await pingRes.json();
     if (pingData.ok) {
@@ -2812,26 +2850,28 @@ function updateDevicesPanel(data) {
       }
       const packLabel = result.pack_name || 'Sin pack';
       const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
-      const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+      const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
       el.innerHTML = devices.map(d => {
         const name = d.label || kindName(d.kind);
         const idShort = (d.external_id||'').substring(0,6);
         const st = devStateOf(d);
         const dm = devDotMeta(st);
-        const via = devIsTuyaCloud(d) ? 'Tuya' : 'ESP32';
+        const via = devViaLabel(d);
         let statusLabel = dm.label;
         if (d._pending_check) {
           statusLabel = '(comprobando...)';
         } else if (st === 'online') {
           if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) statusLabel = '(vía ESP32, no verificado)';
           else if (d._inherited) statusLabel = '(vía ESP32)';
+          else if (devIsCamera(d)) statusLabel = '(vía sonda)';
+          else if (devIsZigbee(d)) statusLabel = '(vía Zigbee2MQTT)';
           else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
           else statusLabel = '';
         } else if (st === 'unknown') {
-          statusLabel = devIsTuyaCloud(d) ? '(no verificado · pulsa Comprobar)' : '(sin datos)';
+          statusLabel = '(' + devUnknownLabel(d) + ')';
         }
         const lastSeen = d.last_seen_at ? ' · last_seen ' + d.last_seen_at : '';
-        const probed   = d.online_probed_at ? ' · sonda Tuya ' + d.online_probed_at : '';
+        const probed   = d.online_probed_at ? ' · última comprobación ' + d.online_probed_at : '';
         return `
         <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} · verificación ${via} · estado ${st}${lastSeen}${probed}">
           <span><span class="dot" style="background:${dm.dot};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
@@ -2859,26 +2899,28 @@ function updateDevicesPanelFromCache(result) {
   }
   const packLabel = result.pack_name || 'Sin pack';
   const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
-  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR'}[k]||k);
+  const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
   el.innerHTML = devices.map(d => {
     const name = d.label || kindName(d.kind);
     const idShort = (d.external_id||'').substring(0,6);
     const st = devStateOf(d);
     const dm = devDotMeta(st);
-    const via = devIsTuyaCloud(d) ? 'Tuya' : 'ESP32';
+    const via = devViaLabel(d);
     let statusLabel = dm.label;
     if (d._pending_check) {
       statusLabel = '(comprobando...)';
     } else if (st === 'online') {
       if (d._inherited && (d.kind === 'SCANNER' || d.kind === 'LOCK')) statusLabel = '(vía ESP32, no verificado)';
       else if (d._inherited) statusLabel = '(vía ESP32)';
+      else if (devIsCamera(d)) statusLabel = '(vía sonda)';
+      else if (devIsZigbee(d)) statusLabel = '(vía Zigbee2MQTT)';
       else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
       else statusLabel = '';
     } else if (st === 'unknown') {
-      statusLabel = devIsTuyaCloud(d) ? '(no verificado · pulsa Comprobar)' : '(sin datos)';
+      statusLabel = '(' + devUnknownLabel(d) + ')';
     }
     const lastSeen = d.last_seen_at ? ' · last_seen ' + d.last_seen_at : '';
-    const probed   = d.online_probed_at ? ' · sonda Tuya ' + d.online_probed_at : '';
+    const probed   = d.online_probed_at ? ' · última comprobación ' + d.online_probed_at : '';
     return `
     <div class="dev-row" title="${d.kind}: ${d.external_id||'—'} · verificación ${via} · estado ${st}${lastSeen}${probed}">
       <span><span class="dot" style="background:${dm.dot};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${name}</span>
@@ -2950,7 +2992,7 @@ async function refreshDeviceStatus() {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true, verify_cameras: true }),
     });
     const pingData = await pingRes.json();
 

@@ -21,6 +21,38 @@ final class ZigbeeMqttEventProcessor
     }
 
     /**
+     * Persist a Zigbee2MQTT availability message as connectivity evidence only
+     * (F92/RF-153.3). It never touches presence, door state or visits.
+     *
+     * @param array<string,mixed> $mapped Output from ZigbeeMqttMessageMapper.
+     * @return array{status:string,reason?:string,state?:string}
+     */
+    public function applyAvailability(array $mapped): array
+    {
+        $diagnostic = is_array($mapped['diagnostic'] ?? null) ? $mapped['diagnostic'] : null;
+        if ($diagnostic === null || ($diagnostic['kind'] ?? null) !== 'availability') {
+            return ['status' => 'ignored', 'reason' => 'not_availability'];
+        }
+        $state = strtolower(trim((string) ($diagnostic['state'] ?? '')));
+        if (!in_array($state, ['online', 'offline'], true)) {
+            return ['status' => 'discarded', 'reason' => 'invalid_availability'];
+        }
+        $externalId = (string) ($diagnostic['device_external_id'] ?? '');
+        if ($externalId === '') {
+            return ['status' => 'discarded', 'reason' => 'unknown_device'];
+        }
+        $device = $this->devices->findByExternalId($externalId);
+        if ($device === null) {
+            return ['status' => 'discarded', 'reason' => 'unknown_device'];
+        }
+        if ($device->transport !== Device::TRANSPORT_ZIGBEE2MQTT) {
+            return ['status' => 'discarded', 'reason' => 'wrong_transport'];
+        }
+        $this->devices->updateOnlineState($device->id, $state === 'online');
+        return ['status' => 'processed', 'state' => $state];
+    }
+
+    /**
      * @param array<string,mixed> $mappedEvent Output from ZigbeeMqttMessageMapper.
      * @return array{status:string,reason?:string,result?:array<string,mixed>}
      */

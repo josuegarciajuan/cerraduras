@@ -1,9 +1,92 @@
 # Design — Cerraduras Hotel
 
+> **F92 — Última revisión**: 2026-10-27 · **Estado**: aprobado; implementación en curso.
 > **F91 — Última revisión**: 2026-10-27 · **Estado**: diseño aprobado; implementación pendiente.
 > **F90 — Última revisión**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
 > caracterización funcional e integración pendientes. Revisar al elegir host definitivo y antes
 > de instalar en el almacén.
+
+---
+
+# Fase 92: Estado de conectividad por transporte
+
+## Decisión
+
+La liveness del panel deja de depender de `kind` y pasa a depender de `transport` cuando está
+declarado. Se separan cuatro categorías:
+
+| Categoría | Criterio | Fuente de verdad |
+|---|---|---|
+| Cámara | `kind=CAMERA` | Sonda RTSP bajo demanda persistida |
+| Zigbee | `transport=ZIGBEE2MQTT` | `availability` fresca o `integration_status` + push |
+| Tuya | `transport=TUYA` o legacy NULL + kind Tuya | Sonda Tuya fresca o push |
+| Local/ESP32 | `transport=LOCAL` o legacy NULL + kind ESP32 | `last_seen_at` del heartbeat/check |
+
+`CAMERA` tiene prioridad sobre el transporte para no confundirla con local.
+
+## Reglas de resolución
+
+```text
+camera  -> online_state/online_probed_at frescos -> online|offline
+           sin sonda fresca                       -> unknown (not_probed)
+zigbee  -> availability fresca                    -> online|offline
+           integration_status operational         -> online (zigbee_push)
+           integration_status degraded            -> unknown (stale)
+           waiting_signal/pending/attention/draft -> unknown (motivo)
+tuya    -> push reciente (PROXIMITY o presence_source=push) -> online
+           sonda Tuya fresca                              -> online|offline
+           sin señal fresca                               -> unknown
+local   -> last_seen nulo -> unknown
+           last_seen <= 10 min -> online
+           last_seen > 10 min  -> offline
+```
+
+- La ventana push de Tuya se mantiene en 10 min.
+- La ventana de sonda (Tuya o cámara) es `TUYA_PROBE_TTL_SECONDS` (600 s).
+- La presencia Zigbee se considera degradada según `DeviceIntegrationStatusService`
+  (`presence_stale_seconds`, default 300 s).
+- Los dispositivos Zigbee edge-triggered no se degradan por silencio.
+
+## Availability Zigbee
+
+- `ZigbeeMqttMessageMapper` incluye `device_external_id` en el diagnóstico de
+  `<topic>/availability`.
+- `ZigbeeMqttEventProcessor::applyAvailability()` actualiza `online_state`/`online_probed_at`
+  solo si el dispositivo existe y su `transport=ZIGBEE2MQTT`.
+- No toca `IotSessionService`, no crea visitas y no cambia `door_state` ni `presence_state`.
+- Si Zigbee2MQTT no publica availability, la política cae a `integration_status`.
+
+## Sonda de cámara
+
+- `CameraReachabilityProbe::parseRtsp()` obtiene host/puerto sin exponer credenciales.
+- `probe()` usa `ffprobe -rtsp_transport tcp -rw_timeout …` con deadline acotado; si no está
+  disponible, usa `fsockopen` TCP al puerto RTSP.
+- El resultado se persiste en las mismas columnas que la verificación Tuya (semántica genérica:
+  última verificación de conectividad).
+- Solo se invoca desde `ping-all-devices` cuando `verify_cameras=true`.
+- `device-status` nunca sondea.
+
+## Contrato y panel
+
+- `tuya_cloud` se calcula con la categoría, no con `kind` aislado.
+- Campos aditivos: `liveness_source`, `liveness_reason`.
+- `ping-all-devices` añade `verify_cameras` y `checked_via` pasa a `ZIGBEE`/`CAMERA`.
+- `/dashboard` usa `d.tuya_cloud` y el transporte; las etiquetas dejan de asumir Tuya para Zigbee.
+
+## No objetivos
+
+- No se añade polling Tuya ni de Zigbee.
+- No se cambia la máquina de presencia ni la coreografía.
+- No se modifica el contrato de `/panel` ni la provisión F91.
+- No se fuerza la activación de availability: si Z2M la tiene desactivada, se usa la inferencia
+  por integración y se documenta el límite para dispositivos de batería.
+
+## Verificación
+
+- Unit de `DeviceLivenessService` y `CameraReachabilityProbe` (sin red).
+- Bloque F92 del runner: sala 14, `tuya_cloud=false` para Zigbee/cámara, sin sonda Tuya para
+  Zigbee, rama cámara explícita y contadores coherentes.
+- Regresión completa y comprobación manual del pack en verde.
 
 ---
 

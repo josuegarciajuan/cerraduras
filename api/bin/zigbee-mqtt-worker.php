@@ -68,11 +68,22 @@ function resolveClientBinary(string $configured): ?string
     return null;
 }
 
-function processMappedMessage(ZigbeeMqttMessageMapper $mapper, string $topic, string $payload, ?callable $processEvent): void
-{
+function processMappedMessage(
+    ZigbeeMqttMessageMapper $mapper,
+    string $topic,
+    string $payload,
+    ?callable $processEvent,
+    ?callable $processAvailability = null
+): void {
     $result = $mapper->mapMessage($topic, $payload, new DateTimeImmutable('now', new DateTimeZone('UTC')));
     if ($result['diagnostic'] !== null) {
         error_log('[zigbee-mqtt-worker] availability ' . $topic . '=' . $result['diagnostic']['state']);
+        if ($processAvailability !== null) {
+            $applied = $processAvailability($result);
+            if (($applied['status'] ?? '') !== 'processed') {
+                error_log('[zigbee-mqtt-worker] availability discarded reason=' . (string) ($applied['reason'] ?? 'unknown'));
+            }
+        }
     }
     if ($result['discard_reason'] !== null) {
         error_log('[zigbee-mqtt-worker] discarded topic=' . $topic . ' reason=' . $result['discard_reason']);
@@ -216,7 +227,13 @@ while (true) {
             continue;
         }
         try {
-            processMappedMessage($mapper, substr($line, 0, $separator), substr($line, $separator + 1), $processEvent);
+            processMappedMessage(
+                $mapper,
+                substr($line, 0, $separator),
+                substr($line, $separator + 1),
+                $processEvent,
+                static fn (array $mapped): array => $processor->applyAvailability($mapped)
+            );
         } catch (Throwable $error) {
             error_log('[zigbee-mqtt-worker] event processing failed: ' . $error->getMessage());
         }

@@ -167,6 +167,7 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
     public function findAll(): array { return []; }
     public function touchPackKind(int $packId, string $kind): int { return 0; }
     public function updateLastSeen(int $deviceId): void {}
+    public function updateOnlineState(int $deviceId, bool $online): void {}
     public function resolveRoomId(int $deviceId): ?int
     {
         $d = $this->findById($deviceId);

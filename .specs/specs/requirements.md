@@ -1,10 +1,85 @@
 # Requirements — Cerraduras Hotel
 
+> **Última revisión de F92**: 2026-10-27 · **Estado**: aprobada; implementación en curso.
 > **Última revisión de F91**: 2026-10-27 · **Estado**: especificación aprobada para integrar los
 > tres dispositivos Zigbee en un pack y una sala de almacén aislados. Implementación pendiente.
 > **Última revisión de F90**: 2026-10-26 · **Estado**: tres dispositivos emparejados en banco;
 > caracterización funcional e integración pendientes. **Cadencia**: antes de cada paso de
 > migración.
+
+---
+
+# Fase 92: Estado de conectividad por transporte (Zigbee y cámaras)
+
+## Contexto
+
+El panel `/dashboard` mostraba `sin verificar` los tres dispositivos Zigbee y las dos cámaras del
+pack `PACK_ZIGBEE` aunque estaban encendidos. La liveness se decidía por `kind` (los Zigbee caían
+en la rama Tuya cloud) y las cámaras no tenían sonda. Además, `ping-all-devices` podía sondear
+Tuya con los IEEE Zigbee y con los `external_id` de cámara, gastando cuota y falseando el estado.
+
+## RF-152: Liveness determinada por el transporte declarado
+
+- **RF-152.1**: Si `devices.transport` está declarado, la liveness se decide por ese valor; no se
+  infiere Tuya desde `kind`, `external_id`, etiqueta ni pack.
+- **RF-152.2**: `ZIGBEE2MQTT`, `LOCAL` y `SIMULATED` nunca realizan llamadas a la API REST de Tuya.
+- **RF-152.3**: Las filas con `transport=NULL` conservan el comportamiento legacy por `kind` para
+  no romper salas existentes; la API sigue presentándolas como `UNKNOWN`.
+- **RF-152.4**: `tuya_cloud` solo es `true` para `transport=TUYA` o para filas legacy NULL con
+  `kind` Tuya (`PRESENCE`, `PROXIMITY`, `SWITCH`).
+- **RF-152.5**: `probeTuyaOnlineOnce()` y las rutas de diagnóstico (`tuya-quota`, reset/apply-pack,
+  calibración de presencia) rechazan dispositivos con transporte distinto de Tuya o legacy NULL.
+
+## RF-153: Liveness Zigbee por push y availability
+
+- **RF-153.1**: Zigbee `operational` se muestra `online`; `degraded` (presencia sin reportes)
+  se muestra `unknown` con motivo `stale`; `waiting_signal`, `pending_mapping`, `attention` y
+  `draft` se muestran `unknown` con su motivo.
+- **RF-153.2**: Los dispositivos Zigbee edge-triggered (`PROXIMITY`, `SWITCH`) no se degradan por
+  antigüedad de `last_seen_at`; una puerta o luz silenciosa puede seguir operativa.
+- **RF-153.3**: Si llega `<topic>/availability` (`online|offline`), se persiste como verificación
+  de conectividad en `devices.online_state` + `devices.online_probed_at` y prevalece sobre la
+  inferencia por integración mientras esté fresca.
+- **RF-153.4**: La availability nunca modifica `door_state`, `presence_state`, visitas ni genera
+  `ABSENT`; es solo conectividad.
+
+## RF-154: Sonda de cámaras bajo demanda
+
+- **RF-154.1**: `CAMERA` se clasifica por categoría propia y no usa `last_seen_at`.
+- **RF-154.2**: La sonda valida alcance del stream RTSP (ffprobe con timeout acotado; fallback TCP
+  al puerto) y persiste `online_state`/`online_probed_at`.
+- **RF-154.3**: La sonda se ejecuta solo al cargar el panel o pulsar «Comprobar dispositivos»,
+  nunca en el poll periódico.
+- **RF-154.4**: Sin sonda fresca el estado es `unknown`; una cámara deshabilitada o sin
+  `rtsp_url` se reporta `unknown` con motivo y no se sondea.
+- **RF-154.5**: Las credenciales RTSP nunca se escriben en logs ni en la respuesta HTTP.
+
+## RF-155: Contrato del panel de dispositivos
+
+- **RF-155.1**: `GET /dashboard-api/device-status` mantiene la forma y añade
+  `liveness_source` y `liveness_reason` por dispositivo.
+- **RF-155.2**: `POST /dashboard-api/ping-all-devices` acepta `verify_cameras` (default `false`).
+- **RF-155.3**: Zigbee devuelve `checked_via="ZIGBEE"` sin sonda Tuya; cámara devuelve
+  `checked_via="CAMERA"`; cámara nunca se reporta como `HEARTBEAT`.
+- **RF-155.4**: Los contadores `online/offline/unknown` del pack siguen sumando `total`.
+
+## RF-156: Presentación en `/dashboard`
+
+- **RF-156.1**: Zigbee se etiqueta «vía Zigbee2MQTT»; cámara «vía sonda»; nunca Zigbee «vía Tuya».
+- **RF-156.2**: Los estados `unknown` muestran el motivo (`sin señal reciente`, `sin verificar`,
+  `esperando primera señal`, etc.) en lugar de un texto genérico.
+- **RF-156.3**: `autoPingDevicesIfRoomHasPack()` y «Comprobar dispositivos» solicitan
+  `verify_tuya` y `verify_cameras` solo para los transportes que correspondan.
+
+## RF-157: Verificación
+
+- **RF-157.1**: Unit de la política de liveness (Zigbee, cámara, legacy, `tuya_cloud`) y del
+  parseo RTSP.
+- **RF-157.2**: Bloque de runner F92 que comprueba sala 14, ausencia de sonda Tuya para Zigbee,
+  rama de cámara y coherencia de contadores.
+- **RF-157.3**: Regresión completa `bash api/bin/run-tests.sh` con 0 failures.
+- **RF-157.4**: Verificación manual en `/dashboard`: pack `Pack Zigbee` en verde con los 9
+  dispositivos cuando las cámaras respondan.
 
 ---
 

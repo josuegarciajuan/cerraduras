@@ -119,7 +119,7 @@ final class ZigbeeMqttMessageMapper
     /**
      * @return array{
      *   events:list<array{device_external_id:string,sensor:string,value:string,provider:string,occurred_at:string,source_event_id:string,meta:array<string,mixed>}>,
-     *   diagnostic:array{kind:string,state:string}|null,
+     *   diagnostic:array{kind:string,state:string,device_external_id?:string}|null,
      *   discard_reason:string|null
      * }
      */
@@ -145,7 +145,11 @@ final class ZigbeeMqttMessageMapper
                 $empty['discard_reason'] = 'invalid_availability';
                 return $empty;
             }
-            $empty['diagnostic'] = ['kind' => 'availability', 'state' => $state];
+            $empty['diagnostic'] = [
+                'kind' => 'availability',
+                'state' => $state,
+                'device_external_id' => $device['external_id'],
+            ];
             return $empty;
         }
 
