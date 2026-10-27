@@ -169,7 +169,8 @@ final class IotSessionService
                         'door_window_seconds' => $roomType->presenceDoorWindowSeconds,
                         'stale_seconds' => $roomType->presenceStaleSeconds,
                     ],
-                    $physical
+                    $physical,
+                    $preSession?->doorState
                 );
                 $meta = is_array($meta) ? $meta : [];
                 $meta['radar_decision'] = $radarDecision;
