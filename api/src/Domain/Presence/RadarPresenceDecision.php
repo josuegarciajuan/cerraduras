@@ -27,6 +27,7 @@ final class RadarPresenceDecision
     public const MODE_RADAR_DOOR        = 'radar_door';
     public const MODE_RADAR_ONLY_SHADOW = 'radar_only_shadow';
     public const MODE_RADAR_ONLY        = 'radar_only';
+    public const MODE_MIXED             = 'mixed';
 
     public const STATE_UNKNOWN            = 'UNKNOWN';
     public const STATE_CANDIDATE_PRESENT  = 'CANDIDATE_PRESENT';
@@ -42,6 +43,7 @@ final class RadarPresenceDecision
             self::MODE_RADAR_DOOR,
             self::MODE_RADAR_ONLY_SHADOW,
             self::MODE_RADAR_ONLY,
+            self::MODE_MIXED,
         ];
     }
 
@@ -68,6 +70,8 @@ final class RadarPresenceDecision
 
         $presence = [];
         $latestDoorOpen = null;
+        $latestDoorValue = null;
+        $latestDoorTs = null;
         foreach ($events as $event) {
             $provider = (string) ($event['provider'] ?? '');
             if ($provider !== PresenceEvent::PROVIDER_ZIGBEE2MQTT) {
@@ -88,6 +92,13 @@ final class RadarPresenceDecision
                     'ts' => $ts,
                     'value' => $value,
                 ];
+            }
+            if ($sensor === PresenceEvent::SENSOR_PROXIMITY
+                && in_array($value, [PresenceEvent::VALUE_OPEN, PresenceEvent::VALUE_CLOSED], true)
+                && ($latestDoorTs === null || $ts >= $latestDoorTs)
+            ) {
+                $latestDoorTs = $ts;
+                $latestDoorValue = $value;
             }
             if ($sensor === PresenceEvent::SENSOR_PROXIMITY && $value === PresenceEvent::VALUE_OPEN) {
                 if ($latestDoorOpen === null || $ts > $latestDoorOpen) {
@@ -121,6 +132,9 @@ final class RadarPresenceDecision
             $state = $confirmed ? self::STATE_ABSENT_CONFIRMED : self::STATE_CANDIDATE_ABSENT;
             $decision = self::result($mode, $state, $raw, true, $reports, $span, false, $stale, null, $nowUtc, null);
             $decision['apply'] = true;
+            $decision['operational_mode'] = $mode === self::MODE_MIXED
+                ? ($latestDoorValue === PresenceEvent::VALUE_OPEN ? self::MODE_RADAR_ONLY : self::MODE_RADAR_DOOR)
+                : ($mode === self::MODE_RADAR_ONLY_SHADOW ? self::MODE_RADAR_DOOR : $mode);
             if ($mode === self::MODE_RADAR_ONLY_SHADOW) {
                 $decision['shadow'] = self::shadowDecision($sorted, $nowUtc, $cfg, $physicalEvidence);
             }
@@ -155,7 +169,13 @@ final class RadarPresenceDecision
             && $windowSpan >= $cfg['min_span_seconds']
             && $maxGap <= $cfg['hold_seconds'];
 
-        $operationalMode = $mode === self::MODE_RADAR_ONLY_SHADOW ? self::MODE_RADAR_DOOR : $mode;
+        $operationalMode = match ($mode) {
+            self::MODE_RADAR_ONLY_SHADOW => self::MODE_RADAR_DOOR,
+            self::MODE_MIXED => $latestDoorValue === PresenceEvent::VALUE_OPEN
+                ? self::MODE_RADAR_ONLY
+                : self::MODE_RADAR_DOOR,
+            default => $mode,
+        };
         $confirmed = match ($operationalMode) {
             self::MODE_RADAR_ONLY => $temporalOk,
             self::MODE_RADAR_DOOR => $doorCorroborated && $maxGap <= $cfg['hold_seconds'],

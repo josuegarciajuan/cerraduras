@@ -110,7 +110,7 @@ consulta de topología.
 **Trazabilidad**: RF-148.1..RF-148.12, RF-149.2..RF-149.4
 
 - [x] Implementar `RadarPresenceDecision` con modos `camera_fusion`, `radar_door`,
-  `radar_only_shadow` y `radar_only`.
+  `radar_only_shadow`, `radar_only` y `mixed`.
 - [x] Implementar máquina de estados, evidencia temporal, histéresis, frescura y ausencia.
 - [x] Integrar solo `PRESENT_CONFIRMED` con el motor; candidatos y stale no producen efectos.
 - [x] Conservar `PresenceEvidence`/cámara sin cambios y usarlos como referencia/rollback.
@@ -168,9 +168,12 @@ consulta de topología.
 
 **Verificación**: regresión completa 2026-10-27 → 726 passed, 0 failed, 5 skipped; BLOCK 64 y guardias F74/F78/F90 en verde.
 
-## TSK-91.12: Aceptación física en banco
+## TSK-91.12: Aceptación física — DIFERIDA
 
 **Trazabilidad**: RF-150.2..RF-150.4
+
+> **DIFERIDA**: no se ejecuta hasta instalar los dispositivos en la sala. El software
+> queda preparado y el banco se probará antes con los equipos sobre la mesa.
 
 - [ ] Renombrar los dispositivos a los nombres definitivos y actualizar el mapa.
 - [ ] Puerta: 10 ciclos OPEN/CLOSED, orden, deduplicación y semántica.
@@ -179,13 +182,26 @@ consulta de topología.
 - [ ] Caídas de ingreso, broker, consumidor y BD; recuperación del spool.
 - [ ] Comparar `radar_only_shadow` con la referencia y registrar falsos positivos, entradas
   perdidas y efectos falsos.
-- [ ] Decidir con evidencia si se promueve `radar_only` o se mantiene `radar_door`/`camera_fusion`.
+- [ ] Decidir con evidencia si se promueve `radar_only` o se mantiene `mixed`/`radar_door`.
 
 **Verificación**: informe fechado con evidencia y actualización de los cuatro documentos.
 
-## TSK-91.13: Despliegue gradual y rollback
+## TSK-91.13: Activación software, despliegue físico y rollback
 
-**Trazabilidad**: RF-150.5, RF-150.6, RF-150.8
+**Trazabilidad**: RF-149.1..RF-151.5, RF-150.5/RF-150.6
+
+### Software (completado)
+
+- [x] Añadir `ZIGBEE_SPOOL_ENABLED` y guardia de arranque del consumidor.
+- [x] Unidades `cerraduras-zigbee-tunnel`, `cerraduras-zigbee-ingress` y
+  `cerraduras-zigbee-spool`.
+- [x] Arranque/parada condicional en `start-all.sh`/`stop-all.sh`.
+- [x] Bloque aditivo `zigbee` en `health/deep`.
+- [x] `zigbee-readiness.php` y `zigbee-install-deps.sh`.
+- [x] Modo `mixed`: puerta cerrada → `radar_door`; puerta abierta → `radar_only`.
+- [x] Documentación operativa `docs/ops-zigbee.md` y guardias en BLOCK 64.
+
+### Instalación física (pendiente)
 
 - [ ] Instalar y aceptar puerta Zigbee; conservar rollback.
 - [ ] Instalar y aceptar presencia con el modo aprobado; conservar cámara como referencia.
@@ -193,7 +209,8 @@ consulta de topología.
 - [ ] Probar rollback por dispositivo sin borrar auditoría, spool ni topología.
 - [ ] Informar cambios, verificación y siguiente fase al cerrar cada paso.
 
-**Verificación**: aceptación por dispositivo, rollback probado y regresión final.
+**Verificación**: software con regresión completa; aceptación física y rollback pendientes de la
+instalación en la sala.
 
 ### Estado de ejecución (F91)
 
@@ -209,8 +226,8 @@ consulta de topología.
 - [x] TSK-91.09 panel del almacén
 - [x] TSK-91.10 endurecimiento
 - [x] TSK-91.11 pruebas y regresión
-- [ ] TSK-91.12 aceptación física
-- [ ] TSK-91.13 despliegue y rollback
+- [ ] TSK-91.12 aceptación física (DIFERIDA)
+- [x] TSK-91.13 software / [ ] instalación física
 
 # Fase 90: Consumidor Zigbee MQTT pre-hardware y migración gradual
 

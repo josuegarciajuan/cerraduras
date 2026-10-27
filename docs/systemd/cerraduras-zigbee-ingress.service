@@ -1,0 +1,16 @@
+[Unit]
+Description=Cerraduras — ingreso MQTT Zigbee con ACK tras persistencia (F91)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target cerraduras-api.service cerraduras-zigbee-tunnel.service
+Wants=network-online.target cerraduras-api.service cerraduras-zigbee-tunnel.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/usr/bin/node bin/zigbee-ingress/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

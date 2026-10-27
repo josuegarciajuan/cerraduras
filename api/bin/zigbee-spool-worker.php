@@ -46,6 +46,7 @@ $statusFile = resolvePath($apiDir, Config::get('ZIGBEE_SPOOL_STATUS_FILE', 'run/
 $limit = max(1, (int) ($opts['limit'] ?? 1000));
 $dryRun = isset($opts['dry-run']);
 $watch = isset($opts['watch']);
+$spoolEnabled = Config::getBool('ZIGBEE_SPOOL_ENABLED', false);
 
 try {
     if (!is_file($mapFile) || !is_readable($mapFile)) {
@@ -63,6 +64,13 @@ try {
 }
 
 $queue = new ZigbeeSpoolQueue($spoolDir);
+
+// F91.13: el consumidor continuo es opt-in. El replay manual y el dry-run
+// siguen disponibles con el flag apagado para diagnóstico.
+if (!$spoolEnabled && !$dryRun && !isset($opts['requeue'])) {
+    echo "[zigbee-spool] disabled (ZIGBEE_SPOOL_ENABLED is not true); nothing started\n";
+    exit(0);
+}
 
 if (isset($opts['requeue'])) {
     if (!isset($opts['yes'])) {

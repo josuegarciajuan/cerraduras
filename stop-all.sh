@@ -130,6 +130,10 @@ systemctl stop cerraduras-warehouse-retention.timer 2>/dev/null || true
 systemctl stop cerraduras-camera-motion 2>/dev/null || true
 # F70/RF-80: servidor MJPEG de cámaras (directo del almacén).
 systemctl stop cerraduras-cameras-live 2>/dev/null || true
+# F91: ingress y consumidor del spool Zigbee (opt-in).
+systemctl stop cerraduras-zigbee-ingress 2>/dev/null || true
+systemctl stop cerraduras-zigbee-spool 2>/dev/null || true
+systemctl stop cerraduras-zigbee-tunnel 2>/dev/null || true
 for _w in exit-scan overstay-scan outbox-worker anomaly-scanner; do
   systemctl stop "cerraduras-worker@$_w" 2>/dev/null || true
 done

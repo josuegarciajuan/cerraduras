@@ -1,0 +1,16 @@
+[Unit]
+Description=Cerraduras — consumidor del spool Zigbee (F91)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target cerraduras-api.service
+Wants=network-online.target cerraduras-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/cerraduras/api
+ExecStart=/usr/bin/php bin/zigbee-spool-worker.php --watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

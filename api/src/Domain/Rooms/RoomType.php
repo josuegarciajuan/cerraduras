@@ -52,6 +52,11 @@ final class RoomType
     public const PRESENCE_MODE_RADAR_DOOR        = 'radar_door';
     public const PRESENCE_MODE_RADAR_ONLY_SHADOW = 'radar_only_shadow';
     public const PRESENCE_MODE_RADAR_ONLY        = 'radar_only';
+    /**
+     * F91/RF-148: mixed mode. Door closed → radar_door (safe entry); door open →
+     * radar_only (handles leaving/returning with the door left open).
+     */
+    public const PRESENCE_MODE_MIXED             = 'mixed';
 
     public string $presenceMode;
     public int $presenceConfirmReports;
@@ -115,6 +120,7 @@ final class RoomType
             self::PRESENCE_MODE_RADAR_DOOR,
             self::PRESENCE_MODE_RADAR_ONLY_SHADOW,
             self::PRESENCE_MODE_RADAR_ONLY,
+            self::PRESENCE_MODE_MIXED,
         ];
     }
 

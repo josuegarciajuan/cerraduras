@@ -151,6 +151,46 @@ final class HealthController
             $allOk = false;
         }
 
+        // 5b. Zigbee local (F91/RF-149): estado de ingress y spool sin sondear
+        // hardware ni Tuya. Aditivo; no altera el contrato de los 5 workers.
+        try {
+            $ingressEnabled = Config::getBool('ZIGBEE_INGRESS_ENABLED', false);
+            $spoolEnabled = Config::getBool('ZIGBEE_SPOOL_ENABLED', false);
+            $apiDir = dirname(__DIR__, 3);
+            $readJson = static function (string $file): ?array {
+                if (!is_file($file)) {
+                    return null;
+                }
+                $raw = @file_get_contents($file);
+                $decoded = is_string($raw) ? json_decode($raw, true) : null;
+                return is_array($decoded) ? $decoded : null;
+            };
+            $ingressFile = Config::get('ZIGBEE_INGRESS_STATUS_FILE', 'run/zigbee-ingress-status.json') ?? 'run/zigbee-ingress-status.json';
+            $spoolFile = Config::get('ZIGBEE_SPOOL_STATUS_FILE', 'run/zigbee-spool-status.json') ?? 'run/zigbee-spool-status.json';
+            if ($ingressFile[0] !== '/') { $ingressFile = $apiDir . '/' . $ingressFile; }
+            if ($spoolFile[0] !== '/') { $spoolFile = $apiDir . '/' . $spoolFile; }
+            $ingress = $readJson($ingressFile);
+            $spool = $readJson($spoolFile);
+            $connected = (bool) ($ingress['connected'] ?? false);
+            $pending = (int) (($spool['counts']['incoming'] ?? 0) + ($spool['counts']['processing'] ?? 0));
+            $quarantine = (int) ($spool['counts']['quarantine'] ?? 0);
+            $enabled = $ingressEnabled || $spoolEnabled;
+            $zigbeeStatus = !$enabled ? 'disabled' : (($connected && $quarantine === 0) ? 'ok' : 'warning');
+            $checks['zigbee'] = [
+                'status' => $zigbeeStatus,
+                'enabled' => $enabled,
+                'ingress_enabled' => $ingressEnabled,
+                'spool_enabled' => $spoolEnabled,
+                'ingress_connected' => $connected,
+                'spool_pending' => $pending,
+                'spool_quarantine' => $quarantine,
+                'last_processed_at' => $spool['last_processed_at'] ?? null,
+                'updated_at' => $ingress['updated_at'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            $checks['zigbee'] = ['status' => 'error', 'message' => $e->getMessage()];
+        }
+
         // 6. Circuit breaker status (Fase 3 — T3.2)
         if (class_exists('App\Support\Resilience\CircuitBreaker')) {
             try {

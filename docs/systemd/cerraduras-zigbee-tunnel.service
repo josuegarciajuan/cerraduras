@@ -1,0 +1,15 @@
+[Unit]
+Description=Cerraduras — túnel SSH al broker MQTT de oficina (F91)
+Documentation=file:///root/cerraduras/.specs/specs/design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -L 127.0.0.1:1884:127.0.0.1:1883 oficina
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -169,6 +169,39 @@ else
   echo "       (unit cerraduras-camera-motion ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
+echo "[5f/8] Zigbee local (ingress MQTT + spool, F91)..."
+# Opt-in: sin flags activos no se arranca nada. El túnel solo es necesario
+# cuando el broker no corre en este host (banco actual: oficina). No hay poller
+# de Tuya; el ingress solo consume push MQTT.
+ZIGBEE_INGRESS_ON=false
+ZIGBEE_SPOOL_ON=false
+if grep -qE '^ZIGBEE_INGRESS_ENABLED=(true|1)$' "$API_DIR/.env" 2>/dev/null; then
+  ZIGBEE_INGRESS_ON=true
+fi
+if grep -qE '^ZIGBEE_SPOOL_ENABLED=(true|1)$' "$API_DIR/.env" 2>/dev/null; then
+  ZIGBEE_SPOOL_ON=true
+fi
+if [ "$ZIGBEE_INGRESS_ON" = true ]; then
+  if systemctl restart cerraduras-zigbee-tunnel cerraduras-zigbee-ingress 2>/dev/null; then
+    echo "       zigbee-ingress: systemd (túnel + ingress)"
+  else
+    echo "       (units cerraduras-zigbee-* ausentes — instala docs/systemd/cerraduras-zigbee-*.service)"
+  fi
+else
+  systemctl stop cerraduras-zigbee-ingress cerraduras-zigbee-tunnel 2>/dev/null || true
+  echo "       zigbee-ingress: deshabilitado (ZIGBEE_INGRESS_ENABLED=false)"
+fi
+if [ "$ZIGBEE_SPOOL_ON" = true ]; then
+  if systemctl restart cerraduras-zigbee-spool 2>/dev/null; then
+    echo "       zigbee-spool: systemd"
+  else
+    echo "       (unit cerraduras-zigbee-spool ausente — instala docs/systemd/)"
+  fi
+else
+  systemctl stop cerraduras-zigbee-spool 2>/dev/null || true
+  echo "       zigbee-spool: deshabilitado (ZIGBEE_SPOOL_ENABLED=false)"
+fi
+
 sleep 2
 
 echo "Health checks:"
