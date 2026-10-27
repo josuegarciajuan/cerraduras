@@ -1,9 +1,293 @@
 # Contracts — Cerraduras Hotel
 
+> **F91 — Estado**: contratos aprobados para provisión aislada, ingesta con ACK posterior a
+> persistencia, presencia por radar y luz operativa. Implementación pendiente.
 > **F90 — Estado**: software, paquete de despliegue y tres dispositivos emparejados en banco;
 > mapping definitivo, caracterización funcional e integración pendientes.
 
 ---
+
+# Fase 91: Contratos de la integración Zigbee aislada
+
+## Límite
+
+Esta fase amplía de forma **aditiva** el contrato F90. No cambia la forma de las rutas públicas
+existentes ni introduce polling Tuya. Zigbee2MQTT y Mosquitto siguen siendo locales; el panel y la
+API no exponen el broker.
+
+## Configuración
+
+| Variable | Default | Regla |
+|---|---|---|
+| `ZIGBEE_INGRESS_ENABLED` | `false` | Solo `true`/`1` inicia el ingreso MQTT. |
+| `ZIGBEE_MQTT_HOST` | `127.0.0.1` | Host del broker. |
+| `ZIGBEE_MQTT_PORT` | `1883` | Entero 1–65535. |
+| `ZIGBEE_MQTT_TOPIC_PREFIX` | `zigbee2mqtt` | Prefijo suscrito. |
+| `ZIGBEE_MQTT_CLIENT_ID` | `cerraduras-zigbee-ingress` | Sesión persistente; una instancia por id. |
+| `ZIGBEE_MQTT_USERNAME` / `ZIGBEE_MQTT_PASSWORD_FILE` | — | Credenciales fuera de Git; nunca en `argv` ni logs. |
+| `ZIGBEE_MAP_FILE` | `config/zigbee2mqtt-devices.json` | Mapa v2; debe existir y validar al habilitar. |
+| `ZIGBEE_SPOOL_DIR` | `run/zigbee-spool` | Fuera de Git, permisos `0700`. |
+| `ZIGBEE_SPOOL_MAX_AGE_SECONDS` | `86400` | Antigüedad máxima antes de backpressure. |
+| `ZIGBEE_SPOOL_MAX_FILES` | `10000` | Límite de pendientes. |
+| `ZIGBEE_SPOOL_MAX_BYTES` | `268435456` | Límite de bytes pendientes. |
+| `ZIGBEE_SWITCH_TIMEOUT_SECONDS` | `5` | Espera de confirmación de estado. |
+| `ZIGBEE_SWITCH_MAX_ATTEMPTS` | `2` | Intentos acotados; nunca bucle. |
+| `ZIGBEE_PRESENCE_STALE_SECONDS` | `180` | Frescura por defecto; configurable por tipo de sala. |
+
+Sin `ZIGBEE_INGRESS_ENABLED=true`, ni el ingreso ni el consumidor de spool escriben en dominio.
+El mapa ausente, vacío o inválido hace fallar el arranque antes de conectar.
+
+## Mapa v2
+
+El ejemplo F90 de `contact` queda **derogado** por invertir la semántica observada. El mapa v2 es:
+
+```json
+{
+  "version": 2,
+  "devices": {
+    "zigbee2mqtt/almacen-zb-puerta": {
+      "external_id": "0xc09b9efffef431fb",
+      "entities": {
+        "contact": {"sensor": "PROXIMITY", "values": {"true": "OPEN", "false": "CLOSED"}}
+      }
+    },
+    "zigbee2mqtt/almacen-zb-presencia": {
+      "external_id": "0xa4c138b2a3c49dbe",
+      "entities": {
+        "presence": {"sensor": "PRESENCE", "values": {"true": "PRESENT", "false": "ABSENT"}}
+      }
+    },
+    "zigbee2mqtt/almacen-zb-luz": {
+      "external_id": "0xf044d3fffecd9e8e",
+      "entities": {
+        "state": {"sensor": "SWITCH", "values": {"ON": "ON", "OFF": "OFF"}}
+      }
+    }
+  }
+}
+```
+
+Reglas:
+
+- `version` obligatoria; `1` sigue admitido solo para `contact`/`occupancy` legacy.
+- Cada topic declara `external_id` y una tabla exhaustiva `values`.
+- `contact` → `PROXIMITY` (`OPEN|CLOSED`), `presence` → `PRESENCE` (`PRESENT|ABSENT`),
+  `state` → `SWITCH` (`ON|OFF`). Un `state` mapeado a `PROXIMITY` en v2 es inválido.
+- `availability` se registra como diagnóstico `online|offline`; no genera evento de dominio.
+- Los topics `*-oficina` se rechazan en el mapa productivo.
+- JSON inválido, >64 KiB, topic no mapeado, valor no mapeado o dispositivo desconocido se
+  descartan con diagnóstico sin mutar estado.
+
+## Spool de entrada
+
+Cada registro es un JSON con este contrato:
+
+```json
+{
+  "schema": 1,
+  "topic": "zigbee2mqtt/almacen-zb-puerta",
+  "payload": "{\"contact\":true,\"linkquality\":150}",
+  "payload_sha256": "<sha256-hex>",
+  "qos": 1,
+  "dup": false,
+  "received_at": "2026-10-27T09:00:00.000Z",
+  "attempts": 0,
+  "bootstrap": false
+}
+```
+
+- `received_at` es UTC con milisegundos y se fija al persistir, no al procesar.
+- `bootstrap=true` identifica un mensaje retenido/recuperado al arrancar: actualiza el último
+  valor conocido y **no** crea una transición.
+- La escritura es atómica (`tmp` + `fsync` + `rename`). El ACK QoS 1 se emite después.
+- El consumidor mueve el registro a `processed/` solo tras el éxito del dominio; tras el límite de
+  reintentos pasa a `quarantine/`.
+- Antigüedad, número y bytes están acotados. Al superar un límite se deja de confirmar; no se
+  descarta silenciosamente.
+- El replay requiere confirmación, conserva el original y marca la copia para auditoría.
+- Garantía declarada: at-least-once broker→spool; la deduplicación de dominio evita efectos
+  duplicados. No se declara exactly-once.
+
+## Evento canónico interno
+
+### Puerta y presencia
+
+```json
+{
+  "device_external_id": "0xc09b9efffef431fb",
+  "sensor": "PROXIMITY",
+  "value": "OPEN",
+  "provider": "ZIGBEE2MQTT",
+  "occurred_at": "2026-10-27T09:00:00.000Z",
+  "source_event_id": "z2m-<sha256-topic-payload-entity-received_at>",
+  "meta": {
+    "source": "zigbee2mqtt",
+    "topic": "zigbee2mqtt/almacen-zb-puerta",
+    "entity": "contact",
+    "bootstrap": false
+  }
+}
+```
+
+- `source_event_id` incluye `received_at` con ms para no colapsar una transición real posterior.
+  La idempotencia sigue en `IotSessionService`.
+- `meta.bootstrap=true` no genera transición.
+- `provider` es siempre `ZIGBEE2MQTT`.
+
+### Luz
+
+```json
+{
+  "device_external_id": "0xf044d3fffecd9e8e",
+  "sensor": "SWITCH",
+  "value": "ON",
+  "provider": "ZIGBEE2MQTT",
+  "occurred_at": "2026-10-27T09:00:00.000Z",
+  "source_event_id": "z2m-<sha256>",
+  "meta": {"source": "zigbee2mqtt", "topic": "zigbee2mqtt/almacen-zb-luz", "entity": "state"}
+}
+```
+
+El evento `SWITCH` actualiza el estado confirmado del dispositivo y notifica al panel; no entra en
+la máquina de estados de puerta/presencia ni crea visitas.
+
+## Decisión de presencia
+
+La API y la auditoría exponen de forma aditiva:
+
+```json
+{
+  "mode": "camera_fusion|radar_door|radar_only_shadow|radar_only",
+  "raw": "PRESENT|ABSENT|UNKNOWN",
+  "state": "UNKNOWN|CANDIDATE_PRESENT|PRESENT_CONFIRMED|CANDIDATE_ABSENT|ABSENT_CONFIRMED",
+  "confirmed": true,
+  "evidence_score": 8,
+  "reports": 4,
+  "span_seconds": 7.2,
+  "door_corroborated": false,
+  "stale": false,
+  "discard_reason": "uncorroborated|candidate|stale|null",
+  "decided_at": "2026-10-27T09:00:07.200Z",
+  "shadow": {
+    "state": "PRESENT_CONFIRMED",
+    "confirmed": true,
+    "disagrees": false
+  }
+}
+```
+
+`shadow` solo aparece en `radar_only_shadow`. Solo `state=PRESENT_CONFIRMED` y `confirmed=true`
+pueden generar `EV_PRESENT` en modos radar.
+
+## Columnas de configuración
+
+Añadidas de forma aditiva a `room_types`:
+
+| Columna | Default | Regla |
+|---|---|---|
+| `presence_mode` | `camera_fusion` | Enum de los cuatro modos. |
+| `presence_confirm_reports` | `3` | 1–20. |
+| `presence_confirm_window_seconds` | `12` | 1–300. |
+| `presence_min_span_seconds` | `6` | 0–300. |
+| `presence_hold_seconds` | `20` | 0–600. |
+| `presence_absent_reports` | `3` | 1–20. |
+| `presence_absent_window_seconds` | `30` | 1–600. |
+| `presence_door_window_seconds` | `90` | 0–600. |
+| `presence_stale_seconds` | `180` | 30–86400. |
+
+`almacenZigbee` se provisiona con `radar_door`. `radar_only` requiere aprobación explícita tras la
+aceptación.
+
+## API aditiva
+
+### Dispositivos y panel
+
+- `GET /api/v1/devices`, `GET /api/v1/rooms/{id}/devices`, pack detail y
+  `GET /dashboard-api/device-status` incluyen:
+  - `transport`: `TUYA|ZIGBEE2MQTT|LOCAL|SIMULATED|UNKNOWN`.
+  - `integration_status`: `{status, mapping_configured, last_signal_at,
+    last_signal_age_seconds, reason}`.
+- `POST /api/v1/devices/register` acepta `transport` opcional; default `UNKNOWN`.
+- `PATCH /api/v1/devices/{id}` acepta `transport`.
+- `GET/POST/PATCH /api/v1/rooms` y `POST /api/v1/rooms/{id}/apply-pack/{pack_id}` no cambian de
+  forma. El panel usa `apply-pack`, no un `PATCH` de `pack_id`.
+
+### Estado del almacén
+
+`GET /almacen-api/state` añade:
+
+```json
+{
+  "live": {
+    "presence_decision": { "...": "contrato anterior" },
+    "switch": {
+      "state": "ON|OFF|UNKNOWN",
+      "state_at": "2026-10-27T09:00:00.000Z",
+      "transport": "ZIGBEE2MQTT",
+      "confirmed": true,
+      "pending_command": null
+    }
+  },
+  "buffer": {
+    "pending": 0,
+    "quarantined": 0,
+    "oldest_age_seconds": 0,
+    "last_received_at": "2026-10-27T09:00:00.000Z",
+    "last_processed_at": "2026-10-27T09:00:00.500Z"
+  },
+  "devices": [
+    {"id": 1, "transport": "ZIGBEE2MQTT", "integration_status": {"status": "operational"}}
+  ]
+}
+```
+
+Los campos son aditivos; los clientes existentes ignoran lo que no conocen. El SSE incluye
+`presence_decision`, `switch` y `buffer` en su fingerprint sin incluir edades que cambian cada
+segundo.
+
+## Control de luz
+
+`POST /almacen-api/switch`
+
+Request:
+
+```json
+{"state": "ON"}
+```
+
+- Resuelve el único `SWITCH` del pack de la sala activa.
+- Usa el gateway del `transport` del dispositivo.
+- Autorización: la misma que `POST /almacen-api/door/open`.
+- Respuestas:
+  - `200 {ok:true, state:"ON", confirmed:true, command_id}` cuando el estado ya está confirmado.
+  - `202 {ok:true, state:"ON", confirmed:false, command_id}` cuando la orden se publicó y queda
+    pendiente de confirmación.
+  - `404` si la sala no tiene `SWITCH`.
+  - `409` si el transporte no soporta control.
+  - `503` si el transporte falla al publicar.
+- No acepta `TOGGLE`. No hace polling. Un timeout deja la orden `unconfirmed` y se refleja en
+  `pending_command`.
+
+## Errores y diagnóstico
+
+- El ingreso no responde por HTTP; registra métricas y estado en `api/run/zigbee-ingress-status.json`
+  (sin secretos).
+- El consumidor registra contadores de recibidos, procesados, descartados, duplicados,
+  cuarentena, antigüedad y última entrega.
+- Los motivos de descarte son estables y consultables: `unmapped_topic`, `unmapped_entity`,
+  `unmapped_value`, `unknown_device`, `kind_mismatch`, `bootstrap`, `stale`, `uncorroborated`,
+  `candidate`, `quarantine`.
+- Ningún diagnóstico expone credenciales, payload completo de configuración ni claves de red.
+
+## Compatibilidad y rollback
+
+- El contrato F90 sigue válido para el worker legacy; F91 lo sustituye por ingreso con ACK
+  posterior a persistencia.
+- Desactivar un dispositivo Zigbee es retirar su entrada del mapa y su gateway de salida; no se
+  borran auditoría, spool ni topología.
+- Restaurar Tuya para un rol no cambia rutas ni cuerpos públicos.
+- No se modifica `/live`, SSE, QR, reglas de salida ni el almacén existente salvo los campos
+  aditivos indicados.
 
 # Fase 90: Contrato del consumidor MQTT local
 
