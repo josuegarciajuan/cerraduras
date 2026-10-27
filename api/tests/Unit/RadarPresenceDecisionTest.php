@@ -192,6 +192,25 @@ $mixedOpen = RadarPresenceDecision::decide(
 same('mixed puerta abierta → radar_only confirmed', $mixedOpen['state'], 'PRESENT_CONFIRMED');
 same('mixed puerta abierta opera radar_only', $mixedOpen['operational_mode'], 'radar_only');
 
+$mixedCurrentOpen = RadarPresenceDecision::decide(
+    [ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7)],
+    now(),
+    cfg('mixed'),
+    false,
+    PresenceEvent::VALUE_OPEN
+);
+same('mixed con puerta actual OPEN sin evento en historial → radar_only confirmed', $mixedCurrentOpen['state'], 'PRESENT_CONFIRMED');
+same('mixed puerta actual OPEN usa radar_only', $mixedCurrentOpen['operational_mode'], 'radar_only');
+
+$mixedCurrentClosed = RadarPresenceDecision::decide(
+    [ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7)],
+    now(),
+    cfg('mixed'),
+    false,
+    PresenceEvent::VALUE_CLOSED
+);
+same('mixed con puerta actual CLOSED sin apertura → candidate', $mixedCurrentClosed['state'], 'CANDIDATE_PRESENT');
+
 $mixedOpenOne = RadarPresenceDecision::decide(
     [ev('OPEN', -200, PresenceEvent::SENSOR_PROXIMITY), ev('PRESENT', 0)],
     now(),

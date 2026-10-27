@@ -59,7 +59,8 @@ final class RadarPresenceDecision
         array $events,
         DateTimeImmutable $now,
         array $config = [],
-        bool $physicalEvidence = false
+        bool $physicalEvidence = false,
+        ?string $currentDoorState = null
     ): array {
         $mode = (string) ($config['mode'] ?? self::MODE_RADAR_DOOR);
         if (!in_array($mode, self::modes(), true)) {
@@ -132,8 +133,11 @@ final class RadarPresenceDecision
             $state = $confirmed ? self::STATE_ABSENT_CONFIRMED : self::STATE_CANDIDATE_ABSENT;
             $decision = self::result($mode, $state, $raw, true, $reports, $span, false, $stale, null, $nowUtc, null);
             $decision['apply'] = true;
+            $doorOpenForAbsent = $currentDoorState !== null
+                ? $currentDoorState === PresenceEvent::VALUE_OPEN
+                : $latestDoorValue === PresenceEvent::VALUE_OPEN;
             $decision['operational_mode'] = $mode === self::MODE_MIXED
-                ? ($latestDoorValue === PresenceEvent::VALUE_OPEN ? self::MODE_RADAR_ONLY : self::MODE_RADAR_DOOR)
+                ? ($doorOpenForAbsent ? self::MODE_RADAR_ONLY : self::MODE_RADAR_DOOR)
                 : ($mode === self::MODE_RADAR_ONLY_SHADOW ? self::MODE_RADAR_DOOR : $mode);
             if ($mode === self::MODE_RADAR_ONLY_SHADOW) {
                 $decision['shadow'] = self::shadowDecision($sorted, $nowUtc, $cfg, $physicalEvidence);
@@ -169,9 +173,12 @@ final class RadarPresenceDecision
             && $windowSpan >= $cfg['min_span_seconds']
             && $maxGap <= $cfg['hold_seconds'];
 
+        $doorOpenForMode = $currentDoorState !== null
+            ? $currentDoorState === PresenceEvent::VALUE_OPEN
+            : $latestDoorValue === PresenceEvent::VALUE_OPEN;
         $operationalMode = match ($mode) {
             self::MODE_RADAR_ONLY_SHADOW => self::MODE_RADAR_DOOR,
-            self::MODE_MIXED => $latestDoorValue === PresenceEvent::VALUE_OPEN
+            self::MODE_MIXED => $doorOpenForMode
                 ? self::MODE_RADAR_ONLY
                 : self::MODE_RADAR_DOOR,
             default => $mode,
