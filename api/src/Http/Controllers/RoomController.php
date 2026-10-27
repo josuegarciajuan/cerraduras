@@ -107,6 +107,9 @@ final class RoomController
             $v = $body['presence_check_seconds'];
             $fields['presence_check_seconds'] = $v === null || $v === '' ? null : (int) $v;
         }
+        if (array_key_exists('presence_mode_override', $body)) {
+            $fields['presence_mode_override'] = $body['presence_mode_override'];
+        }
         return Response::json(200, $this->rooms->update($id, $fields)->toArray());
     }
 

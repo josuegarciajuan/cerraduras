@@ -35,7 +35,7 @@ final class RoomRepository implements RoomRepositoryInterface
             $wheres[] = 'room_type_id = :rt';
             $params[':rt'] = (int) $filters['room_type_id'];
         }
-        $sql = 'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds
+        $sql = 'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds, presence_mode_override
                 FROM rooms';
         if (!empty($wheres)) {
             $sql .= ' WHERE ' . implode(' AND ', $wheres);
@@ -56,7 +56,7 @@ final class RoomRepository implements RoomRepositoryInterface
     public function findById(int $id): ?Room
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds
+            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds, presence_mode_override
              FROM rooms WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -67,7 +67,7 @@ final class RoomRepository implements RoomRepositoryInterface
     public function findByCode(string $code): ?Room
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds
+            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds, presence_mode_override
              FROM rooms WHERE code = :c LIMIT 1'
         );
         $stmt->execute([':c' => $code]);
@@ -105,6 +105,7 @@ final class RoomRepository implements RoomRepositoryInterface
             'status' => ':st',            // F31: needed by ExitActionService
             'cooldown_until' => ':cu',    // F31: needed by ExitActionService
             'presence_check_seconds' => ':pcs',
+            'presence_mode_override' => ':pmo',
         ];
         $sets = [];
         $params = [':id' => $id];
@@ -164,7 +165,7 @@ final class RoomRepository implements RoomRepositoryInterface
     public function findByPackId(int $packId): ?Room
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds
+            'SELECT id, code, room_type_id, status, simulated_override, cooldown_until, notes, pack_id, presence_check_seconds, presence_mode_override
              FROM rooms WHERE pack_id = :pid LIMIT 1'
         );
         $stmt->execute([':pid' => $packId]);
@@ -184,7 +185,8 @@ final class RoomRepository implements RoomRepositoryInterface
             $sim === null ? null : (bool) ((int) $sim),
             $row['cooldown_until'] === null ? null : (string) $row['cooldown_until'],
             isset($row['notes']) ? ($row['notes'] === null ? null : (string) $row['notes']) : null,
-            isset($row['presence_check_seconds']) && $row['presence_check_seconds'] !== null ? (int) $row['presence_check_seconds'] : null
+            isset($row['presence_check_seconds']) && $row['presence_check_seconds'] !== null ? (int) $row['presence_check_seconds'] : null,
+            isset($row['presence_mode_override']) && $row['presence_mode_override'] !== null ? (string) $row['presence_mode_override'] : null
         );
     }
 }
