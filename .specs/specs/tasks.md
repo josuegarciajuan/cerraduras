@@ -81,14 +81,14 @@ consulta de topología.
 
 **Trazabilidad**: RF-145.1..RF-145.10, RF-146.1..RF-146.9
 
-- [ ] Crear `api/bin/zigbee-ingress/` con cliente MQTT, `manualAcks`, QoS y sesión persistente.
-- [ ] Persistir el sobre en spool con `fsync` y `rename` atómico antes de confirmar.
-- [ ] Aplicar backpressure y no confirmar si el spool falla o está lleno.
-- [ ] Estado operativo en `api/run/zigbee-ingress-status.json` sin secretos.
-- [ ] Tests: ACK después de persistir, fallo de disco sin ACK, reconexión, límites y credenciales
+- [x] Crear `api/bin/zigbee-ingress/` con cliente MQTT 5, `customHandleAcks`, QoS y sesión persistente.
+- [x] Persistir el sobre en spool con `fsync` y `rename` atómico antes de confirmar.
+- [x] Aplicar backpressure y no confirmar si el spool falla o está lleno.
+- [x] Estado operativo en `api/run/zigbee-ingress-status.json` sin secretos.
+- [x] Tests: ACK después de persistir, fallo de disco sin ACK, reconexión, límites y credenciales
   fuera de `argv`.
 
-**Verificación**: tests Node con broker simulado y spool temporal; sin broker real.
+**Verificación**: tests Node sin broker (spool temporal y handler inyectable); el arranque real requiere `npm install` en `api/bin/zigbee-ingress`.
 
 ## TSK-91.06: Consumidor de spool, mapa v2 y entrega al dominio
 
@@ -202,7 +202,7 @@ consulta de topología.
 - [x] TSK-91.02 API
 - [x] TSK-91.03 panel de alta
 - [x] TSK-91.04 provisión
-- [ ] TSK-91.05 ingreso MQTT
+- [x] TSK-91.05 ingreso MQTT
 - [ ] TSK-91.06 consumidor y mapa v2
 - [ ] TSK-91.07 presencia por radar
 - [ ] TSK-91.08 luz operativa
