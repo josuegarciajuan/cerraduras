@@ -8,7 +8,7 @@ declare(strict_types=1);
  *   - pack `Pack Zigbee` (`PACK_ZIGBEE`)
  *   - sala `almacenZigbee` de tipo `ALMACEN_BEBIDAS`
  *   - tres dispositivos Zigbee con IEEE estable y transporte ZIGBEE2MQTT
- *   - `presence_mode_override=radar_door` solo para esa sala
+ *   - `presence_mode_override=mixed` solo para esa sala
  *
  * No habilita MQTT, no arranca servicios, no toca Tuya ni el almacén actual.
  * Por defecto solo muestra el plan (--dry-run). Para escribir: --apply.
@@ -231,7 +231,7 @@ try {
         $stmt = $pdo->prepare(
             "INSERT INTO rooms
                 (code, room_type_id, simulated_override, status, notes, presence_mode_override)
-             VALUES (:code, :rt, NULL, 'FREE', :notes, 'radar_door')"
+             VALUES (:code, :rt, NULL, 'FREE', :notes, 'mixed')"
         );
         $stmt->execute([
             ':code' => ROOM_CODE,
@@ -246,7 +246,7 @@ try {
                 SET room_type_id = :rt,
                     pack_id = :pid,
                     notes = COALESCE(NULLIF(notes, ''), :notes),
-                    presence_mode_override = 'radar_door'
+                    presence_mode_override = 'mixed'
               WHERE id = :id"
         );
         $stmt->execute([
@@ -309,6 +309,6 @@ try {
 }
 
 $log('OK: pack ' . PACK_CODE . ' (id ' . $packId . '), sala ' . ROOM_CODE . ' (id ' . $roomId . '), '
-    . count(DEVICES) . ' dispositivos, presence_mode_override=radar_door.');
+    . count(DEVICES) . ' dispositivos, presence_mode_override=mixed.');
 $log('MQTT sigue deshabilitado; no se ha arrancado ningún servicio.');
 exit(0);

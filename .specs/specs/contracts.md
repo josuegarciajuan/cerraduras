@@ -157,7 +157,7 @@ La API y la auditoría exponen de forma aditiva:
 
 ```json
 {
-  "mode": "camera_fusion|radar_door|radar_only_shadow|radar_only",
+  "mode": "camera_fusion|radar_door|radar_only_shadow|radar_only|mixed",
   "raw": "PRESENT|ABSENT|UNKNOWN",
   "state": "UNKNOWN|CANDIDATE_PRESENT|PRESENT_CONFIRMED|CANDIDATE_ABSENT|ABSENT_CONFIRMED",
   "confirmed": true,
@@ -195,7 +195,7 @@ Añadidas de forma aditiva a `room_types`:
 | `presence_door_window_seconds` | `90` | 0–600. |
 | `presence_stale_seconds` | `180` | 30–86400. |
 
-`almacenZigbee` se provisiona con `radar_door`. `radar_only` requiere aprobación explícita tras la
+`almacenZigbee` se provisiona con `mixed`. `radar_only` requiere aprobación explícita tras la
 aceptación.
 
 ## API aditiva

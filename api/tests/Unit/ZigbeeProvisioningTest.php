@@ -55,7 +55,7 @@ $checks = [
     ['etiqueta presencia', "'Zigbee · Presencia · almacenZigbee'"],
     ['etiqueta luz', "'Zigbee · Luz · almacenZigbee'"],
     ['topic puerta', "'zigbee2mqtt/' . \$spec['friendly']"],
-    ['modo radar_door por sala', "presence_mode_override = 'radar_door'"],
+    ['modo mixed por sala', "presence_mode_override = 'mixed'"],
     ['dry-run por defecto', "if (!\$apply)"],
     ['escritura solo con --apply', "'--apply'"],
     ['transacción', '$pdo->beginTransaction()'],

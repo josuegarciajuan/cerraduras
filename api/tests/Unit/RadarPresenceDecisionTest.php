@@ -155,6 +155,50 @@ for ($i = 0; $i < 1200; $i++) {
 $longDecision = RadarPresenceDecision::decide($long, now(3605), cfg('radar_only'));
 same('continuous occupancy remains confirmed (no time cap)', $longDecision['state'], 'PRESENT_CONFIRMED');
 
+// F91 mixed: door closed → radar_door; door open → radar_only.
+$mixedClosed = RadarPresenceDecision::decide(
+    [ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7)],
+    now(),
+    cfg('mixed')
+);
+same('mixed sin puerta → candidate (radar_door)', $mixedClosed['state'], 'CANDIDATE_PRESENT');
+same('mixed sin puerta opera radar_door', $mixedClosed['operational_mode'], 'radar_door');
+
+$mixedClosedDoor = RadarPresenceDecision::decide(
+    [ev('OPEN', -5, PresenceEvent::SENSOR_PROXIMITY), ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7)],
+    now(),
+    cfg('mixed')
+);
+same('mixed puerta reciente → confirmed', $mixedClosedDoor['state'], 'PRESENT_CONFIRMED');
+same('mixed puerta reciente opera radar_only (puerta abierta)', $mixedClosedDoor['operational_mode'], 'radar_only');
+
+$mixedDoorClosed = RadarPresenceDecision::decide(
+    [
+        ev('OPEN', -12, PresenceEvent::SENSOR_PROXIMITY),
+        ev('CLOSED', -10, PresenceEvent::SENSOR_PROXIMITY),
+        ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7),
+    ],
+    now(),
+    cfg('mixed')
+);
+same('mixed puerta cerrada tras apertura → radar_door', $mixedDoorClosed['operational_mode'], 'radar_door');
+same('mixed puerta cerrada tras apertura → confirmed', $mixedDoorClosed['state'], 'PRESENT_CONFIRMED');
+
+$mixedOpen = RadarPresenceDecision::decide(
+    [ev('OPEN', -200, PresenceEvent::SENSOR_PROXIMITY), ev('PRESENT', 0), ev('PRESENT', 3), ev('PRESENT', 7)],
+    now(),
+    cfg('mixed')
+);
+same('mixed puerta abierta → radar_only confirmed', $mixedOpen['state'], 'PRESENT_CONFIRMED');
+same('mixed puerta abierta opera radar_only', $mixedOpen['operational_mode'], 'radar_only');
+
+$mixedOpenOne = RadarPresenceDecision::decide(
+    [ev('OPEN', -200, PresenceEvent::SENSOR_PROXIMITY), ev('PRESENT', 0)],
+    now(),
+    cfg('mixed')
+);
+same('mixed puerta abierta con 1 reporte → candidate', $mixedOpenOne['state'], 'CANDIDATE_PRESENT');
+
 $unknown = RadarPresenceDecision::decide([], now(), cfg('radar_only'));
 same('no events → UNKNOWN', $unknown['state'], 'UNKNOWN');
 same('no events does not apply', $unknown['apply'], false);

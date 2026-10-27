@@ -161,10 +161,11 @@ Decisiones del operador que esta fase debe cumplir:
 
 - **RF-148.1**: Deben existir modos de decisión por sala configurables:
   `camera_fusion` (comportamiento F88 actual), `radar_door` (radar con corroboración de puerta, sin
-  cámara), `radar_only_shadow` (calcula radar-only pero no actúa) y `radar_only` (radar como
-  decisión principal, sin cámara ni requisito de puerta).
-- **RF-148.2**: El modo por defecto de `almacenZigbee` será `radar_door` hasta completar la
-  aceptación; `radar_only` solo se activa tras aprobación explícita. El modo `camera_fusion` se
+  cámara), `radar_only_shadow` (calcula radar-only pero no actúa), `radar_only` (radar como
+  decisión principal, sin cámara ni requisito de puerta) y `mixed` (puerta cerrada → `radar_door`;
+  puerta abierta → `radar_only`, para salidas con la puerta abierta).
+- **RF-148.2**: El modo por defecto de `almacenZigbee` será `mixed` hasta completar la aceptación;
+  `radar_only` solo se activa tras aprobación explícita. El modo `camera_fusion` se
   conserva intacto para las salas actuales y como rollback.
 - **RF-148.3**: El algoritmo parte de los eventos push recibidos, no de lecturas adicionales. Cada
   episodio de presencia se evalúa con evidencia temporal: número de reportes, separación entre

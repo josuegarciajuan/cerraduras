@@ -196,9 +196,9 @@ if ($defaultsOk) {
     pass('RoomType: defaults de presencia y toArray() correctos');
 }
 
-$modes = ['camera_fusion', 'radar_door', 'radar_only_shadow', 'radar_only'];
+$modes = ['camera_fusion', 'radar_door', 'radar_only_shadow', 'radar_only', 'mixed'];
 if (RoomType::presenceModes() === $modes) {
-    pass('RoomType::presenceModes() contiene los cuatro modos');
+    pass('RoomType::presenceModes() contiene los cinco modos');
 } else {
     fail('RoomType::presenceModes() inesperado');
 }

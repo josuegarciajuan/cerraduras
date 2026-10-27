@@ -180,6 +180,7 @@ Mapa v2 (reemplaza el ejemplo invertido de F90):
 | `radar_door` | `almacenZigbee` inicial | Radar + corroboración de puerta; sin cámara |
 | `radar_only_shadow` | Validación | Radar-only se calcula y audita, pero no actúa |
 | `radar_only` | Tras aceptación | Radar-only decide; sin cámara ni puerta obligatoria |
+| `mixed` | `almacenZigbee` inicial | Puerta cerrada → `radar_door`; puerta abierta → `radar_only` |
 
 `camera_fusion` no se elimina ni se desactiva globalmente. Es el rollback de presencia.
 

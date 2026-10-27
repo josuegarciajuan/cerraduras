@@ -5891,6 +5891,8 @@ block "BLOCK 64 — F91: integración Zigbee aislada"
 for F91_FILE in \
     "bin/provision-zigbee-almacen.php" \
     "bin/zigbee-spool-worker.php" \
+    "bin/zigbee-readiness.php" \
+    "bin/zigbee-install-deps.sh" \
     "bin/zigbee-ingress/index.js" \
     "bin/zigbee-ingress/ingress.js" \
     "bin/zigbee-ingress/spool.js" \
@@ -5902,7 +5904,10 @@ for F91_FILE in \
     "config/zigbee2mqtt-devices.json" \
     "migrations/0127_device_transport.sql" \
     "migrations/0128_room_type_presence_modes.sql" \
-    "migrations/0129_room_presence_mode_override.sql"; do
+    "migrations/0129_room_presence_mode_override.sql" \
+    "../docs/systemd/cerraduras-zigbee-tunnel.service" \
+    "../docs/systemd/cerraduras-zigbee-ingress.service" \
+    "../docs/systemd/cerraduras-zigbee-spool.service"; do
     if [ -f "$F91_FILE" ]; then
         pass "F91: existe $F91_FILE"
     else
@@ -5999,15 +6004,18 @@ if grep -qF -- "--requeue requiere --yes" bin/zigbee-spool-worker.php \
 else
     fail "F91: replay sin confirmación/auditoría"
 fi
-if grep -qF "ZIGBEE_INGRESS_ENABLED=false" .env.example; then
-    pass "F91: ingress deshabilitado por defecto"
+if grep -qF "ZIGBEE_INGRESS_ENABLED=false" .env.example \
+    && grep -qF "ZIGBEE_SPOOL_ENABLED=false" .env.example; then
+    pass "F91: ingress y spool deshabilitados por defecto"
 else
-    fail "F91: ingress no está deshabilitado por defecto"
+    fail "F91: flags por defecto"
 fi
-if grep -RqsF -e "zigbee-ingress" -e "zigbee-spool" ../start-all.sh ../stop-all.sh ../docs/systemd 2>/dev/null; then
-    fail "F91: sin wiring de arranque/systemd todavía"
+if grep -qF "cerraduras-zigbee-ingress" ../start-all.sh \
+    && grep -qF "cerraduras-zigbee-spool" ../start-all.sh \
+    && grep -qF "cerraduras-zigbee-tunnel" ../stop-all.sh; then
+    pass "F91: wiring condicional de arranque/parada y units"
 else
-    pass "F91: sin wiring de arranque/systemd"
+    fail "F91: wiring condicional de arranque/parada"
 fi
 
 # --- 64.5 Provisión en seco (solo lectura) ---------------------------------
@@ -6033,7 +6041,8 @@ for F91_TEST in \
     "tests/Unit/SwitchGatewayFactoryZigbeeTest.php" \
     "tests/Unit/ZigbeeSwitchStateServiceTest.php" \
     "tests/Unit/PanelAlmacenZigbeeUiTest.php" \
-    "tests/Unit/MotionEndpointHardeningTest.php"; do
+    "tests/Unit/MotionEndpointHardeningTest.php" \
+    "tests/Unit/ZigbeeRuntimeWiringTest.php"; do
     if [ -f "$F91_TEST" ]; then
         F91_OUT=$(php "$F91_TEST" 2>&1)
         F91_RC=$?
