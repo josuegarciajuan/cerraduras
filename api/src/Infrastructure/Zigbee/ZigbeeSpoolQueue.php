@@ -26,6 +26,7 @@ final class ZigbeeSpoolQueue
             if (!is_dir($path)) {
                 mkdir($path, 0700, true);
             }
+            @chmod($path, 0700);
         }
     }
 
@@ -123,8 +124,17 @@ final class ZigbeeSpoolQueue
             $record['last_error'] = null;
             $record['replay'] = true;
             $record['replay_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
+            $record['replayed_from'] = $safe;
+            $record['replayed_by'] = self::currentUser();
             $name = sprintf('%013d-%08d-%s.json', (int) (microtime(true) * 1000), random_int(0, 99999999), substr((string) ($record['payload_sha256'] ?? 'replay'), 0, 16));
             $this->writeAtomic('incoming', $name, $record);
+            $this->appendReplayAudit([
+                'at' => gmdate('Y-m-d\TH:i:s.v\Z'),
+                'source' => $safe,
+                'target' => $name,
+                'by' => $record['replayed_by'],
+                'payload_sha256' => $record['payload_sha256'] ?? null,
+            ]);
             return $name;
         }
         return null;
@@ -195,6 +205,26 @@ final class ZigbeeSpoolQueue
         file_put_contents($tmp, $json, LOCK_EX);
         @chmod($tmp, 0600);
         rename($tmp, $dir . DIRECTORY_SEPARATOR . $safe);
+    }
+
+    private static function currentUser(): string
+    {
+        if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+            $info = posix_getpwuid(posix_geteuid());
+            if (is_array($info) && isset($info['name'])) {
+                return (string) $info['name'];
+            }
+        }
+        return (string) (getenv('USER') ?: getenv('LOGNAME') ?: 'unknown');
+    }
+
+    /** @param array<string,mixed> $entry */
+    private function appendReplayAudit(array $entry): void
+    {
+        $file = $this->dir . DIRECTORY_SEPARATOR . 'replay.log';
+        $line = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
+        file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+        @chmod($file, 0600);
     }
 
     private function path(string $sub): string

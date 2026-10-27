@@ -107,11 +107,14 @@ file_put_contents(
     json_encode(array_merge($record, ['last_error' => 'poison', 'attempts' => 3]))
 );
 unlink($dir . '/incoming/' . $name);
-[$reCode, $reOut, $reErr] = runWorker(['--requeue=' . $name], $env);
+[$noYesCode] = runWorker(['--requeue=' . $name], $env);
+check('--requeue requires explicit --yes', $noYesCode === 2);
+[$reCode, $reOut, $reErr] = runWorker(['--requeue=' . $name, '--yes'], $env);
 $requeuedFiles = glob($dir . '/incoming/*.json') ?: [];
 check('--requeue restores an incoming record', $reCode === 0 && count($requeuedFiles) >= 1, $reErr);
 $requeued = json_decode(file_get_contents($requeuedFiles[0]), true);
 check('requeue resets attempts and marks replay', $requeued['attempts'] === 0 && ($requeued['replay'] ?? false) === true);
+check('requeue audit log written', is_file($dir . '/replay.log'));
 
 $source = file_get_contents(dirname(__DIR__, 2) . '/bin/zigbee-spool-worker.php');
 check('worker uses the spool queue', str_contains($source, 'ZigbeeSpoolQueue'));
