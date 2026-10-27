@@ -22,7 +22,7 @@ final class ZigbeeSwitchStateService
     /**
      * @return array{state:string,state_at:string}
      */
-    public function apply(Device $device, string $state, string $occurredAt): array
+    public function apply(Device $device, string $state, string $occurredAt, bool $touchLiveness = true): array
     {
         if (!in_array($state, ['ON', 'OFF'], true)) {
             throw new InvalidArgumentException('Invalid SWITCH state');
@@ -31,7 +31,10 @@ final class ZigbeeSwitchStateService
         $meta = is_array($device->meta) ? $device->meta : [];
 
         // A real report proves liveness even when it repeats the same value.
-        $this->devices->updateLastSeen($device->id);
+        // A retained/bootstrap report is not proof of current liveness.
+        if ($touchLiveness) {
+            $this->devices->updateLastSeen($device->id);
+        }
 
         // Z2M emits 2–3 state reports per command. Once the confirmed state is
         // already the same, repeated reports must not rewrite meta (dedupe).

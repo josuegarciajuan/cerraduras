@@ -31,9 +31,7 @@ final class ZigbeeMqttEventProcessor
         }
 
         $meta = is_array($mappedEvent['meta'] ?? null) ? $mappedEvent['meta'] : [];
-        if (($meta['bootstrap'] ?? false) === true) {
-            return ['status' => 'discarded', 'reason' => 'bootstrap'];
-        }
+        $isBootstrap = (($meta['bootstrap'] ?? false) === true);
 
         $externalId = $mappedEvent['device_external_id'] ?? null;
         $sensor = $mappedEvent['sensor'] ?? null;
@@ -55,17 +53,19 @@ final class ZigbeeMqttEventProcessor
             return ['status' => 'discarded', 'reason' => 'device_kind_mismatch'];
         }
 
-        // A real push proves the device is alive, regardless of the later
-        // domain decision (duplicate/stale still means it reported).
-        $this->devices->updateLastSeen($device->id);
+        // A retained/bootstrap message seeds state but is not a live transition.
+        if ($isBootstrap && $sensor === 'PRESENCE') {
+            return ['status' => 'discarded', 'reason' => 'bootstrap'];
+        }
 
         if ($sensor === 'SWITCH') {
             $state = $this->switchStates->apply(
                 $device,
                 (string) ($mappedEvent['value'] ?? ''),
-                (string) ($mappedEvent['occurred_at'] ?? '')
+                (string) ($mappedEvent['occurred_at'] ?? ''),
+                !$isBootstrap
             );
-            return ['status' => 'processed', 'result' => ['switch' => $state]];
+            return ['status' => $isBootstrap ? 'discarded' : 'processed', 'reason' => $isBootstrap ? 'bootstrap' : null, 'result' => ['switch' => $state]];
         }
 
         if ($device->packId === null) {
@@ -76,6 +76,23 @@ final class ZigbeeMqttEventProcessor
         if ($roomId === null || $roomId <= 0) {
             return ['status' => 'discarded', 'reason' => 'room_not_found'];
         }
+
+        if ($isBootstrap && $sensor === 'PROXIMITY') {
+            $result = $this->iotSessions->applyDoorBootstrap([
+                'room_id' => $roomId,
+                'sensor' => $sensor,
+                'value' => (string) ($mappedEvent['value'] ?? ''),
+                'provider' => PresenceEvent::PROVIDER_ZIGBEE2MQTT,
+                'occurred_at' => (string) ($mappedEvent['occurred_at'] ?? ''),
+                'source_event_id' => (string) ($mappedEvent['source_event_id'] ?? ''),
+                'meta' => $meta,
+            ], $correlationId);
+            return ['status' => 'discarded', 'reason' => 'bootstrap', 'result' => $result];
+        }
+
+        // A real push proves the device is alive, regardless of the later
+        // domain decision (duplicate/stale still means it reported).
+        $this->devices->updateLastSeen($device->id);
 
         $event = [
             'room_id' => $roomId,

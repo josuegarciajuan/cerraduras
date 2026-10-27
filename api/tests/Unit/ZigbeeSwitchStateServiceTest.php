@@ -100,6 +100,26 @@ same('source marked Zigbee', $meta['switch_state_source'], 'ZIGBEE2MQTT');
 same('existing meta is preserved', $meta['model'], 'ZBMINIL2');
 same('last command is preserved', $meta['last_command'], 'OFF');
 
+$bootstrapRepo = new FakeDeviceRepoForZigbeeSwitch();
+$bootstrapService = new ZigbeeSwitchStateService($bootstrapRepo);
+$bootstrapDevice = new Device(
+    440,
+    532,
+    Device::KIND_SWITCH,
+    '0xf044d3fffecd9e8e',
+    'Zigbee · Luz',
+    null,
+    ['switch_state' => 'OFF'],
+    null,
+    false,
+    null,
+    null,
+    'ZIGBEE2MQTT'
+);
+$bootstrapService->apply($bootstrapDevice, 'ON', '2026-10-27T10:00:00.123Z', false);
+same('bootstrap switch no refresca liveness', $bootstrapRepo->lastSeen, 0);
+same('bootstrap switch sí actualiza estado', $bootstrapRepo->updates[0]['fields']['meta_json'] !== null, true);
+
 try {
     $service->apply($device, 'TOGGLE', '2026-10-27T10:00:00.123Z');
     fail('invalid state rejected');
