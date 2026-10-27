@@ -438,6 +438,56 @@ final class IotSessionService
      *
      * @param array<string,mixed> $event
      */
+    /**
+     * F91/RF-145.7: apply a retained/bootstrap door state without creating a
+     * transition, visit, light command or anomaly. It only seeds the last known
+     * door state so mixed mode can decide while the door is already open.
+     *
+     * @param array<string,mixed> $event Normalized event (room_id, value, occurred_at...).
+     * @return array{accepted:bool,derived_state:array<string,mixed>,reason:string}
+     */
+    public function applyDoorBootstrap(array $event, string $correlationId): array
+    {
+        $roomId = (int) ($event['room_id'] ?? 0);
+        $value = (string) ($event['value'] ?? '');
+        $occurredAt = (string) ($event['occurred_at'] ?? '');
+        $sourceEvtId = isset($event['source_event_id']) ? (string) $event['source_event_id'] : null;
+        $meta = is_array($event['meta'] ?? null) ? $event['meta'] : [];
+        $meta['bootstrap'] = true;
+
+        if ($roomId <= 0 || !in_array($value, [PresenceEvent::VALUE_OPEN, PresenceEvent::VALUE_CLOSED], true)) {
+            return ['accepted' => false, 'derived_state' => [], 'reason' => 'invalid_bootstrap'];
+        }
+        $room = $this->rooms->findById($roomId);
+        if ($room === null) {
+            return ['accepted' => false, 'derived_state' => [], 'reason' => 'room_not_found'];
+        }
+
+        $raw = $this->presenceEvents->insertOrGet(
+            $roomId,
+            PresenceEvent::SENSOR_PROXIMITY,
+            $value,
+            PresenceEvent::PROVIDER_ZIGBEE2MQTT,
+            $occurredAt,
+            $sourceEvtId,
+            $meta
+        );
+        $this->presenceEvents->markAudit($raw['event']->id, false, 'bootstrap');
+
+        try {
+            $this->iotSessions->beginTransaction();
+            $session = $this->iotSessions->lockByRoomId($roomId);
+            $session->doorState = $value;
+            $this->iotSessions->updateState($session);
+            $this->iotSessions->commit();
+        } catch (\Throwable $e) {
+            $this->safeRollback();
+            throw $e;
+        }
+
+        return ['accepted' => false, 'derived_state' => ['door_state' => $value], 'reason' => 'bootstrap'];
+    }
+
     private function mutate(
         Room     $room,
         IotSession $session,
