@@ -4613,28 +4613,35 @@ fi
 # 48.2 HTTP: mjpeg_url en state + servidor interno MJPEG
 if [ "$SERVER_UP" = true ]; then
     F70_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id JOIN devices d ON d.pack_id=r.pack_id AND d.kind='CAMERA' WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
-    F70_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F70_ROOM")
-    if echo "$F70_STATE" | grep -q '"mjpeg_url"'; then
-        pass "F70: state.cameras incluye mjpeg_url"
+    if [ -z "$F70_ROOM" ]; then
+        # El piloto Zigbee puede estar temporalmente en TIPO_NORMAL para probar
+        # /dashboard: sus cámaras siguen existiendo, pero no hay sala almacén
+        # con cámaras que consultar. No es un fallo del directo MJPEG.
+        skip "BLOCK 48 HTTP" "sin sala ALMACEN_BEBIDAS con cámara"
     else
-        fail "F70: state.cameras[].mjpeg_url" "ausente"
-    fi
-    F70_CAM=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F70_ROOM AND d.kind='CAMERA' AND COALESCE(JSON_EXTRACT(d.meta_json,'\$.enabled'),'true')='true' ORDER BY d.id LIMIT 1" 2>/dev/null)
-    if [ -n "$F70_CAM" ]; then
-        F70_STATUS=$(curl -s --max-time 4 "http://127.0.0.1:8086/status" 2>/dev/null)
-        if echo "$F70_STATUS" | grep -q '"ok"'; then
-            pass "F70: servidor MJPEG /status operativo"
-            F70_LIVE_HDR=$(curl -s -D - -o /dev/null --max-time 5 "http://127.0.0.1:8086/live?id=$F70_CAM" 2>/dev/null | tr -d '\r')
-            if echo "$F70_LIVE_HDR" | grep -qi 'multipart/x-mixed-replace'; then
-                pass "F70: /live?id=$F70_CAM sirve MJPEG"
+        F70_STATE=$(curl -s --max-time 5 "$API_BASE/almacen-api/state?room_id=$F70_ROOM")
+        if echo "$F70_STATE" | grep -q '"mjpeg_url"'; then
+            pass "F70: state.cameras incluye mjpeg_url"
+        else
+            fail "F70: state.cameras[].mjpeg_url" "ausente"
+        fi
+        F70_CAM=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F70_ROOM AND d.kind='CAMERA' AND COALESCE(JSON_EXTRACT(d.meta_json,'\$.enabled'),'true')='true' ORDER BY d.id LIMIT 1" 2>/dev/null)
+        if [ -n "$F70_CAM" ]; then
+            F70_STATUS=$(curl -s --max-time 4 "http://127.0.0.1:8086/status" 2>/dev/null)
+            if echo "$F70_STATUS" | grep -q '"ok"'; then
+                pass "F70: servidor MJPEG /status operativo"
+                F70_LIVE_HDR=$(curl -s -D - -o /dev/null --max-time 5 "http://127.0.0.1:8086/live?id=$F70_CAM" 2>/dev/null | tr -d '\r')
+                if echo "$F70_LIVE_HDR" | grep -qi 'multipart/x-mixed-replace'; then
+                    pass "F70: /live?id=$F70_CAM sirve MJPEG"
+                else
+                    fail "F70: /live multipart" "$(echo "$F70_LIVE_HDR" | head -1)"
+                fi
             else
-                fail "F70: /live multipart" "$(echo "$F70_LIVE_HDR" | head -1)"
+                skip "F70 MJPEG interno" "servicio cameras-live no activo"
             fi
         else
-            skip "F70 MJPEG interno" "servicio cameras-live no activo"
+            skip "F70 MJPEG" "sin cámara habilitada"
         fi
-    else
-        skip "F70 MJPEG" "sin cámara habilitada"
     fi
 else
     skip "BLOCK 48 HTTP" "servidor no disponible"
