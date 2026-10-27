@@ -14,8 +14,10 @@ final class ZigbeeMqttEventProcessor
 {
     public function __construct(
         private DeviceRepositoryInterface $devices,
-        private IotSessionService $iotSessions
+        private IotSessionService $iotSessions,
+        private ?ZigbeeSwitchStateService $switchStates = null
     ) {
+        $this->switchStates ??= new ZigbeeSwitchStateService($devices);
     }
 
     /**
@@ -28,6 +30,11 @@ final class ZigbeeMqttEventProcessor
             throw new InvalidArgumentException('Unexpected event provider');
         }
 
+        $meta = is_array($mappedEvent['meta'] ?? null) ? $mappedEvent['meta'] : [];
+        if (($meta['bootstrap'] ?? false) === true) {
+            return ['status' => 'discarded', 'reason' => 'bootstrap'];
+        }
+
         $externalId = $mappedEvent['device_external_id'] ?? null;
         $sensor = $mappedEvent['sensor'] ?? null;
         if (!is_string($externalId) || !is_string($sensor)) {
@@ -38,11 +45,29 @@ final class ZigbeeMqttEventProcessor
         if ($device === null) {
             return ['status' => 'discarded', 'reason' => 'unknown_device'];
         }
-        $expectedKind = $sensor === 'PROXIMITY' ? Device::KIND_PROXIMITY
-            : ($sensor === 'PRESENCE' ? Device::KIND_PRESENCE : null);
+        $expectedKind = match ($sensor) {
+            'PROXIMITY' => Device::KIND_PROXIMITY,
+            'PRESENCE' => Device::KIND_PRESENCE,
+            'SWITCH' => Device::KIND_SWITCH,
+            default => null,
+        };
         if ($expectedKind === null || $device->kind !== $expectedKind) {
             return ['status' => 'discarded', 'reason' => 'device_kind_mismatch'];
         }
+
+        // A real push proves the device is alive, regardless of the later
+        // domain decision (duplicate/stale still means it reported).
+        $this->devices->updateLastSeen($device->id);
+
+        if ($sensor === 'SWITCH') {
+            $state = $this->switchStates->apply(
+                $device,
+                (string) ($mappedEvent['value'] ?? ''),
+                (string) ($mappedEvent['occurred_at'] ?? '')
+            );
+            return ['status' => 'processed', 'result' => ['switch' => $state]];
+        }
+
         if ($device->packId === null) {
             return ['status' => 'discarded', 'reason' => 'device_without_pack'];
         }
@@ -59,7 +84,7 @@ final class ZigbeeMqttEventProcessor
             'provider' => PresenceEvent::PROVIDER_ZIGBEE2MQTT,
             'occurred_at' => (string) ($mappedEvent['occurred_at'] ?? ''),
             'source_event_id' => (string) ($mappedEvent['source_event_id'] ?? ''),
-            'meta' => is_array($mappedEvent['meta'] ?? null) ? $mappedEvent['meta'] : [],
+            'meta' => $meta,
         ];
 
         $result = $this->iotSessions->processEvent($event, $correlationId);
