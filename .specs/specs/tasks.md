@@ -55,12 +55,12 @@ tareas. Sin cambios de código.
 
 **Trazabilidad**: RF-144.1, RF-144.2, RF-144.6..RF-144.8
 
-- [ ] Añadir alta/edición de habitaciones con código, tipo, notas y pack.
-- [ ] Añadir acción “Asignar pack” usando `POST /api/v1/rooms/{id}/apply-pack/{pack_id}`.
-- [ ] Añadir insignia de transporte y estado de provisión en dispositivos y packs.
-- [ ] Exigir pack en el alta de dispositivo y evitar el estado “Sin pack” inválido.
-- [ ] Etiquetar `almacenZigbee` como piloto Zigbee y no confundirlo con el almacén actual.
-- [ ] Accesibilidad: diálogo semántico, foco, Escape, teclado y `aria-live`.
+- [x] Añadir alta/edición de habitaciones con código, tipo, notas y pack.
+- [x] Añadir acción “Asignar pack” usando `POST /api/v1/rooms/{id}/apply-pack/{pack_id}`.
+- [x] Añadir insignia de transporte y estado de provisión en dispositivos y packs.
+- [x] Exigir pack en el alta de dispositivo y evitar el estado “Sin pack” inválido.
+- [x] Etiquetar `almacenZigbee` como piloto Zigbee y no confundirlo con el almacén actual.
+- [x] Accesibilidad: diálogo semántico, foco, Escape, teclado y `aria-live`.
 
 **Verificación**: prueba manual en `/panel` y tests de lógica de estados.
 
@@ -200,7 +200,7 @@ consulta de topología.
 - [x] TSK-91.00 especificación y diseño
 - [x] TSK-91.01 esquema
 - [x] TSK-91.02 API
-- [ ] TSK-91.03 panel de alta
+- [x] TSK-91.03 panel de alta
 - [ ] TSK-91.04 provisión
 - [ ] TSK-91.05 ingreso MQTT
 - [ ] TSK-91.06 consumidor y mapa v2
