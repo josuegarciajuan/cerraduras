@@ -97,6 +97,10 @@
 - [x] TSK-92.05 panel
 - [x] TSK-92.06 pruebas
 
+**Verificación**: regresión 2026-10-27 → **701 passed, 0 failed, 12 skipped**. Sala 14:
+**9/9 online** (`zigbee_push` ×3, `camera_probe` ×2, `esp32_heartbeat` ×4). Ping Zigbee con
+`verify_tuya=true` no incrementó `run/tuya-quota.json`.
+
 ---
 
 # Fase 91: Integración Zigbee aislada en `almacenZigbee`
