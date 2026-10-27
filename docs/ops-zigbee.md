@@ -82,6 +82,47 @@ a `PACK_ZIGBEE` para que la sala las resuelva por pack (F30).
 `radar_only_shadow` calcula radar-only sin actuar; `radar_only` decide solo con
 el radar.
 
+## Modo normal temporal (pruebas de `/dashboard`)
+
+El piloto puede cambiarse a `TIPO_NORMAL` para probar en `/dashboard` el flujo de
+estancia/QR/regla de salida con los mismos dispositivos del `PACK_ZIGBEE`. En este
+modo la sala deja de aparecer en `/almacen` y no crea visitas ni grabaciones.
+
+```bash
+# 1. Pasar la sala a tipo normal y limpiar el override de presencia
+mysql ... <<'SQL'
+UPDATE rooms
+   SET room_type_id = (SELECT id FROM room_types WHERE code = 'TIPO_NORMAL'),
+       presence_mode_override = NULL
+ WHERE code = 'almacenZigbee';
+SQL
+
+# 2. Reset completo del ciclo (cierra estancia/QR, IoT UNKNOWN, luz OFF)
+curl -s -X POST http://127.0.0.1:8080/dashboard-api/rooms/reset \
+  -H 'Content-Type: application/json' \
+  -d '{"room_id":14}'
+
+# 3. El detector de movimiento no aplica fuera del almacén; pararlo mientras dure la prueba
+systemctl stop cerraduras-camera-motion
+```
+
+`provision-zigbee-almacen.php` detecta este estado: el `--dry-run` informa y no
+escribe; `--apply` exige restaurar `ALMACEN_BEBIDAS` antes de continuar.
+
+Rollback:
+
+```bash
+mysql ... <<'SQL'
+UPDATE rooms
+   SET room_type_id = (SELECT id FROM room_types WHERE code = 'ALMACEN_BEBIDAS'),
+       presence_mode_override = 'mixed'
+ WHERE code = 'almacenZigbee';
+SQL
+curl -s -X POST http://127.0.0.1:8080/dashboard-api/rooms/reset \
+  -H 'Content-Type: application/json' -d '{"room_id":14}'
+systemctl start cerraduras-camera-motion
+```
+
 ## Estado de conectividad en `/dashboard` (F92)
 
 El panel decide la liveness por transporte, no por `kind`:
