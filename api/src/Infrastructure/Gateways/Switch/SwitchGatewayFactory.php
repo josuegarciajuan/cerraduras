@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Gateways\Switch;
 
+use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Rooms\Room;
 use App\Support\Config;
@@ -26,8 +27,11 @@ final class SwitchGatewayFactory
     /**
      * Resolve the correct gateway for the given room.
      */
-    public static function make(?Room $room = null, ?DeviceRepositoryInterface $deviceRepo = null): SwitchGatewayInterface
-    {
+    public static function make(
+        ?Room $room = null,
+        ?DeviceRepositoryInterface $deviceRepo = null,
+        ?Device $switchDevice = null
+    ): SwitchGatewayInterface {
         $simulated = self::isSimulated($room);
 
         if ($simulated) {
@@ -37,6 +41,14 @@ final class SwitchGatewayFactory
         if ($deviceRepo === null) {
             error_log('[SwitchGatewayFactory] Real mode requires DeviceRepository; falling back to Simulated');
             return new SimulatedSwitchGateway();
+        }
+
+        if ($switchDevice === null && $room !== null) {
+            $switchDevice = $deviceRepo->findForRoomKind($room->id, Device::KIND_SWITCH);
+        }
+
+        if ($switchDevice !== null && $switchDevice->transport === Device::TRANSPORT_ZIGBEE2MQTT) {
+            return new ZigbeeSwitchGateway($deviceRepo);
         }
 
         return new TuyaSwitchGateway($deviceRepo);

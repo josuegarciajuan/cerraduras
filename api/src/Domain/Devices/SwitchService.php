@@ -187,7 +187,7 @@ final class SwitchService
         }
 
         $room = $this->rooms->findById($roomId);
-        return SwitchGatewayFactory::make($room, $this->devices);
+        return SwitchGatewayFactory::make($room, $this->devices, $device);
     }
 
     /**
@@ -212,7 +212,7 @@ final class SwitchService
         // Canonical model (F30): resolve the room from the pack, never from a
         // direct device room_id.
         $room = $this->rooms->findByPackId($packId);
-        $gateway = SwitchGatewayFactory::make($room, $this->devices);
+        $gateway = SwitchGatewayFactory::make($room, $this->devices, $device);
         $action = $turnOn ? 'ON' : 'OFF';
 
         try {

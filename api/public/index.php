@@ -2752,6 +2752,68 @@ $router->post(
     }
 );
 
+// POST /almacen-api/switch — control manual de la luz Zigbee (F91/RF-147).
+// Misma autorización que door/open (panel LAN). Solo transporte ZIGBEE2MQTT:
+// no se usa como puerta trasera hacia Tuya. La confirmación física llega por
+// push; aquí solo se confirma la entrega al broker.
+$router->post(
+    '/almacen-api/switch',
+    function (\App\Http\Request $request) use ($deviceRepo, $switchService, $pdo): \App\Http\Response {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        $state = strtoupper(trim((string) ($body['state'] ?? '')));
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id_required']);
+        }
+        if (!in_array($state, ['ON', 'OFF'], true)) {
+            return \App\Http\Response::json(400, ['error' => 'invalid_state', 'allowed' => ['ON', 'OFF']]);
+        }
+
+        $wh = $pdo->prepare(
+            "SELECT 1 FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+             WHERE r.id = :id AND rt.code = 'ALMACEN_BEBIDAS' LIMIT 1"
+        );
+        $wh->execute([':id' => $roomId]);
+        if ($wh->fetchColumn() === false) {
+            return \App\Http\Response::json(404, ['error' => 'warehouse_room_not_found']);
+        }
+
+        $device = $deviceRepo->findForRoomKind($roomId, \App\Domain\Devices\Device::KIND_SWITCH);
+        if ($device === null) {
+            return \App\Http\Response::json(404, ['error' => 'switch_not_found']);
+        }
+        if ($device->transport !== \App\Domain\Devices\Device::TRANSPORT_ZIGBEE2MQTT) {
+            return \App\Http\Response::json(409, ['error' => 'transport_unsupported']);
+        }
+
+        $result = $state === 'ON' ? $switchService->turnOn($roomId) : $switchService->turnOff($roomId);
+        if (($result['ok'] ?? false) !== true) {
+            return \App\Http\Response::json(503, [
+                'ok' => false,
+                'state' => $state,
+                'error' => (string) ($result['error'] ?? 'switch_error'),
+            ]);
+        }
+
+        $fresh = $deviceRepo->findById($device->id);
+        $meta = $fresh !== null && is_array($fresh->meta) ? $fresh->meta : [];
+        $confirmed = (($meta['switch_state'] ?? null) === $state);
+        $commandId = bin2hex(random_bytes(8));
+        $meta['last_command_id'] = $commandId;
+        $meta['last_command_source'] = 'panel';
+        $deviceRepo->update($device->id, [
+            'meta_json' => json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+
+        return \App\Http\Response::json($confirmed ? 200 : 202, [
+            'ok' => true,
+            'state' => $state,
+            'confirmed' => $confirmed,
+            'command_id' => $commandId,
+        ]);
+    }
+);
+
 // POST /almacen-api/sensors/refresh — relectura puntual bajo demanda (F75/RF-88).
 // Hace UNA lectura REST del sensor de puerta de la sala (respeta el presupuesto y
 // el backoff compartido de Tuya) y la aplica por la ingesta existente. NUNCA se

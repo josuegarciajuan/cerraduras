@@ -74,6 +74,25 @@ same('apply returns confirmed state', $result['state'], 'ON');
 same('apply updates last_seen', $repo->lastSeen, 1);
 same('apply writes one meta update', count($repo->updates), 1);
 
+$deviceAlreadyOn = new Device(
+    439,
+    532,
+    Device::KIND_SWITCH,
+    '0xf044d3fffecd9e8e',
+    'Zigbee · Luz · almacenZigbee',
+    null,
+    ['switch_state' => 'ON', 'switch_state_at' => '2026-10-27T10:00:00.000Z'],
+    null,
+    false,
+    null,
+    null,
+    'ZIGBEE2MQTT'
+);
+$duplicate = $service->apply($deviceAlreadyOn, 'ON', '2026-10-27T10:00:01.000Z');
+same('repeated ON is duplicate', $duplicate['duplicate'], true);
+same('duplicate does not rewrite meta', count($repo->updates), 1);
+same('duplicate still refreshes liveness', $repo->lastSeen, 2);
+
 $meta = json_decode($repo->updates[0]['fields']['meta_json'], true);
 same('switch_state persisted', $meta['switch_state'], 'ON');
 same('switch_state_at persisted', $meta['switch_state_at'], '2026-10-27T10:00:00.123Z');

@@ -123,13 +123,13 @@ consulta de topología.
 
 **Trazabilidad**: RF-147.1..RF-147.8, RF-149.5
 
-- [ ] Implementar `ZigbeeSwitchGateway` y seleccionarlo por `transport=ZIGBEE2MQTT`.
-- [ ] Publicar `ON`/`OFF` QoS 1, sin `TOGGLE`, con auditoría y timeout acotado.
-- [ ] Confirmar por estado push; deduplicar 2–3 reportes; marcar `unconfirmed` sin bucle.
-- [ ] Añadir `POST /almacen-api/switch` con autorización, errores 404/409/503 y auditoría.
-- [ ] Tests: confirmación, timeout, duplicados, cambio manual y transporte no soportado.
+- [x] Implementar `ZigbeeSwitchGateway` y seleccionarlo por `transport=ZIGBEE2MQTT`.
+- [x] Publicar `ON`/`OFF` QoS 1, sin `TOGGLE`, con auditoría y timeout acotado.
+- [x] Confirmar por estado push; deduplicar 2–3 reportes; marcar `unconfirmed` sin bucle.
+- [x] Añadir `POST /almacen-api/switch` con autorización, errores 404/409/503 y auditoría.
+- [x] Tests: confirmación, timeout, duplicados, cambio manual y transporte no soportado.
 
-**Verificación**: tests unitarios/HTTP y prueba en banco con lámpara.
+**Verificación**: tests unitarios/HTTP; la prueba física con lámpara queda para la aceptación F91.12.
 
 ## TSK-91.09: Panel `/almacen` para `almacenZigbee`
 
@@ -205,7 +205,7 @@ consulta de topología.
 - [x] TSK-91.05 ingreso MQTT
 - [x] TSK-91.06 consumidor y mapa v2
 - [x] TSK-91.07 presencia por radar
-- [ ] TSK-91.08 luz operativa
+- [x] TSK-91.08 luz operativa
 - [ ] TSK-91.09 panel del almacén
 - [ ] TSK-91.10 endurecimiento
 - [ ] TSK-91.11 pruebas y regresión
