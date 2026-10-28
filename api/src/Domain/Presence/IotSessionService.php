@@ -234,6 +234,19 @@ final class IotSessionService
                         $this->iotSessions->updateState($session);
                         $doorRefreshed = true;
                     }
+                    // F94/RF-161: un reporte de presencia (aunque sea noop, duplicate,
+                    // no_contest o uncorroborated) demuestra que el sensor sigue
+                    // emitiendo. La frescura se mide desde el último REPORTE, no desde
+                    // la última transición aplicada: si no, un radar que repite
+                    // `PRESENT` aparecía como "sin datos" a los 3 minutos.
+                    // Un evento stale no refresca (llegó tarde).
+                    if ($sensor === PresenceEvent::SENSOR_PRESENCE
+                        && $decision !== SensorEventDecision::STALE
+                        && $session->lastPresenceEventAt !== $evtUtc
+                    ) {
+                        $session->lastPresenceEventAt = $evtUtc;
+                        $this->iotSessions->updateState($session);
+                    }
                     $this->presenceEvents->markAudit($rawEvent->id, false, $decision);
                     $this->iotSessions->commit();
                     break;

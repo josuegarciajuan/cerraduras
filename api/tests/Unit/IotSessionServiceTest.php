@@ -292,6 +292,23 @@ if ($sess->lastAbsentSince === null) ok('T3: last_absent_since cleared');
 else bad('T3: last_absent_since cleared', "got {$sess->lastAbsentSince}");
 
 // ============================================================================
+// T3b (F94/RF-161): un PRESENT repetido (noop) refresca la frescura sin
+// cambiar el estado. La frescura es "último reporte", no "última transición".
+// ============================================================================
+$r3b = $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T10:00:05Z', 'evt-3b'), 'corr-3b');
+$sess = $iotRepo->sessions[1];
+if ($sess->presenceState === IotSession::PRESENCE_PRESENT) ok('T3b: estado sigue PRESENT tras noop');
+else bad('T3b: estado sigue PRESENT', "got {$sess->presenceState}");
+if ($sess->lastPresenceEventAt === '2026-04-28 10:00:05.000') ok('T3b: noop refresca last_presence_event_at');
+else bad('T3b: noop refresca last_presence_event_at', "got {$sess->lastPresenceEventAt}");
+
+// Un evento atrasado no refresca la frescura.
+$svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_PRESENT, '2026-04-28T10:00:01Z', 'evt-3c'), 'corr-3c');
+$sess = $iotRepo->sessions[1];
+if ($sess->lastPresenceEventAt === '2026-04-28 10:00:05.000') ok('T3b: stale no retrocede la frescura');
+else bad('T3b: stale no retrocede la frescura', "got {$sess->lastPresenceEventAt}");
+
+// ============================================================================
 // T4: PROXIMITY=CLOSED → door_state=CLOSED, last_close_at set (F31)
 // ============================================================================
 $r4 = $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_CLOSED, '2026-04-28T10:00:03Z', 'evt-4'), 'corr-4');

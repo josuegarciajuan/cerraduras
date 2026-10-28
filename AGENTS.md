@@ -206,6 +206,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Paneles (RF-157)**: `/live` expone `presence_decision`; `/dashboard` muestra
   `PRESENT?`/`ABSENT?`; el croquis prioriza `CANDIDATE_ABSENT`.
 - **Captura (RF-158)**: `bin/sensor-capture.php` (JSONL + marcas + `--analyze`).
+- **Frescura (RF-161)**: cada reporte de presencia (aunque sea `noop`/`duplicate`/
+  `no_context`/`uncorroborated`) refresca `last_presence_event_at`; un `stale` no. Así
+  `presence_stale` refleja "el sensor dejó de emitir", no "no cambió de estado".
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 66) + units
   `ZigbeeRadarCalibrationTest`, ampliaciones de `RadarPresenceDecisionTest`,
   `SensorEventDecisionTest`, `ZigbeeMqttMessageMapperTest` y `croquis-logic.test.js`.
