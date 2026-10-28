@@ -1,4 +1,23 @@
-# Calibración y verificación de sensores (F93)
+# Calibración y verificación de sensores (F93/F95)
+
+## Flujo universal `/sensores` (F95, Zigbee)
+
+Válido para los tres dispositivos de `almacenZigbee` (SNZB-04P, ZY-M100-S_2,
+ZBMINIL2):
+
+1. **Preflight**: muestra los 3 dispositivos (verde/rojo/ámbar) y el plan.
+2. **Puerta**: cierra y pulsa `Comprobar polaridad`. La app corrige el montaje
+   invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
+3. **Radar dentro**: colócate en el punto más lejano y quieto 30 s. Si no detecta,
+   `Ajustar si no detecta` sube sensibilidad/rango con confirmación por push.
+4. **Radar fuera**: sal, cierra, pasa 3 veces y espera 60 s. Si detecta de más,
+   `Ajustar si detecta de más` baja un escalón.
+5. **Luz**: `Encender`/`Apagar` y confirma físicamente.
+6. **Veredicto**: descarga el informe. `Comprobar reposo` revisa los últimos
+   30 min cuando la sala lleve ese tiempo vacía (sin proceso de fondo).
+
+La puerta y el radar son obligatorios; si no hay luz, el paso queda `NO INSTALADO`.
+
 
 Procedimiento para puerta y presencia con datos reales. No se sondea Tuya: la captura
 lee eventos ya persistidos (push) y las marcas físicas del técnico.

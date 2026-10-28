@@ -178,6 +178,84 @@ same('panel_consistent FAIL si falta decisión exigida', v('panel_consistent',
 same('manual PASS', v('manual', ['reason' => 'ok'], ctx())['status'], 'PASS');
 same('regla desconocida FAIL', v('nope', [], ctx())['status'], 'FAIL');
 
+// ── F95 door_full ──────────────────────────────────────────────────────
+$doorCtx = ctx(
+    [ev('PROXIMITY', 'OPEN', 1), ev('PROXIMITY', 'CLOSED', 3),
+     ev('PROXIMITY', 'OPEN', 5), ev('PROXIMITY', 'CLOSED', 7),
+     ev('PROXIMITY', 'OPEN', 9), ev('PROXIMITY', 'CLOSED', 11)],
+    ['door_state' => 'CLOSED']
+);
+$doorCtx['initial_live'] = ['door_state' => 'CLOSED'];
+same('door_full PASS con 3 ciclos', v('door_full', [], $doorCtx)['status'], 'PASS');
+$doorOpen = $doorCtx;
+$doorOpen['initial_live'] = ['door_state' => 'OPEN'];
+same('door_full FAIL si empieza abierta', v('door_full', [], $doorOpen)['status'], 'FAIL');
+same('door_full motivo start', v('door_full', [], $doorOpen)['reason'], 'door_must_start_closed');
+$doorShort = ctx([ev('PROXIMITY', 'OPEN', 1), ev('PROXIMITY', 'CLOSED', 3)], ['door_state' => 'CLOSED']);
+$doorShort['initial_live'] = ['door_state' => 'CLOSED'];
+same('door_full FAIL con pocos ciclos', v('door_full', [], $doorShort)['reason'], 'door_too_few_cycles');
+$doorBad = ctx([ev('PROXIMITY', 'CLOSED', 1), ev('PROXIMITY', 'OPEN', 3)], ['door_state' => 'OPEN']);
+$doorBad['initial_live'] = ['door_state' => 'CLOSED'];
+same('door_full FAIL con secuencia invertida', v('door_full', [], $doorBad)['reason'], 'door_sequence_mismatch');
+$doorEnd = ctx([ev('PROXIMITY', 'OPEN', 1), ev('PROXIMITY', 'CLOSED', 3),
+    ev('PROXIMITY', 'OPEN', 5), ev('PROXIMITY', 'CLOSED', 7),
+    ev('PROXIMITY', 'OPEN', 9)], ['door_state' => 'OPEN']);
+$doorEnd['initial_live'] = ['door_state' => 'CLOSED'];
+same('door_full FAIL si no termina cerrada', v('door_full', [], $doorEnd)['status'], 'FAIL');
+
+// ── F95 radar_inside ───────────────────────────────────────────────────
+$inside = ctx([ev('PRESENCE', 'PRESENT', 0), ev('PRESENCE', 'PRESENT', 15), ev('PRESENCE', 'PRESENT', 31)],
+    ['presence_state' => 'PRESENT'], ['maximum_range' => 6], [], 40);
+$inside['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_inside PASS con 30 s', v('radar_inside', ['hold_seconds' => 30], $inside)['status'], 'PASS');
+$insideShort = ctx([ev('PRESENCE', 'PRESENT', 0), ev('PRESENCE', 'PRESENT', 10)],
+    ['presence_state' => 'PRESENT'], [], [], 12);
+$insideShort['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_inside SKIP si es corto', v('radar_inside', ['hold_seconds' => 30], $insideShort)['status'], 'SKIP');
+$insideStale = ctx([ev('PRESENCE', 'PRESENT', 0)], ['presence_state' => 'PRESENT', 'presence_stale' => true], [], [], 40);
+$insideStale['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_inside UNVERIFIED si stale', v('radar_inside', [], $insideStale)['status'], 'UNVERIFIED');
+$insideAbsent = ctx([ev('PRESENCE', 'PRESENT', 0), ev('PRESENCE', 'ABSENT', 10), ev('PRESENCE', 'PRESENT', 20), ev('PRESENCE', 'PRESENT', 31)],
+    ['presence_state' => 'PRESENT'], [], [], 40);
+$insideAbsent['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_inside FAIL si pierde presencia', v('radar_inside', ['hold_seconds' => 30], $insideAbsent)['reason'], 'presence_not_continuous');
+$insideNone = ctx([], ['presence_state' => 'ABSENT'], [], [], 40);
+$insideNone['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_inside FAIL sin detección', v('radar_inside', [], $insideNone)['reason'], 'no_presence_detected');
+
+// ── F95 radar_outside ──────────────────────────────────────────────────
+$outside = ctx([ev('PRESENCE', 'ABSENT', 5), ev('PRESENCE', 'ABSENT', 20)],
+    ['presence_state' => 'ABSENT'], [], [], 60);
+$outside['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_outside PASS sin detección', v('radar_outside', ['min_elapsed_seconds' => 50], $outside)['status'], 'PASS');
+$outsideGrace = ctx([ev('PRESENCE', 'PRESENT', 5), ev('PRESENCE', 'ABSENT', 20)],
+    ['presence_state' => 'ABSENT'], [], [], 60);
+$outsideGrace['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_outside ignora el fading inicial', v('radar_outside',
+    ['min_elapsed_seconds' => 50, 'grace_seconds' => 20], $outsideGrace)['status'], 'PASS');
+$outsideFail = ctx([ev('PRESENCE', 'PRESENT', 30)], ['presence_state' => 'PRESENT'], [], [], 60);
+$outsideFail['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_outside FAIL si detecta fuera', v('radar_outside',
+    ['min_elapsed_seconds' => 50, 'grace_seconds' => 20], $outsideFail)['reason'], 'presence_detected_outside');
+$outsideShort = ctx([], ['presence_state' => 'ABSENT'], [], [], 10);
+$outsideShort['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_outside SKIP si es corto', v('radar_outside', ['min_elapsed_seconds' => 50], $outsideShort)['status'], 'SKIP');
+$outsideStale = ctx([], ['presence_state' => 'ABSENT', 'presence_stale' => true], [], [], 60);
+$outsideStale['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+same('radar_outside UNVERIFIED si stale', v('radar_outside', ['min_elapsed_seconds' => 50], $outsideStale)['status'], 'UNVERIFIED');
+
+// ── F95 light_test ─────────────────────────────────────────────────────
+$light = ctx();
+$light['human'] = ['on' => true, 'off' => true, 'telemetry_on' => true, 'telemetry_off' => true];
+$light['switch'] = ['present' => true, 'state' => 'OFF'];
+same('light_test PASS', v('light_test', [], $light)['status'], 'PASS');
+$lightBad = $light; $lightBad['human'] = ['on' => false, 'off' => true];
+same('light_test FAIL si no enciende', v('light_test', [], $lightBad)['status'], 'FAIL');
+$lightMismatch = $light; $lightMismatch['human'] = ['on' => true, 'off' => true, 'telemetry_on' => false];
+same('light_test FAIL si telemetría contradice', v('light_test', [], $lightMismatch)['status'], 'FAIL');
+$lightNone = $light; $lightNone['switch'] = ['present' => false];
+same('light_test SKIP sin switch', v('light_test', [], $lightNone)['status'], 'SKIP');
+
 // ── catálogo ───────────────────────────────────────────────────────────
 $raw = file_get_contents(__DIR__ . '/../../public/assets/sensor-tests.json');
 $catalog = json_decode((string) $raw, true);
@@ -205,6 +283,27 @@ foreach ((array) ($catalog['tests'] ?? []) as $t) {
 check('catálogo sin reglas o ids inválidos', $badRules === [], implode(',', $badRules));
 check('catálogo sin bloques huérfanos', $missingBlocks === [], implode(',', $missingBlocks));
 check('catálogo contiene los 5 bloques', count($blockIds) === 5, implode(',', $blockIds));
+
+// Catálogo universal v2 (F95)
+$rawV2 = file_get_contents(__DIR__ . '/../../public/assets/sensor-tests-v2.json');
+$v2 = json_decode((string) $rawV2, true);
+check('catálogo v2 válido', is_array($v2));
+$v2bad = [];
+$v2ids = [];
+foreach ((array) ($v2['steps'] ?? []) as $t) {
+    $id = (string) ($t['id'] ?? '');
+    if ($id === '' || isset($v2ids[$id])) $v2bad[] = 'id:' . $id;
+    $v2ids[$id] = true;
+    if (!in_array((string) ($t['rule'] ?? ''), SensorCalibrationValidator::rules(), true)) {
+        $v2bad[] = $id . ':rule=' . (string) ($t['rule'] ?? '');
+    }
+    if (trim((string) ($t['action'] ?? '')) === '') $v2bad[] = $id . ':action';
+}
+check('catálogo v2 sin reglas o ids inválidos', $v2bad === [], implode(',', $v2bad));
+check('catálogo v2 tiene 5 pasos', count($v2ids) === 5, implode(',', array_keys($v2ids)));
+foreach (['door', 'radar_inside', 'radar_outside', 'light', 'verdict'] as $need) {
+    check('catálogo v2 contiene ' . $need, isset($v2ids[$need]));
+}
 
 echo "\nTotal: {$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

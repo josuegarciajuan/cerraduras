@@ -2809,3 +2809,71 @@ sin depender de una sesión de asistencia y sin procesos de fondo.
   marcas de orden.
 - **RF-161.3**: El estado (`presence_state`) solo cambia con decisiones aplicadas; la
   frescura no altera la ocupación, solo su validez.
+
+
+# Fase 95: Flujo universal de verificación Zigbee
+
+**Alcance**: los tres dispositivos Zigbee definitivos de `almacenZigbee`:
+puerta SONOFF SNZB-04P, radar Tuya ZY-M100-S_2 y luz SONOFF ZBMINIL2.
+Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
+
+## RF-162: Polaridad automática por dispositivo
+
+- **RF-162.1**: el contacto puede montarse invertido. La app lo detecta con la
+  puerta cerrada y lo corrige **solo en ese dispositivo** mediante
+  `devices.meta_json.door_polarity` (`normal`|`inverted`).
+- **RF-162.2**: la inversión se aplica en el ingress Zigbee antes del dominio, de
+  modo que paneles, ventanas y reglas de salida ven la semántica canónica.
+- **RF-162.3**: la corrección exige un evento `contact` fresco (≤90 s) y la
+  confirmación humana de que la puerta está cerrada; se audita y se puede deshacer.
+- **RF-162.4**: al corregir la polaridad se actualiza el estado de sesión a
+  `CLOSED` para que el primer ciclo posterior se aplique correctamente.
+- **RF-162.5**: la tarjeta de puerta valida 3 ciclos (normal, lento y rápido) con
+  secuencia exacta y final cerrado; tolera un ciclo extra, no flapping.
+
+## RF-163: Preflight y dispositivos
+
+- **RF-163.1**: antes de empezar se detectan los 3 dispositivos, transporte,
+  última señal, batería, LQI y configuración del radar.
+- **RF-163.2**: la tira de dispositivos muestra verde si están reconocidos y con
+  señal reciente, rojo si no hay acceso/estado, ámbar si no hay datos.
+- **RF-163.3**: puerta y radar son obligatorios; la luz es opcional
+  (`NO INSTALADO`) y no bloquea el veredicto.
+
+## RF-164: Ventanas e intentos
+
+- **RF-164.1**: la ventana de un paso empieza al pulsar `Empezar prueba`
+  (`attempt/start`), nunca al abrir la tarjeta.
+- **RF-164.2**: solo puede haber un intento activo por sala; una segunda petición
+  devuelve `409`.
+- **RF-164.3**: los intentos son inmutables; repetir un paso crea uno nuevo y el
+  anterior queda auditado.
+- **RF-164.4**: `stale`/sin señal se trata como `UNVERIFIED`, nunca PASS.
+- **RF-164.5**: `SKIP` no cuenta como PASS.
+
+## RF-165: Radar dentro
+
+- **RF-165.1**: detecta presencia **real** (incluye descartes por `no_context`),
+  no solo la decisión de dominio.
+- **RF-165.2**: exige 30 s de presencia continua; si no detecta en 20 s, la app
+  puede subir sensibilidad (+2) y luego alcance (+0,75 m), con confirmación por
+  push y máximo 2 escalados.
+- **RF-165.3**: si el sensor está stale, el resultado es `UNVERIFIED`.
+
+## RF-166: Radar fuera
+
+- **RF-166.1**: exige 50–60 s de ventana, sin `PRESENT` real tras un margen de
+  fading de 20 s, y ausencia final confirmada.
+- **RF-166.2**: si detecta de más, baja alcance (−0,75 m) o sensibilidad (−1),
+  máximo 2 ajustes, y repite.
+- **RF-166.3**: no debe crear visitas, grabaciones ni estancias (`effects_delta`).
+
+## RF-167: Luz y veredicto
+
+- **RF-167.1**: la app envía ON/OFF al gateway Zigbee y espera el estado reportado
+  ≤10 s; el técnico confirma físicamente encendido y apagado.
+- **RF-167.2**: discrepancia entre telemetría y confirmación humana → FAIL.
+- **RF-167.3**: veredicto por dispositivo y global: `CORRECT`, `WITH_RESERVES`,
+  `REVIEW`, `INCOMPLETE`, `NOT_EVALUABLE`. Un `FAIL` instalado bloquea el verde.
+- **RF-167.4**: el veredicto se da al terminar; el “reposo” de 30 min se comprueba
+  después, al reabrir la sala o pulsar `Comprobar reposo`, sin proceso de fondo.

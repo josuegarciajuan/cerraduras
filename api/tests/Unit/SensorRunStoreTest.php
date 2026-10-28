@@ -28,11 +28,31 @@ check('path traversal rechazado', !$store->isValidId('../evil'));
 check('id con barra rechazado', !$store->isValidId('a/b'));
 check('id vacío rechazado', !$store->isValidId(''));
 
-$run = $store->create(['room_id' => 14, 'operator' => 'tester', 'initial_settings' => ['maximum_range' => 6]]);
+$run = $store->create(['room_id' => 14, 'operator' => 'tester', 'catalog_version' => 2,
+    'plan' => ['door', 'radar_inside', 'radar_outside', 'light'],
+    'initial_settings' => ['maximum_range' => 6]]);
 check('create devuelve run_id', isset($run['run_id']) && $run['run_id'] !== '');
 check('run_id válido', $store->isValidId((string) $run['run_id']));
 check('estado inicial running', $run['status'] === 'running');
 check('guarda settings iniciales', ($run['calibration']['initial_settings']['maximum_range'] ?? null) === 6);
+check('guarda plan y versión', $run['plan'] === ['door', 'radar_inside', 'radar_outside', 'light'] && $run['catalog_version'] === 2);
+
+// Intentos activos y lock
+$run['steps']['door'] = ['status' => 'IN_PROGRESS', 'active_attempt' => ['attempt_id' => 'a-test', 'step_id' => 'door']];
+$store->save($run);
+$active = $store->findActiveAttemptForRoom(14);
+check('findActiveAttemptForRoom encuentra el intento', is_array($active) && $active['attempt_id'] === 'a-test');
+check('findActiveAttemptForRoom ignora otras salas', $store->findActiveAttemptForRoom(99) === null);
+$locked = $store->withLock((string) $run['run_id'], static function (array $r): array {
+    $r['steps']['door']['status'] = 'PASS';
+    return $r;
+});
+check('withLock persiste la mutación', ($locked['steps']['door']['status'] ?? null) === 'PASS');
+check('withLock releyó el fichero', ($store->load((string) $run['run_id'])['steps']['door']['status'] ?? null) === 'PASS');
+$run = $store->load((string) $run['run_id']);
+unset($run['steps']['door']['active_attempt']);
+$store->save($run);
+check('sin intento activo deja de encontrarlo', $store->findActiveAttemptForRoom(14) === null);
 
 $loaded = $store->load((string) $run['run_id']);
 check('load devuelve la corrida', is_array($loaded) && $loaded['run_id'] === $run['run_id']);

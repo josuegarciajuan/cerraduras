@@ -24,7 +24,8 @@ final class SensorContextBuilder
     public function devices(int $roomId): array
     {
         $stmt = $this->pdo->prepare(
-            "SELECT d.id, d.kind, d.external_id, d.label, d.transport, d.meta_json, d.last_seen_at
+            "SELECT d.id, d.kind, d.external_id, d.label, d.transport, d.meta_json,
+                    d.last_seen_at, d.battery_pct
                FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
               WHERE r.id = :rid AND d.kind IN ('PRESENCE','PROXIMITY','SWITCH')
               ORDER BY FIELD(d.kind,'PRESENCE','PROXIMITY','SWITCH'), d.id"
@@ -34,13 +35,26 @@ final class SensorContextBuilder
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
             $kind = strtoupper((string) $row['kind']);
             $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
+            $lastSeen = $row['last_seen_at'] !== null ? (string) $row['last_seen_at'] : null;
+            $lastSeenTs = $lastSeen !== null ? strtotime($lastSeen . ' UTC') : false;
+            $age = $lastSeenTs !== false ? max(0, time() - $lastSeenTs) : null;
+            $metaArr = is_array($meta) ? $meta : [];
             $dev = [
                 'id' => (int) $row['id'],
                 'external_id' => (string) $row['external_id'],
                 'label' => (string) ($row['label'] ?? ''),
                 'transport' => strtoupper((string) ($row['transport'] ?? '')),
-                'last_seen_at' => $row['last_seen_at'],
-                'meta' => is_array($meta) ? $meta : [],
+                'last_seen_at' => $lastSeen,
+                'last_seen_age_seconds' => $age,
+                'fresh' => $age !== null && $age <= 300,
+                'battery_pct' => $row['battery_pct'] !== null ? (int) $row['battery_pct'] : null,
+                'model' => (string) ($metaArr['model'] ?? ''),
+                'lqi' => $metaArr['lqi'] ?? null,
+                'door_polarity' => strtolower((string) ($metaArr['door_polarity'] ?? 'normal')),
+                'switch_state' => strtoupper((string) ($metaArr['switch_state'] ?? 'UNKNOWN')),
+                'switch_state_at' => $metaArr['switch_state_at'] ?? null,
+                'calibration' => is_array($metaArr['calibration'] ?? null) ? $metaArr['calibration'] : null,
+                'meta' => $metaArr,
             ];
             if ($kind === 'PRESENCE') {
                 $out['presence'] = $dev;
@@ -291,6 +305,77 @@ final class SensorContextBuilder
             'effects_delta' => self::effectDelta($initialEffects, $effects),
             'elapsed_seconds' => $elapsed,
             'server_now' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+    }
+
+    /**
+     * F95/RF-162: información de la sala y plan propuesto.
+     *
+     * @return array<string,mixed>
+     */
+    public function preflight(int $roomId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT r.id, r.code, r.room_type_id, r.presence_mode_override,
+                    rt.code AS room_type_code, rt.presence_mode
+               FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+              WHERE r.id = :id LIMIT 1'
+        );
+        $stmt->execute([':id' => $roomId]);
+        $room = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $devices = $this->devices($roomId);
+        $latest = $this->latestSettings($roomId);
+        $live = $this->live($roomId);
+        $issues = [];
+        if ($devices['proximity'] === null) {
+            $issues[] = 'door_missing';
+        } elseif (!$devices['proximity']['fresh']) {
+            $issues[] = 'door_stale';
+        }
+        if ($devices['presence'] === null) {
+            $issues[] = 'presence_missing';
+        } elseif (!$devices['presence']['fresh']) {
+            $issues[] = 'presence_stale';
+        }
+        $hasSwitch = $devices['switch'] !== null;
+        $canStart = $devices['proximity'] !== null && $devices['presence'] !== null;
+        $plan = ['door', 'radar_inside', 'radar_outside'];
+        if ($hasSwitch) {
+            $plan[] = 'light';
+        }
+        return [
+            'room' => [
+                'id' => (int) ($room['id'] ?? $roomId),
+                'code' => (string) ($room['code'] ?? ''),
+                'room_type_id' => (int) ($room['room_type_id'] ?? 0),
+                'room_type_code' => (string) ($room['room_type_code'] ?? ''),
+                'presence_mode' => (string) ($room['presence_mode_override'] ?? $room['presence_mode'] ?? ''),
+            ],
+            'devices' => $devices,
+            'switch' => $devices['switch'],
+            'settings' => $latest['settings'],
+            'settings_at' => $latest['settings_at'],
+            'settings_age_seconds' => $latest['settings_age_seconds'],
+            'live' => $live,
+            'issues' => $issues,
+            'can_start' => $canStart,
+            'plan' => $plan,
+            'effects' => $this->effects($roomId),
+            'server_now' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+    }
+
+    /**
+     * @return array{state:string,state_at:?string,reported:bool}
+     */
+    public function switchSnapshot(int $roomId): array
+    {
+        $devices = $this->devices($roomId);
+        $switch = $devices['switch'];
+        return [
+            'state' => $switch['switch_state'] ?? 'UNKNOWN',
+            'state_at' => $switch['switch_state_at'] ?? null,
+            'reported' => in_array($switch['switch_state'] ?? 'UNKNOWN', ['ON', 'OFF'], true),
         ];
     }
 

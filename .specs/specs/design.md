@@ -5913,3 +5913,54 @@ whitelist (sin path traversal). No requiere migración de BD.
   validadores de presencia fallan en vez de inventar estado.
 - No mide latencia física con precisión de laboratorio; mide secuencia, tiempo desde el
   inicio del paso y coherencia con los paneles.
+
+
+# Fase 95 — Flujo universal de verificación
+
+## 95.1 Flujo
+
+```text
+preflight → run/start → (por paso) attempt/start → acción → attempt/check
+          → finish → veredicto → soak diferido
+```
+
+Cinco tarjetas: Puerta (polaridad + 3 ciclos), Radar dentro, Radar fuera, Luz,
+Veredicto. Un solo flujo; sin catálogo experto en la UI.
+
+## 95.2 Polaridad
+
+`devices.meta_json.door_polarity`. El processor Zigbee invierte OPEN/CLOSED antes
+de `IotSessionService`. El endpoint `door/polarity` compara el valor crudo
+`contact` con la puerta cerrada confirmada por el operador, persiste la polaridad,
+actualiza `iot_sessions.door_state=CLOSED` y audita. El ciclo posterior valida.
+
+## 95.3 Intentos y locks
+
+`SensorRunStore` guarda `steps[step].active_attempt` y `attempts[]`. `withLock`
+usa `flock` por corrida; `findActiveAttemptForRoom` impide dos ventanas en la
+misma sala. Repetir un paso abre un intento nuevo.
+
+## 95.4 Radar
+
+Reglas puras en `SensorCalibrationValidator`: `radar_inside` y `radar_outside`.
+La detección física cuenta reportes reales, incluidos los descartados por
+`no_context`; el soak valida los efectos de dominio. Ajustes con
+`ZigbeeRadarCalibrationService` (push + read-back).
+
+## 95.5 Luz
+
+`switch/test` publica ON/OFF con `ZigbeeSwitchGateway` y lee el estado reportado.
+La confirmación humana es obligatoria; si la telemetría contradice, FAIL.
+
+## 95.6 Veredicto y reposo
+
+`SensorVerdict` combina puerta, radar (dentro+fuera) y luz. `SKIP` no es PASS.
+El finish deja `soak=PENDING`; `run/soak` revisa 30 min de eventos y efectos y
+puede degradar a `REVIEW`.
+
+## 95.7 UI
+
+Consola de campo: tira de 3 dispositivos, progreso de 5 estaciones, una tarjeta
+por paso, barra de acción, panel técnico plegado y veredicto. Sin auto-avance,
+sin jerga interna, sin emojis como única etiqueta. Tokens y contraste corregidos
+(`--text-soft: #9a9ab0`, bordes `#66668a`), targets ≥48 px, `aria-live` y foco.

@@ -5130,3 +5130,48 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] Prueba de humo local del flujo completo (run → step → check → finish).
 - [x] Regresión en producción (**727 passed, 0 failed**).
 - [ ] Uso en campo con el operador.
+
+
+# Fase 95 — Tareas
+
+## TSK-F95-01: Polaridad automática
+- **Trazabilidad**: RF-162.
+- **Archivos**: `DoorPolarity.php`, `ZigbeeMqttEventProcessor.php`,
+  `SensorWizardController::polarity`, `DeviceRepository::updateMeta`.
+- [x] Inversión por dispositivo en el ingress.
+- [x] Endpoint y corrección del estado de sesión.
+- [x] Tests unitarios de polaridad.
+
+## TSK-F95-02: Preflight e intentos
+- **Trazabilidad**: RF-163/164.
+- **Archivos**: `SensorContextBuilder::preflight`, `SensorRunStore` (lock,
+  active attempt), `SensorWizardController`.
+- [x] Detección de dispositivos y plan.
+- [x] Ventana explícita, intento inmutable, 409 por sala.
+
+## TSK-F95-03: Radar y luz
+- **Trazabilidad**: RF-165/166/167.
+- **Archivos**: `SensorCalibrationValidator` (`radar_inside`, `radar_outside`,
+  `light_test`), `SensorWizardController::tune`, `switchTest`.
+- [x] Detección física real y margen de fading.
+- [x] Ajuste por push y verificación de efectos.
+- [x] Luz con telemetría + confirmación humana.
+
+## TSK-F95-04: Veredicto y reposo
+- **Trazabilidad**: RF-167.
+- **Archivos**: `SensorVerdict.php`, `SensorWizardController::finish/soak`.
+- [x] Matriz por dispositivo.
+- [x] `SKIP`/`UNVERIFIED` no verdes.
+- [x] Reposo diferido sin proceso de fondo.
+
+## TSK-F95-05: UI universal
+- **Trazabilidad**: RF-162…RF-167.
+- **Archivos**: `sensores.html`, `sensor-wizard-v2.js`, `sensor-tests-v2.json`.
+- [x] Tira de 3 dispositivos, preflight, 5 tarjetas, veredicto.
+- [x] Sin modo experto; panel técnico plegado; accesibilidad.
+
+## TSK-F95-06: Verificación
+- **Trazabilidad**: RF-162…RF-167.
+- **Archivos**: `bin/run-tests.sh` BLOCK 68, specs, docs.
+- [x] Unitarios y flujo HTTP con datos reales/sin hardware.
+- [ ] Regresión y prueba física tras el despliegue.

@@ -3639,3 +3639,44 @@ Errores: `400` parámetros, `404` corrida/paso/sala.
 
 `api/run/sensores/<run_id>.json` + `.jsonl`, permisos 0600, `run_id`
 `^[A-Za-z0-9_-]{1,80}$`. Sin migración de BD y sin secretos.
+
+
+# §F95 — API del flujo universal
+
+## §F95.1 Preflight y salas
+
+- `GET /dashboard-api/sensores/v2/rooms`
+- `GET /dashboard-api/sensores/v2/preflight?room_id=N` → `room`, `devices`
+  (proximity/presence/switch con `fresh`, `last_seen_age_seconds`, `model`,
+  `door_polarity`, `switch_state`), `settings`, `live`, `issues`, `can_start`,
+  `plan`, `active_attempt`.
+
+## §F95.2 Corrida e intentos
+
+- `POST .../v2/run/start` `{room_id, operator}` → `201 {run, plan}`.
+- `POST .../v2/attempt/start` `{run_id, step_id}` → `201 {attempt}`;
+  `409 attempt_in_progress`; `409 polarity_not_checked` para `door`.
+- `POST .../v2/attempt/check` `{run_id, step_id, attempt_id, check_id, human?}` →
+  `{status, verdict, attempt, summary}`; idempotente por `attempt_id`+`check_id`;
+  `409 attempt_not_active`.
+- `POST .../v2/attempt/cancel` `{run_id, step_id, attempt_id}`.
+- `POST .../v2/run/finish` `{run_id}` → `{run}` con `verdict` y `soak`.
+- `POST .../v2/run/soak` `{run_id}` → 422 `too_early` si <30 min; si no,
+  `{soak, verdict}`.
+
+## §F95.3 Acciones
+
+- `POST .../v2/door/polarity` `{room_id, run_id?, physical:"CLOSED"|restore}`
+  → `{polarity, raw, session_state, message}`; 422 si no hay evento fresco.
+- `POST .../v2/radar/tune` `{run_id, step_id, attempt_id, phase:"inside"|"outside"}`
+  → `{action, applied, settings, detected}`.
+- `POST .../v2/switch/test` `{room_id, action:"ON"|"OFF"}` →
+  `{ok, reported_state, pending_confirmation}`.
+
+## §F95.4 Lectura e informes
+
+- `GET .../v2/runs` · `GET .../v2/get?id=` · `GET .../v2/export?id=&format=json|md`
+- `GET .../v2/events?room_id=N`
+
+Estados de paso: `PENDING`, `IN_PROGRESS`, `PASS`, `FAIL`, `SKIP`, `UNVERIFIED`.
+Veredicto: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`, `NOT_EVALUABLE`.

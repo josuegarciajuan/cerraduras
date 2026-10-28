@@ -174,6 +174,29 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F92 Estado de conectividad por transporte (Zigbee/cámaras)** | **BLOCK 65 + units F92** | **Completado** |
 | **F93 Calibración y veracidad de sensores (puerta + radar)** | **BLOCK 66 + units F93** | **Completado (código); pruebas físicas pendientes** |
 | **F94 Asistente de verificación física de sensores** | **BLOCK 67 + units F94** | **Completado (código); uso en campo pendiente** |
+| **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
+
+### F95 — Flujo universal de verificación Zigbee (RF-162…RF-167)
+
+- **Alcance**: SNZB-04P, ZY-M100-S_2 y ZBMINIL2 de `almacenZigbee`. Sin Tuya.
+- **Flujo**: preflight + 4 tarjetas (puerta, radar dentro, radar fuera, luz) +
+  veredicto. Sin modo experto.
+- **Polaridad**: `devices.meta_json.door_polarity`, aplicada en
+  `ZigbeeMqttEventProcessor`; el endpoint `v2/door/polarity` la detecta con la
+  puerta cerrada, corrige el estado de sesión y permite deshacer.
+- **Intentos**: `attempt/start|check|cancel` con `attempt_id`, ventana explícita,
+  un solo intento activo por sala (`flock` + `409`) y `SKIP` que no cuenta como PASS.
+- **Radar**: `radar_inside`/`radar_outside` juzgan reportes reales (incluye
+  `no_context`), con margen de fading y efectos falsos; ajuste con
+  `ZigbeeRadarCalibrationService`.
+- **Luz**: `switch/test` con gateway Zigbee + confirmación humana; discrepancia
+  con telemetría → FAIL.
+- **Veredicto**: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`,
+  `NOT_EVALUABLE`; reposo de 30 min diferido bajo demanda.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units
+  `DoorPolarityTest`, `SensorVerdictTest`, ampliaciones de
+  `SensorCalibrationValidatorTest` y `SensorRunStoreTest`. Regresión pendiente
+  tras el despliegue; prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 
