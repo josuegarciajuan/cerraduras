@@ -424,7 +424,9 @@ final class SensorWizardController
             $ctx = $this->context();
             $since = (string) $active['started_at'];
             $data = $ctx->context((int) $run['room_id'], $since, (array) ($active['initial_effects'] ?? []));
-            $detected = $this->realPresent($data['events'], $phase === 'inside' ? 20 : 0);
+            // En "fuera" solo cuentan los últimos 20 s: el fading inicial tras
+            // salir no debe provocar un ajuste a la baja.
+            $detected = $this->realPresent($data['events'], 20);
             if ($phase === 'inside' && $detected) {
                 return Response::json(200, ['action' => 'none', 'detected' => true,
                     'settings' => $data['settings'], 'message' => 'Ya detecta; no hace falta ajustar.']);
