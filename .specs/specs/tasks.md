@@ -5121,11 +5121,12 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - **Trazabilidad**: RF-159/160.
 - **Archivos**: `api/bin/run-tests.sh` (BLOCK 67), specs y docs.
 - [x] BLOCK 67 estático + HTTP condicional.
-- [ ] Regresión completa tras el despliegue.
+- [x] Regresión completa tras el despliegue (**727 passed, 0 failed, 13 skipped**).
 - [ ] Ejecución física de la matriz con el operador.
 
 ## Estado de ejecución (F94)
 
 - [x] TSK-F94-01 … TSK-F94-04 implementadas.
 - [x] Prueba de humo local del flujo completo (run → step → check → finish).
-- [ ] Regresión en producción y uso en campo.
+- [x] Regresión en producción (**727 passed, 0 failed**).
+- [ ] Uso en campo con el operador.
