@@ -14,7 +14,24 @@ lee eventos ya persistidos (push) y las marcas físicas del técnico.
 
 Nunca dejar un proceso de sondeo de Tuya en marcha.
 
-## 2. Captura de una sesión
+## 2. Asistente guiado `/sensores` (recomendado)
+
+Abre `https://<host>/sensores` en el móvil u ordenador del técnico:
+
+1. Sala (por defecto la del piloto Zigbee) y operador.
+2. `▶ Empezar corrida`.
+3. Sigue la tarjeta: acción física → `✅ Hecho, validar`. El servidor valida la ventana y
+   responde PASS/FAIL con el detalle.
+4. Si algo no se puede validar solo, usa `Marcar fallo` u `Omitir` (quedan en el informe).
+5. En el bloque de calibración puedes leer y aplicar ajustes; se confirman con un reporte
+   nuevo del radar.
+6. Al final: `✔ Finalizar` y descarga JSON/Markdown. Las corridas quedan en
+   `api/run/sensores/`.
+
+Pasos largos (sala vacía, persona inmóvil): el propio paso indica la duración mínima; si
+terminas antes, el resultado será SKIP con el tiempo medido.
+
+## 3. Captura manual (alternativa)
 
 ```bash
 cd /root/cerraduras/api
@@ -35,7 +52,7 @@ php bin/sensor-capture.php --mark=SALA_VACIA
 Salida: `api/run/captures/<room>-<fecha>Z.jsonl` (0600). Contiene la señal, `applied`,
 `discard_reason`, `radar_decision` y `settings`.
 
-## 3. Prueba de puerta (10 transiciones)
+## 4. Prueba de puerta (10 transiciones)
 
 1. Cinco ciclos normales, separados ≥2 s.
 2. Un cierre lento, una apertura rápida y movimiento cerca del contacto.
@@ -53,7 +70,7 @@ Revisar por ciclo:
 Criterio: 10/10 transiciones correctas. Solo si aparecen rebotes se añade antirrebote
 (no antes).
 
-## 4. Matriz del radar
+## 5. Matriz del radar
 
 | Escenario | Repeticiones | Qué se mide |
 |---|---:|---|
@@ -80,7 +97,7 @@ Al soltar un control se publica por MQTT y se espera un **reporte nuevo** del ra
 no confirma, el valor no se guarda. Con Tuya se mantiene la lectura REST bajo demanda y
 el cooldown de cuota.
 
-## 5. Análisis sin efectos
+## 6. Análisis sin efectos
 
 ```bash
 php bin/sensor-capture.php --analyze=run/captures/14-20261028T100000Z.jsonl --mode=radar_only
@@ -90,7 +107,7 @@ Devuelve número de eventos, marcas, recuento por estado y transiciones. No escr
 ni acciona nada. Comparar el modo operativo (`mixed`, `radar_door`, `camera_fusion`) con
 el candidato antes de promoverlo.
 
-## 6. Interpretación de estados
+## 7. Interpretación de estados
 
 | Estado | Significado |
 |---|---|
@@ -100,7 +117,7 @@ el candidato antes de promoverlo.
 | `ABSENT_CONFIRMED` | ausencia efectiva (permite salida) |
 | `stale` | el sensor dejó de reportar; no es ausencia |
 
-## 7. Criterios de aceptación
+## 8. Criterios de aceptación
 
 - 10/10 transiciones de puerta correctas.
 - Ninguna entrada real perdida en la matriz.
@@ -110,7 +127,7 @@ el candidato antes de promoverlo.
 - Reconexión/duplicados sin efectos nuevos.
 - Regresión: `cd api && bash bin/run-tests.sh` con 0 fallos.
 
-## 8. Límites conocidos
+## 9. Límites conocidos
 
 - La puerta Zigbee es un EndDevice dormido: `contact` no admite `/get`.
 - El radar Zigbee publica su configuración en cada reporte; una publicación aceptada no

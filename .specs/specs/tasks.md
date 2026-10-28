@@ -5083,3 +5083,49 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F93-08 regresión local en verde.
 - [ ] TSK-F93-08 verificación HTTP tras despliegue.
 - [ ] TSK-F93-09 pruebas físicas y elección de parámetros finales.
+
+
+# Fase 94 — Tareas
+
+## TSK-F94-01: Validador y catálogo
+- **Trazabilidad**: RF-159.2/159.4.
+- **Archivos**: `api/src/Domain/Sensors/SensorCalibrationValidator.php`,
+  `api/public/assets/sensor-tests.json`,
+  `api/tests/Unit/SensorCalibrationValidatorTest.php`.
+- [x] 11 reglas puras + validación del catálogo.
+- [x] Test unitario (43 checks).
+
+## TSK-F94-02: Corridas y contexto
+- **Trazabilidad**: RF-160.1/160.3.
+- **Archivos**: `SensorRunStore.php`, `SensorContextBuilder.php`,
+  `api/tests/Unit/SensorRunStoreTest.php`.
+- [x] JSON + JSONL atómicos, 0600, whitelist de id.
+- [x] Contexto: dispositivos, estado vivo, eventos, settings y efectos.
+- [x] Test unitario (17 checks).
+
+## TSK-F94-03: Endpoints
+- **Trazabilidad**: RF-159.1/159.3, RF-160.2.
+- **Archivos**: `api/public/index.php`.
+- [x] `/sensores` + `context`, `events`, `run/*`, `step/*`, `runs`, `get`, `export`.
+- [x] Validación server-side con el catálogo del repositorio.
+
+## TSK-F94-04: UI
+- **Trazabilidad**: RF-159.1/159.5, RF-160.2/160.3.
+- **Archivos**: `api/public/sensores.html`, `api/public/assets/sensor-wizard.js`.
+- [x] Wizard por pasos, notas, PASS/FAIL/SKIP, progreso.
+- [x] Calibración Zigbee embebida.
+- [x] Eventos en vivo (BD, solo pestaña visible).
+- [x] Listado, apertura y exportación de corridas.
+
+## TSK-F94-05: Verificación
+- **Trazabilidad**: RF-159/160.
+- **Archivos**: `api/bin/run-tests.sh` (BLOCK 67), specs y docs.
+- [x] BLOCK 67 estático + HTTP condicional.
+- [ ] Regresión completa tras el despliegue.
+- [ ] Ejecución física de la matriz con el operador.
+
+## Estado de ejecución (F94)
+
+- [x] TSK-F94-01 … TSK-F94-04 implementadas.
+- [x] Prueba de humo local del flujo completo (run → step → check → finish).
+- [ ] Regresión en producción y uso en campo.

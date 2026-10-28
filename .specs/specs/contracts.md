@@ -3590,3 +3590,52 @@ php api/bin/sensor-capture.php --analyze=api/run/captures/14-....jsonl --mode=ra
 
 JSONL: `{"type":"event"|"mark"|"session"|"session_end", ...}`. Solo lectura de BD;
 sin MQTT ni Tuya.
+
+
+# §F94 — Asistente de verificación de sensores
+
+## §F94.1 Página
+
+`GET /sensores` → HTML del asistente. Catálogo: `GET /assets/sensor-tests.json`.
+
+## §F94.2 Contexto y eventos
+
+`GET /dashboard-api/sensores/context?room_id=N`
+
+```json
+{"room": {"id": 14, "code": "almacenZigbee", "room_type_id": 1},
+ "transport": "ZIGBEE2MQTT",
+ "devices": {"presence": {...}, "proximity": {...}, "switch": {...}},
+ "live": {"door_state": "...", "presence_state": "...", "presence_stale": false,
+          "presence_decision": {...}|null, "...": "..."},
+ "settings": {...}, "settings_at": "...", "settings_age_seconds": 3,
+ "effects": {"visits": 0, "recordings": 0, "stays": 0, "access_events": 0,
+             "anomalies": 0, "switch_on": 0},
+ "events": [{"id": 1, "sensor": "PRESENCE", "value": "PRESENT", "applied": true,
+             "discard_reason": null, "radar_state": "PRESENT_CONFIRMED"}]}
+```
+
+`GET /dashboard-api/sensores/events?room_id=N&limit=25` → últimos eventos + `live` +
+`settings` (solo lectura local).
+
+## §F94.3 Corrida y pasos
+
+- `POST /dashboard-api/sensores/run/start` `{room_id, operator}` → `201 {run}`.
+- `POST /dashboard-api/sensores/step/start` `{run_id, step_id, reset?}` → `{step}`.
+  No reinicia un paso ya validado salvo `reset=true`.
+- `POST /dashboard-api/sensores/step/check`
+  `{run_id, step_id, override?, notes?}` →
+  `{status, verdict:{status,reason,details}, evidence:{...}, summary:{...}, log_file}`.
+  `override ∈ {PASS,FAIL,SKIP}` sustituye el resultado automático y conserva el original
+  en `verdict.details.auto`.
+- `POST /dashboard-api/sensores/run/finish` `{run_id}` → `{run}` con `summary`.
+- `GET /dashboard-api/sensores/runs` → lista de resúmenes.
+- `GET /dashboard-api/sensores/get?id=RUN` → corrida completa.
+- `GET /dashboard-api/sensores/export?id=RUN&format=json|md` → descarga.
+
+Errores: `400` parámetros, `404` corrida/paso/sala.
+
+## §F94.4 Almacenamiento
+
+`api/run/sensores/<run_id>.json` + `.jsonl`, permisos 0600, `run_id`
+`^[A-Za-z0-9_-]{1,80}$`. Sin migración de BD y sin secretos.

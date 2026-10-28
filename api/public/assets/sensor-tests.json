@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "room_id": 14,
+  "blocks": [
+    { "id": "D", "name": "Puerta", "order": 1 },
+    { "id": "R", "name": "Radar de presencia", "order": 2 },
+    { "id": "C", "name": "Calibración", "order": 3 },
+    { "id": "P", "name": "Paneles", "order": 4 },
+    { "id": "Z", "name": "Cierre", "order": 5 }
+  ],
+  "tests": [
+    {
+      "id": "D1", "block": "D", "type": "fisico",
+      "title": "Ciclo 1: abrir y cerrar",
+      "action": "Abre la puerta por completo, espera 2 s y ciérrala. Luego pulsa Hecho.",
+      "expected": "La puerta pasa a ABIERTA y vuelve a CERRADA una sola vez.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D2", "block": "D", "type": "fisico",
+      "title": "Ciclo 2",
+      "action": "Abre y cierra de nuevo, con una pausa de 2 s.",
+      "expected": "Una apertura y un cierre aplicados, sin inversión.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D3", "block": "D", "type": "fisico",
+      "title": "Ciclo 3",
+      "action": "Abre y cierra.",
+      "expected": "Una apertura y un cierre aplicados.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D4", "block": "D", "type": "fisico",
+      "title": "Ciclo 4",
+      "action": "Abre y cierra.",
+      "expected": "Una apertura y un cierre aplicados.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D5", "block": "D", "type": "fisico",
+      "title": "Ciclo 5",
+      "action": "Abre y cierra.",
+      "expected": "Una apertura y un cierre aplicados.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D6", "block": "D", "type": "fisico",
+      "title": "Cierre lento",
+      "action": "Abre la puerta y ciérrala muy despacio, acercando el imán poco a poco.",
+      "expected": "Un único CLOSED al final; sin rebotes OPEN/CLOSED.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D7", "block": "D", "type": "fisico",
+      "title": "Apertura/cierre rápido",
+      "action": "Abre y cierra en menos de un segundo.",
+      "expected": "Se registran ambas transiciones, sin perder ninguna.",
+      "rule": "door_cycle", "params": {}
+    },
+    {
+      "id": "D8", "block": "D", "type": "fisico",
+      "title": "Puerta mantenida abierta",
+      "action": "Abre la puerta y déjala abierta. Pulsa Hecho sin cerrarla.",
+      "expected": "El estado queda ABIERTA y no aparece un CLOSED fantasma.",
+      "rule": "door_state_is", "params": { "state": "OPEN" }
+    },
+    {
+      "id": "D9", "block": "D", "type": "fisico",
+      "title": "Puerta mantenida cerrada",
+      "action": "Cierra la puerta y déjala cerrada 15 s. Pulsa Hecho.",
+      "expected": "Estado CERRADA; ninguna transición nueva en la ventana.",
+      "rule": "no_applied", "params": { "sensors": ["PROXIMITY"], "values": ["OPEN", "CLOSED"] }
+    },
+    {
+      "id": "D10", "block": "D", "type": "fisico",
+      "title": "Sin transición por payloads cacheados",
+      "action": "Con la puerta cerrada, pasea cerca del sensor y por la habitación 30 s. Pulsa Hecho.",
+      "expected": "La puerta no cambia: solo deben llegar reportes de presencia/batería.",
+      "rule": "no_applied", "params": { "sensors": ["PROXIMITY"], "values": ["OPEN", "CLOSED"] }
+    },
+
+    {
+      "id": "R1", "block": "R", "type": "fisico",
+      "title": "Sala vacía, puerta cerrada (10 min)",
+      "action": "Sal de la sala, cierra la puerta y espera 10 minutos sin nadie dentro. Pulsa Hecho.",
+      "expected": "Ningún PRESENT aplicado, ninguna visita/grabación/luz nueva.",
+      "rule": "presence_absent",
+      "params": { "max_applied_present": 0, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+    },
+    {
+      "id": "R2", "block": "R", "type": "fisico",
+      "title": "Sala vacía, puerta abierta (10 min)",
+      "action": "Deja la puerta abierta y sal de la sala 10 minutos. Pulsa Hecho.",
+      "expected": "Ningún PRESENT aplicado pese a la puerta abierta.",
+      "rule": "presence_absent",
+      "params": { "max_applied_present": 0, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+    },
+    {
+      "id": "R3", "block": "R", "type": "fisico",
+      "title": "Ruido del pasillo",
+      "action": "Con la puerta cerrada, pasa 10 veces por delante de la puerta (sin entrar). Pulsa Hecho.",
+      "expected": "Ningún PRESENT aplicado; solo descartes por contexto.",
+      "rule": "presence_absent",
+      "params": { "max_applied_present": 0, "min_elapsed_seconds": 120, "forbid_effect_keys": ["visits", "recordings"] }
+    },
+    {
+      "id": "R4", "block": "R", "type": "fisico",
+      "title": "Entrada real",
+      "action": "Abre la puerta, entra y quédate a 1–2 m del radar. Pulsa Hecho.",
+      "expected": "Presencia aplicada y confirmada; puerta ABIERTA/ CERRADA según lo que hayas hecho.",
+      "rule": "presence_present", "params": { "min_applied_present": 1 }
+    },
+    {
+      "id": "R5", "block": "R", "type": "fisico",
+      "title": "Persona inmóvil (5 min)",
+      "action": "Permanece quieto dentro, sin moverte, 5 minutos. Pulsa Hecho.",
+      "expected": "La presencia se mantiene; no se confirma ausencia.",
+      "rule": "presence_hold", "params": { "min_seconds": 240 }
+    },
+    {
+      "id": "R6", "block": "R", "type": "fisico",
+      "title": "Salida completa",
+      "action": "Sal de la sala, cierra la puerta y aléjate del radar. Pulsa Hecho cuando estés fuera.",
+      "expected": "Se aplica ausencia en menos de 60 s; la puerta queda CERRADA.",
+      "rule": "presence_exit", "params": { "max_confirm_seconds": 60 }
+    },
+    {
+      "id": "R7", "block": "R", "type": "fisico",
+      "title": "Reentrada con puerta abierta",
+      "action": "Abre la puerta, sal, vuelve a entrar y déjala abierta. Pulsa Hecho.",
+      "expected": "Vuelve a detectarse presencia; no se pierde la reentrada.",
+      "rule": "presence_present", "params": { "min_applied_present": 1 }
+    },
+
+    {
+      "id": "C1", "block": "C", "type": "mixto",
+      "title": "Leer configuración real",
+      "action": "Abre el bloque de calibración y pulsa Refrescar. Pulsa Hecho.",
+      "expected": "Se muestran los valores reales recibidos por push (sensibilidad, rangos, delays).",
+      "rule": "settings_present", "params": { "keys": ["maximum_range", "radar_sensitivity"], "max_age_seconds": 600 }
+    },
+    {
+      "id": "C2", "block": "C", "type": "mixto",
+      "title": "Aplicar un cambio",
+      "action": "Cambia el rango máximo o la sensibilidad con los controles, espera la confirmación y pulsa Hecho.",
+      "expected": "El panel indica aplicado y el radar reemite su configuración.",
+      "rule": "manual", "params": { "reason": "cambio_aplicado" }
+    },
+    {
+      "id": "C3", "block": "C", "type": "mixto",
+      "title": "Restaurar configuración inicial",
+      "action": "Vuelve a los valores del inicio y aplica. Pulsa Hecho.",
+      "expected": "Los valores coinciden con la configuración inicial de la corrida.",
+      "rule": "settings_match", "params": { "expected_from": "initial_settings" }
+    },
+
+    {
+      "id": "P1", "block": "P", "type": "nav",
+      "title": "Panel /dashboard (sala normal)",
+      "action": "Abre /dashboard con esta sala y comprueba puerta, presencia, luz y estados candidatos.",
+      "expected": "Lo mostrado coincide con los eventos validados; sin PRESENT/ABSENT inventados.",
+      "rule": "panel_consistent", "params": { "door_in": ["OPEN", "CLOSED"], "presence_in": ["PRESENT", "ABSENT"], "require_decision": false }
+    },
+    {
+      "id": "P2", "block": "P", "type": "nav",
+      "title": "Panel /almacen",
+      "action": "Abre /almacen con esta sala, entra y sal una vez y revisa croquis, visita y grabación.",
+      "expected": "Croquis y estados coherentes; ni visitas ni grabaciones falsas.",
+      "rule": "panel_consistent", "params": { "door_in": ["OPEN", "CLOSED"], "presence_in": ["PRESENT", "ABSENT"] }
+    },
+
+    {
+      "id": "Z1", "block": "Z", "type": "mixto",
+      "title": "Cerrar la verificación",
+      "action": "Pulsa Hecho para generar el informe de la corrida.",
+      "expected": "Resumen con PASS/FAIL por bloque y valores de calibración usados.",
+      "rule": "manual", "params": { "reason": "run_finished" }
+    }
+  ]
+}

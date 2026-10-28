@@ -211,6 +211,385 @@ $router->get(
     }
 );
 
+// ── Sensor calibration wizard (F94) ──────────────────────────────────────────
+// Herramienta de campo: página /sensores + validación server-side de cada paso.
+// Solo lectura de BD/MQTT bajo demanda; sin pollers ni llamadas a Tuya.
+$router->get(
+    '/sensores',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $htmlFile = __DIR__ . '/sensores.html';
+        if (!is_file($htmlFile)) {
+            return \App\Http\Response::json(404, ['error' => 'sensores HTML not found']);
+        }
+        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+    }
+);
+
+$sensorRunsDir = dirname(__DIR__) . '/run/sensores';
+$sensorStore = new \App\Infrastructure\Sensors\SensorRunStore($sensorRunsDir);
+$sensorCatalog = static function (): array {
+    static $catalog = null;
+    if ($catalog === null) {
+        $raw = @file_get_contents(__DIR__ . '/assets/sensor-tests.json');
+        $decoded = is_string($raw) ? json_decode($raw, true) : null;
+        $catalog = is_array($decoded) ? $decoded : ['tests' => [], 'blocks' => []];
+    }
+    return $catalog;
+};
+$sensorStep = static function (string $stepId) use ($sensorCatalog): ?array {
+    foreach ((array) ($sensorCatalog()['tests'] ?? []) as $t) {
+        if (is_array($t) && (string) ($t['id'] ?? '') === $stepId) {
+            return $t;
+        }
+    }
+    return null;
+};
+$sensorSummary = static function (array $record) use ($sensorCatalog): array {
+    $steps = (array) ($record['steps'] ?? []);
+    $pass = $fail = $skip = $pending = 0;
+    foreach ((array) ($sensorCatalog()['tests'] ?? []) as $t) {
+        $id = (string) ($t['id'] ?? '');
+        $status = (string) ($steps[$id]['status'] ?? 'PENDING');
+        if ($status === 'PASS') $pass++;
+        elseif ($status === 'FAIL') $fail++;
+        elseif ($status === 'SKIP') $skip++;
+        else $pending++;
+    }
+    $total = $pass + $fail + $skip + $pending;
+    return [
+        'pass' => $pass, 'fail' => $fail, 'skip' => $skip, 'pending' => $pending,
+        'total' => $total, 'green' => $total > 0 && $pending === 0 && $fail === 0,
+    ];
+};
+
+$router->get(
+    '/dashboard-api/sensores/context',
+    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
+        $pdo = $pdoProvider();
+        $sensorContext = new \App\Infrastructure\Sensors\SensorContextBuilder($pdo);
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id required']);
+        }
+        $rooms = $pdo->prepare(
+            'SELECT r.id, r.code, r.room_type_id, r.presence_mode_override,
+                    rt.code AS room_type_code, rt.presence_mode
+               FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+              WHERE r.id = :id LIMIT 1'
+        );
+        $rooms->execute([':id' => $roomId]);
+        $room = $rooms->fetch(\PDO::FETCH_ASSOC);
+        if ($room === false) {
+            return \App\Http\Response::json(404, ['error' => 'room_not_found']);
+        }
+        $devices = $sensorContext->devices($roomId);
+        $latest = $sensorContext->latestSettings($roomId);
+        return \App\Http\Response::json(200, [
+            'room' => [
+                'id' => (int) $room['id'],
+                'code' => (string) $room['code'],
+                'room_type_id' => (int) $room['room_type_id'],
+                'room_type_code' => (string) ($room['room_type_code'] ?? ''),
+                'presence_mode' => (string) ($room['presence_mode_override'] ?? $room['presence_mode'] ?? ''),
+            ],
+            'transport' => $devices['transport'],
+            'devices' => $devices,
+            'live' => $sensorContext->live($roomId),
+            'settings' => $latest['settings'],
+            'settings_at' => $latest['settings_at'],
+            'settings_age_seconds' => $latest['settings_age_seconds'],
+            'effects' => $sensorContext->effects($roomId),
+            'events' => $sensorContext->latestEvents($roomId, 20),
+        ])->withHeader('Cache-Control', 'no-store');
+    }
+);
+
+$router->get(
+    '/dashboard-api/sensores/events',
+    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
+        $sensorContext = new \App\Infrastructure\Sensors\SensorContextBuilder($pdoProvider());
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id required']);
+        }
+        $limit = (int) ($request->query['limit'] ?? 25);
+        return \App\Http\Response::json(200, [
+            'room_id' => $roomId,
+            'events' => $sensorContext->latestEvents($roomId, $limit),
+            'live' => $sensorContext->live($roomId),
+            'settings' => $sensorContext->latestSettings($roomId),
+            'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
+        ])->withHeader('Cache-Control', 'no-store');
+    }
+);
+
+$router->post(
+    '/dashboard-api/sensores/run/start',
+    function (\App\Http\Request $request) use ($sensorStore, $pdoProvider, $sensorCatalog): \App\Http\Response {
+        $pdo = $pdoProvider();
+        $sensorContext = new \App\Infrastructure\Sensors\SensorContextBuilder($pdo);
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return \App\Http\Response::json(400, ['error' => 'room_id required']);
+        }
+        try {
+            $devices = $sensorContext->devices($roomId);
+            $latest = $sensorContext->latestSettings($roomId);
+            $infoStmt = $pdo->prepare(
+                'SELECT r.code, rt.code AS room_type_code, r.presence_mode_override, rt.presence_mode
+                   FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                  WHERE r.id = :id LIMIT 1'
+            );
+            $infoStmt->execute([':id' => $roomId]);
+            $info = $infoStmt->fetch(\PDO::FETCH_ASSOC) ?: [];
+            $record = $sensorStore->create([
+                'room_id' => $roomId,
+                'room' => [
+                    'code' => (string) ($info['code'] ?? ''),
+                    'room_type_code' => (string) ($info['room_type_code'] ?? ''),
+                    'presence_mode' => (string) ($info['presence_mode_override'] ?? $info['presence_mode'] ?? ''),
+                ],
+                'operator' => (string) ($body['operator'] ?? ''),
+                'catalog_version' => (int) ($sensorCatalog()['version'] ?? 1),
+                'initial_settings' => $latest['settings'],
+                'initial_settings_at' => $latest['settings_at'],
+                'devices' => [
+                    'presence' => $devices['presence'],
+                    'proximity' => $devices['proximity'],
+                    'transport' => $devices['transport'],
+                ],
+            ]);
+            return \App\Http\Response::json(201, ['ok' => true, 'run' => $record]);
+        } catch (\Throwable $e) {
+            return \App\Http\Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+);
+
+$router->post(
+    '/dashboard-api/sensores/step/start',
+    function (\App\Http\Request $request) use ($sensorStore, $pdoProvider, $sensorStep, $sensorSummary): \App\Http\Response {
+        $sensorContext = new \App\Infrastructure\Sensors\SensorContextBuilder($pdoProvider());
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $runId = (string) ($body['run_id'] ?? '');
+        $stepId = (string) ($body['step_id'] ?? '');
+        $run = $sensorStore->load($runId);
+        if ($run === null) {
+            return \App\Http\Response::json(404, ['error' => 'run_not_found']);
+        }
+        if ($sensorStep($stepId) === null) {
+            return \App\Http\Response::json(404, ['error' => 'step_not_found']);
+        }
+        $existing = (array) ($run['steps'][$stepId] ?? []);
+        $done = in_array((string) ($existing['status'] ?? ''), ['PASS', 'FAIL', 'SKIP'], true);
+        if ($done && empty($body['reset'])) {
+            // No se reinicia un paso ya validado salvo petición explícita.
+            return \App\Http\Response::json(200, ['ok' => true, 'step' => $existing]);
+        }
+        $now = gmdate('Y-m-d\TH:i:s.v\Z');
+        $run['steps'][$stepId] = array_merge($existing, [
+            'status' => 'PENDING',
+            'started_at' => $now,
+            'checked_at' => null,
+            'verdict' => null,
+            'override' => null,
+            'evidence' => null,
+            'notes' => (string) ($existing['notes'] ?? ''),
+            'initial_effects' => $sensorContext->effects((int) $run['room_id']),
+        ]);
+        $run['summary'] = $sensorSummary($run);
+        $sensorStore->save($run);
+        $sensorStore->appendLog($runId, ['type' => 'step_start', 'step_id' => $stepId, 'at' => $now]);
+        return \App\Http\Response::json(200, ['ok' => true, 'step' => $run['steps'][$stepId]]);
+    }
+);
+
+$router->post(
+    '/dashboard-api/sensores/step/check',
+    function (\App\Http\Request $request) use ($sensorStore, $pdoProvider, $sensorStep, $sensorSummary): \App\Http\Response {
+        $sensorContext = new \App\Infrastructure\Sensors\SensorContextBuilder($pdoProvider());
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $runId = (string) ($body['run_id'] ?? '');
+        $stepId = (string) ($body['step_id'] ?? '');
+        $override = strtoupper((string) ($body['override'] ?? ''));
+        $notes = trim((string) ($body['notes'] ?? ''));
+        $run = $sensorStore->load($runId);
+        if ($run === null) {
+            return \App\Http\Response::json(404, ['error' => 'run_not_found']);
+        }
+        $step = $sensorStep($stepId);
+        if ($step === null) {
+            return \App\Http\Response::json(404, ['error' => 'step_not_found']);
+        }
+        $state = (array) ($run['steps'][$stepId] ?? []);
+        $startedAt = (string) ($state['started_at'] ?? gmdate('Y-m-d\TH:i:s.v\Z'));
+        $initialEffects = (array) ($state['initial_effects'] ?? $sensorContext->effects((int) $run['room_id']));
+        $initialSettings = (array) ($run['calibration']['initial_settings'] ?? []);
+
+        $ctx = $sensorContext->context(
+            (int) $run['room_id'],
+            $startedAt,
+            $initialEffects,
+            $initialSettings
+        );
+        $verdict = \App\Domain\Sensors\SensorCalibrationValidator::validate(
+            (string) ($step['rule'] ?? 'manual'),
+            (array) ($step['params'] ?? []),
+            $ctx
+        );
+        if (in_array($override, ['PASS', 'FAIL', 'SKIP'], true)) {
+            $verdict = [
+                'status' => $override,
+                'reason' => 'manual_' . strtolower($override),
+                'details' => ['auto' => $verdict],
+            ];
+        }
+
+        $evidence = [
+            'elapsed_seconds' => $ctx['elapsed_seconds'],
+            'live' => $ctx['live'],
+            'settings' => $ctx['settings'],
+            'settings_age_seconds' => $ctx['settings_age_seconds'],
+            'effects_delta' => $ctx['effects_delta'],
+            'event_counts' => [
+                'total' => count($ctx['events']),
+                'applied' => count(array_filter($ctx['events'], static fn ($e) => ($e['applied'] ?? false) === true)),
+                'presence_applied' => count(array_filter($ctx['events'], static fn ($e) => ($e['applied'] ?? false) === true && $e['sensor'] === 'PRESENCE')),
+                'door_applied' => count(array_filter($ctx['events'], static fn ($e) => ($e['applied'] ?? false) === true && $e['sensor'] === 'PROXIMITY')),
+            ],
+        ];
+        $run['steps'][$stepId] = array_merge($state, [
+            'status' => $verdict['status'],
+            'rule' => (string) ($step['rule'] ?? 'manual'),
+            'params' => (array) ($step['params'] ?? []),
+            'title' => (string) ($step['title'] ?? $stepId),
+            'block' => (string) ($step['block'] ?? ''),
+            'started_at' => $startedAt,
+            'checked_at' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            'elapsed_seconds' => $ctx['elapsed_seconds'],
+            'verdict' => $verdict,
+            'override' => in_array($override, ['PASS', 'FAIL', 'SKIP'], true) ? $override : null,
+            'notes' => $notes,
+            'evidence' => $evidence,
+        ]);
+        $run['summary'] = $sensorSummary($run);
+        $sensorStore->save($run);
+        // Log completo de la ventana para analizar al final (acotado).
+        $events = array_slice($ctx['events'], 0, 2000);
+        $sensorStore->appendLog($runId, [
+            'type' => 'step_check',
+            'step_id' => $stepId,
+            'status' => $verdict['status'],
+            'reason' => $verdict['reason'],
+            'elapsed_seconds' => $ctx['elapsed_seconds'],
+            'verdict' => $verdict,
+            'effects_delta' => $ctx['effects_delta'],
+            'settings' => $ctx['settings'],
+            'events' => $events,
+        ]);
+
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'step_id' => $stepId,
+            'status' => $verdict['status'],
+            'verdict' => $verdict,
+            'evidence' => $evidence,
+            'summary' => $run['summary'],
+            'log_file' => basename($sensorStore->logPath($runId)),
+        ]);
+    }
+);
+
+$router->post(
+    '/dashboard-api/sensores/run/finish',
+    function (\App\Http\Request $request) use ($sensorStore, $sensorSummary): \App\Http\Response {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $run = $sensorStore->load((string) ($body['run_id'] ?? ''));
+        if ($run === null) {
+            return \App\Http\Response::json(404, ['error' => 'run_not_found']);
+        }
+        $run['status'] = 'finished';
+        $run['finished_at'] = gmdate('Y-m-d\TH:i:s\Z');
+        $run['summary'] = $sensorSummary($run);
+        $sensorStore->save($run);
+        $sensorStore->appendLog($run['run_id'], ['type' => 'run_finish', 'summary' => $run['summary']]);
+        return \App\Http\Response::json(200, ['ok' => true, 'run' => $run]);
+    }
+);
+
+$router->get(
+    '/dashboard-api/sensores/runs',
+    function (\App\Http\Request $request) use ($sensorStore): \App\Http\Response {
+        return \App\Http\Response::json(200, $sensorStore->listRuns(50));
+    }
+);
+
+$router->get(
+    '/dashboard-api/sensores/get',
+    function (\App\Http\Request $request) use ($sensorStore): \App\Http\Response {
+        $run = $sensorStore->load((string) ($request->query['id'] ?? ''));
+        if ($run === null) {
+            return \App\Http\Response::json(404, ['error' => 'run_not_found']);
+        }
+        return \App\Http\Response::json(200, $run);
+    }
+);
+
+$router->get(
+    '/dashboard-api/sensores/export',
+    function (\App\Http\Request $request) use ($sensorStore, $sensorCatalog, $sensorSummary): \App\Http\Response {
+        $run = $sensorStore->load((string) ($request->query['id'] ?? ''));
+        if ($run === null) {
+            return \App\Http\Response::json(404, ['error' => 'run_not_found']);
+        }
+        $run['summary'] = $sensorSummary($run);
+        if (($request->query['format'] ?? 'json') === 'json') {
+            return new \App\Http\Response(200, [
+                'Content-Type' => 'application/json; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="sensores-' . $run['run_id'] . '.json"',
+            ], json_encode($run, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}');
+        }
+
+        $lines = [];
+        $lines[] = '# Verificación de sensores — ' . $run['run_id'];
+        $lines[] = '';
+        $lines[] = '- Sala: ' . $run['room_id'] . ' · Operador: ' . ($run['operator'] ?: '—');
+        $lines[] = '- Inicio: ' . $run['created_at'] . ' · Fin: ' . ($run['finished_at'] ?? '—');
+        $s = $sensorSummary($run);
+        $lines[] = '- Resultado: ' . ($s['green'] ? 'VERDE' : 'REVISAR') . " · PASS {$s['pass']} · FAIL {$s['fail']} · SKIP {$s['skip']} · PEND {$s['pending']}";
+        $lines[] = '';
+        foreach ((array) ($sensorCatalog()['tests'] ?? []) as $t) {
+            $id = (string) ($t['id'] ?? '');
+            $st = (string) ($run['steps'][$id]['status'] ?? 'PENDING');
+            $lines[] = '## ' . $id . ' — ' . ($t['title'] ?? '') . ' [' . $st . ']';
+            $lines[] = '';
+            $lines[] = 'Acción: ' . ($t['action'] ?? '');
+            $lines[] = '';
+            $lines[] = 'Esperado: ' . ($t['expected'] ?? '');
+            $step = $run['steps'][$id] ?? null;
+            if (is_array($step)) {
+                $v = (array) ($step['verdict'] ?? []);
+                $lines[] = '';
+                $lines[] = 'Resultado: ' . ($v['status'] ?? '—') . ' · ' . ($v['reason'] ?? '—');
+                $lines[] = 'Detalle: `' . json_encode($v['details'] ?? [], JSON_UNESCAPED_UNICODE) . '`';
+                if (!empty($step['notes'])) {
+                    $lines[] = 'Nota: ' . $step['notes'];
+                }
+            }
+            $lines[] = '';
+        }
+        $lines[] = '## Configuración inicial';
+        $lines[] = '```json';
+        $lines[] = json_encode($run['calibration']['initial_settings'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}';
+        $lines[] = '```';
+        return new \App\Http\Response(200, [
+            'Content-Type' => 'text/markdown; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="sensores-' . $run['run_id'] . '.md"',
+        ], implode("\n", $lines));
+    }
+);
+
 // ── Acceptance runs store (no auth — LAN/MVP dev tool, F55/RF-62) ─────────────
 // Guarda cada corrida de aceptación manual en api/run/acceptance/<run-id>.json.
 // run_id saneado por whitelist para impedir path traversal; escritura atómica.
