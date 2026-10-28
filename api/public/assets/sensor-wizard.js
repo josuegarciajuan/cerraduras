@@ -217,7 +217,11 @@
     var s = run && run.summary ? run.summary : { pass: 0, fail: 0, skip: 0, pending: 0, total: 0 };
     $('summaryText').innerHTML = '<b class="c-pass">' + s.pass + '</b> PASS · <b class="c-fail">' + s.fail + '</b> FAIL · '
       + s.skip + ' SKIP · ' + s.pending + ' pendientes';
-    $('btnStartRun').disabled = !!run;
+    // F94: siempre se puede empezar una corrida nueva; la anterior queda
+    // guardada en el servidor y accesible desde "Corridas".
+    var btn = $('btnStartRun');
+    btn.disabled = false;
+    btn.textContent = run ? '➕ Nueva corrida' : '▶ Empezar corrida';
   }
 
   function renderDetail() {
@@ -457,6 +461,7 @@
     scheduleEvents();
 
     $('btnStartRun').onclick = function () {
+      if (run && !confirm('¿Empezar una nueva corrida desde cero? La actual queda guardada.')) return;
       startRun().catch(function (e) { toast(e.message); });
     };
     $('btnValidate'); // creado en renderDetail
