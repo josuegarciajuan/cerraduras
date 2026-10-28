@@ -6301,6 +6301,111 @@ else:
 fi
 
 # =============================================================================
+# BLOCK 67 — F94: asistente de verificación física de sensores
+# Trazabilidad: RF-159, RF-160
+# =============================================================================
+block "BLOCK 67 — F94: asistente de verificación de sensores"
+
+# Artefactos de la herramienta.
+for f in public/sensores.html public/assets/sensor-wizard.js public/assets/sensor-tests.json \
+         src/Domain/Sensors/SensorCalibrationValidator.php src/Infrastructure/Sensors/SensorRunStore.php \
+         src/Infrastructure/Sensors/SensorContextBuilder.php; do
+    if [ -f "$f" ]; then pass "F94: $f presente"; else fail "F94: $f" "falta"; fi
+done
+
+if grep -q "'/sensores'" public/index.php \
+    && grep -q "/dashboard-api/sensores/step/check" public/index.php \
+    && grep -q "/dashboard-api/sensores/export" public/index.php; then
+    pass "F94: rutas del asistente cableadas"
+else
+    fail "F94: rutas" "faltan rutas de /sensores o de la API"
+fi
+
+if grep -q "SensorCalibrationValidator::validate" public/index.php \
+    && grep -q "step/start" public/assets/sensor-wizard.js \
+    && grep -q "step/check" public/assets/sensor-wizard.js; then
+    pass "F94: la UI delega la validación en el servidor"
+else
+    fail "F94: cableado UI↔validador" "la UI no usa el validador del servidor"
+fi
+
+# Sin cuota: los artefactos nuevos no llaman a Tuya ni crean pollers.
+if ! grep -qi "openapi.tuya\|tuyaPresenceApi\|api.tuya" src/Domain/Sensors/SensorCalibrationValidator.php \
+    src/Infrastructure/Sensors/SensorRunStore.php src/Infrastructure/Sensors/SensorContextBuilder.php \
+    public/assets/sensor-wizard.js; then
+    pass "F94: sin llamadas a Tuya en el asistente"
+else
+    fail "F94: sin Tuya" "aparece una referencia a Tuya"
+fi
+if ! grep -q "setInterval.*tuya\|while.*tuya" public/assets/sensor-wizard.js \
+    src/Infrastructure/Sensors/SensorContextBuilder.php; then
+    pass "F94: sin bucles de sondeo a dispositivos"
+else
+    fail "F94: sin pollers" "hay un bucle de sondeo"
+fi
+
+# Reglas del catálogo conocidas por el validador (unit ya lo cubre; guardia rápida).
+if php -r 'require "src/Support/Autoload.php"; $r=App\Domain\Sensors\SensorCalibrationValidator::rules(); $c=json_decode(file_get_contents("public/assets/sensor-tests.json"),true); $bad=[]; foreach(($c["tests"]??[]) as $t){ if(!in_array($t["rule"]??"",$r,true)) $bad[]=$t["id"]; } exit($bad?1:0);' >/dev/null 2>&1; then
+    pass "F94: todas las reglas del catálogo existen"
+else
+    fail "F94: catálogo/validador" "alguna regla no está implementada"
+fi
+
+# HTTP condicional: corrida completa y determinista (paso D9 sin eventos).
+F94_UI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/sensores" 2>/dev/null || echo 000)
+if [ "$SERVER_UP" = true ] && [ "$F94_UI_CODE" = "200" ]; then
+    F94_CONTEXT=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/context?room_id=14" 2>/dev/null)
+    F94_CTX_OK=$(printf '%s' "$F94_CONTEXT" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print('bad'); sys.exit(0)
+ok = d.get('room',{}).get('id')==14 and 'live' in d and 'devices' in d and 'settings' in d
+print('ok' if ok else 'bad')
+" 2>/dev/null)
+    if [ "$F94_CTX_OK" = "ok" ]; then
+        pass "F94: context devuelve sala, dispositivos y estado"
+    else
+        skip "F94 context" "sala 14 o API no disponible"
+    fi
+
+    F94_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/run/start" \
+        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner"}')
+    F94_RUN_ID=$(printf '%s' "$F94_RUN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+    if [ -n "$F94_RUN_ID" ]; then
+        pass "F94: run/start crea corrida ($F94_RUN_ID)"
+        curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/step/start" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$F94_RUN_ID\",\"step_id\":\"D9\"}" >/dev/null
+        F94_CHECK=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/step/check" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$F94_RUN_ID\",\"step_id\":\"D9\"}")
+        F94_STATUS=$(printf '%s' "$F94_CHECK" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+        if [ "$F94_STATUS" = "PASS" ]; then
+            pass "F94: step/check valida D9 (sin transiciones)"
+        else
+            fail "F94: step/check" "esperado PASS en D9, got '$F94_STATUS'"
+        fi
+        F94_FIN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/run/finish" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$F94_RUN_ID\"}")
+        F94_TOTAL=$(printf '%s' "$F94_FIN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run',{}).get('summary') or {}).get('total',''))" 2>/dev/null)
+        if [ "$F94_TOTAL" = "23" ]; then
+            pass "F94: run/finish resume 23 pasos"
+        else
+            fail "F94: run/finish" "total=$F94_TOTAL"
+        fi
+        F94_LIST=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/runs")
+        if printf '%s' "$F94_LIST" | grep -q "$F94_RUN_ID"; then
+            pass "F94: runs lista la corrida"
+        else
+            fail "F94: runs" "la corrida no aparece en el listado"
+        fi
+        rm -f "run/sensores/${F94_RUN_ID}.json" "run/sensores/${F94_RUN_ID}.jsonl"
+    else
+        fail "F94: run/start" "${F94_RUN:-sin respuesta}"
+    fi
+elif [ "$SERVER_UP" = true ]; then
+    skip "F94 HTTP" "API aún sin desplegar /sensores (HTTP $F94_UI_CODE)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

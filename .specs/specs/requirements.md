@@ -2763,3 +2763,38 @@ esos bordes y añade la instrumentación necesaria para calibrar con datos reale
   acordada, coherencia panel-servidor y regresión con 0 fallos.
 - **RF-158.4**: Los valores finales de calibración y de ventanas se eligen con las
   medidas; el repositorio aporta el procedimiento y la configuración inicial.
+
+
+# Fase 94: Asistente de verificación física de sensores
+
+**Motivo**: las comprobaciones físicas de F93 necesitaban una herramienta que guiara al
+operador paso a paso, validara cada acción en el momento y dejara un registro analizable,
+sin depender de una sesión de asistencia y sin procesos de fondo.
+
+## RF-159: Asistente guiado con validación en servidor
+
+- **RF-159.1**: `GET /sensores` sirve una página sin frameworks con pasos ordenados por
+  bloques (puerta, radar, calibración, paneles y cierre).
+- **RF-159.2**: Cada paso declara acción, resultado esperado y una regla del catálogo
+  `assets/sensor-tests.json`; la validación se ejecuta **en el servidor** y no confía en
+  reglas enviadas por el cliente.
+- **RF-159.3**: Al pulsar `Hecho, validar` se evalúa la ventana desde el inicio del paso y
+  se devuelve PASS/FAIL/SKIP con motivo y detalles; el operador puede forzar FAIL o SKIP.
+- **RF-159.4**: Los pasos largos (sala vacía, persona inmóvil) indican una duración mínima;
+  si no se cumple, el resultado es SKIP con el tiempo medido, no FAIL.
+- **RF-159.5**: La UI muestra en vivo el estado de puerta/presencia y los últimos eventos
+  (aplicado/descartado y motivo). El refresco es una lectura local a la BD y solo ocurre
+  con la pestaña visible.
+
+## RF-160: Corridas persistentes y análisis
+
+- **RF-160.1**: Cada corrida se guarda en `api/run/sensores/<run_id>.json` (estado,
+  pasos, evidencias y resumen) y `<run_id>.jsonl` (log append-only de inicio de paso,
+  validaciones y ventana de eventos).
+- **RF-160.2**: Se pueden listar, abrir, exportar (JSON/Markdown) y finalizar corridas.
+  El informe incluye PASS/FAIL/SKIP por paso, motivos, efectos observados y la
+  configuración inicial del radar.
+- **RF-160.3**: El asistente incluye la calibración del radar Zigbee (mismos endpoints de
+  F93) y registra los valores iniciales para poder verificar su restauración.
+- **RF-160.4**: Sin pollers ni llamadas a Tuya: solo BD local y MQTT cuando el paso lo
+  requiere.

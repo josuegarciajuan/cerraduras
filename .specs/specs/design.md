@@ -5871,3 +5871,45 @@ Umbrales iniciales (se revisan con la captura): `confirm_reports=3`,
 
 No se añade ningún poller. La calibración usa MQTT local y la BD; `/get` del radar
 Zigbee no existe y no se simula.
+
+
+# Fase 94 — Asistente de verificación física
+
+## 94.1 Flujo
+
+```text
+run/start        → run_id + settings/effects iniciales
+step/start       → t0 + snapshot de efectos
+  ...acción...
+step/check       → contexto desde t0 → SensorCalibrationValidator → PASS/FAIL/SKIP
+                 → run JSON + JSONL (ventana de eventos acotada)
+run/finish       → resumen y estado finished
+```
+
+El navegador solo presenta y envía `run_id/step_id`; no decide el resultado.
+
+## 94.2 Catálogo
+
+`api/public/assets/sensor-tests.json` declara bloques y pasos con `rule` + `params`.
+`SensorCalibrationValidator::rules()` es la fuente de verdad; una regla desconocida
+falla de forma explícita. Reglas: ciclos y estado de puerta, ausencia de transiciones,
+presencia presente/ausente/sostenida/salida, efectos inalterados, configuración del
+radar (actual/inicial) y coherencia de panel.
+
+## 94.3 Evidencia y efectos
+
+Cada `step/check` guarda: tiempo transcurrido, estado vivo, `settings`, delta de efectos
+(visitas, grabaciones, estancias, accesos, anomalías, luz) y recuentos de eventos. En el
+JSONL se registra la ventana completa (máximo 2000 eventos) para el análisis final.
+
+## 94.4 Almacenamiento
+
+`SensorRunStore` escribe con rename atómico, permisos 0600 y validación de `run_id` por
+whitelist (sin path traversal). No requiere migración de BD.
+
+## 94.5 Límites
+
+- La validación depende de que el push esté llegando; `presence_stale` se refleja y los
+  validadores de presencia fallan en vez de inventar estado.
+- No mide latencia física con precisión de laboratorio; mide secuencia, tiempo desde el
+  inicio del paso y coherencia con los paneles.

@@ -173,6 +173,23 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F89 Firmware productivo base nueva R35D-B** | **Unit `R35dProductionSketchTest`** | **Completado (compilación); prueba física pendiente** |
 | **F92 Estado de conectividad por transporte (Zigbee/cámaras)** | **BLOCK 65 + units F92** | **Completado** |
 | **F93 Calibración y veracidad de sensores (puerta + radar)** | **BLOCK 66 + units F93** | **Completado (código); pruebas físicas pendientes** |
+| **F94 Asistente de verificación física de sensores** | **BLOCK 67 + units F94** | **Completado (código); uso en campo pendiente** |
+
+### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
+
+- **Herramienta**: `GET /sensores` · catálogo `assets/sensor-tests.json` · corridas en
+  `api/run/sensores/<run_id>.{json,jsonl}`.
+- **Validación en servidor**: `POST /dashboard-api/sensores/step/check` evalúa la ventana
+  desde el inicio del paso con `SensorCalibrationValidator` (11 reglas: puerta, radar,
+  efectos, ajustes y paneles). La UI solo presenta y pulsa.
+- **Corrida**: `run/start` guarda settings y efectos iniciales; `step/start` fija `t0`;
+  `run/finish` genera el resumen. Export JSON/Markdown.
+- **Calibración**: embebida (mismos endpoints Zigbee de F93) y con restauración verificable.
+- **Sin cuota**: solo BD local (y MQTT al aplicar calibración). Sin pollers; el refresco
+  de eventos se detiene con la pestaña oculta.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 67) + units
+  `SensorCalibrationValidatorTest` (43) y `SensorRunStoreTest` (17). Regresión y uso en
+  campo pendientes.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 
