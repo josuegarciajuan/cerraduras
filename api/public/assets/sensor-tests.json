@@ -86,7 +86,7 @@
       "action": "Sal de la sala, cierra la puerta y espera 10 minutos sin nadie dentro. Pulsa Hecho.",
       "expected": "Ningún PRESENT aplicado, ninguna visita/grabación/luz nueva.",
       "rule": "presence_absent",
-      "params": { "max_applied_present": 0, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+      "params": { "max_applied_present": 0, "require_final_absent": true, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
     },
     {
       "id": "R2", "block": "R", "type": "fisico",
@@ -94,7 +94,7 @@
       "action": "Deja la puerta abierta y sal de la sala 10 minutos. Pulsa Hecho.",
       "expected": "Ningún PRESENT aplicado pese a la puerta abierta.",
       "rule": "presence_absent",
-      "params": { "max_applied_present": 0, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+      "params": { "max_applied_present": 0, "require_final_absent": true, "min_elapsed_seconds": 540, "forbid_effect_keys": ["visits", "recordings", "stays"] }
     },
     {
       "id": "R3", "block": "R", "type": "fisico",
@@ -102,7 +102,7 @@
       "action": "Con la puerta cerrada, pasa 10 veces por delante de la puerta (sin entrar). Pulsa Hecho.",
       "expected": "Ningún PRESENT aplicado; solo descartes por contexto.",
       "rule": "presence_absent",
-      "params": { "max_applied_present": 0, "min_elapsed_seconds": 120, "forbid_effect_keys": ["visits", "recordings"] }
+      "params": { "max_applied_present": 0, "require_final_absent": true, "min_elapsed_seconds": 120, "forbid_effect_keys": ["visits", "recordings"] }
     },
     {
       "id": "R4", "block": "R", "type": "fisico",

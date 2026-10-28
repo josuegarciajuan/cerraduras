@@ -191,6 +191,12 @@ final class SensorCalibrationValidator
         if ($presents > $maxPresent) {
             return self::result(self::FAIL, 'present_applied_in_empty_scenario', $details);
         }
+        // F94: en un escenario de sala vacía, quedarse en PRESENT también es un
+        // falso positivo, aunque no haya una transición nueva en la ventana
+        // (el radar repite el mismo valor y el evento se audita como noop).
+        if (($params['require_final_absent'] ?? false) === true && $live !== 'ABSENT') {
+            return self::result(self::FAIL, 'presence_not_absent_at_end', $details);
+        }
         if ($requireAbsent && $absents < 1) {
             return self::result(self::FAIL, 'absent_not_applied', $details);
         }
