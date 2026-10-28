@@ -187,6 +187,19 @@
     });
   }
 
+  function showDeviceDetails(it) {
+    var d = it.dev;
+    if (!d) { toast(it.label + ': sin acceso'); return; }
+    var parts = [it.label];
+    if (d.model) parts.push(d.model);
+    if (d.transport) parts.push(d.transport);
+    if (d.battery_pct != null) parts.push('pila ' + d.battery_pct + '%');
+    parts.push(d.last_seen_age_seconds != null ? age(d.last_seen_age_seconds) : 'sin señal');
+    if (it.key === 'puerta') parts.push('polaridad ' + (d.door_polarity || 'normal'));
+    if (it.key === 'luz') parts.push('estado ' + (d.switch_state || '—'));
+    toast(parts.join(' · '));
+  }
+
   function age(sec) {
     if (sec == null) return 'sin señal';
     if (sec < 60) return 'hace ' + sec + ' s';
