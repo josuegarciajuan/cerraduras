@@ -3530,13 +3530,16 @@ Aditivo. Tuya conserva su forma. Con transporte Zigbee:
                "detection_delay": 0.1, "fading_time": 15},
   "settings_at": "2026-10-28 10:00:00.123",
   "settings_age_seconds": 2,
+  "stale": false,
   "saved": {"source": "dashboard-calib-zigbee", "calibrated_at": "...",
             "maximum_range": 6, "radar_sensitivity": 7}
 }
 ```
 
 `far_detection`/`near_detection` se expresan en **cm** para reutilizar el panel;
-`settings` conserva las unidades del dispositivo.
+`settings` conserva las unidades del dispositivo. Si el último push tiene más de
+300 s, `stale=true`, `presence_state` y `effective_presence` son `null` (el panel no
+afirma presencia con una señal vieja).
 
 ## §F93.2 `POST /dashboard-api/presence-calibrate/set`
 
