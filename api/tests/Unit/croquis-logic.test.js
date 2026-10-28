@@ -107,6 +107,16 @@ const confirmed = deriveCroquis(snap({
 check('F91 confirmado → chip PRESENCIA CONFIRMADA',
   confirmed.chips.presence.text === 'PRESENCIA CONFIRMADA' && confirmed.chips.presence.mod === 'warn');
 
+// F93/RF-154.2: una ausencia candidata NO cierra la presencia en el panel.
+const candidateAbsent = deriveCroquis(snap({
+  door_state: 'CLOSED',
+  presence_state: 'PRESENT',
+  presence_decision: { state: 'CANDIDATE_ABSENT', discard_reason: 'candidate_absent' },
+}, false), BASE);
+check('F93 ausencia candidata → sigue dentro', candidateAbsent.personInside === true);
+check('F93 ausencia candidata → chip AUSENCIA NO CONFIRMADA',
+  candidateAbsent.chips.presence.text === 'AUSENCIA NO CONFIRMADA' && candidateAbsent.chips.presence.mod === 'dim');
+
 // ─── 7. Vacío ──────────────────────────────────────────────────────────
 const empty = deriveCroquis(snap({ door_state: 'CLOSED', presence_state: 'ABSENT' }, false), BASE);
 check('vacío → personInside=false', empty.personInside === false);

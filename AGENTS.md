@@ -172,6 +172,27 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F88 Presencia robusta por fusión de sensores** | **BLOCK 61** | **Completado** |
 | **F89 Firmware productivo base nueva R35D-B** | **Unit `R35dProductionSketchTest`** | **Completado (compilación); prueba física pendiente** |
 | **F92 Estado de conectividad por transporte (Zigbee/cámaras)** | **BLOCK 65 + units F92** | **Completado** |
+| **F93 Calibración y veracidad de sensores (puerta + radar)** | **BLOCK 66 + units F93** | **Completado (código); pruebas físicas pendientes** |
+
+### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
+
+- **Presencia (RF-154)**: `apply` solo con decisión confirmada; `CANDIDATE_PRESENT` y
+  `CANDIDATE_ABSENT` se auditan y no mutan la sesión. El modo radar se resuelve por sala
+  (almacén hereda el tipo; sala normal exige `presence_mode_override`). La decisión se
+  calcula bajo `lockByRoomId()` y con histórico acotado por tiempo (`listForRoomSince`).
+- **Puerta (RF-155)**: en Zigbee solo `meta.entity=contact` refresca la puerta; el
+  `contact` cacheado en payloads de presencia/batería es `noop`.
+- **Calibración (RF-156)**: `presence-calibrate/status|set` atiende Zigbee; el mapper
+  guarda `meta.settings`; la escritura usa `bin/zigbee-ingress/publish-json.js`
+  (allowlist) y `applied=true` exige un reporte nuevo coincidente. Sin `/get`, sin Tuya.
+- **Paneles (RF-157)**: `/live` expone `presence_decision`; `/dashboard` muestra
+  `PRESENT?`/`ABSENT?`; el croquis prioriza `CANDIDATE_ABSENT`.
+- **Captura (RF-158)**: `bin/sensor-capture.php` (JSONL + marcas + `--analyze`).
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 66) + units
+  `ZigbeeRadarCalibrationTest`, ampliaciones de `RadarPresenceDecisionTest`,
+  `SensorEventDecisionTest`, `ZigbeeMqttMessageMapperTest` y `croquis-logic.test.js`.
+  Regresión local: **706 passed, 0 failed, 16 skipped**. Pruebas físicas y elección de
+  parámetros pendientes (ver `docs/ops-sensores.md`).
 
 ### F89 — Firmware productivo para la base nueva R35D-B (RF-127…RF-131)
 

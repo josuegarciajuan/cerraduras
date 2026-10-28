@@ -5009,3 +5009,77 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] TSK-F89-04 LEDs + GPIO9
 - [x] TSK-F89-05 unit estático + docs + compilación
 - [ ] Regresión completa y prueba física en la placa
+
+
+# Fase 93 — Tareas
+
+## TSK-F93-01: Presencia confirmada vs candidata
+- **Trazabilidad**: RF-154.1/154.2.
+- **Archivos**: `api/src/Domain/Presence/RadarPresenceDecision.php`,
+  `api/src/Domain/Presence/IotSessionService.php`.
+- [x] `apply` solo con confirmación (PRESENT y ABSENT).
+- [x] Candidatos auditados sin mutar la sesión.
+- [x] Modo por override en salas normales.
+
+## TSK-F93-02: Consistencia y horizonte temporal
+- **Trazabilidad**: RF-154.3/154.4.
+- **Archivos**: `IotSessionService.php`, `PresenceEventRepository.php`,
+  `PresenceEventRepositoryInterface.php`, fakes de test.
+- [x] Decisión bajo `lockByRoomId()`.
+- [x] `listForRoomSince()` con horizonte calculado.
+- [x] `updateMetaJson()` para adjuntar la decisión.
+
+## TSK-F93-03: Puerta Zigbee fiel
+- **Trazabilidad**: RF-155.
+- **Archivos**: `SensorEventDecision.php`.
+- [x] REFRESH solo con `meta.entity=contact` en Zigbee.
+- [x] `contact` cacheado en otros payloads ⇒ noop.
+
+## TSK-F93-04: Snapshot de configuración del radar
+- **Trazabilidad**: RF-156.2.
+- **Archivos**: `ZigbeeMqttMessageMapper.php`.
+- [x] `meta.settings` acotado (7 claves), sin payload completo.
+
+## TSK-F93-05: Calibración Zigbee
+- **Trazabilidad**: RF-156.1/156.3/156.4/156.5.
+- **Archivos**: `ZigbeeRadarCalibrationService.php`, `bin/zigbee-ingress/publish-json.js`,
+  `public/index.php`.
+- [x] Status/set por transporte.
+- [x] Publicación con allowlist + read-back por push.
+- [x] Persistencia solo con confirmación.
+
+## TSK-F93-06: Paneles
+- **Trazabilidad**: RF-157.
+- **Archivos**: `RoomLiveController.php`, `public/dashboard.html`,
+  `public/assets/croquis-logic.js`.
+- [x] `/live` aditivo `presence_decision`.
+- [x] Etiquetas honestas en `/dashboard`.
+- [x] Croquis prioriza `CANDIDATE_ABSENT`.
+- [x] Modal Zigbee (avanzados) y ocultación de la prueba de paseo Tuya.
+
+## TSK-F93-07: Captura/replay
+- **Trazabilidad**: RF-158.1/158.2.
+- **Archivos**: `bin/sensor-capture.php`.
+- [x] Captura JSONL con eventos, settings, decisión y marcas.
+- [x] `--analyze` sin efectos.
+
+## TSK-F93-08: Tests y regresión
+- **Trazabilidad**: RF-158.3.
+- **Archivos**: `tests/Unit/{RadarPresenceDecisionTest,SensorEventDecisionTest,
+  ZigbeeMqttMessageMapperTest,ZigbeeRadarCalibrationTest,croquis-logic.test.js}`,
+  `bin/run-tests.sh` (BLOCK 66).
+- [x] Regresión: **706 passed, 0 failed, 16 skipped** (API sin desplegar F93).
+- [ ] Repetir tras el despliegue para ejecutar el bloque HTTP condicional.
+
+## TSK-F93-09: Documentación y calibración física
+- **Trazabilidad**: RF-156.5/RF-158.4.
+- **Archivos**: `docs/ops-sensores.md`, `docs/ops.md`, `AGENTS.md`.
+- [x] Procedimiento de captura y matriz de pruebas.
+- [ ] Ejecutar la matriz en la sala real y registrar los valores elegidos.
+
+## Estado de ejecución (F93)
+
+- [x] TSK-F93-01 … TSK-F93-07 implementadas.
+- [x] TSK-F93-08 regresión local en verde.
+- [ ] TSK-F93-08 verificación HTTP tras despliegue.
+- [ ] TSK-F93-09 pruebas físicas y elección de parámetros finales.

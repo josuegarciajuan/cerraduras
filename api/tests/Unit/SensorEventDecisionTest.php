@@ -179,6 +179,24 @@ $decision = SensorEventDecision::decide($evSim, $session, false);
 if ($decision === SensorEventDecision::NOOP) pass('decide F86: mismo valor simulado → noop');
 else fail('decide F86: simulado debería ser noop, got ' . $decision);
 
+// F93/RF-155.2: en Zigbee solo un reporte de la entidad `contact` refresca la
+// puerta; el `contact` cacheado dentro de un payload de presencia/batería no.
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$evZbContact = doorEvent('2026-04-28T10:00:12Z', 'OPEN');
+$evZbContact['provider'] = PresenceEvent::PROVIDER_ZIGBEE2MQTT;
+$evZbContact['meta'] = ['entity' => 'contact'];
+$decision = SensorEventDecision::decide($evZbContact, $session, false);
+if ($decision === SensorEventDecision::REFRESH) pass('decide F93: Zigbee contact repetido → refresh');
+else fail('decide F93: contact Zigbee debería ser refresh, got ' . $decision);
+
+$session = sessionWithDoor('2026-04-28 10:00:10.000', 'OPEN');
+$evZbCached = doorEvent('2026-04-28T10:00:12Z', 'OPEN');
+$evZbCached['provider'] = PresenceEvent::PROVIDER_ZIGBEE2MQTT;
+$evZbCached['meta'] = ['entity' => 'presence'];
+$decision = SensorEventDecision::decide($evZbCached, $session, false);
+if ($decision === SensorEventDecision::NOOP) pass('decide F93: contact cacheado en payload de presencia → noop');
+else fail('decide F93: contact cacheado debería ser noop, got ' . $decision);
+
 // La presencia con el mismo valor sigue siendo noop (REFRESH es solo puerta).
 $session = sessionWithPresence('2026-04-28 10:00:10.000', 'PRESENT');
 $decision = SensorEventDecision::decide(

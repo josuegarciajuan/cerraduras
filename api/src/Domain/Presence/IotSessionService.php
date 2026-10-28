@@ -123,66 +123,19 @@ final class IotSessionService
         }
 
         // --- 2. (A) Raw audit outside the state transaction (RF-44.3) ---
-        // F91/RF-148: decide Zigbee radar presence from persisted history BEFORE
-        // inserting the raw event. The decision is stored in meta for audit.
+        // F93/RF-154.1: el modo radar se resuelve por sala. En el almacén se
+        // hereda el modo del tipo; en una sala normal solo se activa con un
+        // override explícito (`rooms.presence_mode_override`), para no alterar
+        // el flujo hotelero por defecto.
+        $roomType   = $this->roomTypes->findById($room->roomTypeId);
+        $radarMode  = $this->resolveRadarMode($room, $roomType);
         $radarDecision = null;
-        if ($provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
-            && $sensor === PresenceEvent::SENSOR_PRESENCE
-            && $this->isWarehouseRoom($room)
-        ) {
-            $roomType = $this->roomTypes->findById($room->roomTypeId);
-            $mode = $room->presenceModeOverride ?? ($roomType?->presenceMode ?? RadarPresenceDecision::MODE_CAMERA_FUSION);
-            if ($roomType !== null && in_array($mode, RadarPresenceDecision::modes(), true)) {
-                $history = [];
-                foreach ($this->presenceEvents->listForRoom($roomId, 500) as $h) {
-                    $history[] = [
-                        'sensor' => $h->sensor,
-                        'value' => $h->value,
-                        'provider' => $h->provider,
-                        'occurred_at' => $h->occurredAt,
-                        'source_event_id' => $h->sourceEventId,
-                    ];
-                }
-                $history[] = [
-                    'sensor' => $sensor,
-                    'value' => $value,
-                    'provider' => $provider,
-                    'occurred_at' => $occurredAt,
-                    'source_event_id' => $sourceEvtId,
-                ];
-                $preSession = $this->iotSessions->findByRoomId($roomId);
-                $physical = false;
-                if ($mode === RadarPresenceDecision::MODE_CAMERA_FUSION && $preSession !== null) {
-                    $physical = $this->warehousePhysicalEvidence($room, $preSession, Clock::nowUtc());
-                }
-                $radarDecision = RadarPresenceDecision::decide(
-                    $history,
-                    Clock::nowUtc(),
-                    [
-                        'mode' => $mode,
-                        'confirm_reports' => $roomType->presenceConfirmReports,
-                        'confirm_window_seconds' => $roomType->presenceConfirmWindowSeconds,
-                        'min_span_seconds' => $roomType->presenceMinSpanSeconds,
-                        'hold_seconds' => $roomType->presenceHoldSeconds,
-                        'absent_reports' => $roomType->presenceAbsentReports,
-                        'absent_window_seconds' => $roomType->presenceAbsentWindowSeconds,
-                        'door_window_seconds' => $roomType->presenceDoorWindowSeconds,
-                        'stale_seconds' => $roomType->presenceStaleSeconds,
-                    ],
-                    $physical,
-                    $preSession?->doorState
-                );
-                $meta = is_array($meta) ? $meta : [];
-                $meta['radar_decision'] = $radarDecision;
-            }
-        }
 
         $raw       = $this->presenceEvents->insertOrGet(
             $roomId, $sensor, $value, $provider, $occurredAt, $sourceEvtId, $meta
         );
         $rawEvent  = $raw['event'];
         $isNewFact = $raw['is_new'];
-
         $now    = Clock::nowUtc();
         $evtUtc = $this->isoToMysqlUtc($occurredAt);
 
@@ -199,20 +152,41 @@ final class IotSessionService
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
 
-                // F91/RF-148.9: a Zigbee PRESENT that does not reach evidence is
-                // audited as candidate/uncorroborated and produces no effects.
+                // F93/RF-154.1/154.3: la decisión radar se calcula DENTRO de la
+                // transacción, con la sesión bloqueada, para que dos eventos
+                // concurrentes no construyan su evidencia sobre una fotografía
+                // inconsistente. El histórico está acotado por tiempo, no por un
+                // número arbitrario de filas.
                 if ($isNewFact
-                    && $radarDecision !== null
-                    && ($radarDecision['raw'] ?? null) === PresenceEvent::VALUE_PRESENT
-                    && ($radarDecision['apply'] ?? false) !== true
+                    && $radarMode !== null
+                    && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
+                    && $sensor === PresenceEvent::SENSOR_PRESENCE
                 ) {
-                    $this->presenceEvents->markAudit(
-                        $rawEvent->id,
-                        false,
-                        (string) ($radarDecision['discard_reason'] ?? 'candidate')
+                    $radarDecision = $this->computeRadarDecision(
+                        $room, $roomType, $radarMode, $session, $now
                     );
-                    $this->iotSessions->commit();
-                    break;
+                    if ($radarDecision !== null) {
+                        $this->presenceEvents->updateMetaJson(
+                            $rawEvent->id,
+                            ['radar_decision' => $radarDecision]
+                        );
+                        $decidedValue = (string) ($radarDecision['raw'] ?? '');
+                        $applies = ($radarDecision['apply'] ?? false) === true;
+                        if (!$applies
+                            && in_array($decidedValue, [PresenceEvent::VALUE_PRESENT, PresenceEvent::VALUE_ABSENT], true)
+                        ) {
+                            // F91/RF-148.9 (PRESENT) + F93/RF-154.2 (ABSENT): un
+                            // candidato no altera la ocupación efectiva ni genera
+                            // visitas, grabaciones, luces o salidas.
+                            $this->presenceEvents->markAudit(
+                                $rawEvent->id,
+                                false,
+                                (string) ($radarDecision['discard_reason'] ?? 'candidate')
+                            );
+                            $this->iotSessions->commit();
+                            break;
+                        }
+                    }
                 }
 
                 // F48 (RF-57): contexto para la credibilidad de presencia. Solo se
@@ -644,6 +618,97 @@ final class IotSessionService
         } catch (\Throwable $e) {
             error_log('[IotSessionService] Failed to write WORKER_EXIT (door event): ' . $e->getMessage());
         }
+    }
+
+    /**
+     * F93/RF-154.1: modo radar efectivo de la sala.
+     *
+     * - Almacén: hereda `room_types.presence_mode` (F91).
+     * - Sala normal: solo con `rooms.presence_mode_override` explícito; sin él se
+     *   mantiene el flujo de estancia/F48 y no se toca el comportamiento hotelero.
+     */
+    private function resolveRadarMode(Room $room, ?RoomType $roomType): ?string
+    {
+        $mode = $room->presenceModeOverride;
+        if ($mode === null || $mode === '') {
+            if (!$this->isWarehouseRoom($room)) {
+                return null;
+            }
+            $mode = $roomType?->presenceMode;
+        }
+        if ($roomType === null || $mode === null
+            || !in_array($mode, RadarPresenceDecision::modes(), true)
+        ) {
+            return null;
+        }
+        return (string) $mode;
+    }
+
+    /**
+     * F93/RF-154.3: decisión radar sobre un histórico acotado por tiempo.
+     *
+     * Se ejecuta con la sesión bloqueada. El horizonte cubre todas las ventanas
+     * configuradas; nunca depende de "las últimas N filas", porque la cadencia
+     * del radar cambia con el estado (más mensajes en reposo que con presencia).
+     *
+     * @return array<string,mixed>|null
+     */
+    private function computeRadarDecision(
+        Room $room,
+        ?RoomType $roomType,
+        string $mode,
+        IotSession $session,
+        \DateTimeImmutable $now
+    ): ?array {
+        if ($roomType === null) {
+            return null;
+        }
+        $config = [
+            'mode' => $mode,
+            'confirm_reports' => $roomType->presenceConfirmReports,
+            'confirm_window_seconds' => $roomType->presenceConfirmWindowSeconds,
+            'min_span_seconds' => $roomType->presenceMinSpanSeconds,
+            'hold_seconds' => $roomType->presenceHoldSeconds,
+            'absent_reports' => $roomType->presenceAbsentReports,
+            'absent_window_seconds' => $roomType->presenceAbsentWindowSeconds,
+            'door_window_seconds' => $roomType->presenceDoorWindowSeconds,
+            'stale_seconds' => $roomType->presenceStaleSeconds,
+        ];
+
+        $horizon = max(
+            (int) $config['confirm_window_seconds'],
+            (int) $config['absent_window_seconds'],
+            (int) $config['min_span_seconds'],
+            (int) $config['hold_seconds'],
+            (int) $config['door_window_seconds']
+        );
+        // Margen x4 + frescura, acotado a [10 min, 6 h]: suficiente para una
+        // ocupación continua sin escanear toda la tabla.
+        $horizon = min(21600, max(600, $horizon * 4 + (int) $config['stale_seconds']));
+
+        $history = [];
+        foreach ($this->presenceEvents->listForRoomSince($room->id, $now->modify('-' . $horizon . ' seconds'), 5000) as $h) {
+            $history[] = [
+                'sensor' => $h->sensor,
+                'value' => $h->value,
+                'provider' => $h->provider,
+                'occurred_at' => $h->occurredAt,
+                'source_event_id' => $h->sourceEventId,
+            ];
+        }
+
+        $physical = false;
+        if ($mode === RadarPresenceDecision::MODE_CAMERA_FUSION) {
+            $physical = $this->warehousePhysicalEvidence($room, $session, $now);
+        }
+
+        return RadarPresenceDecision::decide(
+            $history,
+            $now,
+            $config,
+            $physical,
+            $session->doorState
+        );
     }
 
     /**

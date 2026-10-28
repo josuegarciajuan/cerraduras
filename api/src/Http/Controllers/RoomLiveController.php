@@ -275,6 +275,10 @@ final class RoomLiveController
             'qr_status'        => $qrStatus,
             'recent_events'    => $recentEvents,
             'recent_presence'  => $recentPresence,
+            // F93/RF-157.1: última decisión del radar Zigbee (candidato,
+            // confirmado, stale) para que /dashboard muestre la misma
+            // incertidumbre que /almacen. Aditivo; null sin radar Zigbee.
+            'presence_decision' => $this->latestRadarDecision($roomId),
             'anomalies'        => $anomalies,
             // F46+: cuota Tuya (ok|exhausted) + puerta abierta demasiado tiempo.
             'tuya_quota'         => [
@@ -288,6 +292,25 @@ final class RoomLiveController
             ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->withHeader('Pragma', 'no-cache')
             ->withHeader('Expires', '0');
+    }
+
+    /**
+     * F93/RF-157.1: última decisión radar auditada en presence_events.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function latestRadarDecision(int $roomId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT meta_json FROM presence_events
+              WHERE room_id = :r AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+              ORDER BY id DESC LIMIT 1"
+        );
+        $stmt->execute([':r' => $roomId]);
+        $meta = json_decode((string) ($stmt->fetchColumn() ?: ''), true);
+        return is_array($meta) && is_array($meta['radar_decision'] ?? null)
+            ? $meta['radar_decision']
+            : null;
     }
 
     /**

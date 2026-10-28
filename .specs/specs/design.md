@@ -5802,3 +5802,72 @@ Detalles de diseño:
 - Prueba física pendiente del operador: QR válido abre; QR inválido no abre;
   LEDs rojo/verde correctos; identify GPIO9; heartbeat/command-queue; WiFi/TLS.
   Monitor 115200 con DTR/RTS off.
+
+
+# Fase 93 — Calibración, filtrado y veracidad de sensores
+
+## 93.1 Principio
+
+Cuatro niveles separados: **señal recibida** → **observación normalizada** → **estado
+físico estimado** → **reglas de habitación y paneles**. El filtro no conoce estancias ni
+visitas; la habitación no reinterpreta la evidencia.
+
+## 93.2 Decisión de presencia
+
+- Modo efectivo: `rooms.presence_mode_override` > (almacén) `room_types.presence_mode`.
+  Sala normal sin override ⇒ sin filtro radar (flujo F48 intacto).
+- `RadarPresenceDecision` sigue siendo puro. `apply` es **true solo con estado
+  confirmado**; `CANDIDATE_PRESENT` y `CANDIDATE_ABSENT` se auditan y no actúan.
+- La decisión se calcula en `IotSessionService::processEvent()` **después** de
+  `lockByRoomId()`. El evento bruto ya está insertado (auditoría fuera de transacción,
+  RF-44.3) y se le añade el resultado con `meta.radar_decision` (`updateMetaJson`).
+- Horizonte de histórico: `max(ventanas) * 4 + stale`, acotado a `[10 min, 6 h]`; se
+  consulta con `listForRoomSince()`. El número de filas ya no define la ventana.
+- Un candidato (positivo o negativo) termina el procesamiento sin mutar la sesión.
+
+## 93.3 Puerta por transporte
+
+`SensorEventDecision::decide()` considera “reporte real de puerta”:
+
+- Tuya: `provider=TUYA` y `meta.source != resync`;
+- Zigbee: `provider=ZIGBEE2MQTT` y `meta.entity = contact`.
+
+Cualquier otro evento con el mismo valor es `noop`. Un `contact` cacheado dentro de un
+payload de presencia no refresca `last_door_event_at`.
+
+## 93.4 Calibración Zigbee
+
+```text
+POST /dashboard-api/presence-calibrate/set
+  → valida y ajusta a rejilla (radar_sensitivity, ranges, delays)
+  → publish-json.js → <topic>/set (QoS 1, allowlist)
+  → espera hasta 6 reportes nuevos (~4 s)
+  → applied=true solo si meta.settings coincide
+  → persist=true y applied ⇒ devices.meta_json.calibration
+```
+
+`status` lee el último evento de presencia (BD) y devuelve la configuración real; la
+liveness es el último push (≤300 s), no un valor cacheado.
+
+## 93.5 Paneles
+
+- `/dashboard`: `presence_decision` aditivo en `/live`; etiquetas `PRESENT?`/
+  `ABSENT?` mientras no haya confirmación.
+- `/almacen`: el croquis prioriza `CANDIDATE_ABSENT` sobre el `presence_state` vigente.
+- El modal de calibración muestra los ajustes avanzados Zigbee y oculta la prueba de
+  paseo Tuya cuando el transporte es Zigbee.
+
+## 93.6 Captura y aceptación
+
+`bin/sensor-capture.php` escribe JSONL con eventos y marcas; `--analyze` reconstruye la
+decisión. La aceptación se hace con sesiones nuevas (no las usadas para ajustar) y
+compara efectos reales: visitas, grabaciones, luces y aperturas.
+
+Umbrales iniciales (se revisan con la captura): `confirm_reports=3`,
+`confirm_window=12 s`, `min_span=6 s`, `hold=20 s`, `absent_reports=3`,
+`absent_window=30 s`, `door_window=90 s`, `stale=180 s`.
+
+## 93.7 Sin cuota
+
+No se añade ningún poller. La calibración usa MQTT local y la BD; `/get` del radar
+Zigbee no existe y no se simula.

@@ -160,6 +160,43 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
         return array_map([$this, 'hydrate'], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
     }
 
+    /** @return list<PresenceEvent> */
+    public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array
+    {
+        $sinceUtc = $since->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.v');
+        $limit = max(1, min(20000, $limit));
+        $stmt = $this->pdo->prepare(
+            'SELECT ' . self::EVENT_COLUMNS . '
+             FROM presence_events
+             WHERE room_id = :rid AND occurred_at >= :since
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT :lim'
+        );
+        $stmt->bindValue(':rid', $roomId, PDO::PARAM_INT);
+        $stmt->bindValue(':since', $sinceUtc);
+        $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map([$this, 'hydrate'], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    }
+
+    public function updateMetaJson(int $id, array $delta): void
+    {
+        $stmt = $this->pdo->prepare('SELECT meta_json FROM presence_events WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $id]);
+        $raw = $stmt->fetchColumn();
+        if ($raw === false) {
+            return;
+        }
+        $meta = json_decode((string) $raw, true);
+        $meta = is_array($meta) ? $meta : [];
+        $meta = array_replace($meta, $delta);
+        $this->pdo->prepare('UPDATE presence_events SET meta_json = :meta WHERE id = :id')
+            ->execute([
+                ':meta' => json_encode($meta, JSON_UNESCAPED_UNICODE),
+                ':id'   => $id,
+            ]);
+    }
+
     private function findById(int $id): ?PresenceEvent
     {
         $stmt = $this->pdo->prepare('SELECT ' . self::EVENT_COLUMNS . ' FROM presence_events WHERE id = :id LIMIT 1');

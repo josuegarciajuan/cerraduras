@@ -190,6 +190,24 @@ final class ZigbeeMqttMessageMapper
                 continue;
             }
 
+            $meta = [
+                'source' => 'zigbee2mqtt',
+                'topic' => $baseTopic,
+                'entity' => $entity,
+                'zigbee_value' => $rawValue,
+                'bootstrap' => $bootstrap,
+            ];
+            // F93/RF-156.2: el radar Zigbee publica su configuración en cada
+            // payload, pero no admite `/get`. Guardamos un snapshot acotado en el
+            // propio evento de presencia para poder mostrar la configuración REAL
+            // en el calibrador sin sondear el dispositivo ni inventar valores.
+            if (($mapping['sensor'] ?? '') === 'PRESENCE') {
+                $settings = self::radarSettings($decoded);
+                if ($settings !== []) {
+                    $meta['settings'] = $settings;
+                }
+            }
+
             $events[] = [
                 'device_external_id' => $device['external_id'],
                 'sensor' => $mapping['sensor'],
@@ -197,13 +215,7 @@ final class ZigbeeMqttMessageMapper
                 'provider' => self::PROVIDER,
                 'occurred_at' => $occurredAt,
                 'source_event_id' => 'z2m-' . hash('sha256', $topic . "\0" . $payload . "\0" . $entity . "\0" . $identityTime),
-                'meta' => [
-                    'source' => 'zigbee2mqtt',
-                    'topic' => $baseTopic,
-                    'entity' => $entity,
-                    'zigbee_value' => $rawValue,
-                    'bootstrap' => $bootstrap,
-                ],
+                'meta' => $meta,
             ];
         }
 
@@ -213,6 +225,34 @@ final class ZigbeeMqttMessageMapper
         }
         $empty['events'] = $events;
         return $empty;
+    }
+
+    /**
+     * F93/RF-156.2: subconjunto estable de la configuración del radar presente
+     * en un payload Zigbee2MQTT. No se guarda el payload completo (ruido y
+     * crecimiento de BD); solo las claves que el calibrador necesita.
+     *
+     * @return array<string,int|float>
+     */
+    private static function radarSettings(\stdClass $decoded): array
+    {
+        $allowed = [
+            'radar_sensitivity',
+            'minimum_range',
+            'maximum_range',
+            'detection_delay',
+            'fading_time',
+            'target_distance',
+            'illuminance',
+        ];
+        $out = [];
+        foreach (get_object_vars($decoded) as $key => $value) {
+            if (!in_array($key, $allowed, true) || !is_int($value) && !is_float($value)) {
+                continue;
+            }
+            $out[$key] = $value;
+        }
+        return $out;
     }
 
     /** @return list<string> */
