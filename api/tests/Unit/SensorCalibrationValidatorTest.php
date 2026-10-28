@@ -111,6 +111,12 @@ same('presence_absent FAIL con PRESENT', v('presence_absent', ['max_applied_pres
     ctx([ev('PRESENCE', 'PRESENT', 3)]))['status'], 'FAIL');
 same('presence_absent SKIP si el paso es corto', v('presence_absent',
     ['max_applied_present' => 0, 'min_elapsed_seconds' => 540], ctx([], [], [], [], 60))['status'], 'SKIP');
+same('presence_absent FAIL si sigue PRESENT al final', v('presence_absent',
+    ['max_applied_present' => 0, 'require_final_absent' => true],
+    ctx([], ['presence_state' => 'PRESENT']))['status'], 'FAIL');
+same('presence_absent PASS si termina ABSENT', v('presence_absent',
+    ['max_applied_present' => 0, 'require_final_absent' => true],
+    ctx([], ['presence_state' => 'ABSENT']))['status'], 'PASS');
 same('presence_absent FAIL por efecto falso', v('presence_absent',
     ['max_applied_present' => 0, 'forbid_effect_keys' => ['visits']],
     ctx([], [], [], ['visits' => 1]))['status'], 'FAIL');

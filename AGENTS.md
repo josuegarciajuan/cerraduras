@@ -188,8 +188,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Sin cuota**: solo BD local (y MQTT al aplicar calibración). Sin pollers; el refresco
   de eventos se detiene con la pestaña oculta.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 67) + units
-  `SensorCalibrationValidatorTest` (43) y `SensorRunStoreTest` (17). Regresión:
-  **727 passed, 0 failed, 13 skipped** (incluye el flujo HTTP run→step→finish). Uso en
+  `SensorCalibrationValidatorTest` (45) y `SensorRunStoreTest` (17). Regresión:
+  **725 passed, 0 failed, 15 skipped** (incluye el flujo HTTP run→step→finish). Uso en
   campo pendiente.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
