@@ -6406,6 +6406,124 @@ elif [ "$SERVER_UP" = true ]; then
 fi
 
 # =============================================================================
+# BLOCK 68 — F95: flujo universal de verificación Zigbee
+# Trazabilidad: RF-162…RF-169
+# =============================================================================
+block "BLOCK 68 — F95: flujo universal de sensores"
+
+for f in public/assets/sensor-tests-v2.json public/assets/sensor-wizard-v2.js \
+         src/Http/Controllers/SensorWizardController.php src/Infrastructure/Sensors/SensorVerdict.php \
+         src/Domain/Presence/DoorPolarity.php; do
+    if [ -f "$f" ]; then pass "F95: $f presente"; else fail "F95: $f" "falta"; fi
+done
+if grep -q "sensores/v2/preflight" public/index.php \
+    && grep -q "sensores/v2/attempt/check" public/index.php \
+    && grep -q "sensores/v2/door/polarity" public/index.php; then
+    pass "F95: rutas v2 cableadas"
+else
+    fail "F95: rutas v2" "faltan endpoints del flujo universal"
+fi
+if grep -q "sensor-wizard-v2.js" public/sensores.html \
+    && grep -q "attempt/check" public/assets/sensor-wizard-v2.js \
+    && grep -q "door/polarity" public/assets/sensor-wizard-v2.js; then
+    pass "F95: UI universal usa la API v2"
+else
+    fail "F95: UI v2" "la página no carga el wizard v2"
+fi
+if ! grep -qi "tuyaPresenceApi\|openapi.tuya" src/Http/Controllers/SensorWizardController.php \
+    src/Infrastructure/Sensors/SensorVerdict.php src/Domain/Presence/DoorPolarity.php; then
+    pass "F95: sin llamadas a Tuya"
+else
+    fail "F95: sin Tuya" "aparece Tuya en el flujo universal"
+fi
+if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
+    pass "F95: polaridad aplicada en el ingress"
+else
+    fail "F95: polaridad" "el processor no aplica door_polarity"
+fi
+if grep -q "UNVERIFIED" src/Domain/Sensors/SensorCalibrationValidator.php \
+    && grep -q "unverified" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "unverified" src/Infrastructure/Sensors/SensorVerdict.php; then
+    pass "F95: veredicto distingue UNVERIFIED/SKIP"
+else
+    fail "F95: veredicto" "faltan estados de verificación"
+fi
+
+# HTTP condicional (solo con el despliegue v2).
+F95_UI=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/sensores" 2>/dev/null || echo 000)
+F95_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" 2>/dev/null || echo 000)
+if [ "$SERVER_UP" = true ] && [ "$F95_UI" = "200" ] && [ "$F95_PING" = "200" ]; then
+    F95_ROOMS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/rooms")
+    if printf '%s' "$F95_ROOMS" | grep -q '"id":14'; then
+        pass "F95: rooms incluye la sala del piloto"
+    else
+        skip "F95 rooms" "sala 14 no disponible"
+    fi
+    F95_PRE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14")
+    F95_PRE_OK=$(printf '%s' "$F95_PRE" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print('bad'); sys.exit(0)
+print('ok' if d.get('can_start') is True and isinstance(d.get('plan'),list) and len(d.get('plan'))>=3 else 'bad')
+" 2>/dev/null)
+    if [ "$F95_PRE_OK" = "ok" ]; then
+        pass "F95: preflight detecta los 3 dispositivos y el plan"
+    else
+        fail "F95: preflight" "$(printf '%s' "$F95_PRE" | head -c 200)"
+    fi
+
+    F95_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner"}')
+    F95_RID=$(printf '%s' "$F95_RUN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+    if [ -n "$F95_RID" ]; then
+        pass "F95: run/start crea la corrida ($F95_RID)"
+        F95_ATT=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\",\"step_id\":\"radar_inside\"}")
+        F95_AID=$(printf '%s' "$F95_ATT" | python3 -c "import sys,json; print((json.load(sys.stdin).get('attempt') or {}).get('attempt_id',''))" 2>/dev/null)
+        if [ -n "$F95_AID" ]; then
+            pass "F95: attempt/start abre una ventana"
+            F95_DUP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\",\"step_id\":\"radar_outside\"}")
+            if [ "$F95_DUP_CODE" = "409" ]; then
+                pass "F95: una sola ventana activa por sala (409)"
+            else
+                fail "F95: ventana única" "esperado 409, got $F95_DUP_CODE"
+            fi
+            F95_CHK=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/check" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F95_AID\",\"check_id\":\"runner-1\"}")
+            F95_ST=$(printf '%s' "$F95_CHK" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+            case "$F95_ST" in
+                SKIP|FAIL|UNVERIFIED) pass "F95: check sin hardware no inventa PASS ($F95_ST)" ;;
+                PASS) fail "F95: check sin hardware" "no debe dar PASS sin señal" ;;
+                *) fail "F95: check" "respuesta inesperada: $F95_ST" ;;
+            esac
+            F95_FIN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/finish" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\"}")
+            F95_VERD=$(printf '%s' "$F95_FIN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run',{}).get('verdict') or {}).get('verdict',''))" 2>/dev/null)
+            if [ "$F95_VERD" = "INCOMPLETE" ] || [ "$F95_VERD" = "REVIEW" ]; then
+                pass "F95: finish calcula veredicto ($F95_VERD)"
+            else
+                fail "F95: finish" "veredicto inesperado: $F95_VERD"
+            fi
+            F95_SOAK_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/soak" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\"}")
+            if [ "$F95_SOAK_CODE" = "422" ]; then
+                pass "F95: soak rechaza comprobación antes de 30 min"
+            else
+                fail "F95: soak" "esperado 422 too_early, got $F95_SOAK_CODE"
+            fi
+        else
+            fail "F95: attempt/start" "$(printf '%s' "$F95_ATT" | head -c 200)"
+        fi
+        rm -f "run/sensores/${F95_RID}.json" "run/sensores/${F95_RID}.jsonl" "run/sensores/locks/${F95_RID}.lock"
+    else
+        fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
+    fi
+elif [ "$SERVER_UP" = true ]; then
+    skip "F95 HTTP" "API aún sin desplegar el flujo v2 (UI $F95_UI, preflight $F95_PING)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

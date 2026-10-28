@@ -5,6 +5,7 @@ namespace App\Infrastructure\Gateways\Sensor;
 
 use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepositoryInterface;
+use App\Domain\Presence\DoorPolarity;
 use App\Domain\Presence\PresenceEvent;
 use App\Domain\Presence\IotSessionService;
 use InvalidArgumentException;
@@ -83,6 +84,18 @@ final class ZigbeeMqttEventProcessor
         };
         if ($expectedKind === null || $device->kind !== $expectedKind) {
             return ['status' => 'discarded', 'reason' => 'device_kind_mismatch'];
+        }
+
+        // F95/RF-162: normaliza la polaridad del contacto POR DISPOSITIVO antes
+        // de tocar el dominio. La auditoría conserva el valor canónico previo y
+        // la polaridad aplicada; el valor crudo ya está en meta.zigbee_value.
+        if ($sensor === 'PROXIMITY') {
+            $rawValue = (string) ($mappedEvent['value'] ?? '');
+            $meta = is_array($mappedEvent['meta'] ?? null) ? $mappedEvent['meta'] : [];
+            $meta['canonical_before_polarity'] = $rawValue;
+            $meta['door_polarity'] = DoorPolarity::value($device->meta);
+            $mappedEvent['meta'] = $meta;
+            $mappedEvent['value'] = DoorPolarity::canonical($device->meta, $rawValue);
         }
 
         // A retained/bootstrap message seeds state but is not a live transition.

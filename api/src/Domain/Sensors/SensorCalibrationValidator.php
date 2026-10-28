@@ -28,6 +28,7 @@ final class SensorCalibrationValidator
     public const PASS = 'PASS';
     public const FAIL = 'FAIL';
     public const SKIP = 'SKIP';
+    public const UNVERIFIED = 'UNVERIFIED';
 
     /** @return list<string> */
     public static function rules(): array
@@ -44,6 +45,10 @@ final class SensorCalibrationValidator
             'settings_match',
             'settings_present',
             'panel_consistent',
+            'door_full',
+            'radar_inside',
+            'radar_outside',
+            'light_test',
             'manual',
         ];
     }
@@ -71,6 +76,10 @@ final class SensorCalibrationValidator
             'settings_match' => self::settingsMatch($params, $ctx),
             'settings_present' => self::settingsPresent($params, $ctx),
             'panel_consistent' => self::panelConsistent($params, $ctx),
+            'door_full' => self::doorFull($params, $ctx),
+            'radar_inside' => self::radarInside($params, $ctx),
+            'radar_outside' => self::radarOutside($params, $ctx),
+            'light_test' => self::lightTest($params, $ctx),
             default => self::manual($params, $ctx),
         };
     }
@@ -362,6 +371,238 @@ final class SensorCalibrationValidator
             'elapsed_seconds' => $ctx['elapsed_seconds'] ?? null,
             'events' => count((array) ($ctx['events'] ?? [])),
         ]);
+    }
+
+    /**
+     * F95/RF-163: ciclo completo de la puerta.
+     * Requiere estado inicial CLOSED, 3–4 pares OPEN→CLOSED alternos y final
+     * CLOSED. Tolera una acción extra, pero no el flapping.
+     *
+     * @param array<string,mixed> $params
+     * @param array<string,mixed> $ctx
+     */
+    private static function doorFull(array $params, array $ctx): array
+    {
+        $initial = strtoupper((string) ($ctx['initial_live']['door_state'] ?? 'UNKNOWN'));
+        $end = strtoupper((string) ($ctx['live']['door_state'] ?? 'UNKNOWN'));
+        $events = self::sorted(self::applied($ctx, 'PROXIMITY'));
+        $sequence = array_map(static fn (array $e): string => (string) ($e['value'] ?? ''), $events);
+        $pairs = 0;
+        $alternationOk = count($sequence) > 0 && $sequence[0] === 'OPEN';
+        for ($i = 0; $i < count($sequence); $i += 2) {
+            if (($sequence[$i] ?? '') !== 'OPEN' || ($sequence[$i + 1] ?? '') !== 'CLOSED') {
+                $alternationOk = false;
+                break;
+            }
+            $pairs++;
+        }
+        if (count($sequence) % 2 !== 0) {
+            $alternationOk = false;
+        }
+        $minPairs = (int) ($params['min_pairs'] ?? 3);
+        $maxPairs = (int) ($params['max_pairs'] ?? 4);
+        $details = [
+            'initial_door_state' => $initial,
+            'end_door_state' => $end,
+            'sequence' => $sequence,
+            'pairs' => $pairs,
+            'door_polarity' => $ctx['door_polarity'] ?? null,
+            'max_pairs' => $maxPairs,
+        ];
+        if ($initial !== 'CLOSED') {
+            return self::result(self::FAIL, 'door_must_start_closed', $details);
+        }
+        if ($sequence === []) {
+            return self::result(self::FAIL, 'no_door_events', $details);
+        }
+        if (!$alternationOk) {
+            return self::result(self::FAIL, 'door_sequence_mismatch', $details);
+        }
+        if ($pairs < $minPairs) {
+            return self::result(self::FAIL, 'door_too_few_cycles', $details);
+        }
+        if ($pairs > $maxPairs) {
+            return self::result(self::FAIL, 'door_too_many_transitions', $details);
+        }
+        if ($end !== 'CLOSED') {
+            return self::result(self::FAIL, 'door_not_closed_at_end', $details);
+        }
+        return self::result(self::PASS, 'door_ok', $details);
+    }
+
+    /**
+     * F95/RF-164: presencia física dentro. Cuenta reportes REALES (aplicados o
+     * descartados por no_context), no solo la decisión de dominio.
+     *
+     * @param array<string,mixed> $params
+     * @param array<string,mixed> $ctx
+     */
+    private static function radarInside(array $params, array $ctx): array
+    {
+        $hold = (int) ($params['hold_seconds'] ?? 30);
+        $grace = (int) ($params['grace_seconds'] ?? 20);
+        $real = self::realPresence($ctx);
+        $presents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'PRESENT'));
+        $absents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'ABSENT'));
+        $stale = (bool) ($ctx['live']['presence_stale'] ?? false);
+        $details = [
+            'real_presents' => count($presents),
+            'real_absents' => count($absents),
+            'hold_seconds' => $hold,
+            'grace_seconds' => $grace,
+            'stale' => $stale,
+            'settings_age_seconds' => $ctx['settings_age_seconds'] ?? null,
+        ];
+        if ($stale) {
+            return self::result(self::UNVERIFIED, 'presence_stale', $details);
+        }
+        if ($presents === []) {
+            if ((float) ($ctx['elapsed_seconds'] ?? 0) < $grace) {
+                return self::result(self::SKIP, 'step_too_short', $details);
+            }
+            return self::result(self::FAIL, 'no_presence_detected', $details);
+        }
+        $first = self::ms($presents[0]['occurred_at'] ?? null) ?? 0;
+        $last = self::ms($presents[count($presents) - 1]['occurred_at'] ?? null) ?? 0;
+        $span = max(0, ($last - $first) / 1000);
+        $details['span_seconds'] = round($span, 3);
+        $absentAfter = false;
+        foreach ($absents as $a) {
+            $ts = self::ms($a['occurred_at'] ?? null) ?? 0;
+            if ($ts > $first) {
+                $absentAfter = true;
+                break;
+            }
+        }
+        if ($absentAfter) {
+            return self::result(self::FAIL, 'presence_not_continuous', $details);
+        }
+        if ($span < $hold) {
+            return self::result(self::SKIP, 'hold_too_short', $details);
+        }
+        return self::result(self::PASS, 'presence_detected_inside', $details);
+    }
+
+    /**
+     * F95/RF-165: fuera de la sala no debe haber detección física ni efectos.
+     *
+     * @param array<string,mixed> $params
+     * @param array<string,mixed> $ctx
+     */
+    private static function radarOutside(array $params, array $ctx): array
+    {
+        $minElapsed = (int) ($params['min_elapsed_seconds'] ?? 50);
+        $grace = (int) ($params['grace_seconds'] ?? 20);
+        $startedAt = self::ms($ctx['attempt_started_at'] ?? null);
+        $real = self::realPresence($ctx);
+        $presents = array_values(array_filter($real, static function (array $e) use ($startedAt, $grace): bool {
+            if (($e['value'] ?? '') !== 'PRESENT') {
+                return false;
+            }
+            if ($startedAt === null) {
+                return true;
+            }
+            $ts = self::ms($e['occurred_at'] ?? null) ?? 0;
+            return $ts >= $startedAt + ($grace * 1000);
+        }));
+        $stale = (bool) ($ctx['live']['presence_stale'] ?? false);
+        $live = strtoupper((string) ($ctx['live']['presence_state'] ?? 'UNKNOWN'));
+        $decision = is_array($ctx['live']['presence_decision'] ?? null)
+            ? (string) ($ctx['live']['presence_decision']['state'] ?? '') : '';
+        $delta = (array) ($ctx['effects_delta'] ?? []);
+        $details = [
+            'real_presents' => count($presents),
+            'presence_state' => $live,
+            'decision' => $decision,
+            'stale' => $stale,
+            'elapsed_seconds' => $ctx['elapsed_seconds'] ?? null,
+            'grace_seconds' => $grace,
+            'effects_delta' => $delta,
+        ];
+        if ((float) ($ctx['elapsed_seconds'] ?? 0) < $minElapsed) {
+            return self::result(self::SKIP, 'step_too_short', $details);
+        }
+        if ($stale) {
+            return self::result(self::UNVERIFIED, 'presence_stale', $details);
+        }
+        if ($presents !== []) {
+            return self::result(self::FAIL, 'presence_detected_outside', $details);
+        }
+        foreach ((array) ($params['forbid_effect_keys'] ?? ['visits', 'recordings', 'stays']) as $key) {
+            if ((int) ($delta[$key] ?? 0) !== 0) {
+                return self::result(self::FAIL, 'false_effect:' . $key, $details);
+            }
+        }
+        if (!in_array($live, ['ABSENT', 'UNKNOWN'], true) && $decision !== 'ABSENT_CONFIRMED') {
+            return self::result(self::UNVERIFIED, 'absence_not_confirmed', $details);
+        }
+        if ($live === 'UNKNOWN' && $decision !== 'ABSENT_CONFIRMED') {
+            return self::result(self::UNVERIFIED, 'absence_not_confirmed', $details);
+        }
+        return self::result(self::PASS, 'no_presence_outside', $details);
+    }
+
+    /**
+     * F95/RF-166: luz ON/OFF con confirmación humana y telemetría opcional.
+     *
+     * @param array<string,mixed> $params
+     * @param array<string,mixed> $ctx
+     */
+    private static function lightTest(array $params, array $ctx): array
+    {
+        $human = (array) ($ctx['human'] ?? []);
+        $switch = (array) ($ctx['switch'] ?? []);
+        $details = [
+            'human_on' => $human['on'] ?? null,
+            'human_off' => $human['off'] ?? null,
+            'switch_state' => $switch['state'] ?? 'UNKNOWN',
+            'telemetry_on' => $human['telemetry_on'] ?? null,
+            'telemetry_off' => $human['telemetry_off'] ?? null,
+        ];
+        if (!($switch['present'] ?? false)) {
+            return self::result(self::SKIP, 'no_switch', $details);
+        }
+        if (($human['on'] ?? null) !== true || ($human['off'] ?? null) !== true) {
+            return self::result(self::FAIL, 'human_not_confirmed', $details);
+        }
+        if (($human['telemetry_on'] ?? null) === false || ($human['telemetry_off'] ?? null) === false) {
+            return self::result(self::FAIL, 'telemetry_mismatch', $details);
+        }
+        return self::result(self::PASS, 'light_ok', $details);
+    }
+
+    /**
+     * Reportes reales de presencia Zigbee (incluye descartes por contexto),
+     * excluyendo resync y valores no de presencia.
+     *
+     * @param array<string,mixed> $ctx
+     * @return list<array<string,mixed>>
+     */
+    private static function realPresence(array $ctx): array
+    {
+        $out = [];
+        foreach ((array) ($ctx['events'] ?? []) as $e) {
+            if (!is_array($e)) {
+                continue;
+            }
+            if (strtoupper((string) ($e['sensor'] ?? '')) !== 'PRESENCE') {
+                continue;
+            }
+            $provider = strtoupper((string) ($e['provider'] ?? ''));
+            if (!in_array($provider, ['ZIGBEE2MQTT', 'TUYA'], true)) {
+                continue;
+            }
+            $source = strtolower((string) (($e['meta'] ?? [])['source'] ?? ''));
+            if ($source === 'resync') {
+                continue;
+            }
+            $value = (string) ($e['value'] ?? '');
+            if (!in_array($value, ['PRESENT', 'ABSENT'], true)) {
+                continue;
+            }
+            $out[] = $e;
+        }
+        return self::sorted($out);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────

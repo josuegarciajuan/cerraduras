@@ -6,159 +6,166 @@
 <title>Cerraduras · Verificación de sensores</title>
 <style>
   :root{
-    --bg:#0a0a0f; --surface:#141422; --surface2:#1c1c30; --line:#2a2a40;
-    --text:#e0e0e8; --text-mid:#9a9ab0; --text-dim:#707088;
+    --bg:#0a0a0f; --surface:#141422; --surface2:#1c1c30; --well:#07070c;
+    --line:#2a2a40; --line-strong:#66668a;
+    --text:#e0e0e8; --text-mid:#9a9ab0; --text-soft:#9a9ab0;
     --pass:#00e676; --fail:#ff5252; --skip:#8a8aa0; --todo:#6a6a80;
-    --cyan:#18ffff; --warn:#ff9100; --yellow:#ffd740;
-    --rad:12px; --rad-sm:8px;
+    --cyan:#18ffff; --warn:#ff9100; --yellow:#ffd740; --blue:#448aff;
+    --rad:16px; --rad-sm:12px;
     --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-    font-family:Inter,'Segoe UI',system-ui,-apple-system,sans-serif;font-size:15px;line-height:1.45}
-  body{padding-bottom:90px}
-  code{font-family:var(--mono);font-size:.9em;background:#000;padding:1px 5px;border-radius:4px}
-  button{font:inherit;cursor:pointer;border-radius:var(--rad-sm);border:1px solid var(--line);
-    background:var(--surface2);color:var(--text);padding:10px 14px}
+    font-family:Inter,'Segoe UI',system-ui,-apple-system,sans-serif;font-size:16px;line-height:1.45}
+  body{padding-bottom:40px}
+  code{font-family:var(--mono);font-size:.9em;background:var(--well);padding:1px 5px;border-radius:4px}
+  button{font:inherit;cursor:pointer;border-radius:var(--rad-sm);border:1px solid var(--line-strong);
+    background:var(--surface2);color:var(--text);padding:12px 16px;min-height:48px}
   button:hover{border-color:var(--cyan)}
   button:disabled{opacity:.45;cursor:not-allowed}
-  input,select{font:inherit;background:#000;border:1px solid var(--line);color:var(--text);
-    border-radius:6px;padding:8px 10px}
+  button.primary{background:#0d3b33;border-color:var(--pass);color:var(--pass);font-weight:700;min-height:56px;width:100%}
+  button.danger{border-color:var(--fail);color:var(--fail)}
+  button.ghost{background:transparent;border-color:var(--line)}
+  input,select{font:inherit;background:var(--well);border:1px solid var(--line-strong);color:var(--text);
+    border-radius:8px;padding:10px 12px;min-height:48px}
   .hidden{display:none!important}
-  .c-pass{color:var(--pass)} .c-fail{color:var(--fail)} .c-skip{color:var(--skip)}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
-  header{position:sticky;top:0;z-index:20;background:rgba(10,10,15,.96);
+  header{position:sticky;top:0;z-index:20;background:rgba(10,10,15,.97);
     backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:10px 14px}
   .brand{font-weight:800;letter-spacing:.12em;font-size:12px;color:var(--cyan)}
-  .meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--text-mid);margin-top:8px}
-  #roomId{width:70px} #operator{width:150px}
-  .badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
+  .toprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .toprow label{font-size:12px;color:var(--text-mid)}
+  #roomSel{min-width:180px}
+  #operator{width:170px}
+  .badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--text-mid)}
   .badge.ok{border-color:var(--pass);color:var(--pass)}
   .badge.warn{border-color:var(--warn);color:var(--warn)}
-  .badge.dim{color:var(--text-dim)}
-  .toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-  .toolbar button{padding:7px 10px;font-size:12px}
-  .strip{display:flex;gap:3px;flex-wrap:wrap;margin-top:8px}
-  .strip .cell{width:14px;height:10px;border-radius:3px;background:var(--todo)}
-  .strip .cell.PASS{background:var(--pass)} .strip .cell.FAIL{background:var(--fail)}
-  .strip .cell.SKIP{background:var(--skip)}
-  .strip .cell.current{outline:2px solid var(--cyan);outline-offset:1px}
+  .badge.bad{border-color:var(--fail);color:var(--fail)}
+  .roster{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .dev{border:1px solid var(--line);border-left:3px solid var(--todo);border-radius:12px;padding:10px;
+    background:var(--surface);text-align:left;min-height:80px}
+  .dev.active{border-left-color:var(--cyan)}
+  .dev.ok{border-left-color:var(--pass)} .dev.bad{border-left-color:var(--fail)}
+  .dev.warn{border-left-color:var(--warn)}
+  .dev .name{font-size:11px;letter-spacing:.1em;color:var(--text-mid);text-transform:uppercase}
+  .dev .state{font-weight:700;font-size:13px;margin-top:2px}
+  .dev .model{font-size:11px;color:var(--text-soft);margin-top:2px}
+  .dev.ok .state{color:var(--pass)} .dev.bad .state{color:var(--fail)} .dev.warn .state{color:var(--warn)}
 
-  main{max-width:1200px;margin:0 auto;padding:14px;display:grid;grid-template-columns:1fr 360px;gap:14px;align-items:start}
-  @media (max-width:900px){ main{grid-template-columns:1fr} }
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--rad);padding:16px 18px}
-  .card h2{margin:2px 0 10px;font-size:20px}
-  .blockchip{font-family:var(--mono);font-size:12px;color:var(--cyan);letter-spacing:.08em;text-transform:uppercase}
-  .action{font-size:17px;margin:10px 0}
-  .expect{color:var(--text-mid);border-left:3px solid var(--line);padding-left:10px;margin:10px 0}
-  .hint{font-size:12px;color:var(--text-dim)}
-  .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-  .actions .primary{background:#0d3b33;border-color:var(--pass);color:var(--pass);font-weight:700}
-  .actions .danger{border-color:var(--fail);color:var(--fail)}
-  .verdict{margin-top:14px;padding:12px 14px;border-radius:var(--rad-sm);border:1px solid var(--line)}
-  .verdict.PASS{border-color:var(--pass);background:rgba(0,230,118,.08)}
-  .verdict.FAIL{border-color:var(--fail);background:rgba(255,82,82,.08)}
-  .verdict.SKIP{border-color:var(--skip);background:rgba(138,138,160,.08)}
-  .verdict h3{margin:0 0 6px;font-size:15px}
-  details{margin-top:8px}
-  summary{cursor:pointer;color:var(--text-mid);font-size:12px}
-  pre{white-space:pre-wrap;word-break:break-word;font-size:11px;background:#000;padding:10px;border-radius:6px;max-height:240px;overflow:auto}
+  .rail{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  .rail .station{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);
+    border:1px solid var(--line);border-radius:999px;padding:6px 10px}
+  .rail .station.current{border-color:var(--cyan);color:var(--text)}
+  .rail .station.PASS{border-color:var(--pass);color:var(--pass)}
+  .rail .station.FAIL{border-color:var(--fail);color:var(--fail)}
+  .rail .station.UNVERIFIED,.rail .station.SKIP{border-color:var(--warn);color:var(--warn)}
 
-  .events{max-height:420px;overflow:auto}
+  main{max-width:1180px;margin:0 auto;padding:14px;display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--rad);padding:18px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--cyan);text-transform:uppercase}
+  h1{font-size:26px;line-height:1.2;margin:6px 0 10px}
+  h2{font-size:20px;margin:0 0 10px}
+  .action{font-size:18px;margin:12px 0}
+  .expect{color:var(--text-mid);border-left:3px solid var(--line);padding-left:10px;margin:12px 0}
+  .hint{font-size:14px;color:var(--text-soft)}
+  .actions{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .readout{font-family:var(--mono);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 10px;
+    border:1px solid var(--line);font-size:13px}
+  .pill.ok{border-color:var(--pass);color:var(--pass)} .pill.bad{border-color:var(--fail);color:var(--fail)}
+  .pill.warn{border-color:var(--warn);color:var(--warn)} .pill.dim{color:var(--text-mid)}
+  .result{margin-top:14px;padding:14px;border-radius:12px;border:1px solid var(--line)}
+  .result.PASS{border-color:var(--pass);background:rgba(0,230,118,.08)}
+  .result.FAIL{border-color:var(--fail);background:rgba(255,82,82,.08)}
+  .result.UNVERIFIED,.result.SKIP{border-color:var(--warn);background:rgba(255,145,0,.08)}
+  .result h3{margin:0 0 6px;font-size:16px}
+  .stepnotes{width:100%;min-height:64px;margin-top:12px}
+  .timestamp{font-family:var(--mono);font-size:12px;color:var(--text-mid)}
+  .divider{border-top:1px solid var(--line);margin:16px 0}
+  .checklist{display:grid;gap:8px;margin-top:10px}
+  .check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-mid)}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--todo)}
+  .dot.ok{background:var(--pass)} .dot.bad{background:var(--fail)} .dot.warn{background:var(--warn)}
+
+  details.tech{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface)}
+  details.tech summary{cursor:pointer;font-weight:600;font-size:14px;color:var(--text)}
+  .techgrid{display:grid;gap:8px;margin-top:10px;font-size:13px}
+  .techrow{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .techrow span:first-child{color:var(--text-mid)}
+  .events{margin-top:12px;max-height:360px;overflow:auto}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
-  th{color:var(--text-dim);font-weight:600;position:sticky;top:0;background:var(--surface)}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%}
-  .dot.applied{background:var(--pass)} .dot.discarded{background:var(--warn)} .dot.pending{background:var(--todo)}
-
-  .calib summary{font-size:13px;font-weight:600;color:var(--cyan)}
-  .calib .row{display:grid;grid-template-columns:1fr 110px;gap:8px;align-items:center;margin:8px 0}
-  .calib input{width:100%}
-  .calib .msg{font-size:12px;color:var(--text-mid);min-height:18px}
-  .verdictbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(10,10,15,.97);
-    border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-  .verdictbar .grow{flex:1}
-  .toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:var(--surface2);
-    border:1px solid var(--line);border-radius:8px;padding:10px 14px;z-index:50;max-width:90vw}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:60;padding:18px}
-  .modal .box{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:80vh;overflow:auto}
-  .empty{padding:24px;text-align:center;color:var(--text-mid)}
+  th,td{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+  th{color:var(--text-soft);font-weight:600}
+  .banner{margin:0 14px;padding:10px 14px;border-radius:10px;border:1px solid var(--warn);color:var(--warn);font-size:14px}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--surface2);
+    border:1px solid var(--line);border-radius:10px;padding:12px 16px;z-index:50;max-width:92vw}
+  dialog{border:1px solid var(--line-strong);border-radius:16px;background:var(--surface);color:var(--text);
+    padding:18px;max-width:780px;width:calc(100% - 24px);max-height:82vh}
+  dialog::backdrop{background:rgba(0,0,0,.7)}
+  table.runs td,table.runs th{padding:8px}
+  .muted{color:var(--text-mid)}
+  .ok{color:var(--pass)} .bad{color:var(--fail)} .warnc{color:var(--warn)}
+  @media (max-width:520px){
+    .roster{grid-template-columns:1fr 1fr 1fr;gap:6px}
+    .dev{padding:8px;min-height:70px}
+    .dev .model{display:none}
+    h1{font-size:22px}
+    .readout{font-size:28px}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media print{
+    header,aside,.actions,.banner,.toast,dialog{display:none!important}
+    body{background:#fff;color:#000}
+    .card{border-color:#000}
+  }
 </style>
 </head>
 <body>
-
 <header>
-  <div class="brand">CERRADURAS · VERIFICACIÓN FÍSICA DE SENSORES</div>
-  <div class="meta">
-    <span>corrida <b id="runId">—</b></span>
-    <span>sala <input id="roomId" type="number" min="1" value="14"></span>
-    <span>operador <input id="operator" type="text" placeholder="nombre"></span>
-    <span id="transportBadge" class="badge dim">transporte —</span>
-    <span id="deviceBadge" class="badge dim">dispositivos —</span>
-    <span id="liveBadge" class="badge dim">estado —</span>
+  <div class="brand">CERRADURAS · VERIFICACIÓN</div>
+  <div class="toprow">
+    <label for="roomSel">Sala</label>
+    <select id="roomSel" aria-label="Sala a verificar"></select>
+    <label for="operator">Técnico</label>
+    <input id="operator" type="text" placeholder="Nombre" autocomplete="name">
+    <span id="connBadge" class="badge">—</span>
+    <button id="btnRuns" class="ghost" type="button">Verificaciones</button>
   </div>
-  <div class="toolbar">
-    <button id="btnStartRun">▶ Empezar corrida</button>
-    <button id="btnRuns">Corridas</button>
-    <button id="btnExportJson">⤓ JSON</button>
-    <button id="btnExportMd">⤓ Markdown</button>
-    <button id="btnFinish">✔ Finalizar</button>
-    <button id="btnReset">↺ Reiniciar paso</button>
-  </div>
-  <div class="strip" id="strip"></div>
+  <div id="roster" class="roster" aria-label="Estado de dispositivos"></div>
+  <div id="rail" class="rail" aria-label="Progreso"></div>
 </header>
 
+<div id="banner" class="banner hidden" role="alert"></div>
+
 <main>
-  <section id="detail">
-    <div class="card empty" id="emptyCard">Cargando catálogo…</div>
-  </section>
-
-  <aside style="display:flex;flex-direction:column;gap:12px">
-    <div class="card calib">
-      <details id="calibDetails">
-        <summary>🎚️ Calibración del radar</summary>
-        <div class="hint" id="calibHint">—</div>
-        <div class="row"><label for="calMax">Rango máximo (m)</label><input id="calMax" type="number" step="0.15" min="0.15" max="9.45"></div>
-        <div class="row"><label for="calMin">Distancia mínima (m)</label><input id="calMin" type="number" step="0.15" min="0" max="9.45"></div>
-        <div class="row"><label for="calSens">Sensibilidad (0–9)</label><input id="calSens" type="number" step="1" min="0" max="9"></div>
-        <div class="row"><label for="calDelay">Retardo (s)</label><input id="calDelay" type="number" step="0.1" min="0" max="10"></div>
-        <div class="row"><label for="calFading">Sin presencia (s)</label><input id="calFading" type="number" step="1" min="0.5" max="1500"></div>
-        <div class="actions">
-          <button id="btnCalRefresh">Refrescar</button>
-          <button id="btnCalApply" class="primary">Aplicar</button>
-        </div>
-        <div class="msg" id="calMsg"></div>
-      </details>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <strong style="font-size:13px">Eventos</strong>
-        <span>
-          <label class="hint" style="margin-right:8px"><input type="checkbox" id="autoRefresh" checked> auto</label>
-          <button id="btnRefreshEvents" style="padding:4px 8px;font-size:11px">↻</button>
-        </span>
+  <section id="mainCard" aria-live="polite"></section>
+  <aside>
+    <details class="tech" id="techPanel">
+      <summary>Detalles técnicos</summary>
+      <div id="techBody" class="techgrid"></div>
+    </details>
+    <div class="card" style="margin-top:12px">
+      <div class="row" style="justify-content:space-between">
+        <strong style="font-size:14px">Eventos</strong>
+        <button id="btnRefreshEvents" class="ghost" style="min-height:36px;padding:6px 10px;font-size:12px">↻</button>
       </div>
-      <div class="hint" id="eventsMeta">—</div>
-      <div class="events">
-        <table>
-          <thead><tr><th>hora</th><th>sensor</th><th>valor</th><th>estado</th><th>motivo</th></tr></thead>
-          <tbody id="eventsBody"></tbody>
-        </table>
-      </div>
+      <div id="eventsBody" class="events"><div class="hint">—</div></div>
     </div>
   </aside>
 </main>
 
-<div class="verdictbar">
-  <span id="summaryText">0/0</span>
-  <span class="grow"></span>
-  <button id="btnPrev">◀ Anterior</button>
-  <button id="btnNext">Siguiente ▶</button>
-</div>
-<div id="toast" class="toast hidden"></div>
-<div id="modal" class="modal hidden"></div>
+<div id="toast" class="toast hidden" role="status"></div>
+<dialog id="runsDialog" aria-labelledby="runsTitle">
+  <h2 id="runsTitle">Verificaciones guardadas</h2>
+  <div id="runsBody"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button id="runsClose" class="ghost">Cerrar</button>
+  </div>
+</dialog>
 
-<script src="assets/sensor-wizard.js"></script>
+<script src="assets/sensor-wizard-v2.js"></script>
 </body>
 </html>

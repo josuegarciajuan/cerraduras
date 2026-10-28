@@ -45,6 +45,8 @@ final class SensorRunStore
             'room_id' => $room,
             'room' => (array) ($meta['room'] ?? []),
             'operator' => (string) ($meta['operator'] ?? ''),
+            'mode' => (string) ($meta['mode'] ?? 'universal'),
+            'plan' => array_values((array) ($meta['plan'] ?? [])),
             'status' => 'running',
             'created_at' => $now,
             'updated_at' => $now,
@@ -54,7 +56,9 @@ final class SensorRunStore
                 'devices' => (array) ($meta['devices'] ?? []),
             ],
             'steps' => [],
-            'summary' => ['pass' => 0, 'fail' => 0, 'skip' => 0, 'pending' => 0, 'total' => 0, 'green' => false],
+            'summary' => ['pass' => 0, 'fail' => 0, 'skip' => 0, 'unverified' => 0, 'pending' => 0, 'total' => 0, 'green' => false],
+            'verdict' => null,
+            'soak' => ['status' => 'PENDING', 'since' => null, 'checked_at' => null, 'result' => null],
         ];
         $this->save($record);
         $this->appendLog($runId, ['type' => 'run_start', 'at' => $now,
@@ -130,6 +134,7 @@ final class SensorRunStore
             }
             $out[] = [
                 'run_id' => (string) ($decoded['run_id'] ?? basename($file, '.json')),
+                'catalog_version' => (int) ($decoded['catalog_version'] ?? 1),
                 'room_id' => (int) ($decoded['room_id'] ?? 0),
                 'operator' => (string) ($decoded['operator'] ?? ''),
                 'status' => (string) ($decoded['status'] ?? ''),
@@ -139,6 +144,74 @@ final class SensorRunStore
             ];
         }
         return $out;
+    }
+
+    /**
+     * Ejecuta una mutación bajo lock exclusivo del fichero de corrida.
+     * Evita lecturas-modificación-escritura concurrentes.
+     *
+     * @param callable(array<string,mixed>):array<string,mixed> $fn
+     * @return array<string,mixed>
+     */
+    public function withLock(string $id, callable $fn): array
+    {
+        $this->ensureDir();
+        $lockDir = $this->dir . '/locks';
+        if (!is_dir($lockDir)) {
+            @mkdir($lockDir, 0700, true);
+        }
+        $lockPath = $lockDir . '/' . $id . '.lock';
+        $fh = @fopen($lockPath, 'c');
+        if ($fh === false) {
+            throw new RuntimeException('run_lock_unavailable');
+        }
+        try {
+            if (!flock($fh, LOCK_EX)) {
+                throw new RuntimeException('run_lock_failed');
+            }
+            $record = $this->load($id);
+            if ($record === null) {
+                throw new RuntimeException('run_not_found');
+            }
+            $record = $fn($record);
+            $this->save($record);
+            return $record;
+        } finally {
+            @flock($fh, LOCK_UN);
+            @fclose($fh);
+        }
+    }
+
+    /**
+     * Busca un intento activo en cualquier corrida en curso de la sala.
+     *
+     * @return array{run_id:string,step_id:string,attempt_id:string}|null
+     */
+    public function findActiveAttemptForRoom(int $roomId): ?array
+    {
+        if (!is_dir($this->dir)) {
+            return null;
+        }
+        foreach (glob($this->dir . '/*.json') ?: [] as $file) {
+            $run = json_decode((string) @file_get_contents($file), true);
+            if (!is_array($run) || (int) ($run['room_id'] ?? 0) !== $roomId) {
+                continue;
+            }
+            if (($run['status'] ?? '') !== 'running') {
+                continue;
+            }
+            foreach ((array) ($run['steps'] ?? []) as $stepId => $step) {
+                $active = $step['active_attempt'] ?? null;
+                if (is_array($active) && !empty($active['attempt_id'])) {
+                    return [
+                        'run_id' => (string) ($run['run_id'] ?? ''),
+                        'step_id' => (string) $stepId,
+                        'attempt_id' => (string) $active['attempt_id'],
+                    ];
+                }
+            }
+        }
+        return null;
     }
 
     public function logPath(string $id): string

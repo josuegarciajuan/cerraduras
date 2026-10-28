@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "steps": [
+    {
+      "id": "door",
+      "order": 1,
+      "device": "puerta",
+      "title": "Puerta",
+      "action": "Cierra la puerta. Pulsa «Comprobar polaridad». Después abre y cierra tres veces: normal, despacio y rápido.",
+      "expected": "Polaridad correcta y tres ciclos apertura/cierre en orden, terminando cerrada.",
+      "rule": "door_full",
+      "params": { "min_pairs": 3, "max_pairs": 4, "end_state": "CLOSED" }
+    },
+    {
+      "id": "radar_inside",
+      "order": 2,
+      "device": "presencia",
+      "title": "Radar · dentro",
+      "action": "Entra, cierra la puerta y colócate en el punto más lejano donde debe detectarte. Pulsa «Empezar prueba» y quédate quieto 30 segundos.",
+      "expected": "El radar detecta presencia de forma continua durante 30 segundos.",
+      "rule": "radar_inside",
+      "params": { "hold_seconds": 30, "grace_seconds": 20 }
+    },
+    {
+      "id": "radar_outside",
+      "order": 3,
+      "device": "presencia",
+      "title": "Radar · fuera",
+      "action": "Sal, cierra la puerta, pasa tres veces por delante y espera fuera 60 segundos. Pulsa «Empezar prueba» al salir.",
+      "expected": "No detecta a nadie fuera de la sala y no crea visitas, grabaciones ni luces.",
+      "rule": "radar_outside",
+      "params": { "min_elapsed_seconds": 50, "grace_seconds": 20, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+    },
+    {
+      "id": "light",
+      "order": 4,
+      "device": "luz",
+      "title": "Luz",
+      "action": "Enciende la luz y confirma que la lámpara encendió. Después apágala y confirma.",
+      "expected": "La orden Zigbee llega y la lámpara responde físicamente.",
+      "rule": "light_test",
+      "params": {}
+    },
+    {
+      "id": "verdict",
+      "order": 5,
+      "device": "global",
+      "title": "Veredicto",
+      "action": "Revisa el resultado y descarga el informe.",
+      "expected": "Los tres dispositivos quedan verificados.",
+      "rule": "manual",
+      "params": {}
+    }
+  ]
+}

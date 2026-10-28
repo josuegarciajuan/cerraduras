@@ -590,6 +590,28 @@ $router->get(
     }
 );
 
+// ── Sensor wizard v2 (F95): flujo universal Zigbee ───────────────────────────
+$sensorWizardV2 = new \App\Http\Controllers\SensorWizardController(
+    $pdoProvider,
+    dirname(__DIR__) . '/run/sensores',
+    __DIR__ . '/assets/sensor-tests-v2.json'
+);
+$router->get('/dashboard-api/sensores/v2/rooms', [$sensorWizardV2, 'rooms']);
+$router->get('/dashboard-api/sensores/v2/preflight', [$sensorWizardV2, 'preflight']);
+$router->post('/dashboard-api/sensores/v2/run/start', [$sensorWizardV2, 'startRun']);
+$router->post('/dashboard-api/sensores/v2/attempt/start', [$sensorWizardV2, 'startAttempt']);
+$router->post('/dashboard-api/sensores/v2/attempt/check', [$sensorWizardV2, 'checkAttempt']);
+$router->post('/dashboard-api/sensores/v2/attempt/cancel', [$sensorWizardV2, 'cancelAttempt']);
+$router->post('/dashboard-api/sensores/v2/door/polarity', [$sensorWizardV2, 'polarity']);
+$router->post('/dashboard-api/sensores/v2/radar/tune', [$sensorWizardV2, 'tune']);
+$router->post('/dashboard-api/sensores/v2/switch/test', [$sensorWizardV2, 'switchTest']);
+$router->post('/dashboard-api/sensores/v2/run/finish', [$sensorWizardV2, 'finish']);
+$router->post('/dashboard-api/sensores/v2/run/soak', [$sensorWizardV2, 'soak']);
+$router->get('/dashboard-api/sensores/v2/runs', [$sensorWizardV2, 'runs']);
+$router->get('/dashboard-api/sensores/v2/get', [$sensorWizardV2, 'getRun']);
+$router->get('/dashboard-api/sensores/v2/export', [$sensorWizardV2, 'export']);
+$router->get('/dashboard-api/sensores/v2/events', [$sensorWizardV2, 'events']);
+
 // ── Acceptance runs store (no auth — LAN/MVP dev tool, F55/RF-62) ─────────────
 // Guarda cada corrida de aceptación manual en api/run/acceptance/<run-id>.json.
 // run_id saneado por whitelist para impedir path traversal; escritura atómica.

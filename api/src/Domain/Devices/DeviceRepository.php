@@ -57,6 +57,20 @@ final class DeviceRepository implements DeviceRepositoryInterface
         return $row === false ? null : $this->hydrate($row);
     }
 
+    /**
+     * F95: actualiza meta_json de un dispositivo (polaridad, calibración).
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function updateMeta(int $id, array $meta): void
+    {
+        $this->pdo->prepare('UPDATE devices SET meta_json = :meta WHERE id = :id')
+            ->execute([
+                ':meta' => json_encode($meta, JSON_UNESCAPED_UNICODE),
+                ':id'   => $id,
+            ]);
+    }
+
     public function findForRoomKind(int $roomId, string $kind): ?Device
     {
         $stmt = $this->pdo->prepare(
