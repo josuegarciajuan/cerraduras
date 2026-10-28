@@ -2839,6 +2839,10 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
   señal reciente, rojo si no hay acceso/estado, ámbar si no hay datos.
 - **RF-163.3**: puerta y radar son obligatorios; la luz es opcional
   (`NO INSTALADO`) y no bloquea el veredicto.
+- **RF-163.4**: la salud distingue dispositivos periódicos y de evento. El radar
+  (Router) sin push reciente es `SIN DATOS`; la puerta (SNZB-04P) y la luz
+  (ZBMINIL2), que solo emiten al cambiar, muestran `RECONOCIDO` con “sin actividad
+  hace X” en verde, nunca `SIN DATOS` ni rojo por silencio.
 
 ## RF-164: Ventanas e intentos
 

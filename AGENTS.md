@@ -191,6 +191,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `ZigbeeRadarCalibrationService`.
 - **Luz**: `switch/test` con gateway Zigbee + confirmación humana; discrepancia
   con telemetría → FAIL.
+- **Salud (RF-163.4)**: `DeviceHealth` distingue `online`/`idle`/`stale`/`missing`.
+  El radar (Router) sin push es `SIN DATOS`; puerta y luz (EndDevice, solo emiten al
+  cambiar) quedan `RECONOCIDO` con “sin actividad”, no `SIN DATOS` ni rojo.
 - **Veredicto**: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`,
   `NOT_EVALUABLE`; reposo de 30 min diferido bajo demanda.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units

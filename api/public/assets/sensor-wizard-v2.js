@@ -157,9 +157,21 @@
   }
 
   function deviceState(dev) {
-    if (!dev) return { cls: 'bad', text: 'SIN ACCESO' };
-    if (!dev.fresh) return { cls: 'warn', text: 'SIN DATOS' };
-    return { cls: 'ok', text: 'EN LÍNEA' };
+    if (!dev) return { cls: 'bad', text: 'SIN ACCESO', detail: 'No se reconoce el dispositivo' };
+    var h = dev.health || (dev.fresh ? 'online' : 'idle');
+    if (h === 'missing') return { cls: 'bad', text: 'SIN ACCESO', detail: dev.health_detail || '' };
+    if (h === 'stale') return { cls: 'warn', text: 'SIN DATOS', detail: dev.health_detail || 'sin reportes recientes' };
+    if (h === 'idle') return { cls: 'ok', text: 'RECONOCIDO', detail: dev.health_detail || 'sin actividad reciente' };
+    return { cls: 'ok', text: 'EN LÍNEA', detail: dev.health_detail || 'reportando' };
+  }
+
+  function healthLine(dev) {
+    if (!dev) return 'sin acceso';
+    var h = dev.health || (dev.fresh ? 'online' : 'idle');
+    var a = dev.last_seen_age_seconds != null ? age(dev.last_seen_age_seconds) : 'sin señal';
+    if (h === 'idle') return 'sin actividad · ' + a;
+    if (h === 'stale') return 'sin reportes · ' + a;
+    return a;
   }
 
   function renderRoster() {
@@ -181,7 +193,7 @@
       div.innerHTML = '<div class="name">' + it.label + '</div>'
         + '<div class="state">' + st.text + '</div>'
         + '<div class="model">' + esc(it.dev && it.dev.model ? it.dev.model : it.model)
-        + (it.dev && it.dev.last_seen_age_seconds != null ? ' · ' + age(it.dev.last_seen_age_seconds) : '') + '</div>';
+        + ' · ' + esc(healthLine(it.dev)) + '</div>';
       div.onclick = function () { showDeviceDetails(it); };
       host.appendChild(div);
     });
@@ -194,7 +206,7 @@
     if (d.model) parts.push(d.model);
     if (d.transport) parts.push(d.transport);
     if (d.battery_pct != null) parts.push('pila ' + d.battery_pct + '%');
-    parts.push(d.last_seen_age_seconds != null ? age(d.last_seen_age_seconds) : 'sin señal');
+    parts.push(healthLine(d));
     if (it.key === 'puerta') parts.push('polaridad ' + (d.door_polarity || 'normal'));
     if (it.key === 'luz') parts.push('estado ' + (d.switch_state || '—'));
     toast(parts.join(' · '));
@@ -236,8 +248,12 @@
       return;
     }
     var issues = (p.issues || []).map(function (i) {
-      return { door_missing: 'No hay sensor de puerta', door_stale: 'La puerta no envía datos recientes',
+      return { door_missing: 'No hay sensor de puerta',
         presence_missing: 'No hay radar de presencia', presence_stale: 'El radar no envía datos recientes' }[i] || i;
+    });
+    var idle = ['proximity', 'presence', 'switch'].some(function (k) {
+      var d = p.devices && p.devices[k];
+      return d && d.health === 'idle';
     });
     var active = p.active_attempt;
     var html = '<div class="card">';
@@ -245,6 +261,7 @@
     html += '<h1>Comprobar los sensores de ' + esc(p.room.code) + '</h1>';
     html += '<p class="hint">' + (p.can_start ? 'Los dispositivos necesarios están disponibles.' : 'Falta un dispositivo necesario.') + '</p>';
     if (issues.length) html += '<div class="expect">' + issues.map(esc).join('<br>') + '</div>';
+    if (idle) html += '<p class="hint">La puerta y la luz solo envían al cambiar: “sin actividad” no es un fallo. Se actualizarán al abrirlas o conmutarlas.</p>';
     if (p.settings && p.settings.maximum_range != null) {
       html += '<div class="row" style="margin-top:10px"><span class="pill dim">Alcance ' + p.settings.maximum_range + ' m</span>'
         + '<span class="pill dim">Sensibilidad ' + p.settings.radar_sensitivity + '/9</span></div>';
@@ -436,7 +453,7 @@
       if (!dev) return;
       rows.push([dev.label || k, (dev.model || '') + ' · ' + (dev.transport || '') + ' · '
         + (dev.battery_pct != null ? 'pila ' + dev.battery_pct + '%' : '—')
-        + (dev.last_seen_age_seconds != null ? ' · ' + age(dev.last_seen_age_seconds) : '')]);
+        + ' · ' + healthLine(dev)]);
     });
     var settings = p.settings || {};
     if (settings.maximum_range != null) {

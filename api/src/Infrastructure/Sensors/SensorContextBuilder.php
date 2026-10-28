@@ -39,14 +39,26 @@ final class SensorContextBuilder
             $lastSeenTs = $lastSeen !== null ? strtotime($lastSeen . ' UTC') : false;
             $age = $lastSeenTs !== false ? max(0, time() - $lastSeenTs) : null;
             $metaArr = is_array($meta) ? $meta : [];
+            $health = \App\Infrastructure\Sensors\DeviceHealth::classify(
+                true,
+                $age !== null && $age <= 300,
+                (string) $row['kind'],
+                $age
+            );
             $dev = [
                 'id' => (int) $row['id'],
+                'kind' => (string) $row['kind'],
                 'external_id' => (string) $row['external_id'],
                 'label' => (string) ($row['label'] ?? ''),
                 'transport' => strtoupper((string) ($row['transport'] ?? '')),
                 'last_seen_at' => $lastSeen,
                 'last_seen_age_seconds' => $age,
                 'fresh' => $age !== null && $age <= 300,
+                'health' => $health['state'],
+                'health_label' => $health['label'],
+                'health_tone' => $health['tone'],
+                'health_detail' => $health['detail'],
+                'expects_periodic_push' => $health['expects_periodic_push'],
                 'battery_pct' => $row['battery_pct'] !== null ? (int) $row['battery_pct'] : null,
                 'model' => (string) ($metaArr['model'] ?? ''),
                 'lqi' => $metaArr['lqi'] ?? null,
@@ -327,14 +339,15 @@ final class SensorContextBuilder
         $latest = $this->latestSettings($roomId);
         $live = $this->live($roomId);
         $issues = [];
+        // F95/RF-163.4: puerta y luz son EndDevice y solo emiten al cambiar; su
+        // silencio no es una incidencia. Solo el radar (Router) debe reportar
+        // periódicamente; si no lo hace, es "sin datos".
         if ($devices['proximity'] === null) {
             $issues[] = 'door_missing';
-        } elseif (!$devices['proximity']['fresh']) {
-            $issues[] = 'door_stale';
         }
         if ($devices['presence'] === null) {
             $issues[] = 'presence_missing';
-        } elseif (!$devices['presence']['fresh']) {
+        } elseif (($devices['presence']['health'] ?? '') === 'stale') {
             $issues[] = 'presence_stale';
         }
         $hasSwitch = $devices['switch'] !== null;
