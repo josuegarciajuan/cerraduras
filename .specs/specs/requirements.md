@@ -2798,3 +2798,14 @@ sin depender de una sesión de asistencia y sin procesos de fondo.
   F93) y registra los valores iniciales para poder verificar su restauración.
 - **RF-160.4**: Sin pollers ni llamadas a Tuya: solo BD local y MQTT cuando el paso lo
   requiere.
+
+
+## RF-161: Frescura por último reporte del sensor
+
+- **RF-161.1**: `presence_stale` se calcula desde el último **reporte** de presencia
+  (aplicado o descartado), no desde la última transición aplicada. Un radar que repite
+  `PRESENT` mantiene la señal fresca aunque no cambie el estado.
+- **RF-161.2**: Un evento `stale` (atrasado) no refresca la frescura ni retrocede las
+  marcas de orden.
+- **RF-161.3**: El estado (`presence_state`) solo cambia con decisiones aplicadas; la
+  frescura no altera la ocupación, solo su validez.
