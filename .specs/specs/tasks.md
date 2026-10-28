@@ -5174,4 +5174,5 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - **Trazabilidad**: RF-162…RF-167.
 - **Archivos**: `bin/run-tests.sh` BLOCK 68, specs, docs.
 - [x] Unitarios y flujo HTTP con datos reales/sin hardware.
-- [ ] Regresión y prueba física tras el despliegue.
+- [x] Regresión en producción (**747 passed, 0 failed, 13 skipped**).
+- [ ] Prueba física en `almacenZigbee`.
