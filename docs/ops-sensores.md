@@ -18,6 +18,12 @@ ZBMINIL2):
 
 La puerta y el radar son obligatorios; si no hay luz, el paso queda `NO INSTALADO`.
 
+**Indicadores de salud**: el radar (Router) reporta periódicamente; si deja de
+hacerlo aparece `SIN DATOS` (ámbar). La puerta (SNZB-04P) y la luz (ZBMINIL2) son
+EndDevice y solo envían al cambiar: si no hay actividad reciente se muestran como
+`RECONOCIDO` con “sin actividad hace X” (verde). No es un fallo de acceso; se
+actualizan al abrir/cerrar o conmutar.
+
 
 Procedimiento para puerta y presencia con datos reales. No se sondea Tuya: la captura
 lee eventos ya persistidos (push) y las marcas físicas del técnico.

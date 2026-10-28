@@ -5964,3 +5964,18 @@ Consola de campo: tira de 3 dispositivos, progreso de 5 estaciones, una tarjeta
 por paso, barra de acción, panel técnico plegado y veredicto. Sin auto-avance,
 sin jerga interna, sin emojis como única etiqueta. Tokens y contraste corregidos
 (`--text-soft: #9a9ab0`, bordes `#66668a`), targets ≥48 px, `aria-live` y foco.
+
+
+## 95.8 Salud por tipo de dispositivo
+
+`DeviceHealth` clasifica sin ambigüedad:
+
+| Estado | Condición | Color |
+|---|---|---|
+| `missing` | no existe fila/dispositivo | rojo |
+| `online` | push ≤5 min | verde |
+| `idle` | existe, es de evento (puerta/luz) y no hay push reciente | verde “RECONOCIDO” + detalle ámbar |
+| `stale` | existe, es periódico (radar) y no hay push reciente | ámbar “SIN DATOS” |
+
+`expects_periodic_push` solo es cierto para `PRESENCE`. El preflight deja de
+tratar el silencio de la puerta como incidencia.

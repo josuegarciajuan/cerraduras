@@ -6413,7 +6413,7 @@ block "BLOCK 68 — F95: flujo universal de sensores"
 
 for f in public/assets/sensor-tests-v2.json public/assets/sensor-wizard-v2.js \
          src/Http/Controllers/SensorWizardController.php src/Infrastructure/Sensors/SensorVerdict.php \
-         src/Domain/Presence/DoorPolarity.php; do
+         src/Infrastructure/Sensors/DeviceHealth.php src/Domain/Presence/DoorPolarity.php; do
     if [ -f "$f" ]; then pass "F95: $f presente"; else fail "F95: $f" "falta"; fi
 done
 if grep -q "sensores/v2/preflight" public/index.php \
@@ -6468,6 +6468,28 @@ print('ok' if d.get('can_start') is True and isinstance(d.get('plan'),list) and 
 " 2>/dev/null)
     if [ "$F95_PRE_OK" = "ok" ]; then
         pass "F95: preflight detecta los 3 dispositivos y el plan"
+        F95_HEALTH=$(printf '%s' "$F95_PRE" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print('bad'); sys.exit(0)
+bad=[]
+for k in ('proximity','presence','switch'):
+    dev=(d.get('devices') or {}).get(k)
+    if not dev: continue
+    h=dev.get('health')
+    if h is None: print('pending'); sys.exit(0)
+    if h not in ('online','idle','stale','missing'): bad.append(k+':health='+str(h))
+    periodic=bool(dev.get('expects_periodic_push'))
+    if k=='presence' and not periodic: bad.append('presence:not_periodic')
+    if k in ('proximity','switch') and periodic: bad.append(k+':periodic')
+    if k in ('proximity','switch') and h in ('stale','missing'): bad.append(k+':health='+str(h))
+print('ok' if not bad else 'bad '+','.join(bad))
+" 2>/dev/null)
+        case "$F95_HEALTH" in
+            ok) pass "F95: salud distingue periódico vs evento (puerta/luz no son SIN DATOS)" ;;
+            pending) skip "F95 salud" "API aún sin desplegar DeviceHealth" ;;
+            *) fail "F95: salud de dispositivos" "$F95_HEALTH" ;;
+        esac
     else
         fail "F95: preflight" "$(printf '%s' "$F95_PRE" | head -c 200)"
     fi
