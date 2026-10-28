@@ -3680,3 +3680,25 @@ Errores: `400` parámetros, `404` corrida/paso/sala.
 
 Estados de paso: `PENDING`, `IN_PROGRESS`, `PASS`, `FAIL`, `SKIP`, `UNVERIFIED`.
 Veredicto: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`, `NOT_EVALUABLE`.
+
+## §F96 — Llaves y fichas NFC
+
+- `GET /api/v1/nfc-cards?status=&q=` → `{data:[card]}`.
+- `POST /api/v1/nfc-cards` `{number, code, notes?}` → `201 {data:card}`;
+  `409 nfc_number_exists|nfc_code_exists`.
+- `PATCH /api/v1/nfc-cards/{id}` `{number?, notes?}`; `DELETE` desactiva.
+- `GET /api/v1/keys?status=&owner_type=&worker_id=&role_id=&key_type=&q=`.
+- `POST /api/v1/keys` `{label, owner_type, worker_id|role_id, key_type,
+  valid_until, all_room_types, room_type_ids[], nfc_card_id?, notes?}` →
+  `201 {data:key}`; QR incluye `qr_token` **solo en esta respuesta**.
+- `GET/PATCH/DELETE /api/v1/keys/{id}`; `POST /api/v1/keys/{id}/qr` regenera el
+  token (solo QR activo no caducado).
+- `GET /api/v1/keys/defaults?worker_id=|role_id=` → `{room_type_ids, source}`.
+- `POST /api/v1/keys/validate` `{qr_text|ficha_code, room_id?, device_id}` →
+  `{allow, key_id, owner_type, worker_id, room_id, room_type_id, action}`.
+- `GET /api/v1/keys/accesses?worker_id=&key_id=&result=&from=&to=`.
+- `GET /api/v1/keys/{id}/accesses`.
+- `/api/v1/qr/validate` y `/api/v1/workers/qr/validate` aceptan tokens `sub=key`.
+
+Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
+`room_unresolved`, `already_inside`, `ficha_invalid`, `ficha_unassigned`.

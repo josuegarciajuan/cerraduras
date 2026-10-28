@@ -27,7 +27,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 KEYS_FILE="$PROJECT_DIR/seeds/dev_api_keys.txt"
 LOG_FILE="$PROJECT_DIR/logs/test-results.log"
 TMP_BODY="$PROJECT_DIR/logs/_test_body.tmp"
-API_BASE="http://127.0.0.1:8080"
+API_BASE="${API_BASE_OVERRIDE:-http://127.0.0.1:8080}"
 
 # --- Colores -----------------------------------------------------------------
 R='\033[0;31m'
@@ -6544,6 +6544,136 @@ print('ok' if not bad else 'bad '+','.join(bad))
 elif [ "$SERVER_UP" = true ]; then
     skip "F95 HTTP" "API aún sin desplegar el flujo v2 (UI $F95_UI, preflight $F95_PING)"
 fi
+
+# =============================================================================
+# BLOCK 69 — F96: llaves de acceso, fichas NFC y auditoría
+# Trazabilidad: RF-168..RF-175
+# =============================================================================
+block "BLOCK 69 — F96: llaves de acceso y fichas NFC"
+F96_TS=$(date +%s)
+F96_START=$(date -u '+%Y-%m-%d %H:%M:%S')
+F96_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M)
+
+# Esquema
+F96_TABLES=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('nfc_cards','access_keys','access_key_room_types','key_access_events')" 2>/dev/null)
+if [ "$F96_TABLES" = "4" ]; then
+  pass "F96: tablas de llaves y fichas presentes"
+else
+  fail "F96: esquema" "esperadas 4 tablas, encontradas $F96_TABLES — ejecuta: php bin/migrate.php"
+fi
+
+# Ficha NFC
+http_test POST /api/v1/nfc-cards 201 "F96: crear ficha NFC" --key ADMIN-CLI \
+  --body "{\"number\":\"F96-C-$F96_TS\",\"code\":\"F96CODE-$F96_TS\"}"
+
+F96_CARD_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"number\":\"F96-C2-$F96_TS\",\"code\":\"F96CODE2-$F96_TS\"}" "${API_BASE}/api/v1/nfc-cards")
+F96_CARD_ID=$(echo "$F96_CARD_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+
+http_test POST /api/v1/nfc-cards 409 "F96: código de ficha duplicado → 409" --key ADMIN-CLI \
+  --body "{\"number\":\"F96-C3-$F96_TS\",\"code\":\"F96CODE-$F96_TS\"}"
+
+# Llave QR de rol compartida
+F96_KEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"label\":\"F96-ROLE-$F96_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"QR\",\"valid_until\":\"$F96_VALID\",\"all_room_types\":true}" \
+  "${API_BASE}/api/v1/keys")
+F96_KEY_ID=$(echo "$F96_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+F96_TOKEN=$(echo "$F96_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+
+if [ -n "$F96_KEY_ID" ] && [ -n "$F96_TOKEN" ]; then
+  pass "F96: crear llave QR de rol y devolver token una vez"
+else
+  fail "F96: crear llave QR" "$(echo "$F96_KEY_RESP" | tr -d '\n' | head -c 300)"
+fi
+
+F96_HAS_HASH=$(echo "$F96_KEY_RESP" | grep -c 'token_hash' || true)
+[ "$F96_HAS_HASH" = "0" ] && pass "F96: la API no expone token_hash" || fail "F96: la API no expone token_hash" "campo presente"
+
+http_test GET "/api/v1/keys?q=F96-ROLE-$F96_TS" 200 "F96: listar llaves con filtro" --key ADMIN-CLI
+http_test GET "/api/v1/keys/defaults?worker_id=1" 200 "F96: permisos por defecto del trabajador" --key ADMIN-CLI
+
+http_test POST /api/v1/keys/validate 200 "F96: validar QR de llave (rol)" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F96_TOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+# Una llave de rol no crea sesión individual: puede reutilizarse.
+http_test POST /api/v1/keys/validate 200 "F96: llave de rol reutilizable (sin sesión)" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F96_TOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+# Compatibilidad: el endpoint de lector de trabajadores también acepta llaves.
+http_test POST /api/v1/workers/qr/validate 200 "F96: lector de trabajadores acepta llave" --key RPI-DEV \
+  --body "{\"token\":\"$F96_TOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+# Compatibilidad: /qr/validate resuelve la sala desde un RPI registrado.
+F96_RPI_ROW=$($MYSQL -sN -e "SELECT d.external_id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE d.kind='RPI' LIMIT 1" 2>/dev/null)
+if [ -n "$F96_RPI_ROW" ]; then
+  http_test POST /api/v1/qr/validate 200 "F96: /qr/validate despacha llave y resuelve sala" --key RPI-DEV \
+    --body "{\"qr_text\":\"$F96_TOKEN\",\"device_id\":\"$F96_RPI_ROW\"}"
+else
+  skip "F96: /qr/validate con RPI" "no hay dispositivos RPI registrados"
+fi
+
+# Reglas de creación
+http_test POST /api/v1/keys 422 "F96: validez en el pasado → 422" --key ADMIN-CLI \
+  --body "{\"label\":\"F96-EXP-$F96_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"QR\",\"valid_until\":\"2020-01-01T00:00\",\"all_room_types\":true}"
+http_test POST /api/v1/keys 422 "F96: tipo de sala inexistente → 422" --key ADMIN-CLI \
+  --body "{\"label\":\"F96-BAD-$F96_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"QR\",\"valid_until\":\"$F96_VALID\",\"room_type_ids\":[999999]}"
+
+# Revocación
+http_test DELETE "/api/v1/keys/$F96_KEY_ID" 200 "F96: revocar llave" --key ADMIN-CLI
+http_test POST /api/v1/keys/validate 403 "F96: llave revocada no abre" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F96_TOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+# Llave individual de trabajador: identifica al trabajador y abre sesión.
+F96_W_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"F96 Worker $F96_TS\",\"role_id\":1}" "${API_BASE}/api/v1/workers")
+F96_W_ID=$(echo "$F96_W_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+F96_WKEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"label\":\"F96-W-$F96_TS\",\"owner_type\":\"WORKER\",\"worker_id\":$F96_W_ID,\"key_type\":\"QR\",\"valid_until\":\"$F96_VALID\"}" \
+  "${API_BASE}/api/v1/keys")
+F96_WKEY_ID=$(echo "$F96_WKEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+F96_WTOKEN=$(echo "$F96_WKEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+if [ -z "$F96_W_ID" ] || [ -z "$F96_WKEY_ID" ] || [ -z "$F96_WTOKEN" ]; then
+  fail "F96: llave individual de trabajador" "$(echo "$F96_WKEY_RESP" | head -c 300)"
+else
+  pass "F96: crear llave individual de trabajador"
+fi
+
+http_test POST /api/v1/keys/validate 200 "F96: llave individual abre e identifica trabajador" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+http_test POST /api/v1/keys/validate 409 "F96: llave individual ya dentro → 409" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+# Ficha asignada a llave
+if [ -n "$F96_CARD_ID" ]; then
+  F96_NKEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+    -d "{\"label\":\"F96-NFC-$F96_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"NFC\",\"nfc_card_id\":$F96_CARD_ID,\"valid_until\":\"$F96_VALID\",\"all_room_types\":true}" \
+    "${API_BASE}/api/v1/keys")
+  F96_NKEY_ID=$(echo "$F96_NKEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+  http_test POST /api/v1/keys/validate 200 "F96: validar ficha NFC asignada" --key RPI-DEV \
+    --body "{\"ficha_code\":\"F96CODE2-$F96_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+  http_test DELETE "/api/v1/keys/$F96_NKEY_ID" 200 "F96: revocar llave de ficha" --key ADMIN-CLI
+  http_test POST /api/v1/keys/validate 403 "F96: ficha sin llave vigente no abre" --key RPI-DEV \
+    --body "{\"ficha_code\":\"F96CODE2-$F96_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+else
+  skip "F96: ficha NFC" "no se pudo crear la ficha"
+fi
+
+# Historial
+F96_ACC_RESP=$(curl -s -H "X-API-Key: $ADMIN_KEY" "${API_BASE}/api/v1/keys/accesses?key_id=$F96_KEY_ID")
+F96_ACC_N=$(echo "$F96_ACC_RESP" | python3 -c "import sys,json;print(len(json.load(sys.stdin).get('data',[])))" 2>/dev/null)
+if [ "${F96_ACC_N:-0}" -ge 3 ]; then
+  pass "F96: historial de accesos registra OK y denegados"
+else
+  fail "F96: historial de accesos" "esperados >=3 eventos, got ${F96_ACC_N:-0}"
+fi
+http_test GET "/api/v1/keys/$F96_KEY_ID/accesses" 200 "F96: historial por llave" --key ADMIN-CLI
+
+# Limpieza de datos de prueba
+if [ -n "$F96_W_ID" ]; then
+  $MYSQL -e "DELETE FROM worker_sessions WHERE worker_id=$F96_W_ID; UPDATE workers SET active=0 WHERE id=$F96_W_ID; DELETE FROM workers WHERE id=$F96_W_ID" >/dev/null 2>&1 || true
+fi
+$MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F96-%'; DELETE FROM access_keys WHERE label LIKE 'F96-%'; DELETE FROM nfc_cards WHERE number LIKE 'F96-%'; DELETE FROM key_access_events WHERE key_id IS NULL AND occurred_at >= '$F96_START'" >/dev/null 2>&1 || true
+pass "F96: limpieza de datos de prueba"
 
 # =============================================================================
 # RESUMEN

@@ -2881,3 +2881,47 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
   `REVIEW`, `INCOMPLETE`, `NOT_EVALUABLE`. Un `FAIL` instalado bloquea el verde.
 - **RF-167.4**: el veredicto se da al terminar; el “reposo” de 30 min se comprueba
   después, al reabrir la sala o pulsar `Comprobar reposo`, sin proceso de fondo.
+
+## RF-168: Fichas NFC
+
+- **RF-168.1**: cada ficha tiene un número único y un código único; el código se
+  guarda protegido (hash) y solo se muestran los últimos 4 caracteres.
+- **RF-168.2**: una ficha puede estar `AVAILABLE`, `ASSIGNED` o `DISABLED`.
+- **RF-168.3**: una ficha asignada no puede asignarse a otra llave vigente; al
+  revocar la llave vuelve a estar disponible.
+- **RF-168.4**: la integración con lectores NFC no forma parte de esta fase.
+
+## RF-169: Roles operativos
+
+- **RF-169.1**: se añaden los roles Encargado, Camarero y Dirección; Limpieza ya
+  existía. Los roles determinan los permisos por tipo de sala.
+- **RF-169.2**: el trabajador conserva un único rol. Los permisos de una llave
+  individual se copian del rol al crearla y luego pueden personalizarse.
+
+## RF-170: Llaves
+
+- **RF-170.1**: una llave tiene etiqueta, titular (`WORKER` o `ROLE`), tipo
+  (`QR` o `NFC`), fin de validez y permisos por tipo de sala o “todos”.
+- **RF-170.2**: la llave de trabajador identifica al trabajador y abre sesión.
+- **RF-170.3**: la llave de rol es compartida y anónima: no identifica a una
+  persona ni crea sesión individual.
+- **RF-170.4**: una llave caducada o revocada no ordena abrir la cerradura.
+- **RF-170.5**: el QR se genera una vez, puede regenerarse y se descarga como
+  imagen PNG desde el panel.
+- **RF-170.6**: una llave NFC exige una ficha disponible en el momento de crearse.
+
+## RF-171: Validación desde cualquier lector QR
+
+- **RF-171.1**: `/api/v1/qr/validate`, `/api/v1/workers/qr/validate` y
+  `/api/v1/keys/validate` aceptan QR de llave.
+- **RF-171.2**: el permiso se evalúa contra el tipo de sala del lector/sala
+  indicada; “todos los tipos” incluye tipos creados después.
+- **RF-171.3**: toda decisión, concedida o denegada, queda auditada con llave,
+  sala, lector, resultado y motivo.
+
+## RF-172: Historial
+
+- **RF-172.1**: se consulta por trabajador, por llave y globalmente, con filtros
+  por fecha, sala y resultado.
+- **RF-172.2**: las llaves de rol muestran “compartida” y nunca un trabajador
+  inventado.

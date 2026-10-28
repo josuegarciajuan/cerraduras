@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Cerraduras — Panel CRM</title>
+<script src="/assets/qrcode.min.js"></script>
 <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -183,6 +184,9 @@ tr:hover td{background:rgba(108,142,224,.05)}
     <a :class="{active:p==='qr'}" role="button" tabindex="0" @click="nav('qr')" @keydown.enter="nav('qr')" @keydown.space.prevent="nav('qr')"><span class="ic">🎫</span>QRs</a>
     <a :class="{active:p==='dbts'}" role="button" tabindex="0" @click="nav('dbts')" @keydown.enter="nav('dbts')" @keydown.space.prevent="nav('dbts')"><span class="ic">💰</span>Deudas</a>
      <a :class="{active:p==='w'}" role="button" tabindex="0" @click="nav('w')" @keydown.enter="nav('w')" @keydown.space.prevent="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
+     <a :class="{active:p==='ky'}" role="button" tabindex="0" @click="nav('ky')" @keydown.enter="nav('ky')" @keydown.space.prevent="nav('ky')"><span class="ic">🔑</span>Llaves</a>
+     <a :class="{active:p==='nc'}" role="button" tabindex="0" @click="nav('nc')" @keydown.enter="nav('nc')" @keydown.space.prevent="nav('nc')"><span class="ic">💳</span>Fichas NFC</a>
+     <a :class="{active:p==='ac'}" role="button" tabindex="0" @click="nav('ac')" @keydown.enter="nav('ac')" @keydown.space.prevent="nav('ac')"><span class="ic">📜</span>Accesos</a>
      <a :class="{active:p==='fd'}" role="button" tabindex="0" @click="nav('fd')" @keydown.enter="nav('fd')" @keydown.space.prevent="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
     <a :class="{active:p==='wr'}" role="button" tabindex="0" @click="nav('wr')" @keydown.enter="nav('wr')" @keydown.space.prevent="nav('wr')"><span class="ic">🏷️</span>Roles</a>
     <a :class="{active:p==='mon'}" role="button" tabindex="0" @click="nav('mon')" @keydown.enter="nav('mon')" @keydown.space.prevent="nav('mon')"><span class="ic">📋</span>Monitor</a>
@@ -202,6 +206,7 @@ tr:hover td{background:rgba(108,142,224,.05)}
 function crm(){return{
   user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
    workers:[],workerRoles:[],workersInside:[],factoryDevices:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
+   accessKeys:[],nfcCards:[],keyAccesses:[],keyFilters:{worker_id:'',status:'',q:''},nfcFilter:{status:'',q:''},accessFilters:{worker_id:'',key_id:'',result:'',from:'',to:''},_lastKeyToken:null,
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,_factoryTimer:null,
   deviceStatus:{},deviceStatusTick:0,
@@ -211,7 +216,7 @@ function crm(){return{
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
   async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
-   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(this._factoryTimer){clearInterval(this._factoryTimer);this._factoryTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='fd'){this.loadFactoryDevices();this._factoryTimer=setInterval(()=>this.loadFactoryDevices(true),5000)}if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
+   nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(this._factoryTimer){clearInterval(this._factoryTimer);this._factoryTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='ky'){this.loadWorkers();this.loadWorkerRoles();this.loadRoomTypes();this.loadKeys()}if(p==='nc'){this.loadNfcCards()}if(p==='ac'){this.loadWorkers();this.loadAccessKeysForFilter();this.loadKeyAccesses()}if(p==='fd'){this.loadFactoryDevices();this._factoryTimer=setInterval(()=>this.loadFactoryDevices(true),5000)}if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
   toastOk(m){this.toast={show:true,msg:m,type:'ok'};setTimeout(()=>this.toast.show=false,3000)},
   toastErr(m){this.toast={show:true,msg:m,type:'err'};setTimeout(()=>this.toast.show=false,4000)},
   async logout(){await fetch('/api/v1/crm/logout',{method:'POST'});window.location.href='/panel/login'},
@@ -235,12 +240,116 @@ function crm(){return{
     this.workerAlerts=alerts;this.workerAlertCount=alerts.length;
   },
 
-   render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'fd':return this.factoryPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
+   render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'ky':return this.keysPage();case'nc':return this.nfcPage();case'ac':return this.accessesPage();case'fd':return this.factoryPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
 
      async loadFactoryDevices(silent){try{let d=await this.api('/api/v1/factory-devices?status=ALL');this.factoryDevices=d.data||[]}catch(e){if(!silent)this.toastErr(e.message)}},
        openFactoryClaim(id){let d=this.factoryDevices.find(function(x){return x.id===id}),that=this,packs=this.packs.map(function(p){return'<option value="'+p.id+'">'+that.esc(p.code||p.name||('Pack '+p.id))+'</option>'}).join('');this.modal.content='<h2>Reclamar equipo</h2><div class="field field--mono"><label>chip_id (informativo)</label><code>'+that.esc(d?.chip_id||'')+'</code></div><div class="field"><label>Etiqueta (opcional)</label><input id="fc_label"></div><div class="field"><label>Pack (opcional)</label><select id="fc_pack"><option value="">Sin pack</option>'+packs+'</select></div><p class="field-hint">La credencial individual permanece protegida en el dispositivo y no se solicita al operador.</p><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="claimFactoryDevice('+id+')">Reclamar</button></div>';this.modal.show=true},
        async claimFactoryDevice(id){if(!document.getElementById('fc_label')){this.openFactoryClaim(id);return}let label=document.getElementById('fc_label')?.value||'',pack=document.getElementById('fc_pack')?.value||'';try{await this.api('/api/v1/factory-devices/'+id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null})});this.modal.show=false;this.modal.content='';this.toastOk('Equipo reclamado');await this.loadFactoryDevices();await this.loadPacks()}catch(e){this.toastErr(e.message)}},
     factoryPage(){let that=this;return'<div class="ph"><h1>🏭 Identificación de fábrica</h1><p>Equipos anunciados antes del montaje · '+this.factoryDevices.length+'</p></div><table><tr><th>chip_id</th><th>Estado</th><th>Dispositivo</th><th>Primer anuncio</th><th>Último anuncio</th><th></th></tr>'+this.factoryDevices.map(function(d){return'<tr><td><code>'+that.esc(d.chip_id)+'</code></td><td>'+that.statusBadge(d.status)+'</td><td>'+(d.device_id?'<code>RPI #'+d.device_id+'</code>':'<span class="dim">—</span>')+'</td><td>'+that.esc(d.first_announced_at)+'</td><td>'+that.esc(d.last_announced_at)+'</td><td>'+(d.status==='PENDING'?'<button class="btn btn-p btn-sm" @click="claimFactoryDevice('+d.id+')">Reclamar</button>':(d.device_id?'<button class="btn btn-o btn-sm" @click="nav(\'dv\')">Asignar pack</button>':'<span class="dim">Reclamado por '+that.esc(d.claimed_by||'—')+'</span>'))+'</td></tr>'}).join('')+'</table>'},
+
+
+  // ═══ F96: Llaves de acceso, fichas NFC y auditoría ═══
+  async loadKeys(){try{let p=new URLSearchParams();if(this.keyFilters.worker_id)p.set('worker_id',this.keyFilters.worker_id);if(this.keyFilters.status)p.set('status',this.keyFilters.status);if(this.keyFilters.q)p.set('q',this.keyFilters.q);let d=await this.api('/api/v1/keys'+(p.toString()?'?'+p:''));this.accessKeys=d.data||[]}catch(e){this.toastErr(e.message)}},
+  async loadAccessKeysForFilter(){try{let d=await this.api('/api/v1/keys');this.accessKeys=d.data||[]}catch(e){}},
+  async loadNfcCards(){try{let p=new URLSearchParams();if(this.nfcFilter.status)p.set('status',this.nfcFilter.status);if(this.nfcFilter.q)p.set('q',this.nfcFilter.q);let d=await this.api('/api/v1/nfc-cards'+(p.toString()?'?'+p:''));this.nfcCards=d.data||[]}catch(e){this.toastErr(e.message)}},
+  async loadKeyAccesses(){try{let p=new URLSearchParams();let f=this.accessFilters;['worker_id','key_id','result','from','to'].forEach(k=>{if(f[k])p.set(k,f[k])});let d=await this.api('/api/v1/keys/accesses'+(p.toString()?'?'+p:''));this.keyAccesses=d.data||[]}catch(e){this.toastErr(e.message)}},
+  fmtKeyDate(v){if(!v)return '—';try{return new Date(String(v).replace(' ','T')+'Z').toLocaleString('es-ES')}catch(e){return v}},
+  keyOwner(k){return k.owner_type==='WORKER'?'👤 '+(k.worker_name||('Trabajador #'+k.worker_id)):'🏷️ Rol: '+(k.role_name||('#'+k.role_id))},
+  keyStatusBadge(k){let s=k.effective_status||k.status;let m={ACTIVE:['Activa','rgba(76,175,147,.2)','var(--success)'],EXPIRED:['Caducada','rgba(224,185,78,.2)','var(--warning)'],REVOKED:['Revocada','rgba(224,85,106,.2)','var(--danger)']};let x=m[s]||[s,'rgba(139,143,163,.2)','var(--dim)'];return '<span class="badge" style="background:'+x[1]+';color:'+x[2]+'">'+x[0]+'</span>'},
+  keyPerms(k){return k.all_room_types?'Todos los tipos':((k.room_type_ids||[]).length+' tipo(s)')},
+  keysPage(){let that=this;let f=this.keyFilters;
+    return '<div class="ph"><h1>🔑 Llaves</h1><p>Llaves QR y fichas con validez y permisos por tipo de sala · <button class="btn btn-p btn-sm" @click="openKeyForm()">+ Nueva llave</button></p></div>'
+      +'<div class="fbar"><input placeholder="Buscar etiqueta, titular, ficha…" value="'+this.esc(f.q||'')+'" oninput="this.dataset.v=this.value" @keydown.enter="setKeyFilter(\'q\',$event.target.value)"><select @change="setKeyFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option><option value="ACTIVE"'+(f.status==='ACTIVE'?' selected':'')+'>Activas</option><option value="EXPIRED"'+(f.status==='EXPIRED'?' selected':'')+'>Caducadas</option><option value="REVOKED"'+(f.status==='REVOKED'?' selected':'')+'>Revocadas</option></select>'+(f.worker_id?'<button class="btn btn-o btn-sm" @click="clearKeyFilters()">Quitar filtro trabajador</button>':'')+'</div>'
+      +'<table><tr><th>Etiqueta</th><th>Titular</th><th>Tipo</th><th>Validez</th><th>Permisos</th><th>Estado</th><th></th></tr>'
+      +this.accessKeys.map(function(k){return '<tr><td style="font-weight:600">'+that.esc(k.label)+'</td><td>'+that.esc(that.keyOwner(k))+'</td><td>'+(k.key_type==='QR'?'🎫 QR':'💳 Ficha'+(k.nfc_card_number?' · '+that.esc(k.nfc_card_number):''))+'</td><td style="font-size:11px">'+that.esc(that.fmtKeyDate(k.valid_until))+'</td><td style="font-size:11px">'+that.esc(that.keyPerms(k))+'</td><td>'+that.keyStatusBadge(k)+'</td><td style="white-space:nowrap"><button class="btn btn-o btn-sm" @click="openKeyDetail('+k.id+')">Ver</button> <button class="btn btn-o btn-sm" @click="openKeyForm('+k.id+')" '+(k.status!=='ACTIVE'?'disabled':'')+'>Editar</button> <button class="btn btn-d btn-sm" @click="revokeKey('+k.id+')" '+(k.status!=='ACTIVE'?'disabled':'')+'>Revocar</button></td></tr>'}).join('')+'</table>'
+      +(this.accessKeys.length?'':'<div class="empty"><h2>No hay llaves</h2><p>Crea una llave QR o asigna una ficha NFC a un trabajador o rol.</p><button class="btn btn-p" @click="openKeyForm()">+ Nueva llave</button></div>');
+  },
+  setKeyFilter(k,v){this.keyFilters[k]=v;this.loadKeys()},
+  clearKeyFilters(){this.keyFilters={worker_id:'',status:'',q:''};this.loadKeys()},
+  async openKeyForm(id){
+    await Promise.all([this.loadWorkers(),this.loadWorkerRoles(),this.loadRoomTypes(),this.loadNfcCards()]);
+    let that=this;let k=id?this.accessKeys.find(function(x){return x.id===id}):null;
+    if(id&&!k){try{k=(await this.api('/api/v1/keys/'+id)).data}catch(e){this.toastErr(e.message);return}}
+    let wOpts=this.workers.map(function(w){return '<option value="'+w.id+'"'+(k&&k.worker_id===w.id?' selected':'')+'>'+that.esc(w.name)+'</option>'}).join('');
+    let rOpts=this.workerRoles.map(function(r){return '<option value="'+r.id+'"'+(k&&k.role_id===r.id?' selected':'')+'>'+that.esc(r.name)+'</option>'}).join('');
+    let rtChecks=this.roomTypes.map(function(t){let checked=k&&(k.all_room_types||(k.room_type_ids||[]).includes(t.id))?'checked':'';return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0"><input type="checkbox" value="'+t.id+'" '+checked+' class="kf-rt" '+(k&&k.all_room_types?'disabled':'')+'> '+that.esc(t.name)+'</label>'}).join('');
+    let available=this.nfcCards.filter(function(c){return c.status==='AVAILABLE'||(k&&c.id===k.nfc_card_id)});
+    let nOpts='<option value="">— Selecciona una ficha —</option>'+available.map(function(c){return '<option value="'+c.id+'"'+(k&&k.nfc_card_id===c.id?' selected':'')+'>'+that.esc(c.number)+' · '+that.esc(c.code_masked||'')+'</option>'}).join('');
+    let valid=k?String(k.valid_until).replace(' ','T').slice(0,16):'';
+    this.modal.content='<h2>'+(id?'Editar llave':'Nueva llave')+'</h2>'
+      +'<div class="field"><label>Etiqueta</label><input id="kf_label" value="'+this.esc(k?k.label:'')+'" placeholder="Llave de dirección"></div>'
+      +'<div class="field"><label>Titular</label><select id="kf_owner_type" @change="keyOwnerTypeChanged()" '+(id?'disabled':'')+'><option value="WORKER"'+(k&&k.owner_type==='WORKER'?' selected':'')+'>Trabajador (personal)</option><option value="ROLE"'+(k&&k.owner_type==='ROLE'?' selected':'')+'>Rol (compartida y anónima)</option></select></div>'
+      +'<div class="field"><label>Trabajador</label><select id="kf_worker" @change="prefillKeyPermissions()">'+wOpts+'</select></div>'
+      +'<div class="field" id="kf_role_field"><label>Rol</label><select id="kf_role" @change="prefillKeyPermissions()">'+rOpts+'</select></div>'
+      +'<div class="field"><label>Tipo de llave</label><select id="kf_key_type" @change="keyTypeChanged()" '+(id?'disabled':'')+'><option value="QR"'+(k&&k.key_type==='QR'?' selected':'')+'>QR</option><option value="NFC"'+(k&&k.key_type==='NFC'?' selected':'')+'>Ficha NFC</option></select></div>'
+      +'<div class="field" id="kf_nfc_field"><label>Ficha NFC</label><select id="kf_nfc">'+nOpts+'</select><p class="field-hint">Solo aparecen fichas disponibles. La conexión con lectores NFC se configura aparte.</p></div>'
+      +'<div class="field"><label>Fin de validez (UTC)</label><input type="datetime-local" id="kf_valid" value="'+valid+'"><p class="field-hint">La llave deja de abrir en este instante.</p></div>'
+      +'<div class="field"><label><input type="checkbox" id="kf_all" @change="keyAllChanged()" '+(k&&k.all_room_types?'checked':'')+'> Todos los tipos de sala</label></div>'
+      +'<div class="field"><label>Tipos de sala permitidos</label>'+rtChecks+'<p class="field-hint"><button class="btn btn-o btn-xs" type="button" @click="prefillKeyPermissions()">Cargar permisos del titular</button> Si no marcas nada se copian los del rol.</p></div>'
+      +'<div class="field"><label>Notas</label><input id="kf_notes" value="'+this.esc(k?k.notes||'':'')+'"></div>'
+      +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveKey('+(id||0)+')">Guardar</button></div>';
+    this.modal.show=true;
+    this.keyOwnerTypeChanged();
+    this.keyTypeChanged();
+  },
+  keyOwnerTypeChanged(){let t=document.getElementById('kf_owner_type');let w=document.getElementById('kf_worker');let rf=document.getElementById('kf_role_field');if(!t||!w||!rf)return;let isW=t.value==='WORKER';w.closest('.field').style.display=isW?'':'none';rf.style.display=isW?'none':''},
+  keyTypeChanged(){let t=document.getElementById('kf_key_type');let f=document.getElementById('kf_nfc_field');if(t&&f)f.style.display=t.value==='NFC'?'':'none'},
+  keyAllChanged(){let all=document.getElementById('kf_all');document.querySelectorAll('.kf-rt').forEach(function(c){if(all&&all.checked){c.checked=true;c.disabled=true}else{c.disabled=false}})},
+  async prefillKeyPermissions(){try{let ot=document.getElementById('kf_owner_type');if(!ot)return;let q=ot.value==='WORKER'?('worker_id='+document.getElementById('kf_worker').value):('role_id='+document.getElementById('kf_role').value);let d=await this.api('/api/v1/keys/defaults?'+q);let ids=d.data.room_type_ids||[];document.querySelectorAll('.kf-rt').forEach(function(c){c.checked=ids.includes(parseInt(c.value))})}catch(e){this.toastErr(e.message)}},
+  saveKey(id){
+    let that=this;let ot=document.getElementById('kf_owner_type').value;let kt=document.getElementById('kf_key_type').value;
+    let rtIds=[];document.querySelectorAll('.kf-rt:checked').forEach(function(c){rtIds.push(parseInt(c.value))});
+    let body={label:document.getElementById('kf_label').value,valid_until:document.getElementById('kf_valid').value,all_room_types:document.getElementById('kf_all').checked,room_type_ids:rtIds,notes:document.getElementById('kf_notes').value||null};
+    if(!id){body.owner_type=ot;body.key_type=kt;if(ot==='WORKER')body.worker_id=parseInt(document.getElementById('kf_worker').value);else body.role_id=parseInt(document.getElementById('kf_role').value);if(kt==='NFC')body.nfc_card_id=parseInt(document.getElementById('kf_nfc').value||0)}
+    else if(kt==='NFC'){let v=parseInt(document.getElementById('kf_nfc').value||0);if(v)body.nfc_card_id=v}
+    let url=id?'/api/v1/keys/'+id:'/api/v1/keys';let meth=id?'PATCH':'POST';
+    this.api(url,{method:meth,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(d){that.modal.show=false;that.loadKeys();that.loadNfcCards();that.toastOk(id?'Llave actualizada':'Llave creada');if(d.data&&d.data.qr_token)that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)});
+  },
+  showKeyQr(token,label){
+    this.modal.content='<h2>🎫 QR de la llave</h2><p class="dim">'+this.esc(label||'')+' · Este QR es reutilizable hasta la caducidad o revocación.</p><div id="key-qr-box" style="background:#fff;padding:14px;border-radius:8px;display:inline-block"></div><div class="actions"><button class="btn btn-p" @click="downloadKeyQr()">⬇ Descargar PNG</button><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
+    this.modal.show=true;
+    setTimeout(function(){let box=document.getElementById('key-qr-box');if(box&&window.QRCode){box.innerHTML='';new QRCode(box,{text:token,width:260,height:260,correctLevel:QRCode.CorrectLevel.M})}},60);
+  },
+  downloadKeyQr(){
+    let box=document.getElementById('key-qr-box');if(!box)return;
+    let canvas=box.querySelector('canvas');let img=box.querySelector('img');
+    let url=canvas?canvas.toDataURL('image/png'):(img?img.src:'');
+    if(!url){this.toastErr('QR no disponible');return}
+    let a=document.createElement('a');a.href=url;a.download='llave-qr.png';document.body.appendChild(a);a.click();a.remove();
+  },
+  async openKeyDetail(id){try{let k=(await this.api('/api/v1/keys/'+id)).data;let a=(await this.api('/api/v1/keys/'+id+'/accesses')).data||[];let that=this;
+      this.modal.content='<h2>🔑 '+this.esc(k.label)+' '+this.keyStatusBadge(k)+'</h2><p class="dim">'+this.esc(this.keyOwner(k))+' · '+(k.key_type==='QR'?'QR':'Ficha '+(k.nfc_card_number||'—'))+'</p><p>Validez: <b>'+this.esc(this.fmtKeyDate(k.valid_until))+'</b> · Permisos: <b>'+this.esc(this.keyPerms(k))+'</b></p>'
+        +'<h3 style="font-size:14px;margin:14px 0 6px">Accesos recientes</h3>'
+        +(a.length?'<table><tr><th>Fecha</th><th>Sala</th><th>Trabajador</th><th>Resultado</th><th>Motivo</th></tr>'+a.map(function(e){return '<tr><td style="font-size:11px">'+that.esc(that.fmtKeyDate(e.occurred_at))+'</td><td>'+that.esc(e.room_code||'—')+'</td><td>'+that.esc(e.worker_name||(e.owner_type==='ROLE'?'(compartida)':'—'))+'</td><td>'+(e.result==='OK'?'✅':'⛔')+'</td><td style="font-size:11px">'+that.esc(e.reason||'')+'</td></tr>'}).join('')+'</table>':'<p class="dim">Sin accesos registrados</p>')
+        +'<div class="actions">'+(k.key_type==='QR'&&k.status==='ACTIVE'?'<button class="btn btn-p btn-sm" @click="regenerateKeyQr('+k.id+')">🔄 Regenerar QR</button>':'')+(k.status==='ACTIVE'?'<button class="btn btn-d btn-sm" @click="revokeKey('+k.id+')">Revocar</button>':'')+'<button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
+      this.modal.show=true;
+    }catch(e){this.toastErr(e.message)}},
+  regenerateKeyQr(id){if(!confirm('¿Regenerar el QR? El anterior dejará de funcionar.'))return;let that=this;this.api('/api/v1/keys/'+id+'/qr',{method:'POST'}).then(function(d){that.loadKeys();that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)})},
+  revokeKey(id){if(!confirm('¿Revocar esta llave? Dejará de abrir puertas y la ficha quedará disponible.'))return;let that=this;this.api('/api/v1/keys/'+id,{method:'DELETE'}).then(function(){that.modal.show=false;that.loadKeys();that.loadNfcCards();that.toastOk('Llave revocada')}).catch(function(e){that.toastErr(e.message)})},
+  openWorkerKeys(workerId){this.keyFilters={worker_id:workerId,status:'',q:''};this.nav('ky')},
+
+  // ── FICHAS NFC ──
+  nfcPage(){let that=this;return '<div class="ph"><h1>💳 Fichas NFC</h1><p>'+this.nfcCards.length+' · <button class="btn btn-p btn-sm" @click="openNfcForm()">+ Nueva ficha</button></p></div>'
+    +'<div class="fbar"><select @change="setNfcFilter(\'status\',$event.target.value)"><option value="">Todas</option><option value="AVAILABLE"'+(this.nfcFilter.status==='AVAILABLE'?' selected':'')+'>Disponibles</option><option value="ASSIGNED"'+(this.nfcFilter.status==='ASSIGNED'?' selected':'')+'>Asignadas</option><option value="DISABLED"'+(this.nfcFilter.status==='DISABLED'?' selected':'')+'>Desactivadas</option></select></div>'
+    +'<table><tr><th>Número</th><th>Código</th><th>Estado</th><th>Llave</th><th>Notas</th><th></th></tr>'
+    +this.nfcCards.map(function(c){let st={AVAILABLE:['Disponible','var(--success)'],ASSIGNED:['Asignada','var(--accent)'],DISABLED:['Desactivada','var(--dim)']}[c.status]||[c.status,'var(--dim)'];return '<tr><td style="font-weight:600" class="mono">'+that.esc(c.number)+'</td><td class="mono">'+that.esc(c.code_masked||'—')+'</td><td><span class="badge" style="color:'+st[1]+';background:rgba(139,143,163,.12)">'+st[0]+'</span></td><td>'+that.esc(c.current_key_label||'—')+'</td><td class="dim">'+that.esc(c.notes||'')+'</td><td style="white-space:nowrap"><button class="btn btn-o btn-sm" @click="openNfcForm('+c.id+')" '+(c.status==='ASSIGNED'?'disabled':'')+'>Editar</button><button class="btn btn-d btn-sm" @click="disableNfcCard('+c.id+')" '+(c.status!=='AVAILABLE'?'disabled':'')+'>Desactivar</button></td></tr>'}).join('')+'</table>'
+    +(this.nfcCards.length?'':'<div class="empty"><h2>No hay fichas</h2><p>Registra el número y el código de cada ficha física.</p><button class="btn btn-p" @click="openNfcForm()">+ Nueva ficha</button></div>');
+  },
+  setNfcFilter(k,v){this.nfcFilter[k]=v;this.loadNfcCards()},
+  openNfcForm(id){let c=id?this.nfcCards.find(function(x){return x.id===id}):null;this.modal.content='<h2>'+(id?'Editar ficha':'Nueva ficha NFC')+'</h2><div class="field"><label>Número</label><input id="ncf_number" value="'+this.esc(c?c.number:'')+'" placeholder="F-001"></div>'+(id?'<p class="dim">El código de una ficha no se puede cambiar una vez creada.</p>':'<div class="field"><label>Código de la ficha</label><input id="ncf_code" placeholder="Código leído o asignado a la ficha"><p class="field-hint">Se guarda protegido (hash). Solo se mostrarán los últimos 4 caracteres.</p></div>')+'<div class="field"><label>Notas</label><input id="ncf_notes" value="'+this.esc(c?c.notes||'':'')+'"></div><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveNfc('+(id||0)+')">Guardar</button></div>';this.modal.show=true},
+  saveNfc(id){let that=this;let body={number:document.getElementById('ncf_number').value,notes:document.getElementById('ncf_notes').value||null};if(!id)body.code=document.getElementById('ncf_code').value;let url=id?'/api/v1/nfc-cards/'+id:'/api/v1/nfc-cards';this.api(url,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(){that.modal.show=false;that.loadNfcCards();that.toastOk(id?'Ficha actualizada':'Ficha creada')}).catch(function(e){that.toastErr(e.message)})},
+  disableNfcCard(id){if(!confirm('¿Desactivar esta ficha?'))return;let that=this;this.api('/api/v1/nfc-cards/'+id,{method:'DELETE'}).then(function(){that.loadNfcCards();that.toastOk('Ficha desactivada')}).catch(function(e){that.toastErr(e.message)})},
+
+  // ── ACCESOS ──
+  accessesPage(){let that=this;let wOpts='<option value="">Todos los trabajadores</option>'+this.workers.map(function(w){return '<option value="'+w.id+'"'+(that.accessFilters.worker_id==w.id?' selected':'')+'>'+that.esc(w.name)+'</option>'}).join('');let kOpts='<option value="">Todas las llaves</option>'+this.accessKeys.map(function(k){return '<option value="'+k.id+'"'+(that.accessFilters.key_id==k.id?' selected':'')+'>'+that.esc(k.label)+'</option>'}).join('');
+    return '<div class="ph"><h1>📜 Accesos con llave</h1><p>Intentos concedidos y denegados. Las llaves de rol se muestran como compartidas.</p></div>'
+      +'<div class="fbar"><select id="ac_worker" @change="setAccessFilter(\'worker_id\',$event.target.value)">'+wOpts+'</select><select id="ac_key" @change="setAccessFilter(\'key_id\',$event.target.value)">'+kOpts+'</select><select @change="setAccessFilter(\'result\',$event.target.value)"><option value="">Todos</option><option value="OK"'+(this.accessFilters.result==='OK'?' selected':'')+'>Concedidos</option><option value="FAIL"'+(this.accessFilters.result==='FAIL'?' selected':'')+'>Denegados</option></select><input type="datetime-local" @change="setAccessFilter(\'from\',$event.target.value)" title="Desde"><input type="datetime-local" @change="setAccessFilter(\'to\',$event.target.value)" title="Hasta"><button class="btn btn-o btn-sm" @click="clearAccessFilters()">Limpiar</button></div>'
+      +'<table><tr><th>Fecha</th><th>Llave</th><th>Titular</th><th>Sala</th><th>Tipo</th><th>Resultado</th><th>Motivo</th></tr>'
+      +this.keyAccesses.map(function(e){return '<tr><td style="font-size:11px">'+that.esc(that.fmtKeyDate(e.occurred_at))+'</td><td>'+that.esc(e.key_label||('#'+e.key_id))+'(#'+e.key_id+')</td><td>'+that.esc(e.worker_name||(e.owner_type==='ROLE'?'🏷️ '+(e.role_name||'Rol compartido'):'—'))+'</td><td>'+that.esc(e.room_code||'—')+'</td><td>'+(e.credential_type==='QR'?'🎫 QR':'💳 Ficha')+'</td><td>'+(e.result==='OK'?'✅ Concedido':'⛔ Denegado')+'</td><td style="font-size:11px">'+that.esc(e.reason||'')+'</td></tr>'}).join('')+'</table>'
+      +(this.keyAccesses.length?'':'<div class="empty"><h2>Sin accesos</h2><p>Los intentos de llave aparecerán aquí.</p></div>');
+  },
+  setAccessFilter(k,v){this.accessFilters[k]=v;this.loadKeyAccesses()},
+  clearAccessFilters(){this.accessFilters={worker_id:'',key_id:'',result:'',from:'',to:''};this.loadKeyAccesses()},
 
   // ── WORKERS PAGE ──
   workersPage(){
@@ -252,7 +361,7 @@ function crm(){return{
         let activeBadge=w.active?'<span style="color:var(--success);font-weight:700">✅</span>':'<span style="color:var(--danger)">❌</span>';
         let room=w.current_room?that.esc(w.current_room.code):'<span class="dim">—</span>';
         let last=w.last_access_at?new Date(w.last_access_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'}):'—';
-        return'<tr><td style="font-weight:600">'+that.esc(w.name)+'</td><td>'+that.esc((w.role||{}).name||'—')+'</td><td>'+activeBadge+'</td><td>'+room+'</td><td>'+last+'</td><td>'+w.sessions_today+'</td><td style="display:flex;gap:4px;white-space:nowrap"><button class="btn btn-o btn-sm" @click="openWorkerDetail('+w.id+')">📋</button><button class="btn btn-o btn-sm" @click="openWorkerForm('+w.id+')">Editar</button><button class="btn btn-d btn-sm" @click="deactivateWorker('+w.id+')" '+(!w.active?'disabled':'')+'>🗑</button></td></tr>';
+        return'<tr><td style="font-weight:600">'+that.esc(w.name)+'</td><td>'+that.esc((w.role||{}).name||'—')+'</td><td>'+activeBadge+'</td><td>'+room+'</td><td>'+last+'</td><td>'+w.sessions_today+'</td><td style="display:flex;gap:4px;white-space:nowrap"><button class="btn btn-o btn-sm" @click="openWorkerDetail('+w.id+')">📋</button><button class="btn btn-o btn-sm" title="Llaves del trabajador" @click="openWorkerKeys('+w.id+')">🔑</button><button class="btn btn-o btn-sm" @click="openWorkerForm('+w.id+')">Editar</button><button class="btn btn-d btn-sm" @click="deactivateWorker('+w.id+')" '+(!w.active?'disabled':'')+'>🗑</button></td></tr>';
       }).join('')+'</table>';
   },
 
