@@ -136,16 +136,18 @@ same('shadow operational is radar_door candidate', $shadow['state'], 'CANDIDATE_
 same('shadow radar_only is confirmed', $shadow['shadow']['state'] ?? null, 'PRESENT_CONFIRMED');
 same('shadow disagreement detected', $shadow['shadow']['disagrees'] ?? null, true);
 
-// ABSENT is always applicable
+// F93/RF-154.2: una ausencia CANDIDATA no se aplica (no cierra presencia).
 $oneAbsent = RadarPresenceDecision::decide([ev('ABSENT', 0)], now(), cfg('radar_only'));
 same('one ABSENT → CANDIDATE_ABSENT', $oneAbsent['state'], 'CANDIDATE_ABSENT');
-same('ABSENT always applies', $oneAbsent['apply'], true);
+same('candidate ABSENT does not apply', $oneAbsent['apply'], false);
+same('candidate ABSENT reason', $oneAbsent['discard_reason'], 'candidate_absent');
 $threeAbsent = RadarPresenceDecision::decide(
     [ev('ABSENT', 0, id: 'a'), ev('ABSENT', 15, id: 'b'), ev('ABSENT', 35, id: 'c')],
     now(40),
     cfg('radar_only')
 );
 same('3 ABSENT spanning 35s → ABSENT_CONFIRMED', $threeAbsent['state'], 'ABSENT_CONFIRMED');
+same('confirmed ABSENT applies', $threeAbsent['apply'], true);
 
 // Long occupancy: recent reports keep confirming; no 24h cap.
 $long = [];

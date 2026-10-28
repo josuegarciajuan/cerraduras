@@ -129,6 +129,8 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
     public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
 
     public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array { return []; }
+    public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array { return []; }
+    public function updateMetaJson(int $id, array $delta): void {}
     /** @param array<string,mixed> $filters */
     public function listFiltered(array $filters, int $limit = 50): array { return []; }
 }

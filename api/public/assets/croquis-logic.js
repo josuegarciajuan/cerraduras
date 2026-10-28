@@ -177,11 +177,14 @@
     } else if (presenceDecisionState === 'CANDIDATE_PRESENT') {
       // F91/RF-149.3: radar con evidencia insuficiente. No es ocupación.
       presenceChip = chip('PRESENCIA NO CONFIRMADA', 'warn');
+    } else if (presenceDecisionState === 'CANDIDATE_ABSENT') {
+      // F93/RF-154.2: un negativo aún sin evidencia suficiente no convierte el
+      // chip en "VACÍO" ni contradice la ocupación vigente; se muestra como
+      // ausencia pendiente de confirmar.
+      presenceChip = chip('AUSENCIA NO CONFIRMADA', 'dim');
     } else if (presenceDecisionState === 'PRESENT_CONFIRMED' || presence === 'PRESENT') {
       presenceChip = chip(presenceDecisionState === 'PRESENT_CONFIRMED'
         ? 'PRESENCIA CONFIRMADA' : 'PRESENCIA', 'warn');
-    } else if (presenceDecisionState === 'CANDIDATE_ABSENT') {
-      presenceChip = chip('AUSENCIA NO CONFIRMADA', 'dim');
     } else if (presence === 'ABSENT' || presenceDecisionState === 'ABSENT_CONFIRMED') {
       presenceChip = chip('VACÍO', 'dim');
     } else {

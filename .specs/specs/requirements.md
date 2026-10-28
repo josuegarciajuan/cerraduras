@@ -2684,3 +2684,82 @@ definitivo partiendo del productivo y cambiando **solo** el hardware.
 - **RF-131.3**: Regresión completa `bash api/bin/run-tests.sh` con 0 failures.
 - **RF-131.4**: Validación física en la placa nueva: QR válido abre, QR inválido
   no abre, LEDs correctos, identify GPIO9, heartbeat/command-queue, WiFi/TLS.
+
+
+# Fase 93: Calibración, filtrado y veracidad de sensores (puerta y presencia)
+
+**Motivo**: el sistema ya recibe puerta y presencia por push (Tuya/Zigbee) y tiene un
+filtro radar (`RadarPresenceDecision`), pero faltaba un procedimiento medible de
+calibración y varios bordes podían producir efectos falsos: una **ausencia candidata
+cerraba la presencia** (`apply=true` sin evidencia suficiente), el **contacto cacheado**
+podía refrescar la puerta Zigbee, la decisión radar no estaba serializada con la sesión,
+el histórico usaba un `LIMIT` fijo y el calibrador solo atendía Tuya. Esta fase cierra
+esos bordes y añade la instrumentación necesaria para calibrar con datos reales.
+
+## RF-154: Presencia con evidencia temporal e histéresis
+
+- **RF-154.1**: El modo radar se resuelve por sala. En el almacén se hereda
+  `room_types.presence_mode`; en una sala normal solo se activa con
+  `rooms.presence_mode_override` explícito. Sin override, el flujo de estancia/F48 no
+  cambia.
+- **RF-154.2**: Ni un `PRESENT` ni un `ABSENT` **candidato** alteran la ocupación
+  efectiva: se auditan con `discard_reason` (`candidate`/`uncorroborated`/
+  `candidate_absent`) y no crean visitas, grabaciones, luces ni salidas. Solo una
+  decisión confirmada se aplica.
+- **RF-154.3**: La decisión radar se calcula dentro de la transacción y con la sesión
+  bloqueada. El histórico se acota por **tiempo** (todas las ventanas configuradas,
+  con margen), nunca por un número arbitrario de filas.
+- **RF-154.4**: La frescura (`stale`) sigue siendo una marca de comunicación: un sensor
+  mudo no equivale a ausencia ni cierra la ocupación.
+- **RF-154.5**: Se mantiene la prohibición de pollers y de llamadas periódicas a Tuya.
+
+## RF-155: Puerta fiel por transporte
+
+- **RF-155.1**: La puerta mostrada y aplicada sigue al contacto físico; el comando del
+  relé no la abre.
+- **RF-155.2**: En Zigbee, solo un evento cuyo `meta.entity = contact` es un reporte
+  real de la puerta. Los campos `contact` cacheados que viajan en payloads de presencia,
+  batería o iluminancia **no** refrescan la frescura ni crean transiciones.
+- **RF-155.3**: Un reporte real de puerta con el mismo valor y un instante nuevo
+  refresca la frescura sin cambiar el estado (F86/RF-115), también en Zigbee.
+- **RF-155.4**: El arranque (`bootstrap`) siembra estado sin tratarse como transición.
+
+## RF-156: Calibración del radar Zigbee sin cuota
+
+- **RF-156.1**: `GET /dashboard-api/presence-calibrate/status?room_id=N` atiende ambos
+  transportes. Para Zigbee devuelve `transport: ZIGBEE2MQTT`, `dp_caps`, los valores
+  reales recibidos por push y `settings_age_seconds`.
+- **RF-156.2**: Zigbee2MQTT publica la configuración del radar en cada reporte de
+  presencia; el mapper guarda un snapshot acotado (`meta.settings`) con
+  `radar_sensitivity`, `minimum_range`, `maximum_range`, `detection_delay`,
+  `fading_time`, `target_distance` e `illuminance`. No se guarda el payload completo.
+- **RF-156.3**: `POST /dashboard-api/presence-calibrate/set` publica en `<topic>/set`
+  (QoS 1) solo parámetros del radar. Un PUBACK no basta: `applied=true` exige un evento
+  **nuevo** cuyo snapshot coincida con lo pedido. Sin confirmación no se guarda.
+- **RF-156.4**: La calibración Zigbee no admite `/get` ni sonda REST: no consume cuota
+  Tuya ni crea procesos de fondo.
+- **RF-156.5**: El panel adapta el modal al transporte y muestra ajustes avanzados solo
+  para Zigbee; el guardado conserva un snapshot por dispositivo.
+
+## RF-157: Representación honesta en ambos paneles
+
+- **RF-157.1**: `GET /api/v1/rooms/{id}/live` expone aditivamente `presence_decision`
+  (última decisión radar auditada). `/dashboard` distingue `PRESENT?`/`PRESENT` y
+  `ABSENT?`/`ABSENT`, con el motivo en el `title`.
+- **RF-157.2**: `/almacen` mantiene su croquis; una ausencia candidata muestra
+  “AUSENCIA NO CONFIRMADA” y no pinta a la persona fuera mientras la ocupación siga
+  vigente.
+- **RF-157.3**: Ningún panel presenta una señal atrasada o un candidato como un hecho.
+
+## RF-158: Captura reproducible y criterios de aceptación
+
+- **RF-158.1**: `bin/sensor-capture.php --room=N` registra en JSONL los eventos ya
+  persistidos (señal, `applied`, `discard_reason`, decisión radar y `settings`) junto
+  con marcas físicas (`--mark=ETIQUETA`). Solo lee la BD local; no sondea Tuya.
+- **RF-158.2**: `--analyze=archivo` recalcula la decisión sobre la captura sin efectos y
+  resume confirmaciones, candidatos y transiciones.
+- **RF-158.3**: La aceptación exige: 10 transiciones normales de puerta correctas,
+  ninguna entrada real perdida, ningún efecto falso en sala vacía durante la ventana
+  acordada, coherencia panel-servidor y regresión con 0 fallos.
+- **RF-158.4**: Los valores finales de calibración y de ventanas se eligen con las
+  medidas; el repositorio aporta el procedimiento y la configuración inicial.

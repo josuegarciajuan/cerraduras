@@ -6199,6 +6199,108 @@ else
 fi
 
 # =============================================================================
+# BLOCK 66 — F93: calibración y veracidad de sensores (puerta + radar)
+# Trazabilidad: RF-154, RF-155, RF-156, RF-157, RF-158
+# =============================================================================
+block "BLOCK 66 — F93: calibración y veracidad de sensores"
+
+# Artefactos de calibración y captura.
+if [ -f bin/zigbee-ingress/publish-json.js ]; then
+    pass "F93: publicador MQTT de calibración presente"
+else
+    fail "F93: publicador MQTT" "falta bin/zigbee-ingress/publish-json.js"
+fi
+if grep -q "radar_sensitivity" bin/zigbee-ingress/publish-json.js \
+    && ! grep -q "'state'" bin/zigbee-ingress/publish-json.js; then
+    pass "F93: publicador limitado a parámetros del radar"
+else
+    fail "F93: allowlist del publicador" "faltan claves o permite state"
+fi
+if [ -f bin/sensor-capture.php ] && grep -q -- "--analyze" bin/sensor-capture.php; then
+    pass "F93: captura/replay de sesiones de sensores"
+else
+    fail "F93: captura de sensores" "falta bin/sensor-capture.php"
+fi
+
+# El candidato de ausencia no puede aplicar ni cerrar la presencia.
+if grep -q "\$decision\['apply'\] = \$confirmed;" src/Domain/Presence/RadarPresenceDecision.php; then
+    pass "F93: ausencia candidata no se aplica"
+else
+    fail "F93: apply de ausencia" "RadarPresenceDecision no condiciona apply a confirmed"
+fi
+if grep -q "candidate_absent" src/Domain/Presence/RadarPresenceDecision.php; then
+    pass "F93: motivo candidate_absent auditado"
+else
+    fail "F93: motivo candidate_absent" "no se audita el candidato de ausencia"
+fi
+
+# El refresh de puerta Zigbee exige un reporte real de `contact`.
+if grep -q "PROVIDER_ZIGBEE2MQTT" src/Domain/Presence/SensorEventDecision.php \
+    && grep -q "'entity'" src/Domain/Presence/SensorEventDecision.php; then
+    pass "F93: refresh de puerta Zigbee solo para entidad contact"
+else
+    fail "F93: refresh Zigbee" "SensorEventDecision no distingue la entidad"
+fi
+
+# El histórico del radar está acotado por tiempo, no por un LIMIT arbitrario.
+if grep -q "listForRoomSince" src/Domain/Presence/IotSessionService.php \
+    && ! grep -q "listForRoom(\$roomId, 500)" src/Domain/Presence/IotSessionService.php; then
+    pass "F93: histórico radar acotado por tiempo"
+else
+    fail "F93: histórico radar" "sigue usando un límite fijo de filas"
+fi
+
+# /dashboard expone la misma decisión radar que /almacen.
+if grep -q "presence_decision" src/Http/Controllers/RoomLiveController.php; then
+    pass "F93: /live expone presencia_decision"
+else
+    fail "F93: /live presencia_decision" "falta el campo aditivo"
+fi
+
+# El panel /dashboard adapta el calibrador al transporte y muestra candidatos.
+if grep -q "cal-zb-advanced" public/dashboard.html && grep -q "calZbApply" public/dashboard.html; then
+    pass "F93: modal de calibración adapta ajustes Zigbee"
+else
+    fail "F93: UI calibración Zigbee" "falta el bloque de ajustes avanzados"
+fi
+if grep -q "CANDIDATE_ABSENT" public/dashboard.html; then
+    pass "F93: /dashboard distingue ausencia candidata"
+else
+    fail "F93: UI presencia" "no distingue CANDIDATE_ABSENT"
+fi
+
+# Endpoint real por transporte (solo si el despliegue ya incluye F93).
+F93_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id=r.pack_id WHERE d.kind='PRESENCE' AND UPPER(COALESCE(d.transport,''))='ZIGBEE2MQTT' LIMIT 1" 2>/dev/null)
+if [ -z "$F93_ROOM" ]; then
+    skip "F93 calibración Zigbee" "No hay sala con radar Zigbee"
+else
+    F93_CAL=$(curl -s "${API_BASE}/dashboard-api/presence-calibrate/status?room_id=$F93_ROOM")
+    F93_RESULT=$(echo "$F93_CAL" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception as e: print('ERR '+str(e)); sys.exit(0)
+t=str(d.get('transport') or '')
+if t=='':
+    print('PENDING')
+elif t!='ZIGBEE2MQTT':
+    print('FAIL transport='+t)
+else:
+    caps=d.get('dp_caps') or {}
+    bad=[]
+    if caps.get('far_step')!=15: bad.append('far_step')
+    if caps.get('sens_min')!=0 or caps.get('sens_max')!=9: bad.append('sens_range')
+    if 'settings' not in d: bad.append('settings')
+    print(('OK' if not bad else 'FAIL '+str(bad)))
+" 2>/dev/null)
+    case "$F93_RESULT" in
+        OK) pass "F93: calibración Zigbee lee configuración real por push" ;;
+        PENDING) skip "F93 calibración Zigbee" "API aún sin desplegar F93" ;;
+        FAIL*) fail "F93: calibración Zigbee" "${F93_RESULT#FAIL }" ;;
+        *) fail "F93: calibración Zigbee parse" "${F93_RESULT:-respuesta vacía}" ;;
+    esac
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

@@ -77,6 +77,22 @@ same('F90: occupancy maps independently', $mapped['events'][1]['value'] ?? null,
 same('F90: canonical provider is Zigbee2MQTT', $mapped['events'][0]['provider'] ?? null, 'ZIGBEE2MQTT');
 same('F90: received timestamp is UTC with milliseconds', $mapped['events'][0]['occurred_at'] ?? null, '2026-10-26T12:34:56.789Z');
 same('F90: event does not retain whole raw payload', $mapped['events'][0]['meta']['raw'] ?? null, null);
+same('F93: proximity event carries no radar settings', $mapped['events'][0]['meta']['settings'] ?? null, null);
+
+// F93/RF-156.2: el radar publica su configuración dentro de cada payload; se
+// guarda un snapshot acotado (no el payload completo) para leer el estado real.
+$withSettings = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"radar_sensitivity":7,"minimum_range":0.6,"maximum_range":6,'
+    . '"detection_delay":0.1,"fading_time":15,"target_distance":2.4,"illuminance":55,"linkquality":160}',
+    $at
+);
+$settings = $withSettings['events'][0]['meta']['settings'] ?? null;
+same('F93: settings snapshot keeps radar sensitivity', $settings['radar_sensitivity'] ?? null, 7);
+same('F93: settings snapshot keeps maximum range', $settings['maximum_range'] ?? null, 6);
+same('F93: settings snapshot keeps fading time', $settings['fading_time'] ?? null, 15);
+check('F93: settings snapshot drops linkquality', !array_key_exists('linkquality', (array) $settings));
+check('F93: settings snapshot does not retain raw payload', !array_key_exists('raw', (array) $settings));
 
 // Entity string values are also explicit; case matching does not infer semantics.
 $state = $mapper->mapMessage('zigbee2mqtt/door-contact', '{"state":"on"}', $at);

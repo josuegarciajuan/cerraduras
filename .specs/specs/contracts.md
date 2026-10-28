@@ -3500,3 +3500,90 @@ El endpoint lo acepta sin cambios (campo aditivo).
 - Unit: `php api/tests/Unit/R35dProductionSketchTest.php`.
 - Regresión: `cd api && bash bin/run-tests.sh` con 0 failures.
 - Sin polling Tuya (F74/RF-87 y F78/RF-101 intactos).
+
+
+# §F93 — Contratos de calibración y presencia
+
+## §F93.1 `GET /dashboard-api/presence-calibrate/status?room_id=N`
+
+Aditivo. Tuya conserva su forma. Con transporte Zigbee:
+
+```json
+{
+  "room_id": 14,
+  "transport": "ZIGBEE2MQTT",
+  "device": {"id": 42, "external_id": "0xa4c1...", "label": "...", "transport": "ZIGBEE2MQTT", "online": true},
+  "dp_caps": {"far_min": 15, "far_max": 950, "far_step": 15,
+              "sens_min": 0, "sens_max": 9, "off_far": null,
+              "target_scale": 1, "near_min": 0},
+  "far_detection": 600,
+  "near_detection": 60,
+  "sensitivity": 7,
+  "detection_delay_s": 0.1,
+  "fading_time_s": 15,
+  "presence_state": "presence",
+  "target_distance_m": 2.4,
+  "illuminance_value": 55,
+  "mode": "ON",
+  "effective_presence": "PRESENT",
+  "settings": {"radar_sensitivity": 7, "minimum_range": 0.6, "maximum_range": 6,
+               "detection_delay": 0.1, "fading_time": 15},
+  "settings_at": "2026-10-28 10:00:00.123",
+  "settings_age_seconds": 2,
+  "saved": {"source": "dashboard-calib-zigbee", "calibrated_at": "...",
+            "maximum_range": 6, "radar_sensitivity": 7}
+}
+```
+
+`far_detection`/`near_detection` se expresan en **cm** para reutilizar el panel;
+`settings` conserva las unidades del dispositivo.
+
+## §F93.2 `POST /dashboard-api/presence-calibrate/set`
+
+Cuerpo Zigbee (todos opcionales, al menos uno):
+
+```json
+{"room_id": 14, "persist": true,
+ "far_detection": 600, "sensitivity": 7,
+ "minimum_range_m": 0.6, "detection_delay_s": 0.1, "fading_time_s": 15}
+```
+
+Respuesta:
+
+```json
+{"ok": true, "applied": true, "persisted": true, "saved": {...},
+ "warning": null, "published_at": "...", "commands": {"maximum_range": 6, "radar_sensitivity": 7},
+ "status": { ...ver §F93.1... }}
+```
+
+- `400` parámetro inválido o sin parámetros.
+- `502`/error de publicación: `ok=false`, `applied=false`.
+- `applied=true` exige un evento nuevo con `meta.settings` coincidente.
+- `persist=true` sin `applied` no guarda.
+
+## §F93.3 `GET /api/v1/rooms/{id}/live`
+
+Aditivo: `presence_decision` = última decisión radar auditada, o `null`.
+
+```json
+"presence_decision": {"state": "CANDIDATE_ABSENT", "raw": "ABSENT",
+  "confirmed": false, "apply": false, "discard_reason": "candidate_absent",
+  "reports": 1, "span_seconds": 0, "decided_at": "..."}
+```
+
+## §F93.4 Decisión radar
+
+`apply = confirmed`. Estados: `UNKNOWN`, `CANDIDATE_PRESENT`, `PRESENT_CONFIRMED`,
+`CANDIDATE_ABSENT`, `ABSENT_CONFIRMED`. `discard_reason` para candidatos:
+`candidate`, `uncorroborated`, `candidate_absent`.
+
+## §F93.5 Captura CLI (no es API)
+
+```bash
+php api/bin/sensor-capture.php --room=14 --duration=600
+php api/bin/sensor-capture.php --mark=PUERTA_ABRE
+php api/bin/sensor-capture.php --analyze=api/run/captures/14-....jsonl --mode=radar_only
+```
+
+JSONL: `{"type":"event"|"mark"|"session"|"session_end", ...}`. Solo lectura de BD;
+sin MQTT ni Tuya.

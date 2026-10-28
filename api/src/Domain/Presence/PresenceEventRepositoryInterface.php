@@ -62,4 +62,18 @@ interface PresenceEventRepositoryInterface
      * @return list<PresenceEvent>
      */
     public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array;
+
+    /**
+     * F93/RF-154.3: eventos de la sala desde un instante (ventana temporal
+     * explícita, no un número arbitrario de filas). Orden: más reciente primero.
+     *
+     * @return list<PresenceEvent>
+     */
+    public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array;
+
+    /**
+     * F93/RF-156.1: fusiona claves en meta_json de un evento ya persistido
+     * (p. ej. la decisión radar calculada bajo el lock de la sesión).
+     */
+    public function updateMetaJson(int $id, array $delta): void;
 }

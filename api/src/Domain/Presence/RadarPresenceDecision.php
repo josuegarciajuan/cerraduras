@@ -131,8 +131,24 @@ final class RadarPresenceDecision
             $span = $reports > 1 ? ($run[$reports - 1]['ts'] - $run[0]['ts']) / 1000 : 0.0;
             $confirmed = $reports >= $cfg['absent_reports'] && $span >= $cfg['absent_window_seconds'];
             $state = $confirmed ? self::STATE_ABSENT_CONFIRMED : self::STATE_CANDIDATE_ABSENT;
-            $decision = self::result($mode, $state, $raw, true, $reports, $span, false, $stale, null, $nowUtc, null);
-            $decision['apply'] = true;
+            // F93/RF-154.2: un negativo todavía candidato NO cambia la ocupación
+            // efectiva. Antes `apply` era siempre true y un único `none` cerraba
+            // la presencia (salida prematura). `ABSENT` solo se aplica cuando la
+            // evidencia de ausencia está confirmada.
+            $decision = self::result(
+                $mode,
+                $state,
+                $raw,
+                $confirmed,
+                $reports,
+                $span,
+                false,
+                $stale,
+                $confirmed ? null : 'candidate_absent',
+                $nowUtc,
+                null
+            );
+            $decision['apply'] = $confirmed;
             $doorOpenForAbsent = $currentDoorState !== null
                 ? $currentDoorState === PresenceEvent::VALUE_OPEN
                 : $latestDoorValue === PresenceEvent::VALUE_OPEN;

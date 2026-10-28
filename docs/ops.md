@@ -146,6 +146,18 @@ bash bin/run-tests.sh
 /root/cerraduras/ws-vb6/logs/ws-vb6.log
 ```
 
+## Calibración y verificación de sensores (F93)
+
+Procedimiento completo (captura, marcas físicas, matriz de pruebas y criterios de
+aceptación): [`ops-sensores.md`](ops-sensores.md).
+
+```bash
+cd /root/cerraduras/api
+php bin/sensor-capture.php --room=14 --duration=600   # captura local, sin Tuya
+php bin/sensor-capture.php --mark=PUERTA_ABRE        # marca física
+php bin/sensor-capture.php --analyze=run/captures/14-....jsonl --mode=radar_only
+```
+
 ## Diagnóstico de latencia de sensores (F47)
 
 Objetivo: atribuir el retardo percibido a **sensor**, **Tuya** o **panel** sin

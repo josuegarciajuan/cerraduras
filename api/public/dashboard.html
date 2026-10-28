@@ -378,6 +378,23 @@
            disabled aria-label="Sensibilidad de 1 a 10">
     <div class="cal-range-labels"><span>0</span><span>3</span><span>6</span><span>9</span></div>
 
+    <!-- F93/RF-156.3: ajustes avanzados del radar Zigbee (no existen en el Tuya).
+         Se publican por MQTT y solo se dan por aplicados con un reporte nuevo. -->
+    <div id="cal-zb-advanced" hidden style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px">
+      <strong style="font-size:0.8rem">Radar Zigbee · ajustes avanzados</strong>
+      <div class="cal-hint">Valores reales recibidos por push. Al aplicar, se espera un reporte nuevo del radar.</div>
+      <label for="cal-zb-min">Distancia mínima (m)</label>
+      <input type="number" id="cal-zb-min" min="0" max="9.5" step="0.15" inputmode="decimal" style="width:100%">
+      <label for="cal-zb-delay">Retardo de detección (s)</label>
+      <input type="number" id="cal-zb-delay" min="0" max="10" step="0.1" inputmode="decimal" style="width:100%">
+      <label for="cal-zb-fading">Tiempo sin presencia (s)</label>
+      <input type="number" id="cal-zb-fading" min="0.5" max="1500" step="1" inputmode="decimal" style="width:100%">
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn" id="cal-zb-apply" onclick="calZbApply()">Aplicar ajustes</button>
+        <span id="cal-zb-status" class="cal-hint" style="margin:0"></span>
+      </div>
+    </div>
+
     <div class="cal-readback" id="cal-readback">—</div>
 
     <!-- F44+ (RF-52.4): prueba de paseo — elige el radio empíricamente -->
@@ -2605,9 +2622,22 @@ function updateSensorPanel(data) {
   doorEl.textContent = door;
   doorEl.className = 'value ' + (door==='OPEN'?'val-green':door==='CLOSED'?'val-red':'val-orange');
 
+  // F93/RF-157.1: el panel muestra la incertidumbre del filtro radar en vez de
+  // presentar un candidato como un hecho. `presence_state` sigue siendo la
+  // ocupación efectiva (solo cambia con decisiones confirmadas).
+  const pd = data.presence_decision || null;
+  const pdState = pd && pd.state ? String(pd.state) : '';
   const presEl = document.getElementById('s-presence');
-  presEl.textContent = presence;
-  presEl.className = 'value ' + (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange');
+  let presText = presence;
+  if (pdState === 'CANDIDATE_PRESENT') presText = 'PRESENT?';
+  else if (pdState === 'PRESENT_CONFIRMED') presText = 'PRESENT';
+  else if (pdState === 'CANDIDATE_ABSENT') presText = 'ABSENT?';
+  else if (pdState === 'ABSENT_CONFIRMED') presText = 'ABSENT';
+  presEl.textContent = presText;
+  presEl.className = 'value ' + (pdState === 'CANDIDATE_PRESENT' || pdState === 'CANDIDATE_ABSENT'
+    ? 'val-cyan'
+    : (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange'));
+  presEl.title = pd ? ('radar: ' + pdState + (pd.discard_reason ? ' · ' + pd.discard_reason : '')) : '';
 
   const lockEl = document.getElementById('s-lock');
   if (cooldown) { lockEl.textContent = 'ANTI-REENTRADA'; lockEl.className = 'value val-purple'; }
@@ -3399,6 +3429,51 @@ function calApplyStatusToState(st) {
   calRenderBadge();
 }
 
+// F93: adapta el modal al transporte real del sensor. Tuya = lectura REST bajo
+// demanda; Zigbee = última configuración recibida por push (sin /get).
+function calApplyTransportUi(data, isZb) {
+  const adv = calEl('cal-zb-advanced');
+  const walk = calEl('cal-walktest');
+  if (adv) adv.hidden = !isZb;
+  if (walk) walk.hidden = !!isZb;
+  if (!isZb) return;
+  const st = data.settings || {};
+  const saved = data.saved || {};
+  const setV = (id, v) => { const el = calEl(id); if (el && v != null) el.value = v; };
+  setV('cal-zb-min', st.minimum_range != null ? st.minimum_range : saved.minimum_range);
+  setV('cal-zb-delay', st.detection_delay != null ? st.detection_delay : saved.detection_delay);
+  setV('cal-zb-fading', st.fading_time != null ? st.fading_time : saved.fading_time);
+  const hint = calEl('cal-far-range');
+  if (hint) hint.setAttribute('aria-label', 'Rango máximo de detección en metros (Zigbee)');
+  const stEl = calEl('cal-zb-status');
+  if (stEl && data.settings_age_seconds != null) {
+    stEl.textContent = 'Config recibida hace ' + data.settings_age_seconds + ' s';
+  }
+}
+
+async function calZbApply() {
+  if (!calState || !calState.hasSensor) return;
+  const min = parseFloat(calEl('cal-zb-min').value);
+  const delay = parseFloat(calEl('cal-zb-delay').value);
+  const fading = parseFloat(calEl('cal-zb-fading').value);
+  // Guardar al aplicar: son ajustes avanzados explícitos del instalador.
+  const body = { room_id: calState.roomId, persist: true };
+  if (isFinite(min)) body.minimum_range_m = min;
+  if (isFinite(delay)) body.detection_delay_s = delay;
+  if (isFinite(fading)) body.fading_time_s = fading;
+  const stEl = calEl('cal-zb-status');
+  if (stEl) stEl.textContent = 'Aplicando…';
+  calSetError('');
+  try {
+    const data = await calPostSet(body);
+    if (stEl) stEl.textContent = data.applied ? 'Aplicado y confirmado' : 'Sin confirmar todavía';
+    if (!data.applied) calSetError(data.warning || 'El radar no confirmó los ajustes');
+  } catch (e) {
+    if (stEl) stEl.textContent = '';
+    calSetError(e && e.message ? e.message : 'No se pudo aplicar');
+  }
+}
+
 // POST a calibration change. The server applies it, verifies by read-back and
 // returns {applied, persisted, warning, status}. Throws on HTTP/transport error.
 async function calPostSet(body) {
@@ -3495,6 +3570,9 @@ async function openCalibrateModal() {
 // If the last saved calibration is not what the device currently has, re-apply it
 // (the sensor may have rejected an earlier value, e.g. far <= near).
 async function calAutoReapplyIfNeeded() {
+  // F93: en Zigbee no se reaplica sola al abrir el modal: publicar es una acción
+  // explícita del instalador y el snapshot guardado no prueba el estado físico.
+  if (calState.transport === 'ZIGBEE2MQTT') return;
   const saved = calState.saved;
   if (!saved || saved.far_detection == null || calState.readFar == null) return;
   const farDiff  = saved.far_detection !== calState.readFar;
@@ -3538,8 +3616,14 @@ async function calReadStatus() {
     calSetLive('offline', 'SIN DATOS', 'No se pudo leer el sensor.');
     throw new Error(data.error || ('HTTP ' + res.status));
   }
-  calState.online = !!(data.device && (data.device.online || data.far_detection != null));
+  // F93: en Zigbee la liveness es el último push; un valor cacheado no la prueba.
+  const isZb = data.transport === 'ZIGBEE2MQTT';
+  calState.transport = isZb ? 'ZIGBEE2MQTT' : 'TUYA';
+  calState.online = !!(data.device && (isZb
+    ? data.device.online === true
+    : (data.device.online || data.far_detection != null)));
   if (data.dp_caps) calApplyCaps(data.dp_caps);
+  calApplyTransportUi(data, isZb);
   calState.saved = data.saved || calState.saved || null;
   calApplyStatusToState(data);
   if (!calState.initial && data.far_detection != null && data.sensitivity != null) {
@@ -3565,7 +3649,8 @@ function calSeedControls() {
   const farVal = (saved && saved.far_detection != null) ? saved.far_detection
                : (calState.readFar != null ? calState.readFar : lo);
   const midSens = Math.max(smin, Math.min(smax, Math.round((smin + smax) / 2)));
-  const sensVal = (saved && saved.sensitivity != null) ? saved.sensitivity : midSens;
+  const sensVal = (saved && saved.sensitivity != null) ? saved.sensitivity
+                : (calState.readSens != null ? calState.readSens : midSens);
   fr.value = calSnapFar(farVal);
   sr.value = Math.max(smin, Math.min(smax, sensVal));
   calRenderReadout('far', parseInt(fr.value, 10));

@@ -129,8 +129,15 @@ final class SensorEventDecision
         // que la puerta cambió a ese estado cuando el dominio creía el anterior (un
         // `CLOSED` perdido dejó `OPEN` "atascado"). Se refresca la frescura sin
         // cambiar `door_state`; el resync REST queda excluido (no es una transición).
-        if ($isDoor && $lastVal !== null && $value === $lastVal
-            && $provider === PresenceEvent::PROVIDER_TUYA && $source !== 'resync') {
+        //
+        // F93/RF-155.2: en Zigbee el estado del EndDevice llega dentro de payloads
+        // agregados (presencia, batería...). Solo un evento cuya entidad sea
+        // `contact` es un reporte de la puerta; los campos `contact` cacheados que
+        // viajan en otros reportes no deben refrescar la frescura de la puerta.
+        $realDoorReport = ($provider === PresenceEvent::PROVIDER_TUYA && $source !== 'resync')
+            || ($provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
+                && strtolower((string) (($event['meta'] ?? [])['entity'] ?? '')) === 'contact');
+        if ($isDoor && $lastVal !== null && $value === $lastVal && $realDoorReport) {
             return self::REFRESH;
         }
 

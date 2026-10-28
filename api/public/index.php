@@ -847,15 +847,17 @@ function resolveDeviceOnlineState(array $dev, int $probeTtlSeconds): array {
  */
 function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
 {
+    // F93/RF-156: el calibrador atiende cualquier transporte. La exclusión de
+    // Zigbee se retira; el handler decide cómo leer/escribir según `transport`.
     $stmt = $pdo->prepare(
         "SELECT d.id, d.kind, d.external_id, d.label, d.meta_json, d.last_seen_at, d.battery_pct,
+                d.transport,
                 (d.last_seen_at IS NOT NULL
                  AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
            FROM devices d
            JOIN rooms r ON r.pack_id = d.pack_id
           WHERE r.id = :rid AND d.kind = 'PRESENCE'
             AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(d.meta_json,'\$.presence_source')),'') <> 'disabled'
-            AND (d.transport IS NULL OR UPPER(d.transport) <> 'ZIGBEE2MQTT')
           LIMIT 1"
     );
     $stmt->execute([':rid' => $roomId]);
@@ -863,8 +865,9 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
     if (!$row) {
         return null;
     }
-    $row['online']  = (bool) ($row['online'] ?? false);
-    $row['meta']    = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
+    $row['online']    = (bool) ($row['online'] ?? false);
+    $row['transport'] = $row['transport'] !== null ? strtoupper((string) $row['transport']) : 'TUYA';
+    $row['meta']      = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
     unset($row['meta_json']);
     return $row;
 }
@@ -3353,6 +3356,12 @@ $router->get(
             return \App\Http\Response::json(404, ['error' => 'La habitación no tiene sensor de presencia']);
         }
 
+        // F93/RF-156: radar Zigbee → lectura real por push (sin /get ni Tuya).
+        if (($dev['transport'] ?? '') === 'ZIGBEE2MQTT') {
+            $cal = new \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService($pdo);
+            return \App\Http\Response::json(200, $cal->status($roomId, $dev));
+        }
+
         $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
         if ($res['error']) {
             return \App\Http\Response::json(502, [
@@ -3403,6 +3412,43 @@ $router->post(
         $dev = resolvePresenceDeviceForRoom($pdo, $roomId);
         if ($dev === null) {
             return \App\Http\Response::json(404, ['error' => 'La habitación no tiene sensor de presencia']);
+        }
+
+        // F93/RF-156: radar Zigbee. El panel reutiliza `far_detection` (cm) y
+        // `sensitivity`; los ajustes avanzados viajan en metros/segundos.
+        if (($dev['transport'] ?? '') === 'ZIGBEE2MQTT') {
+            $persist = !array_key_exists('persist', $body) || (bool) $body['persist'];
+            $params = [];
+            if (isset($body['far_detection']) && is_numeric($body['far_detection'])) {
+                $params['maximum_range'] = ((int) $body['far_detection']) / 100;
+            }
+            if (isset($body['sensitivity']) && is_numeric($body['sensitivity'])) {
+                $params['radar_sensitivity'] = (int) $body['sensitivity'];
+            }
+            foreach ([
+                'minimum_range_m' => 'minimum_range',
+                'detection_delay_s' => 'detection_delay',
+                'fading_time_s' => 'fading_time',
+                'minimum_range' => 'minimum_range',
+                'detection_delay' => 'detection_delay',
+                'fading_time' => 'fading_time',
+            ] as $inputKey => $param) {
+                if (isset($body[$inputKey]) && is_numeric($body[$inputKey]) && !isset($params[$param])) {
+                    $params[$param] = (float) $body[$inputKey];
+                }
+            }
+            if ($params === []) {
+                return \App\Http\Response::json(400, ['error' => 'far_detection o sensitivity requeridos']);
+            }
+            try {
+                $cal = new \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService($pdo);
+                return \App\Http\Response::json(200, $cal->apply($roomId, $dev, $params, $persist));
+            } catch (\Throwable $e) {
+                return \App\Http\Response::json(400, [
+                    'error' => $e->getMessage(),
+                    'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
+                ]);
+            }
         }
 
         $far = isset($body['far_detection']) ? (int) $body['far_detection'] : null;
