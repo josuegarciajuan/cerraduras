@@ -76,6 +76,7 @@ use App\Http\Middlewares\ErrorHandlerMiddleware;
 use App\Http\Middlewares\IdempotencyMiddleware;
 use App\Http\Middlewares\RequestLogMiddleware;
 use App\Http\Controllers\AdminApiClientController;
+use App\Http\Controllers\AccessKeyController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\CrmController;
 use App\Http\Controllers\DevEchoController;
@@ -86,6 +87,7 @@ use App\Http\Controllers\DevicePackController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\DebtController;
 use App\Http\Controllers\LockController;
+use App\Http\Controllers\NfcCardController;
 use App\Http\Controllers\OverstayController;
 use App\Http\Controllers\PresenceController;
 use App\Http\Controllers\QrController;
@@ -2715,6 +2717,25 @@ $accessEventRepo  = new AccessEventRepository($pdo);
 $workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
 $warehouseAccessPolicy  = new WarehouseAccessPolicy($workerRoomOverrideRepo, $workerRoleRepo);
 $warehouseRecordingService = new \App\Domain\Warehouse\WarehouseRecordingService($pdo);
+$accessKeyRepo       = new \App\Domain\AccessKeys\AccessKeyRepository($pdo);
+$nfcCardRepo         = new \App\Domain\AccessKeys\NfcCardRepository($pdo);
+$nfcCardService      = new \App\Domain\AccessKeys\NfcCardService($nfcCardRepo);
+$nfcCardController   = new NfcCardController($nfcCardService);
+$accessKeyService    = new \App\Domain\AccessKeys\AccessKeyService(
+    $accessKeyRepo,
+    $nfcCardRepo,
+    $workerRepoForRoles,
+    $workerRoleRepo,
+    $workerSessionRepo,
+    $roomRepo,
+    $roomTypeRepo,
+    $deviceRepo,
+    $accessEventRepo,
+    $qrTokenizer,
+    $pdo,
+    $warehouseRecordingService
+);
+$accessKeyController = new AccessKeyController($accessKeyService);
 $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $qrTokenizer,
     $workerRepoForRoles,
@@ -2726,7 +2747,7 @@ $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $warehouseAccessPolicy,
     $warehouseRecordingService
 );
-$workerQrController  = new WorkerQrController($workerQrService);
+$workerQrController  = new WorkerQrController($workerQrService, $accessKeyService, $qrTokenizer);
 
 $lockGateway      = LockGatewayFactory::make(null, $deviceRepo); // global SIMULATED_MODE; per-room resolved inside service
 $qrValidateService = new QrValidateService(
@@ -2741,7 +2762,7 @@ $qrValidateService = new QrValidateService(
     $iotSessionRepo = new IotSessionRepository($pdo),   // F21: sync IoT state on QR open
     $switchService                                       // RF-16: turn on light on QR open
 );
-$qrController = new QrController($qrIssueService, $qrValidateService, $qrCredRepo);
+$qrController = new QrController($qrIssueService, $qrValidateService, $qrCredRepo, $accessKeyService, $qrTokenizer);
 
 $lockService    = new LockService($roomRepo, $accessEventRepo);
 $lockController = new LockController($lockService);
@@ -3215,6 +3236,26 @@ $router->delete('/api/v1/workers/{id}',       [$workerController, 'deactivate'],
 $router->post('/api/v1/workers/{id}/qr',    [$workerController, 'regenerateQr'],  $authFactory(['workers:write']));
 $router->get('/api/v1/workers/{id}/sessions', [$workerController, 'sessions'],      $authFactory(['workers:read']));
 $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],   $authFactory(['qr:validate']));
+
+// --- Routes: Llaves de acceso y fichas NFC (F96) ---
+// Static/specific paths MUST come before /{id}.
+$router->get('/api/v1/keys/defaults',              [$accessKeyController, 'defaults'],      $authFactory(['rooms:read']));
+$router->get('/api/v1/keys/accesses',              [$accessKeyController, 'accesses'],      $authFactory(['audit:read']));
+$router->post('/api/v1/keys/validate',             [$accessKeyController, 'validate'],      $authFactory(['qr:validate']));
+$router->get('/api/v1/keys',                       [$accessKeyController, 'list'],          $authFactory(['rooms:read']));
+$router->post('/api/v1/keys',                      [$accessKeyController, 'create'],        $authFactory(['rooms:write']));
+$router->get('/api/v1/keys/{id}',                  [$accessKeyController, 'show'],          $authFactory(['rooms:read']));
+$router->patch('/api/v1/keys/{id}',                [$accessKeyController, 'update'],        $authFactory(['rooms:write']));
+$router->delete('/api/v1/keys/{id}',               [$accessKeyController, 'revoke'],        $authFactory(['rooms:write']));
+$router->post('/api/v1/keys/{id}/revoke',          [$accessKeyController, 'revoke'],        $authFactory(['rooms:write']));
+$router->post('/api/v1/keys/{id}/qr',              [$accessKeyController, 'regenerateQr'],  $authFactory(['rooms:write']));
+$router->get('/api/v1/keys/{id}/accesses',         [$accessKeyController, 'keyAccesses'],   $authFactory(['audit:read']));
+
+$router->get('/api/v1/nfc-cards',                  [$nfcCardController, 'list'],            $authFactory(['rooms:read']));
+$router->post('/api/v1/nfc-cards',                 [$nfcCardController, 'create'],          $authFactory(['rooms:write']));
+$router->get('/api/v1/nfc-cards/{id}',             [$nfcCardController, 'show'],            $authFactory(['rooms:read']));
+$router->patch('/api/v1/nfc-cards/{id}',           [$nfcCardController, 'update'],          $authFactory(['rooms:write']));
+$router->delete('/api/v1/nfc-cards/{id}',          [$nfcCardController, 'disable'],         $authFactory(['rooms:write']));
 
 // --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
 $warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);

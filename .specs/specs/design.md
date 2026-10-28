@@ -5979,3 +5979,44 @@ sin jerga interna, sin emojis como única etiqueta. Tokens y contraste corregido
 
 `expects_periodic_push` solo es cierto para `PRESENCE`. El preflight deja de
 tratar el silencio de la puerta como incidencia.
+
+# F96 — Llaves de acceso y fichas NFC
+
+## 96.1 Modelo
+
+- `nfc_cards(number, code_hash, code_last4, status, current_key_id)`.
+- `access_keys(owner_type, worker_id|role_id, key_type, token_hash, token_jti,
+  all_room_types, nfc_card_id, valid_until, status)`.
+- `access_key_room_types(key_id, room_type_id)`.
+- `key_access_events(key_id, worker_id, role_id, room_id, credential_type,
+  result, reason, provider, correlation_id, worker_session_id)`.
+
+Una llave tiene exactamente un titular. `ROLE` es compartida y anónima; `WORKER`
+es personal. La fila de BD es la autoridad sobre el token firmado.
+
+## 96.2 Token
+
+`{v:1, sub:"key", kid, jti, iat, exp}` firmado con `QR_SIGNING_SECRET`.
+Se acepta en los endpoints de lector existentes; la sala se resuelve desde el
+dispositivo o se recibe en el cuerpo. La revocación invalida el `jti`/hash.
+
+## 96.3 Permisos
+
+Al crear una llave se copian los tipos de sala del rol del titular si no se
+indican. Después son independientes: cambios posteriores del rol no alteran
+llaves ya creadas. `all_room_types=1` prevalece sobre la tabla pivote.
+
+## 96.4 Flujo de acceso
+
+1. Parsear token y localizar llave por `jti`.
+2. Verificar hash, estado, vigencia y trabajador activo.
+3. Resolver sala y tipo; comprobar permiso.
+4. Abrir cerradura con `LockGatewayFactory`.
+5. Si el titular es `WORKER`, crear `worker_sessions`; si es `ROLE`, no.
+6. Auditar en `key_access_events` y en `access_events` (`QR_VALIDATE`/`OPEN`/`DENIED`).
+
+## 96.5 Panel
+
+Nuevas vistas `Llaves`, `Fichas NFC` y `Accesos` en `/panel`. El detalle de
+trabajador enlaza a sus llaves. El QR se muestra con `qrcode.min.js` y se
+descarga como PNG.

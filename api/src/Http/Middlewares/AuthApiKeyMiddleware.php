@@ -146,6 +146,10 @@ final class AuthApiKeyMiddleware implements Middleware
                     'stays:read', 'stays:write',
                     'debts:read', 'debts:sync',
                     'audit:read',
+                    'workers:read', 'workers:write',
+                    'worker-roles:read', 'worker-roles:write',
+                    'keys:read', 'keys:write',
+                    'nfc-cards:read', 'nfc-cards:write',
                     'factory:claim',
                     'sim:*',
                     'vb6-bridge:read', 'vb6-bridge:write',
@@ -162,6 +166,10 @@ final class AuthApiKeyMiddleware implements Middleware
                     'stays:read', 'stays:write',
                     'debts:read', 'debts:sync',
                     'audit:read',
+                    'workers:read', 'workers:write',
+                    'worker-roles:read', 'worker-roles:write',
+                    'keys:read', 'keys:write',
+                    'nfc-cards:read', 'nfc-cards:write',
                 ];
             case 'viewer':
                 // Read-only

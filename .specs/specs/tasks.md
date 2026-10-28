@@ -5176,3 +5176,28 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] Unitarios y flujo HTTP con datos reales/sin hardware.
 - [x] Regresión en producción (**747 passed, 0 failed, 13 skipped**).
 - [ ] Prueba física en `almacenZigbee`.
+
+## TSK-F96-01: Modelo y migración
+- **Trazabilidad**: RF-168…RF-172.
+- **Archivos**: `migrations/0130_access_keys_nfc.sql`.
+- [x] Tablas, índices y roles operativos.
+- [x] Migración aplicada sin tocar tablas previas.
+
+## TSK-F96-02: Dominio y API
+- **Trazabilidad**: RF-168…RF-172.
+- **Archivos**: `Domain/AccessKeys/*`, `AccessKeyController`, `NfcCardController`,
+  `QrController`, `WorkerQrController`, `public/index.php`.
+- [x] CRUD de fichas y llaves; validez y permisos.
+- [x] Validación QR/NFC y auditoría.
+- [x] Compatibilidad con endpoints de lector existentes.
+
+## TSK-F96-03: Panel
+- **Trazabilidad**: RF-168…RF-172.
+- **Archivos**: `public/panel/index.html`.
+- [x] Llaves, Fichas NFC y Accesos; descarga de QR; enlace desde trabajador.
+
+## TSK-F96-04: Verificación
+- **Trazabilidad**: RF-168…RF-172.
+- **Archivos**: `tests/Unit/AccessKeyTokenTest.php`, `bin/run-tests.sh` BLOCK 69.
+- [x] Unitarios de token.
+- [x] Regresión completa: **773 passed, 0 failed, 15 skipped**.

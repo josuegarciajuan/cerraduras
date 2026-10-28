@@ -18,6 +18,9 @@ use App\Support\Errors\ApiException;
  * Worker payload (F38):
  *     { "v":1, "sub":"worker", "wid":int, "jti":string, "iat":int, "exp":int }
  *
+ * Access-key payload (F96):
+ *     { "v":1, "sub":"key", "kid":int, "jti":string, "iat":int, "exp":int }
+ *
  * HMAC algorithm: SHA-256. The shared secret comes from QR_SIGNING_SECRET.
  * checksum: 4 Crockford Base32 chars — self-check for OCR errors, NOT security.
  *
@@ -79,6 +82,25 @@ final class QrTokenizer
             'exp' => $expEpoch,
         ];
         return $this->signPayload($payload);
+    }
+
+    /**
+     * Issue an access-key QR token (F96). Reusable until the key expires or is
+     * revoked; the DB row remains the authority.
+     */
+    public function issueKey(int $keyId, string $jti, int $iatEpoch, int $expEpoch): string
+    {
+        if ($expEpoch <= $iatEpoch) {
+            throw new \InvalidArgumentException('exp must be greater than iat');
+        }
+        return $this->signPayload([
+            'v'   => self::VERSION,
+            'sub' => 'key',
+            'kid' => $keyId,
+            'jti' => $jti,
+            'iat' => $iatEpoch,
+            'exp' => $expEpoch,
+        ]);
     }
 
     /**
@@ -166,6 +188,20 @@ final class QrTokenizer
                 'v'   => (int) $decoded['v'],
                 'sub' => 'worker',
                 'wid' => (int) $decoded['wid'],
+                'jti' => (string) $decoded['jti'],
+                'iat' => (int) $decoded['iat'],
+                'exp' => (int) $decoded['exp'],
+            ];
+        }
+
+        if ($sub === 'key') {
+            if (!array_key_exists('kid', $decoded)) {
+                throw $this->invalid('Token payload missing field: kid');
+            }
+            return [
+                'v'   => (int) $decoded['v'],
+                'sub' => 'key',
+                'kid' => (int) $decoded['kid'],
                 'jti' => (string) $decoded['jti'],
                 'iat' => (int) $decoded['iat'],
                 'exp' => (int) $decoded['exp'],

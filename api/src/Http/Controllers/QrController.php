@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Domain\AccessKeys\AccessKeyService;
 use App\Domain\Qr\QrCredentialRepository;
 use App\Domain\Qr\QrIssueService;
 use App\Domain\Qr\QrValidateService;
@@ -27,15 +28,21 @@ final class QrController
     private QrIssueService $issueService;
     private ?QrValidateService $validateService;
     private ?QrCredentialRepository $qrRepo;
+    private ?AccessKeyService $accessKeys;
+    private ?\App\Support\Qr\QrTokenizer $tokenizer;
 
     public function __construct(
         QrIssueService $issueService,
         ?QrValidateService $validateService = null,
-        ?QrCredentialRepository $qrRepo = null
+        ?QrCredentialRepository $qrRepo = null,
+        ?AccessKeyService $accessKeys = null,
+        ?\App\Support\Qr\QrTokenizer $tokenizer = null
     ) {
         $this->issueService    = $issueService;
         $this->validateService = $validateService;
         $this->qrRepo          = $qrRepo;
+        $this->accessKeys      = $accessKeys;
+        $this->tokenizer       = $tokenizer;
     }
 
     public function list(Request $request): Response
@@ -65,6 +72,23 @@ final class QrController
         $qrText    = JsonBody::string($body, 'qr_text');
         $deviceId  = JsonBody::string($body, 'device_id');
         $corrId    = (string) $request->attr('correlation_id', '');
+        $provider  = (string) ($request->query('provider') ?? 'TUYA');
+
+        // F96: access-key QR tokens are valid on every reader endpoint. A key
+        // token carries no room: the room is resolved from the reader device.
+        if ($this->accessKeys !== null && $this->tokenizer !== null) {
+            try {
+                $claims = $this->tokenizer->parse($qrText);
+            } catch (\Throwable $e) {
+                $claims = null;
+            }
+            if (is_array($claims) && ($claims['sub'] ?? '') === 'key') {
+                $roomId = !empty($body['room_id']) ? (int) $body['room_id'] : null;
+                return Response::json(200, $this->accessKeys->validateQrToken(
+                    $qrText, $roomId, $deviceId, $provider, $corrId
+                ));
+            }
+        }
 
         $result = $this->validateService->validate($qrText, $deviceId, $corrId);
         return Response::json(200, $result);
