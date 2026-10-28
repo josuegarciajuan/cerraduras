@@ -69,7 +69,9 @@ final class ZigbeeRadarCalibrationService
         $maximum = $this->num($settings['maximum_range'] ?? null);
         $minimum = $this->num($settings['minimum_range'] ?? null);
         $sens    = $this->num($settings['radar_sensitivity'] ?? null);
-        $presence = $snapshot['value'];
+        // F93/RF-157.3: sin push reciente no se afirma presencia ni "online".
+        $stale = $snapshot['age_seconds'] === null || $snapshot['age_seconds'] > 300;
+        $presence = $stale ? null : $snapshot['value'];
 
         return [
             'room_id'   => $roomId,
@@ -110,6 +112,7 @@ final class ZigbeeRadarCalibrationService
             'settings'           => $settings,
             'settings_at'        => $snapshot['last_at'],
             'settings_age_seconds' => $snapshot['age_seconds'],
+            'stale'              => $stale,
             'saved'              => $saved,
         ];
     }
