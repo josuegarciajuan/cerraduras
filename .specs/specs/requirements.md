@@ -2925,3 +2925,16 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
   por fecha, sala y resultado.
 - **RF-172.2**: las llaves de rol muestran “compartida” y nunca un trabajador
   inventado.
+
+## RF-173: Verificación física del lector RFID del R35D-B
+
+- **RF-173.1**: el diagnóstico debe leer el R35D-B por UART1 9600 8N1
+  (RX=18, TX=17, DIR=7 en LOW), sin WiFi, sin API, sin NVS y con GPIO15 en LOW.
+- **RF-173.2**: debe volcar cada trama cruda (longitud, terminador, HEX y ASCII)
+  y emitir una señal `ALIVE` periódica para distinguir silencio de un monitor
+  desconectado.
+- **RF-173.3**: antes de flashear el diagnóstico se debe respaldar la flash
+  completa; la restauración preferente es escribir ese mismo respaldo.
+- **RF-173.4**: la prueba se considera correcta si un QR de control produce una
+  trama y el mismo llavero produce el mismo identificador en lecturas repetidas.
+- **RF-173.5**: el diagnóstico no introduce polling ni consumo de cuota Tuya.

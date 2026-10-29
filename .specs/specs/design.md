@@ -6020,3 +6020,17 @@ llaves ya creadas. `all_room_types=1` prevalece sobre la tabla pivote.
 Nuevas vistas `Llaves`, `Fichas NFC` y `Accesos` en `/panel`. El detalle de
 trabajador enlaza a sus llaves. El QR se muestra con `qrcode.min.js` y se
 descarga como PNG.
+
+## 96.6 Verificación física del R35D-B (diagnóstico)
+
+La integración del lector NFC no forma parte de F96 (RF-168.4). Para comprobar
+si un R35D-B entrega el identificador de un llavero EM se usa un sketch aislado
+de diagnóstico, no el firmware productivo:
+
+- `docs/esp32-qr-reader/r35d-tag-probe.ino` (canónico) y
+  `firmware/r35d-tag-probe/` (copia para Arduino IDE).
+- UART1 9600 8N1, RX=18/TX=17, DIR=7 en LOW; GPIO15 en LOW y sin cambios.
+- Sin WiFi, HTTP, NVS ni validación de API. Vuelca `HEX`/`ASCII` y `ALIVE`.
+- Antes de flashear se respalda la flash completa; la restauración preferente
+  es reescribir ese respaldo para conservar WiFi/NVS y el marcador de build.
+- El runbook operativo está en `docs/esp32-qr-reader/r35d-tag-probe.md`.

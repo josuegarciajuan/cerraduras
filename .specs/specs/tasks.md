@@ -5201,3 +5201,15 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - **Archivos**: `tests/Unit/AccessKeyTokenTest.php`, `bin/run-tests.sh` BLOCK 69.
 - [x] Unitarios de token.
 - [x] Regresión completa: **773 passed, 0 failed, 15 skipped**.
+
+## TSK-F96-05: Diagnóstico físico del R35D-B
+- **Trazabilidad**: RF-173.
+- **Archivos**: `docs/esp32-qr-reader/r35d-tag-probe.ino`,
+  `firmware/r35d-tag-probe/`, `docs/esp32-qr-reader/r35d-tag-probe.md`,
+  `docs/esp32-qr-reader/r35d-serial-observe.py`,
+  `tests/Unit/R35dTagProbeSketchTest.php`.
+- [x] Sketch de solo lectura, sin WiFi/API/NVS y con GPIO15 en LOW.
+- [x] Volcado HEX/ASCII y `ALIVE`; runbook con respaldo/restauración.
+- [x] Compilación `esp32:esp32:esp32s3usbotg`.
+- [x] Unit estático: 14 checks.
+- [ ] Prueba física pendiente: QR de control + llavero EM (dispositivo apagado).
