@@ -501,6 +501,12 @@
     return 'active';
   }
 
+  function isExpiredKey(key) {
+    if (key.effective_status === 'EXPIRED' || key.status === 'EXPIRED') return true;
+    var until = parseUtcDate(key.valid_until);
+    return until ? until.getTime() <= Date.now() : false;
+  }
+
   function statusBadge(kind) {
     var meta = {
       active: { className: 'status--active', label: 'Activa' },
@@ -540,6 +546,7 @@
   function keyCard(key) {
     var kind = keyStatus(key);
     var canRevoke = kind === 'active';
+    var canReactivate = kind === 'revoked' && !isExpiredKey(key);
     return '' +
       '<article class="key-card">' +
         '<div class="card-top">' +
@@ -564,6 +571,11 @@
           (canRevoke
             ? '<button class="btn btn-danger" type="button" data-action="key-revoke" data-id="' + key.id + '">' +
                 icon('lock') + ' Desactivar' +
+              '</button>'
+            : '') +
+          (canReactivate
+            ? '<button class="btn btn-secondary" type="button" data-action="key-reactivate" data-id="' + key.id + '">' +
+                icon('refresh') + ' Reactivar' +
               '</button>'
             : '') +
         '</div>' +
@@ -721,10 +733,12 @@
     var canEdit = kind !== 'revoked';
     var canQr = key.key_type === 'QR' && kind === 'active';
     var canRevoke = kind === 'active';
+    var canReactivate = kind === 'revoked' && !isExpiredKey(key);
     return '' +
       '<button class="btn btn-secondary" type="button" data-modal-close="1">Cerrar</button>' +
       (canEdit ? '<button class="btn btn-secondary" type="button" data-modal-action="detail-edit">' + icon('edit') + ' Editar</button>' : '') +
       (canQr ? '<button class="btn btn-primary" type="button" data-modal-action="detail-qr">' + icon('qr') + ' Generar QR nuevo</button>' : '') +
+      (canReactivate ? '<button class="btn btn-secondary" type="button" data-modal-action="detail-reactivate">' + icon('refresh') + ' Reactivar</button>' : '') +
       (canRevoke ? '<button class="btn btn-danger" type="button" data-modal-action="detail-revoke">' + icon('lock') + ' Desactivar</button>' : '');
   }
 
@@ -748,6 +762,8 @@
         regenerateQr(key);
       } else if (action === 'detail-revoke') {
         revokeKey(key);
+      } else if (action === 'detail-reactivate') {
+        reactivateKey(key);
       }
     });
 
@@ -963,6 +979,27 @@
       closeAllModals();
       await loadKeys();
       showToast('Llave desactivada.');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function reactivateKey(key) {
+    var text = key.owner_type === 'WORKER'
+      ? '¿Reactivar la llave de ' + keyOwnerPhrase(key) + '? Volverá a abrir puertas con la misma credencial.'
+      : '¿Reactivar la llave compartida de ' + (key.role_name || roleName(key.role_id) || 'este puesto') + '? Volverá a abrir puertas con la misma credencial.';
+    var ok = await confirmDialog({
+      title: 'Reactivar llave',
+      message: text,
+      confirmText: 'Sí, reactivar'
+    });
+    if (!ok) return;
+
+    try {
+      await api('/api/v1/keys/' + key.id + '/reactivate', { method: 'POST' });
+      closeAllModals();
+      await loadKeys();
+      showToast('Llave reactivada.');
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -1951,6 +1988,20 @@
         }
       }
       revokeKey(key);
+      return;
+    }
+    if (action === 'key-reactivate') {
+      var reactivateTarget = findKey(id);
+      if (!reactivateTarget) {
+        try {
+          var reactivateResponse = await api('/api/v1/keys/' + id);
+          reactivateTarget = reactivateResponse.data || reactivateResponse;
+        } catch (err) {
+          showToast(err.message, 'error');
+          return;
+        }
+      }
+      reactivateKey(reactivateTarget);
       return;
     }
     if (action === 'refresh-keys' || action === 'retry-keys') {

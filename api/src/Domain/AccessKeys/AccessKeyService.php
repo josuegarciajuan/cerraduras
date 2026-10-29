@@ -357,6 +357,63 @@ final class AccessKeyService
     }
 
     /**
+     * Reactivate a deactivated key (F99).
+     *
+     * The credential is preserved: a QR key keeps its token and an NFC key
+     * recovers its physical card. Only keys that are still valid for their
+     * owner can be reactivated.
+     */
+    public function reactivate(int $id): array
+    {
+        $key = $this->getKey($id);
+
+        $workerActive = null;
+        if ($key['owner_type'] === 'WORKER') {
+            $worker = $this->workers->findById((int) $key['worker_id']);
+            $workerActive = $worker !== null && $worker->isActive();
+        }
+
+        $card = null;
+        if ($key['key_type'] === 'NFC' && $key['nfc_card_id'] !== null) {
+            $card = $this->cards->findById((int) $key['nfc_card_id']);
+        }
+
+        $verdict = AccessKeyReactivationPolicy::evaluate($key, $workerActive, $card, time());
+        if (!$verdict['ok']) {
+            if ($verdict['code'] === 'nfc_card_unavailable') {
+                throw new ConflictException($verdict['code'], (string) $verdict['message'], ['key_id' => $id]);
+            }
+            throw new UnprocessableException($verdict['code'] ?? 'validation_error', (string) $verdict['message']);
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            if ($this->keys->reactivate($id) !== 1) {
+                throw new UnprocessableException('not_revoked', 'Only deactivated keys can be reactivated');
+            }
+            if ($key['key_type'] === 'NFC') {
+                // Release is idempotent; assign fails if another key took the card.
+                $this->cards->releaseFromKey($id);
+                if (!$this->cards->assignToKey((int) $key['nfc_card_id'], $id)) {
+                    throw new ConflictException(
+                        'nfc_card_unavailable',
+                        'NFC card was assigned to another key',
+                        ['key_id' => $id]
+                    );
+                }
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        return $this->getKey($id);
+    }
+
+    /**
      * Rotate the QR credential for an existing QR key.
      *
      * @return array<string,mixed> key plus qr_token

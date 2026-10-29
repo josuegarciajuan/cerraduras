@@ -8,6 +8,46 @@
 
 ---
 
+# Fase 99: Contrato de reactivación de llaves
+
+## `POST /api/v1/keys/{id}/reactivate`
+
+- Ámbito: `keys:write`.
+- Cuerpo: vacío (se ignora cualquier cuerpo enviado).
+- Respuesta `200`:
+
+```json
+{
+  "data": {
+    "id": 42,
+    "status": "ACTIVE",
+    "effective_status": "ACTIVE",
+    "revoked_at": null,
+    "key_type": "QR",
+    "valid_until": "2026-11-01 12:00:00.000",
+    "qr_token": null
+  }
+}
+```
+
+- La credencial no se devuelve: un QR ya emitido sigue siendo válido; una ficha
+  NFC vuelve a quedar `ASSIGNED` a la llave.
+- Errores:
+
+| HTTP | `error.code` | Motivo |
+|---|---|---|
+| 404 | `not_found` | La llave no existe |
+| 422 | `not_revoked` | La llave no está `REVOKED` |
+| 422 | `key_expired` | `valid_until` ya pasó |
+| 422 | `worker_inactive` | El trabajador titular está de baja |
+| 409 | `nfc_card_unavailable` | La ficha no existe, está deshabilitada o pertenece a otra llave |
+
+- Forma del error: la misma que el resto de la API
+  (`{"error":{"code":"...","message":"..."}}`).
+- No se modifica ninguna otra ruta ni la forma de `GET /api/v1/keys`.
+
+---
+
 # Fase 92: Contratos del estado de conectividad por transporte
 
 ## `GET /dashboard-api/device-status?room_id=N`

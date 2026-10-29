@@ -6731,6 +6731,97 @@ pass "F96: limpieza de datos de prueba"
 
 
 # =============================================================================
+# BLOCK 71 — F99: reactivar llaves desactivadas
+# Trazabilidad: RF-185..RF-189
+# =============================================================================
+block "BLOCK 71 — F99: reactivar llaves desactivadas"
+F99_TS=$(date +%s)
+F99_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M)
+
+F99_KEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"label\":\"F99-ROLE-$F99_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"QR\",\"valid_until\":\"$F99_VALID\",\"all_room_types\":true}" \
+  "${API_BASE}/api/v1/keys")
+F99_KEY_ID=$(echo "$F99_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+F99_TOKEN=$(echo "$F99_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+if [ -n "$F99_KEY_ID" ] && [ -n "$F99_TOKEN" ]; then
+  pass "F99: crear llave QR de rol"
+else
+  fail "F99: crear llave" "$(echo "$F99_KEY_RESP" | head -c 300)"
+fi
+
+http_test POST "/api/v1/keys/$F99_KEY_ID/reactivate" 422 "F99: una llave activa no se reactiva" --key ADMIN-CLI
+http_test DELETE "/api/v1/keys/$F99_KEY_ID" 200 "F99: revocar llave" --key ADMIN-CLI
+F99_REACT=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $ADMIN_KEY" "${API_BASE}/api/v1/keys/$F99_KEY_ID/reactivate")
+F99_REACT_CODE=$(echo "$F99_REACT" | tail -n1)
+F99_REACT_BODY=$(echo "$F99_REACT" | sed '$d')
+if [ "$F99_REACT_CODE" = "200" ] && echo "$F99_REACT_BODY" | grep -q '"status":"ACTIVE"' && echo "$F99_REACT_BODY" | grep -q '"revoked_at":null'; then
+  pass "F99: reactivar devuelve la llave activa y sin revoked_at"
+else
+  fail "F99: reactivar llave" "HTTP $F99_REACT_CODE $(echo "$F99_REACT_BODY" | head -c 300)"
+fi
+
+http_test POST /api/v1/keys/validate 200 "F99: el QR conservado vuelve a abrir" --key RPI-DEV \
+  --body "{\"qr_text\":\"$F99_TOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+http_test POST "/api/v1/keys/$F99_KEY_ID/reactivate" 422 "F99: reactivar dos veces → 422" --key ADMIN-CLI
+
+# Llave caducada: se revoca y se fuerza la caducidad en BD.
+F99_EXP_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"label\":\"F99-EXP-$F99_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"QR\",\"valid_until\":\"$F99_VALID\",\"all_room_types\":true}" \
+  "${API_BASE}/api/v1/keys")
+F99_EXP_ID=$(echo "$F99_EXP_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+if [ -n "$F99_EXP_ID" ]; then
+  http_test DELETE "/api/v1/keys/$F99_EXP_ID" 200 "F99: revocar llave caducada" --key ADMIN-CLI
+  $MYSQL -e "UPDATE access_keys SET valid_until = UTC_TIMESTAMP(3) - INTERVAL 1 HOUR WHERE id=$F99_EXP_ID" >/dev/null 2>&1 || true
+  http_test POST "/api/v1/keys/$F99_EXP_ID/reactivate" 422 "F99: una llave caducada no se reactiva" --key ADMIN-CLI
+else
+  skip "F99: llave caducada" "no se pudo crear"
+fi
+
+# Llave personal con trabajador dado de baja.
+F99_W_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"F99 Worker $F99_TS\",\"role_id\":1}" "${API_BASE}/api/v1/workers")
+F99_W_ID=$(echo "$F99_W_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+if [ -n "$F99_W_ID" ]; then
+  F99_WKEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+    -d "{\"label\":\"F99-W-$F99_TS\",\"owner_type\":\"WORKER\",\"worker_id\":$F99_W_ID,\"key_type\":\"QR\",\"valid_until\":\"$F99_VALID\"}" \
+    "${API_BASE}/api/v1/keys")
+  F99_WKEY_ID=$(echo "$F99_WKEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+  if [ -n "$F99_WKEY_ID" ]; then
+    http_test DELETE "/api/v1/keys/$F99_WKEY_ID" 200 "F99: revocar llave personal" --key ADMIN-CLI
+    http_test DELETE "/api/v1/workers/$F99_W_ID" 200 "F99: dar de baja al trabajador" --key ADMIN-CLI
+    http_test POST "/api/v1/keys/$F99_WKEY_ID/reactivate" 422 "F99: no se reactiva si el titular está de baja" --key ADMIN-CLI
+  else
+    skip "F99: llave personal" "no se pudo crear"
+  fi
+else
+  skip "F99: llave personal" "no se pudo crear el trabajador"
+fi
+
+# Ficha NFC: al revocar se libera y al reactivar se recupera.
+F99_CARD_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d "{\"number\":\"F99-C-$F99_TS\",\"code\":\"F99CODE-$F99_TS\"}" "${API_BASE}/api/v1/nfc-cards")
+F99_CARD_ID=$(echo "$F99_CARD_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+if [ -n "$F99_CARD_ID" ]; then
+  F99_NKEY_RESP=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+    -d "{\"label\":\"F99-NFC-$F99_TS\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"NFC\",\"nfc_card_id\":$F99_CARD_ID,\"valid_until\":\"$F99_VALID\",\"all_room_types\":true}" \
+    "${API_BASE}/api/v1/keys")
+  F99_NKEY_ID=$(echo "$F99_NKEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+  http_test DELETE "/api/v1/keys/$F99_NKEY_ID" 200 "F99: revocar llave de ficha" --key ADMIN-CLI
+  http_test POST "/api/v1/keys/$F99_NKEY_ID/reactivate" 200 "F99: reactivar llave de ficha" --key ADMIN-CLI
+  F99_CARD_STATE=$($MYSQL -sN -e "SELECT CONCAT(status,':',IFNULL(current_key_id,0)) FROM nfc_cards WHERE id=$F99_CARD_ID" 2>/dev/null)
+  [ "$F99_CARD_STATE" = "ASSIGNED:$F99_NKEY_ID" ] && pass "F99: la ficha vuelve a quedar asignada" || fail "F99: la ficha vuelve a quedar asignada" "got $F99_CARD_STATE"
+else
+  skip "F99: llave de ficha" "no se pudo crear la ficha"
+fi
+
+$MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F99-%'; DELETE FROM nfc_cards WHERE number LIKE 'F99-%'; DELETE FROM access_keys WHERE label LIKE 'F99-%';" >/dev/null 2>&1 || true
+if [ -n "${F99_W_ID:-}" ]; then
+  $MYSQL -e "DELETE FROM worker_sessions WHERE worker_id=$F99_W_ID; DELETE FROM workers WHERE id=$F99_W_ID" >/dev/null 2>&1 || true
+fi
+pass "F99: limpieza de datos de prueba"
+
+
+# =============================================================================
 # BLOCK 70 — F97: variantes ESP (cerradura/imán) + canal de puerta
 # Trazabilidad: RF-174..RF-177, TSK-F97-01/02/03/06
 # =============================================================================

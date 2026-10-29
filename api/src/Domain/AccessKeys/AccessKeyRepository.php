@@ -234,6 +234,21 @@ final class AccessKeyRepository
     }
 
     /**
+     * Reactivate a revoked key. Returns 0 when it was not revoked (the caller
+     * decides which error to surface).
+     */
+    public function reactivate(int $id): int
+    {
+        $stmt = $this->pdo->prepare(
+            "UPDATE access_keys
+                SET status = 'ACTIVE', revoked_at = NULL
+              WHERE id = :id AND status = 'REVOKED'"
+        );
+        $stmt->execute([':id' => $id]);
+        return $stmt->rowCount();
+    }
+
+    /**
      * @param array{key_id?:int, worker_id?:int, role_id?:int, room_id?:int,
      *              result?:string, from?:string, to?:string, limit?:int} $filters
      * @return list<array<string,mixed>>

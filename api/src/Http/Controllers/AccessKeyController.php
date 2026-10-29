@@ -116,6 +116,11 @@ final class AccessKeyController
         return Response::json(200, ['data' => $this->service->revoke((int) $request->routeParam('id'))]);
     }
 
+    public function reactivate(Request $request): Response
+    {
+        return Response::json(200, ['data' => $this->service->reactivate((int) $request->routeParam('id'))]);
+    }
+
     public function regenerateQr(Request $request): Response
     {
         return Response::json(200, ['data' => $this->service->regenerateQr((int) $request->routeParam('id'))]);
