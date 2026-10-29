@@ -16,7 +16,8 @@ use App\Support\Errors\UnauthorizedException;
 /**
  * AuthApiKeyMiddleware:
  *  - Priority 1: If a valid crm_session cookie exists, auto-authenticate as a
- *    synthetic ADMIN client with all scopes (CRM panel user).
+ *    synthetic client whose scopes are derived from the CRM user role
+ *    (admin/operator/viewer/key_manager).
  *  - Priority 2: Reads the X-API-Key header, hashes with SHA-256, looks up an
  *    active api_clients row.
  *  - Enforces the optional IP whitelist.
@@ -180,6 +181,15 @@ final class AuthApiKeyMiddleware implements Middleware
                     'stays:read',
                     'debts:read',
                     'audit:read',
+                ];
+            case 'key_manager':
+                // F98/RF-179: key desk only. No nfc-cards:write, audit:read,
+                // rooms:write, qr:* or locks:*.
+                return [
+                    'workers:read', 'workers:write',
+                    'worker-roles:read',
+                    'rooms:read',
+                    'keys:read', 'keys:write',
                 ];
             default:
                 return [];

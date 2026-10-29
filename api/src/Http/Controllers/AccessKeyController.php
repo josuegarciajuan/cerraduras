@@ -12,10 +12,11 @@ use App\Support\Json\JsonBody;
  * AccessKeyController: /api/v1/keys endpoints (F96).
  *
  * Scopes:
- *   GET                      → rooms:read
- *   POST/PATCH/...           → rooms:write
+ *   GET                      → keys:read
+ *   POST/PATCH/...           → keys:write
  *   POST /keys/validate      → qr:validate
  *   GET  /keys/accesses      → audit:read
+ *   GET  /keys/{id}/accesses → audit:read
  */
 final class AccessKeyController
 {

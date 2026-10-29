@@ -13,7 +13,8 @@ use App\Http\Response;
  *  - Checks for the "crm_session" cookie.
  *  - Validates it against the crm_sessions table.
  *  - If valid, stores the CrmUser in request attributes as "crm_user".
- *  - For browser page views (paths starting /panel): redirects to /panel/login on failure.
+ *  - For browser page views (/panel* or /llaves*): redirects to the matching
+ *    login page (/panel/login or /llaves/login) on failure.
  *  - For API calls: throws an Unauthorized exception (JSON response).
  *
  * This middleware is used to protect CRM HTML pages and CRM-specific API endpoints.
@@ -33,24 +34,24 @@ final class CrmSessionMiddleware implements Middleware
     public function handle(Request $request, callable $next): Response
     {
         $token = $request->cookie('crm_session');
-        $isPanelPage = strncmp($request->path, '/panel', 6) === 0;
+        $loginPath = $this->loginPathFor($request->path);
 
         // --- No session cookie ---
         if ($token === null || $token === '') {
-            return $this->fail($request, $isPanelPage);
+            return $this->fail($request, $loginPath);
         }
 
         // --- Validate token ---
         $userId = $this->sessionRepo->validate($token);
         if ($userId === null) {
-            return $this->fail($request, $isPanelPage, true);
+            return $this->fail($request, $loginPath, true);
         }
 
         // --- User still active? ---
         $user = $this->userRepo->findById($userId);
         if ($user === null || !$user->active) {
             $this->sessionRepo->destroy($token);
-            return $this->fail($request, $isPanelPage, true);
+            return $this->fail($request, $loginPath, true);
         }
 
         $request->withAttr('crm_user', $user);
@@ -60,18 +61,33 @@ final class CrmSessionMiddleware implements Middleware
     }
 
     /**
+     * Login destination for a protected HTML page, or null for API paths.
+     * /llaves* reuses the CRM session but has its own login page (F98).
+     */
+    private function loginPathFor(string $path): ?string
+    {
+        if ($path === '/panel' || strncmp($path, '/panel/', 7) === 0) {
+            return '/panel/login';
+        }
+        if ($path === '/llaves' || strncmp($path, '/llaves/', 8) === 0) {
+            return '/llaves/login';
+        }
+        return null;
+    }
+
+    /**
      * Fail: redirect browser to login, or throw for API calls.
      */
-    private function fail(Request $request, bool $isPanelPage, bool $clearCookie = false): Response
+    private function fail(Request $request, ?string $loginPath, bool $clearCookie = false): Response
     {
-        if ($isPanelPage && $request->path === '/panel/login') {
+        if ($loginPath !== null && $request->path === $loginPath) {
             // Don't redirect the login page itself; that would cause a loop
             throw new \App\Support\Errors\UnauthorizedException('CRM session required');
         }
 
-        if ($isPanelPage) {
-            // Browser page view → redirect to login
-            $response = new Response(302, ['Location' => '/panel/login'], '');
+        if ($loginPath !== null) {
+            // Browser page view → redirect to the matching login page
+            $response = new Response(302, ['Location' => $loginPath], '');
             if ($clearCookie) {
                 $response->withCookie('crm_session', '', time() - 3600, '/');
             }

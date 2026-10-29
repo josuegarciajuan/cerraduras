@@ -75,10 +75,13 @@ use App\Http\Middlewares\CrmSessionMiddleware;
 use App\Http\Middlewares\ErrorHandlerMiddleware;
 use App\Http\Middlewares\IdempotencyMiddleware;
 use App\Http\Middlewares\RequestLogMiddleware;
+use App\Http\Middlewares\PanelAccessMiddleware;
+use App\Http\Middlewares\KeyDeskAccessMiddleware;
 use App\Http\Controllers\AdminApiClientController;
 use App\Http\Controllers\AccessKeyController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\CrmController;
+use App\Http\Controllers\KeyDeskController;
 use App\Http\Controllers\DevEchoController;
 use App\Http\Controllers\EventStreamController;
 use App\Http\Controllers\DeviceController;
@@ -2738,6 +2741,7 @@ $accessKeyRepo       = new \App\Domain\AccessKeys\AccessKeyRepository($pdo);
 $nfcCardRepo         = new \App\Domain\AccessKeys\NfcCardRepository($pdo);
 $nfcCardService      = new \App\Domain\AccessKeys\NfcCardService($nfcCardRepo);
 $nfcCardController   = new NfcCardController($nfcCardService);
+$keyDeskController   = new KeyDeskController($nfcCardRepo);
 $accessKeyService    = new \App\Domain\AccessKeys\AccessKeyService(
     $accessKeyRepo,
     $nfcCardRepo,
@@ -3256,17 +3260,20 @@ $router->post('/api/v1/workers/qr/validate',  [$workerQrController, 'validate'],
 
 // --- Routes: Llaves de acceso y fichas NFC (F96) ---
 // Static/specific paths MUST come before /{id}.
-$router->get('/api/v1/keys/defaults',              [$accessKeyController, 'defaults'],      $authFactory(['rooms:read']));
+$router->get('/api/v1/keys/defaults',              [$accessKeyController, 'defaults'],      $authFactory(['keys:read']));
 $router->get('/api/v1/keys/accesses',              [$accessKeyController, 'accesses'],      $authFactory(['audit:read']));
 $router->post('/api/v1/keys/validate',             [$accessKeyController, 'validate'],      $authFactory(['qr:validate']));
-$router->get('/api/v1/keys',                       [$accessKeyController, 'list'],          $authFactory(['rooms:read']));
-$router->post('/api/v1/keys',                      [$accessKeyController, 'create'],        $authFactory(['rooms:write']));
-$router->get('/api/v1/keys/{id}',                  [$accessKeyController, 'show'],          $authFactory(['rooms:read']));
-$router->patch('/api/v1/keys/{id}',                [$accessKeyController, 'update'],        $authFactory(['rooms:write']));
-$router->delete('/api/v1/keys/{id}',               [$accessKeyController, 'revoke'],        $authFactory(['rooms:write']));
-$router->post('/api/v1/keys/{id}/revoke',          [$accessKeyController, 'revoke'],        $authFactory(['rooms:write']));
-$router->post('/api/v1/keys/{id}/qr',              [$accessKeyController, 'regenerateQr'],  $authFactory(['rooms:write']));
+$router->get('/api/v1/keys',                       [$accessKeyController, 'list'],          $authFactory(['keys:read']));
+$router->post('/api/v1/keys',                      [$accessKeyController, 'create'],        $authFactory(['keys:write']));
+$router->get('/api/v1/keys/{id}',                  [$accessKeyController, 'show'],          $authFactory(['keys:read']));
+$router->patch('/api/v1/keys/{id}',                [$accessKeyController, 'update'],        $authFactory(['keys:write']));
+$router->delete('/api/v1/keys/{id}',               [$accessKeyController, 'revoke'],        $authFactory(['keys:write']));
+$router->post('/api/v1/keys/{id}/revoke',          [$accessKeyController, 'revoke'],        $authFactory(['keys:write']));
+$router->post('/api/v1/keys/{id}/qr',              [$accessKeyController, 'regenerateQr'],  $authFactory(['keys:write']));
 $router->get('/api/v1/keys/{id}/accesses',         [$accessKeyController, 'keyAccesses'],   $authFactory(['audit:read']));
+
+// F98/RF-182.1: fichas disponibles para el asistente de /llaves (solo id/number).
+$router->get('/api/v1/llaves/nfc-available',       [$keyDeskController, 'nfcAvailable'],    $authFactory(['keys:read']));
 
 $router->get('/api/v1/nfc-cards',                  [$nfcCardController, 'list'],            $authFactory(['rooms:read']));
 $router->post('/api/v1/nfc-cards',                 [$nfcCardController, 'create'],          $authFactory(['rooms:write']));
@@ -3618,6 +3625,8 @@ $crmSessionRepo = new CrmSessionRepository($pdo);
 $crmUserService = new CrmUserService($crmUserRepo, $crmSessionRepo);
 $crmController  = new CrmController($crmUserService);
 $crmSessionMw   = new CrmSessionMiddleware($crmSessionRepo, $crmUserRepo);
+$panelAccessMw  = new PanelAccessMiddleware();
+$keyDeskAccessMw = new KeyDeskAccessMiddleware();
 
 
 // ── Dashboard API: QR de pruebas (RF-20) ──
@@ -4047,8 +4056,17 @@ $router->patch('/api/v1/crm/users/{id}',  [$crmController, 'updateUser'], $authF
 $router->delete('/api/v1/crm/users/{id}', [$crmController, 'deleteUser'], $authFactory(['audit:read']));
 
 // --- Protected CRM panel HTML pages (session cookie) ---
-$router->get('/panel',            [$crmController, 'panel'],      [$crmSessionMw]);
-$router->get('/panel/{path}',     [$crmController, 'panelAsset'], [$crmSessionMw]);
+$router->get('/panel',            [$crmController, 'panel'],      [$crmSessionMw, $panelAccessMw]);
+$router->get('/panel/{path}',     [$crmController, 'panelAsset'], [$crmSessionMw, $panelAccessMw]);
+
+// --- F98: Key desk pages (/llaves) ---
+// Login and static assets are public; everything else reuses the CRM session
+// but admits only key_manager|admin. Assets/login are declared before the SPA
+// catch-all so /llaves/{path} cannot swallow them.
+$router->get('/llaves/login',        [$keyDeskController, 'loginPage']);
+$router->get('/llaves/assets/{path}', [$keyDeskController, 'asset']);
+$router->get('/llaves',              [$keyDeskController, 'index'], [$crmSessionMw, $keyDeskAccessMw]);
+$router->get('/llaves/{path}',       [$keyDeskController, 'index'], [$crmSessionMw, $keyDeskAccessMw]);
 
 // --- SSE event stream (F33x) — bypass middleware for direct streaming ---
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);

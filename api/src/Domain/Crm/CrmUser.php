@@ -7,7 +7,7 @@ final class CrmUser
     public int $id;
     public string $username;
     public string $passwordHash;
-    public string $role;       // 'admin' | 'operator' | 'viewer'
+    public string $role;       // 'admin' | 'operator' | 'viewer' | 'key_manager'
     public ?string $displayName;
     public bool $active;
     public ?string $lastLoginAt;
@@ -15,7 +15,7 @@ final class CrmUser
     public string $updatedAt;
 
     /** @var string[] */
-    private const ROLES = ['admin', 'operator', 'viewer'];
+    private const ROLES = ['admin', 'operator', 'viewer', 'key_manager'];
 
     public function __construct(array $props)
     {
@@ -43,6 +43,24 @@ final class CrmUser
     public function hasRole(string ...$roles): bool
     {
         return in_array($this->role, $roles, true);
+    }
+
+    /**
+     * Whether this user may open the technical panel (/panel).
+     * F98/RF-178.5: key_manager does not; admin/operator/viewer do.
+     */
+    public function canAccessTechnicalPanel(): bool
+    {
+        return $this->hasRole('admin', 'operator', 'viewer');
+    }
+
+    /**
+     * Whether this user may open the key desk (/llaves).
+     * F98/RF-178.3: only key_manager and admin.
+     */
+    public function canAccessKeyDesk(): bool
+    {
+        return $this->hasRole('key_manager', 'admin');
     }
 
     public function toArray(): array
