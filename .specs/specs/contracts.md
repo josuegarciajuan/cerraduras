@@ -3702,3 +3702,11 @@ Veredicto: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`, `NOT_EVALUABLE`.
 
 Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 `room_unresolved`, `already_inside`, `ficha_invalid`, `ficha_unassigned`.
+
+### Diagnóstico serie del R35D-B
+
+- Salida de `r35d-tag-probe.ino` por USB/UART0 a **115200**, DTR/RTS off.
+- Por cada trama: `[TAG] seq`, `len`, `term` (`CRLF|CR|LF|NONE`), `HEX`, `ASCII`,
+  `content` y una pista (`possible-EM-UID`, `possible-QR/text`, `unknown`).
+- `[ALIVE] uptime`, `frames`, `bytes`, `heap` cada 5 s.
+- No hay contrato HTTP: el sketch no llama a la API.
