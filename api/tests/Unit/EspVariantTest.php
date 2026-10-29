@@ -31,6 +31,11 @@ $controller = (string) file_get_contents($root . '/api/src/Http/Controllers/Iman
 $routes = (string) file_get_contents($root . '/api/public/index.php');
 $panel = (string) file_get_contents($root . '/api/public/panel/index.html');
 $migration = (string) file_get_contents($root . '/api/migrations/0131_esp_variants.sql');
+$stateMigration = (string) file_get_contents($root . '/api/migrations/0134_room_sensor_state.sql');
+$resetSource = (string) file_get_contents($root . '/api/src/Domain/Rooms/RoomCycleResetter.php');
+$statusRoute = (string) file_get_contents($root . '/api/public/index.php');
+$dashboard = (string) file_get_contents($root . '/api/public/dashboard.html');
+$wizard = (string) file_get_contents($root . '/api/src/Http/Controllers/SensorWizardController.php');
 
 // ── Modelo ────────────────────────────────────────────────────────────────
 checkEsp(Device::SUBTYPE_ESP_CERRADURA === 'CERRADURA', 'subtipo CERRADURA definido');
@@ -62,7 +67,7 @@ checkEsp(str_contains($legacy, 'startLockSequence') && str_contains($legacy, 'LO
 
 // ── ESP-imán: variante, estados y seguridad eléctrica ─────────────────────
 checkEsp(str_contains($iman, '#define IMAN_VARIANT                 "IMAN"')
-    && str_contains($iman, '#define IMAN_VERSION                 "2.2-iman-continuous"'),
+    && str_contains($iman, '#define IMAN_VERSION                 "2.3-iman-projection"'),
     'ESP-imán declara variante y versión');
 checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         1')
     && str_contains($iman, '#if IMAN_HOLD_CONTINUOUS')
@@ -70,6 +75,9 @@ checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         1')
     'perfil de ensayo continuo a máxima potencia');
 checkEsp(str_contains($iman, 'mantenimiento CONTINUO (ensayo F97.2 máxima potencia)'),
     'el arranque registra el perfil continuo');
+checkEsp(str_contains($iman, 'actuator_state') && str_contains($iman, 'output_on')
+    && str_contains($iman, 'door_link'),
+    'el heartbeat declara estado real del actuador y del canal');
 checkEsp(str_contains($iman, 'IMAN_HOLD_ON_MS              950')
     && str_contains($iman, 'IMAN_HOLD_OFF_MS             50'),
     'perfil pulsado 950/50 conservado para poder revertir');
@@ -104,6 +112,12 @@ checkEsp(str_contains($iman, 'imanJsonTrue(data, "contiguous")')
     && str_contains($iman, 'imanNeedFreshEvent')
     && str_contains($iman, 'imanDoorKnown = false'),
     'un hueco no contiguo obliga a esperar un evento nuevo');
+checkEsp(str_contains($iman, 'state_source') && str_contains($iman, 'manual_confirm'),
+    'una confirmación manual de puerta cerrada es adoptable');
+checkEsp(str_contains($iman, 'SSE close (reconexión inmediata)')
+    && str_contains($iman, 'SSE HTTP %d')
+    && !str_contains($iman, 'if (!imanLinkConnected || imanLinkHealthyAt == 0)'),
+    'SSE reconecta al close y valida el estado HTTP sin cortar por close ordenado');
 checkEsp(str_contains($controller, "sensor = 'PROXIMITY'")
     && str_contains($controller, "transport = 'ZIGBEE2MQTT'")
     && str_contains($controller, 'variant_mismatch')
@@ -111,6 +125,24 @@ checkEsp(str_contains($controller, "sensor = 'PROXIMITY'")
     && str_contains($controller, "'contiguous'")
     && str_contains($controller, '$contiguous'),
     'SSE resuelve la puerta Zigbee del pack y exige identidad/variante');
+checkEsp(str_contains($controller, 'RoomSensorStateRepository')
+    && str_contains($controller, 'state_value')
+    && str_contains($controller, 'state_source'),
+    'SSE usa el estado físico independiente del ciclo de estancia');
+checkEsp(str_contains($stateMigration, 'CREATE TABLE IF NOT EXISTS `room_sensor_state`')
+    && str_contains($stateMigration, 'received_at') && str_contains($stateMigration, 'last_event_id'),
+    'migración del estado físico por sala/sensor/transporte');
+checkEsp(!str_contains($resetSource, 'room_sensor_state'),
+    'el reset de ciclo no borra el estado físico del contacto');
+checkEsp(str_contains($statusRoute, 'd.subtype, d.external_id')
+    && str_contains($statusRoute, 'd.firmware_version')
+    && str_contains($dashboard, 'espDeviceInfo'),
+    'el dashboard identifica variante, firmware y telemetría del ESP');
+checkEsp(str_contains($statusRoute, 'sensores/v2/door/state')
+    && str_contains($wizard, 'setManual')
+    && str_contains($wizard, 'setUnknown')
+    && str_contains($wizard, 'confirm_required'),
+    'confirmación manual de puerta con barrera e invalidación');
 checkEsp(str_contains($routes, "/dashboard-api/door-events")
     && str_contains($routes, 'ImanEventStreamController'),
     'ruta SSE del imán registrada antes del dispatch');

@@ -139,6 +139,10 @@ final class ZigbeeMqttEventProcessor
         // domain decision (duplicate/stale still means it reported).
         $this->devices->updateLastSeen($device->id);
 
+        // F97.3: identidad del sensor en el hecho auditado. Permite que la
+        // proyección física quede ligada al dispositivo correcto.
+        $meta['device_external_id'] = $externalId;
+
         $event = [
             'room_id' => $roomId,
             'sensor' => $sensor,

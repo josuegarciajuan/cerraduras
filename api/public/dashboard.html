@@ -719,6 +719,23 @@ function devStateOf(d) {
   if (!d || d.online === undefined || d.online === null) return 'unknown';
   return d.online ? 'online' : 'offline';
 }
+// F97.3: identifica inequívocamente cada ESP y muestra su telemetría real.
+function espDeviceInfo(d) {
+  if (!d || d.kind !== 'RPI') return '';
+  return [
+    d.subtype === 'IMAN' ? 'ESP-imán' : d.subtype === 'CERRADURA' ? 'ESP-cerradura' : 'ESP',
+    d.firmware_version || '',
+    (d.meta && d.meta.actuator_state) ? ('imán ' + d.meta.actuator_state) : '',
+    (d.meta && d.meta.output_on !== undefined) ? ('salida ' + (d.meta.output_on ? 'ON' : 'OFF')) : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function espDisplayName(d, kindName) {
+  const base = d.label || kindName(d.kind);
+  const info = espDeviceInfo(d);
+  return info ? `${base} <span style="font-size:0.6rem;color:var(--text-dim)">${info}</span>` : base;
+}
+
 function devDotMeta(state) {
   if (state === 'online')  return { dot: 'var(--green)', label: 'conectado' };
   if (state === 'offline') return { dot: 'var(--red)',   label: 'offline' };
@@ -2882,7 +2899,7 @@ function updateDevicesPanel(data) {
       const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
       const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
       el.innerHTML = devices.map(d => {
-        const name = d.label || kindName(d.kind);
+        const name = espDisplayName(d, kindName);
         const idShort = (d.external_id||'').substring(0,6);
         const st = devStateOf(d);
         const dm = devDotMeta(st);
@@ -2931,7 +2948,7 @@ function updateDevicesPanelFromCache(result) {
   const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
   const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
   el.innerHTML = devices.map(d => {
-    const name = d.label || kindName(d.kind);
+    const name = espDisplayName(d, kindName);
     const idShort = (d.external_id||'').substring(0,6);
     const st = devStateOf(d);
     const dm = devDotMeta(st);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepository;
+use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Presence\DoorPolarity;
 use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\SensorCalibrationValidator;
@@ -318,6 +319,46 @@ final class SensorWizardController
         return Response::json(200, ['ok' => true, 'step' => $run['steps'][$stepId]]);
     }
 
+    /**
+     * F97.3: confirmación manual del estado físico del contacto.
+     * El operador debe enviar confirm=true; no se usa para adivinar.
+     */
+    public function doorState(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        $state = strtoupper(trim((string) ($body['state'] ?? '')));
+        $confirmed = (bool) ($body['confirm'] ?? false);
+        if ($roomId <= 0) {
+            return Response::json(400, ['error' => 'room_id required']);
+        }
+        if (!$confirmed) {
+            return Response::json(400, ['error' => 'confirm_required']);
+        }
+        if (!in_array($state, ['OPEN', 'CLOSED'], true)) {
+            return Response::json(422, ['error' => 'invalid_state']);
+        }
+        try {
+            $pdo = $this->pdo();
+            $devices = new DeviceRepository($pdo);
+            $device = $devices->findForRoomKind($roomId, Device::KIND_PROXIMITY);
+            if ($device === null) {
+                return Response::json(404, ['error' => 'door_device_missing']);
+            }
+            $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+            $repo = new RoomSensorStateRepository($pdo);
+            $barrier = $repo->maxAppliedEventId($roomId, 'PROXIMITY', $provider);
+            $repo->setManual($roomId, 'PROXIMITY', $provider, $state, $barrier, $device->externalId);
+            return Response::json(200, [
+                'ok' => true, 'room_id' => $roomId, 'state' => $state,
+                'provider' => $provider, 'state_source' => 'manual_confirm',
+                'barrier_event_id' => $barrier,
+            ]);
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
     public function polarity(Request $request): Response
     {
         $body = $request->jsonBody ?? [];
@@ -346,6 +387,15 @@ final class SensorWizardController
                     "UPDATE iot_sessions SET door_state='UNKNOWN', last_door_value=NULL
                       WHERE room_id = :rid"
                 )->execute([':rid' => $roomId]);
+                $stateRepo = new RoomSensorStateRepository($pdo);
+                $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+                $stateRepo->setUnknown(
+                    $roomId,
+                    'PROXIMITY',
+                    $provider,
+                    $stateRepo->maxAppliedEventId($roomId, 'PROXIMITY', $provider),
+                    $device->externalId
+                );
                 $this->recordPolarity($runId, DoorPolarity::NORMAL, true);
                 return Response::json(200, ['ok' => true, 'polarity' => DoorPolarity::NORMAL,
                     'restored' => true, 'raw' => null, 'needs_report' => true,
@@ -389,6 +439,18 @@ final class SensorWizardController
                         last_door_event_at=UTC_TIMESTAMP(3), last_close_at=UTC_TIMESTAMP(3)
                   WHERE room_id = :rid"
             )->execute([':rid' => $roomId]);
+            // F97.3: la confirmación manual del operador también fija la
+            // proyección física, con barrera para no restaurar eventos previos.
+            $stateRepo = new RoomSensorStateRepository($pdo);
+            $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+            $stateRepo->setManual(
+                $roomId,
+                'PROXIMITY',
+                $provider,
+                'CLOSED',
+                $stateRepo->maxAppliedEventId($roomId, 'PROXIMITY', $provider),
+                $device->externalId
+            );
             $this->recordPolarity($runId, $polarity, false);
             return Response::json(200, [
                 'ok' => true,

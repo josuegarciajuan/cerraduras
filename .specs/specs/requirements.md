@@ -6150,3 +6150,24 @@ correspondencia funcional 1:1 con la numeración solicitada:
 - **NFR-F98.5**: los tokens de marca se definen una sola vez en
   `brand-tokens.css` y los consumen login y panel.
 - **NFR-F98.6**: el cambio no añade dependencias, CDNs ni llamadas externas.
+
+## RF-178: Estado físico del contacto independiente del ciclo
+
+- **RF-178.1**: la última lectura física aplicada de un `PROXIMITY` se guarda
+  por sala, sensor y transporte en `room_sensor_state`, fuera de `iot_sessions`.
+- **RF-178.2**: crear o reiniciar un QR/estancia no borra esa lectura ni apaga
+  el imán. El reset sigue limpiando el ciclo en `iot_sessions`.
+- **RF-178.3**: un cambio de polaridad o de sensor invalida la proyección con
+  una barrera de eventos; no se restaura un estado antiguo a ciegas.
+- **RF-178.4**: el operador puede confirmar manualmente `OPEN`/`CLOSED` con
+  `confirm=true`; la confirmación fija la posición y una barrera.
+- **RF-178.5**: el SSE del imán usa `room_sensor_state` (provider
+  `ZIGBEE2MQTT`), no `iot_sessions.door_state`.
+- **RF-178.6**: el snapshot incluye `state_source` y `state_updated_at`; una
+  confirmación manual es adoptable aunque el hueco no sea contiguo.
+- **RF-178.7**: un cierre ordenado del SSE se reconecta de inmediato y no
+  corta la salida dentro de la ventana de gracia; una respuesta HTTP distinta
+  de 200 no se marca como canal sano.
+- **RF-178.8**: el heartbeat publica `actuator_state`, `actuator_reason`,
+  `output_on`, `door_link` y `door_state`; el panel los muestra junto al
+  subtipo y la versión del firmware.

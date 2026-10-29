@@ -60,6 +60,7 @@ final class IotSessionService
     private ?AnomalyService                  $anomalyService;
     private ?WorkerSessionRepositoryInterface $workerSessionRepo;
     private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
+    private ?RoomSensorStateRepository $sensorStates;
 
     public function __construct(
         PresenceEventRepositoryInterface $presenceEvents,
@@ -74,7 +75,8 @@ final class IotSessionService
         ?ExitActionService               $exitActionService = null,
         ?AnomalyService                  $anomalyService = null,
         ?WorkerSessionRepositoryInterface $workerSessionRepo = null,
-        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null
+        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null,
+        ?RoomSensorStateRepository $sensorStates = null
     ) {
         $this->presenceEvents = $presenceEvents;
         $this->iotSessions    = $iotSessions;
@@ -89,6 +91,7 @@ final class IotSessionService
         $this->anomalyService    = $anomalyService;
         $this->workerSessionRepo = $workerSessionRepo;
         $this->warehouseRecorder = $warehouseRecorder;
+        $this->sensorStates = $sensorStates;
     }
 
     /**
@@ -232,6 +235,7 @@ final class IotSessionService
                             $session->lastCloseAt = $evtUtc;
                         }
                         $this->iotSessions->updateState($session);
+                        $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
                         $doorRefreshed = true;
                     }
                     // F94/RF-161: un reporte de presencia (aunque sea noop, duplicate,
@@ -258,6 +262,7 @@ final class IotSessionService
                 $this->mutate($room, $session, $event, $evtUtc, $activeStay, $correlationId, $now);
 
                 $this->iotSessions->updateState($session);
+                $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
                 $this->presenceEvents->markAudit($rawEvent->id, true, null);
                 $this->iotSessions->commit();
                 $applied = true;
@@ -395,6 +400,32 @@ final class IotSessionService
 
     // -------------------------------------------------------------------------
     // Private helpers
+
+    /**
+     * F97.3: conserva la última posición física aplicada del contacto fuera de
+     * `iot_sessions`. Un reset de ciclo no debe apagar el imán ni borrar la
+     * evidencia del sensor.
+     */
+    private function recordPhysicalSensorState(PresenceEvent $rawEvent, string $sensor, string $value): void
+    {
+        if ($this->sensorStates === null || $sensor !== PresenceEvent::SENSOR_PROXIMITY) {
+            return;
+        }
+        $meta = is_array($rawEvent->meta) ? $rawEvent->meta : [];
+        $externalId = isset($meta['device_external_id']) && is_string($meta['device_external_id'])
+            ? $meta['device_external_id']
+            : null;
+        $this->sensorStates->record(
+            $rawEvent->roomId,
+            $sensor,
+            $rawEvent->provider,
+            $value,
+            $rawEvent->id,
+            $rawEvent->occurredAt,
+            $rawEvent->receivedAt,
+            $externalId
+        );
+    }
 
     /**
      * Map a sensor event to a warehouse recording signal (F63/RF-71).

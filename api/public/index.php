@@ -31,6 +31,7 @@ use App\Domain\Locks\LockService;
 use App\Domain\Presence\IotSessionRepository;
 use App\Domain\Presence\IotSessionServiceFactory;
 use App\Domain\Presence\PresenceEventRepository;
+use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Qr\QrCredentialRepository;
 use App\Domain\Qr\QrIssueService;
 use App\Domain\Qr\QrValidateService;
@@ -609,6 +610,7 @@ $router->post('/dashboard-api/sensores/v2/attempt/start', [$sensorWizardV2, 'sta
 $router->post('/dashboard-api/sensores/v2/attempt/check', [$sensorWizardV2, 'checkAttempt']);
 $router->post('/dashboard-api/sensores/v2/attempt/cancel', [$sensorWizardV2, 'cancelAttempt']);
 $router->post('/dashboard-api/sensores/v2/door/polarity', [$sensorWizardV2, 'polarity']);
+$router->post('/dashboard-api/sensores/v2/door/state', [$sensorWizardV2, 'doorState']);
 $router->post('/dashboard-api/sensores/v2/radar/tune', [$sensorWizardV2, 'tune']);
 $router->post('/dashboard-api/sensores/v2/switch/test', [$sensorWizardV2, 'switchTest']);
 $router->post('/dashboard-api/sensores/v2/run/finish', [$sensorWizardV2, 'finish']);
@@ -2080,7 +2082,8 @@ $router->get(
         // Use MySQL DATE_SUB for consistent timezone. The SQL `online` column is a
         // freshness hint used ONLY for ESP32/local devices (last_seen heartbeat).
         $rows = $pdo->prepare(
-            "SELECT d.id, d.pack_id, d.kind, d.external_id, d.label, d.transport, d.meta_json, d.last_seen_at,
+            "SELECT d.id, d.pack_id, d.kind, d.subtype, d.external_id, d.label, d.transport,
+                    d.firmware_variant, d.firmware_version, d.meta_json, d.last_seen_at,
                     d.online_state, d.online_probed_at, d.battery_pct,
                     (d.last_seen_at IS NOT NULL AND d.last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)) AS online
               FROM devices d
@@ -2218,6 +2221,27 @@ $router->post(
             ? trim($body['firmware_version']) : null;
         $variantMismatch = false;
 
+        // F97.3: telemetría del actuador y del canal de puerta. Es informativa:
+        // no cambia el subtipo ni la lógica eléctrica.
+        $actuatorState = isset($body['actuator_state']) && is_string($body['actuator_state'])
+            ? strtoupper(substr(trim($body['actuator_state']), 0, 16)) : null;
+        $actuatorReason = isset($body['actuator_reason']) && is_string($body['actuator_reason'])
+            ? substr(trim($body['actuator_reason']), 0, 32) : null;
+        $reportedDoorState = isset($body['door_state']) && is_string($body['door_state'])
+            ? strtoupper(substr(trim($body['door_state']), 0, 8)) : null;
+        $outputOn = null;
+        if (array_key_exists('output_on', $body)) {
+            $rawOutput = $body['output_on'];
+            $outputOn = is_bool($rawOutput) ? $rawOutput
+                : (is_string($rawOutput) ? filter_var($rawOutput, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null);
+        }
+        $doorLink = null;
+        if (array_key_exists('door_link', $body)) {
+            $rawLink = $body['door_link'];
+            $doorLink = is_bool($rawLink) ? $rawLink
+                : (is_string($rawLink) ? filter_var($rawLink, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null);
+        }
+
         // RPI: precise liveness update (external_id match).
         $ownerPack = null;
         if ($rpi !== null) {
@@ -2229,6 +2253,19 @@ $router->post(
                 ? strtoupper($rpi->subtype) : \App\Domain\Devices\Device::SUBTYPE_ESP_CERRADURA;
             $variantMismatch = $firmwareVariant !== null && $firmwareVariant !== $expectedVariant;
             $ownerPack = $rpi->packId;
+
+            if ($actuatorState !== null || $actuatorReason !== null || $reportedDoorState !== null
+                || $outputOn !== null || $doorLink !== null
+            ) {
+                $meta = is_array($rpi->meta) ? $rpi->meta : [];
+                if ($actuatorState !== null) $meta['actuator_state'] = $actuatorState;
+                if ($actuatorReason !== null) $meta['actuator_reason'] = $actuatorReason;
+                if ($reportedDoorState !== null) $meta['door_state'] = $reportedDoorState;
+                if ($outputOn !== null) $meta['output_on'] = $outputOn;
+                if ($doorLink !== null) $meta['door_link'] = $doorLink;
+                $meta['actuator_updated_at'] = gmdate('Y-m-d\TH:i:s\Z');
+                $deviceRepo->updateMeta($rpi->id, $meta);
+            }
         }
 
         // Sub-devices: resolve by pack + kind (robust even if their own
@@ -2257,6 +2294,11 @@ $router->post(
             'firmware_variant' => $firmwareVariant,
             'firmware_version' => $firmwareVersion,
             'variant_mismatch' => $variantMismatch,
+            'actuator_state' => $actuatorState,
+            'actuator_reason' => $actuatorReason,
+            'output_on' => $outputOn,
+            'door_state' => $reportedDoorState,
+            'door_link' => $doorLink,
         ]);
     }
 );
@@ -2833,7 +2875,8 @@ $iotSessionService = IotSessionServiceFactory::create(
     $switchService,
     $anomalyService,
     $workerSessionRepo,
-    $warehouseRecordingService
+    $warehouseRecordingService,
+    new RoomSensorStateRepository($pdo)
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
 // room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.

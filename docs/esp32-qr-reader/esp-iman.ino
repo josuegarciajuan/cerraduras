@@ -130,7 +130,7 @@ const int   API_PORT     = 443;
 
 // ── F97: variante y parámetros del imán ────────────────────────────────────
 #define IMAN_VARIANT                 "IMAN"
-#define IMAN_VERSION                 "2.2-iman-continuous"
+#define IMAN_VERSION                 "2.3-iman-projection"
 // F97.2 (ensayo de máxima potencia): mantener la salida encendida sin
 // parpadeo. Es la referencia para comprobar la fuerza real del imán. El
 // consumo y el calentamiento son los de alimentación continua: prueba
@@ -617,8 +617,24 @@ static void imanEnter(int next) {
 }
 
 static bool imanLinkFresh() {
-  if (!imanLinkConnected || imanLinkHealthyAt == 0) return false;
+  // La gracia cubre la reconexión programada del SSE (close a los 60 s).
+  // No se exige `imanLinkConnected`: un cierre ordenado no invalida el estado
+  // mientras no venza la ventana.
+  if (imanLinkHealthyAt == 0) return false;
   return (millis() - imanLinkHealthyAt) <= IMAN_LINK_GRACE_MS;
+}
+
+static const char* imanReason() {
+  if (!imanLinkFresh()) return "link_expired";
+  if (!imanDoorKnown || imanNeedFreshEvent) return "door_unknown";
+  if (imanDoorOpen) return "door_open";
+  switch (imanState) {
+    case IMAN_WAIT_OPEN: return "waiting_open";
+    case IMAN_CLOSING:   return "closing";
+    case IMAN_HOLDING:   return "holding";
+    case IMAN_OPEN:      return "open";
+    default:             return "unsynced";
+  }
 }
 
 static void imanControlTask(void *arg) {
@@ -674,6 +690,9 @@ static void imanControlTask(void *arg) {
         } else if (open) {
           imanEnter(IMAN_OPEN);
           imanOutput(false);
+        } else if (imanNeedFreshEvent) {
+          // No se mantiene corriente con un estado no confirmado.
+          if (imanOutputOn) imanOutput(false);
         } else {
 #if IMAN_HOLD_CONTINUOUS
           // F97.2: máxima potencia, sin conmutación de mantenimiento.
@@ -816,6 +835,7 @@ static void imanHandleSnapshot(const String &data) {
   const uint32_t lastId = (uint32_t) imanJsonLong(data, "last_event_id");
   const bool contiguous = imanJsonTrue(data, "contiguous");
   const String state = imanJsonString(data, "door_state");
+  const String stateSource = imanJsonString(data, "state_source");
 
   if (lastId != imanLastEventId) {
     imanLastEventId = lastId;
@@ -823,9 +843,9 @@ static void imanHandleSnapshot(const String &data) {
   if (!contiguous) {
     imanNeedFreshEvent = true;
     imanDoorKnown = false;
-  } else if (state == "OPEN" || state == "CLOSED") {
-    // Snapshot contiguo: no se perdió ningún evento aplicado desde since_id,
-    // por lo que el estado autoritativo del servidor es confiable.
+  } else if ((state == "OPEN" || state == "CLOSED")
+             && (contiguous || stateSource == "manual_confirm")) {
+    // Snapshot contiguo o confirmación manual del operador: estado confiable.
     imanNeedFreshEvent = false;
     imanDoorKnown = true;
     imanDoorOpen = (state == "OPEN");
@@ -834,9 +854,9 @@ static void imanHandleSnapshot(const String &data) {
     imanDoorKnown = false;
   }
   saveImanPersistedState();
-  Serial.printf("[IMAN] snapshot state=%s last=%lu contiguous=%d need_fresh=%d\n",
-                state.c_str(), (unsigned long) lastId, contiguous ? 1 : 0,
-                imanNeedFreshEvent ? 1 : 0);
+  Serial.printf("[IMAN] snapshot state=%s source=%s last=%lu contiguous=%d need_fresh=%d\n",
+                state.c_str(), stateSource.c_str(), (unsigned long) lastId,
+                contiguous ? 1 : 0, imanNeedFreshEvent ? 1 : 0);
 }
 
 static void imanHandleDoor(const String &data) {
@@ -902,7 +922,11 @@ static void imanDoorEventTask(void *arg) {
     bool sawData = false;
     Serial.printf("[IMAN] SSE conectado (%lu ms)\n", millis());
 
-    while (client->connected()) {
+    bool headersDone = false;
+    bool reconnectNow = false;
+    int httpStatus = 0;
+    int headerLine = 0;
+    while (client->connected() && !reconnectNow) {
       int ch = client->read();
       if (ch < 0) {
         if ((millis() - lastData) > IMAN_SSE_READ_TIMEOUT_MS) {
@@ -927,6 +951,27 @@ static void imanDoorEventTask(void *arg) {
       String line = lineBuf;
       lineBuf = "";
       line.trim();
+
+      if (!headersDone) {
+        if (headerLine == 0) {
+          if (line.startsWith("HTTP/1.")) {
+            int sp = line.indexOf(' ');
+            httpStatus = sp >= 0 ? line.substring(sp + 1).toInt() : 0;
+          }
+          headerLine++;
+          continue;
+        }
+        headerLine++;
+        if (line.length() == 0) {
+          headersDone = true;
+          if (httpStatus != 200) {
+            Serial.printf("[IMAN] SSE HTTP %d; no se procesa\n", httpStatus);
+            reconnectNow = true;
+          }
+        }
+        continue;
+      }
+
       if (line.startsWith("event:")) {
         currentEvent = line.substring(6);
         currentEvent.trim();
@@ -939,7 +984,8 @@ static void imanDoorEventTask(void *arg) {
         } else if (currentEvent == "door") {
           imanHandleDoor(currentData);
         } else if (currentEvent == "close") {
-          Serial.println("[IMAN] SSE close (reconexión)");
+          Serial.println("[IMAN] SSE close (reconexión inmediata)");
+          reconnectNow = true;
         }
         currentEvent = "";
         currentData = "";
@@ -1643,7 +1689,8 @@ void loop() {
       // F33: send heartbeat with batch sub_kinds for all ESP32 sub-devices
       String hbBody;
       hbBody.reserve(250);  // Fase 1: pre-allocate
-      hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"],\"firmware_variant\":\"" IMAN_VARIANT "\",\"firmware_version\":\"" IMAN_VERSION "\"}";
+      String imanDoorState = !imanDoorKnown ? "UNKNOWN" : (imanDoorOpen ? "OPEN" : "CLOSED");
+      hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"],\"firmware_variant\":\"" IMAN_VARIANT "\",\"firmware_version\":\"" IMAN_VERSION "\",\"actuator_state\":\"" + String(imanStateName(imanState)) + "\",\"actuator_reason\":\"" + String(imanReason()) + "\",\"output_on\":" + String(imanOutputOn ? "true" : "false") + ",\"door_link\":" + String(imanLinkFresh() ? "true" : "false") + ",\"door_state\":\"" + imanDoorState + "\"}";
       HTTPClient &hb = apiHttpSession();
       beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hb.addHeader("Content-Type", "application/json");
