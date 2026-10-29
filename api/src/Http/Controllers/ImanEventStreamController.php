@@ -113,9 +113,14 @@ final class ImanEventStreamController
             'ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ]);
 
-        // Nunca reenviar eventos anteriores: el estado actual viaja en el
-        // snapshot (incluidas las barreras manuales) y `contiguous` decide.
-        $lastSent = $barrier;
+        // Si el estado procede de eventos y el cliente ya tenía una barrera,
+        // se reproducen los eventos aplicados que perdió (en orden). Así un
+        // OPEN/CLOSED ocurrido durante la reconexión no deja el imán apagado.
+        // Con estado manual o sin `since_id`, no se reenvía historia antigua.
+        $replayFrom = ($stateSource === 'event' && $sinceId > 0)
+            ? min($sinceId, $barrier)
+            : $barrier;
+        $lastSent = $replayFrom;
         $started = time();
         $lastPing = time();
 
