@@ -10,11 +10,13 @@ ZBMINIL2):
    invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
    El contador `0/3` solo suma pares de esa ventana; los eventos anteriores no cuentan.
 3. **Radar dentro**: colócate en el punto más lejano y quieto 30 s. Durante la
-   cuenta atrás solo puedes cancelar; al terminar, si no detecta, `Ajustar si no
-   detecta` sube sensibilidad/rango con confirmación por push.
-4. **Radar fuera**: sal, cierra, pasa 3 veces y espera 60 s. Durante la espera solo
-   puedes cancelar; al terminar, si detecta de más, `Ajustar si detecta de más` baja
-   un escalón.
+   cuenta atrás solo puedes cancelar. Al terminar, pulsa `Medir este punto`; la
+   app muestra presencia, distancia orientativa y calidad. Si no detecta,
+   `Ajustar y volver a medir` propone un cambio y lo confirma por push.
+4. **Radar fuera**: sal, cierra, pasa 3 veces y espera 60 s. Mide el punto
+   exterior; si detecta, `Ajustar y volver a medir`. Si se aplicó un ajuste, vuelve
+   a entrar y pulsa `Comprobar reentrada`. `Restaurar ajustes iniciales` revierte
+   el alcance/sensibilidad/fading/retardo y exige confirmación por push.
 5. **Luz**: al empezar se apaga y confirmas que está apagada; después enciendes y
    confirmas, y por último apagas y confirmas. Una pregunta por orden. La telemetría
    solo cuenta si es posterior a la orden; si no llega, manda tu observación.

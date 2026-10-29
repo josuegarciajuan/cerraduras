@@ -610,6 +610,7 @@ $router->post('/dashboard-api/sensores/v2/attempt/check', [$sensorWizardV2, 'che
 $router->post('/dashboard-api/sensores/v2/attempt/cancel', [$sensorWizardV2, 'cancelAttempt']);
 $router->post('/dashboard-api/sensores/v2/door/polarity', [$sensorWizardV2, 'polarity']);
 $router->post('/dashboard-api/sensores/v2/radar/tune', [$sensorWizardV2, 'tune']);
+$router->post('/dashboard-api/sensores/v2/radar/calibrate', [$sensorWizardV2, 'radarCalibrate']);
 $router->post('/dashboard-api/sensores/v2/switch/test', [$sensorWizardV2, 'switchTest']);
 $router->post('/dashboard-api/sensores/v2/run/finish', [$sensorWizardV2, 'finish']);
 $router->post('/dashboard-api/sensores/v2/run/soak', [$sensorWizardV2, 'soak']);

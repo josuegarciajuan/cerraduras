@@ -297,7 +297,11 @@
     no_presence_outside: 'No se detectó presencia fuera.', presence_detected_outside: 'Se detectó presencia fuera de la sala.',
     absence_not_confirmed: 'La ausencia aún no está confirmada.', light_ok: 'Encendido y apagado correctos.',
     lamp_not_prepared_off: 'La lámpara no estaba apagada al empezar.', human_not_confirmed: 'La confirmación física no es positiva.',
-    telemetry_mismatch: 'La lámpara y la telemetría no coinciden.', no_switch: 'No hay interruptor asociado.'
+    telemetry_mismatch: 'La lámpara y la telemetría no coinciden.', no_switch: 'No hay interruptor asociado.',
+    inside_not_detected_calibration: 'La medición interior no detectó presencia.',
+    outside_detected_calibration: 'La medición exterior seguía detectando presencia.',
+    reentry_not_verified: 'Falta comprobar que vuelve a detectar al entrar.',
+    outside_and_reentry_ok: 'Exterior sin detección y reentrada correcta.'
   };
   function resultBox(st, verdict) {
     if (!isFinal(st) || !verdict) return '';
@@ -391,6 +395,10 @@
     return 'Alcance ' + st.maximum_range + ' m · sens ' + st.radar_sensitivity + '/9';
   }
 
+  function qualityLabel(q) {
+    return { good: 'fiable', fair: 'orientativa', poor: 'poco fiable' }[q] || 'sin datos';
+  }
+
   function renderRadar(stepId, step) {
     var att = activeAttemptFor(stepId);
     var html = '';
@@ -400,15 +408,26 @@
     }
     var inside = stepId === 'radar_inside';
     var target = inside ? 30 : 60;
-    var a = S.attemptData || { elapsed_seconds: 0, presence: {} };
+    var a = S.attemptData || { elapsed_seconds: 0, presence: {}, distance: {} };
     var elapsed = Math.max(0, Math.floor(a.elapsed_seconds || 0));
     var remain = Math.max(0, target - elapsed);
     var p = a.presence || {};
+    var dist = a.distance || {};
     var span = Math.max(0, Math.floor(p.span_seconds || 0));
+    var session = (S.run.calibration_session) || {};
+    var phase = inside ? session.inside : session.outside;
+    var candidate = session.candidate || null;
+    var reentry = session.reentry || null;
     html += '<div class="divider"></div>';
     html += '<div class="row"><span class="pill ' + (p.active ? 'ok' : 'dim') + '" id="radarPresence">Presencia: '
       + (p.active ? 'DETECTADA' : 'sin detección') + '</span>'
       + '<span class="pill dim" id="radarSettings">' + radarSettingsLabel() + '</span></div>';
+    if (dist.samples > 0) {
+      html += '<div class="hint" style="margin-top:6px">Distancia: '
+        + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
+        + ' · ' + qualityLabel(dist.quality)
+        + ' (' + dist.valid + '/' + dist.samples + ' lecturas)</div>';
+    }
     if (remain > 0) {
       html += '<div style="text-align:center;margin:18px 0">';
       html += '<div class="readout" style="font-size:56px" id="radarTimer" aria-live="off">' + remain + ' s</div>';
@@ -418,24 +437,30 @@
       html += '<div class="actions"><button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
       return html;
     }
-    html += '<div class="hint">' + (inside
-      ? 'Tiempo mínimo cumplido. Presencia detectada durante ' + span + ' de 30 s.'
-      : 'Tiempo mínimo cumplido.') + '</div>';
     html += '<div class="actions">';
-    if (inside) {
-      var canValidate = span >= 30 && p.continuous !== false;
-      if (canValidate) {
-        html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar radar</button>';
-      } else if (!p.presents) {
-        html += '<button class="ghost" data-action="tune" data-phase="inside">Ajustar si no detecta</button>';
-        html += '<div class="hint">Aún no se detecta presencia. Puedes ajustar el radar y seguir en la posición.</div>';
-      } else {
-        html += '<div class="hint">Aún no hay 30 s de presencia continua; sigue quieto.</div>';
-        html += '<button class="ghost" data-action="tune" data-phase="inside">Ajustar si no detecta</button>';
-      }
+    if (!phase) {
+      html += '<button class="primary" data-action="calibrate" data-op="measure">Medir este punto</button>';
+      html += '<div class="hint">' + (inside
+        ? 'Cuando la presencia sea continua, mide el punto interior.'
+        : 'Cuando estés fuera y haya pasado el fading, mide el punto exterior.') + '</div>';
+    } else if (inside && phase.presence !== true) {
+      html += '<button class="primary" data-action="calibrate" data-op="apply">Ajustar y volver a medir</button>';
+      html += '<div class="hint">No se detecta en este punto. La app propondrá subir sensibilidad o alcance.</div>';
+    } else if (!inside && phase.presence === true) {
+      html += '<button class="primary" data-action="calibrate" data-op="apply">Ajustar y volver a medir</button>';
+      html += '<div class="hint">Se sigue detectando fuera. La app propondrá bajar alcance o sensibilidad.</div>';
+    } else if (inside && span < 30) {
+      html += '<div class="hint">Presencia detectada. Sigue quieto hasta completar 30 s.</div>';
+      html += '<button class="ghost" data-action="calibrate" data-op="measure">Volver a medir</button>';
+    } else if (!inside && candidate && candidate.applied && !(reentry && reentry.detected)) {
+      html += '<button class="primary" data-action="calibrate" data-op="reentry">Comprobar reentrada</button>';
+      html += '<div class="hint">Vuelve a entrar y colócate dentro; después pulsa el botón.</div>';
     } else {
       html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar radar</button>';
-      if (p.active) html += '<button class="ghost" data-action="tune" data-phase="outside">Ajustar si detecta de más</button>';
+      html += '<button class="ghost" data-action="calibrate" data-op="measure">Repetir medición</button>';
+    }
+    if (candidate) {
+      html += '<button class="ghost" data-action="calibrate" data-op="restore">Restaurar ajustes iniciales</button>';
     }
     html += '<button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
     return html;
@@ -744,6 +769,56 @@
     finally { busy(false); }
   }
 
+  async function calibrateCall(action) {
+    var att = activeAttemptFor(S.stepId);
+    if (!att) throw new Error('Primero empieza la prueba');
+    return await api(V2 + '/radar/calibrate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: S.run.run_id, step_id: S.stepId,
+        attempt_id: att.attempt_id, action: action })
+    });
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  async function calibrate(action) {
+    busy(true);
+    try {
+      var data = await calibrateCall(action);
+      if (data.message) toast(data.message);
+      if (data.action === 'reposition' || (data.plan && data.plan.action === 'reposition')) {
+        banner('No quedan ajustes automáticos. Revisa la orientación o la ubicación del radar.', 'warn');
+      }
+      if (data.warning) banner(data.warning, 'warn');
+      if (data.action === 'restore' && data.ok) toast('Ajustes iniciales restaurados y confirmados');
+      await reloadRun();
+      await loadPreflight();
+      await pollAttempt();
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function applyAndMeasure() {
+    busy(true);
+    try {
+      var applied = await calibrateCall('apply');
+      if (applied.warning) banner(applied.warning, 'warn');
+      if (applied.action === 'reposition' || (applied.plan && applied.plan.action === 'reposition')) {
+        banner('No quedan ajustes automáticos. Revisa la orientación o la ubicación del radar.', 'warn');
+      }
+      if (applied.applied === true) {
+        await sleep(2500);
+        await calibrateCall('measure');
+      }
+      await reloadRun();
+      await loadPreflight();
+      await pollAttempt();
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
   async function finishRun() {
     busy(true);
     try {
@@ -1012,6 +1087,11 @@
       else if (a === 'check') checkAttempt(step);
       else if (a === 'cancel') cancelAttempt(step);
       else if (a === 'tune') tune(b.getAttribute('data-phase'));
+      else if (a === 'calibrate') {
+        var op = b.getAttribute('data-op');
+        if (op === 'apply') applyAndMeasure();
+        else calibrate(op);
+      }
       else if (a === 'switch') switchTest(b.getAttribute('data-on'));
       else if (a === 'human') {
         var f = b.getAttribute('data-field');
