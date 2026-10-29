@@ -25,7 +25,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function listForRoom(int $roomId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.transport, d.external_id, d.last_seen_at, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
+            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.transport, d.external_id, d.last_seen_at, d.api_client_id, d.meta_json, d.is_identified, d.identified_at, d.firmware_variant, d.firmware_version
              FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND r.pack_id IS NOT NULL
@@ -39,7 +39,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findAll(): array
     {
         $stmt = $this->pdo->query(
-            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, battery_pct, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, battery_pct, is_identified, identified_at, firmware_variant, firmware_version
              FROM devices
              ORDER BY (pack_id IS NOT NULL) DESC, kind ASC, id ASC'
         );
@@ -49,7 +49,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findById(int $id): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at, firmware_variant, firmware_version
              FROM devices WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -74,7 +74,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findForRoomKind(int $roomId, string $kind): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.transport, d.external_id, d.last_seen_at, d.api_client_id, d.meta_json, d.is_identified, d.identified_at
+            'SELECT d.id, d.pack_id, d.kind, d.subtype, d.transport, d.external_id, d.last_seen_at, d.api_client_id, d.meta_json, d.is_identified, d.identified_at, d.firmware_variant, d.firmware_version
              FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
              WHERE d.kind = :k AND r.id = :rid AND r.pack_id IS NOT NULL
@@ -88,7 +88,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByKindAndExternalId(string $kind, string $externalId): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at, firmware_variant, firmware_version
              FROM devices WHERE kind = :k AND external_id = :x LIMIT 1'
         );
         $stmt->execute([':k' => $kind, ':x' => $externalId]);
@@ -99,7 +99,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByExternalId(string $externalId): ?Device
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at, firmware_variant, firmware_version
              FROM devices WHERE external_id = :x LIMIT 1'
         );
         $stmt->execute([':x' => $externalId]);
@@ -176,7 +176,7 @@ final class DeviceRepository implements DeviceRepositoryInterface
     public function findByPackAndKind(int $packId, string $kind): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at
+            'SELECT id, pack_id, kind, subtype, transport, external_id, last_seen_at, label, api_client_id, meta_json, is_identified, identified_at, firmware_variant, firmware_version
              FROM devices WHERE pack_id = :pid AND kind = :k'
         );
         $stmt->execute([':pid' => $packId, ':k' => $kind]);
@@ -273,6 +273,21 @@ final class DeviceRepository implements DeviceRepositoryInterface
     }
 
     /**
+     * Record the variant/version reported by an ESP heartbeat (F97).
+     * Informational only: it never changes subtype or actuator behaviour.
+     */
+    public function updateFirmwareInfo(int $deviceId, ?string $variant, ?string $version): void
+    {
+        $this->pdo->prepare(
+            'UPDATE devices SET firmware_variant = :v, firmware_version = :ver WHERE id = :id'
+        )->execute([
+            ':v'   => $variant === null || $variant === '' ? null : strtoupper(trim($variant)),
+            ':ver' => $version === null || $version === '' ? null : trim($version),
+            ':id'  => $deviceId,
+        ]);
+    }
+
+    /**
      * Refresh last_seen_at for every device of a given kind inside a pack.
      * Used by the ESP32 heartbeat to mark its sub-devices online without
      * depending on them sharing the chip external_id.
@@ -334,7 +349,9 @@ final class DeviceRepository implements DeviceRepositoryInterface
             isset($row['identified_at']) && $row['identified_at'] !== null ? (string) $row['identified_at'] : null,
             isset($row['subtype']) && $row['subtype'] !== null ? (string) $row['subtype'] : null,
             isset($row['transport']) && $row['transport'] !== null ? (string) $row['transport'] : null,
-            isset($row['last_seen_at']) && $row['last_seen_at'] !== null ? (string) $row['last_seen_at'] : null
+            isset($row['last_seen_at']) && $row['last_seen_at'] !== null ? (string) $row['last_seen_at'] : null,
+            isset($row['firmware_variant']) && $row['firmware_variant'] !== null ? (string) $row['firmware_variant'] : null,
+            isset($row['firmware_version']) && $row['firmware_version'] !== null ? (string) $row['firmware_version'] : null
         );
     }
 }

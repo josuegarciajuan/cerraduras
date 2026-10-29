@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\FactoryDevices;
 
+use App\Domain\Devices\Device;
 use App\Support\Errors\BadRequestException;
 use App\Support\Errors\NotFoundException;
 
@@ -34,15 +35,21 @@ final class FactoryDeviceService
     }
 
     /** @return array<string,mixed> */
-    public function claim(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): array
+    public function claim(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null, ?string $subtype = null): array
     {
+        // F97: every claimed ESP is an RPI. Legacy callers without subtype keep
+        // creating ESP-cerradura; an explicit IMAN is validated here.
+        $variant = Device::normalizeEspVariant($subtype);
+        if (!Device::isValidSubtype(Device::KIND_RPI, $variant)) {
+            throw new BadRequestException('subtype must be CERRADURA or IMAN');
+        }
         $device = $this->repository->findById($id);
         if ($device === null) {
             $device = $this->repository->findClaimedById($id);
             if ($device === null) throw new NotFoundException('Factory device not found');
             return $device->toArray();
         }
-        $claimed = $this->repository->claimAndAudit($id, $actor, $actorClientId, $label, $packId);
+        $claimed = $this->repository->claimAndAudit($id, $actor, $actorClientId, $label, $packId, $variant);
         return ($claimed ?? $device)->toArray();
     }
 }

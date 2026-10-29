@@ -120,3 +120,43 @@ No flashear el sketch antiguo en la base nueva ni el nuevo en la base antigua.
 - **2026-10-19 (F89)**: firmware productivo creado y compilado para
   `esp32:esp32:esp32s3usbotg`. Pendiente la validación física del ciclo
   productivo (QR válido/inválido, WiFi/TLS, heartbeat, command-queue, GPIO9).
+
+## Variantes F97: ESP-cerradura y ESP-imán
+
+Misma placa y mismo pinout; cambia el actuador conectado a GPIO15.
+
+| Variante | Sketch | Reposo | Apertura |
+|---|---|---|---|
+| ESP-cerradura | `firmware/esp-cerradura/` | GPIO15 LOW (sin corriente) | secuencia del proveedor |
+| ESP-imán | `firmware/esp-iman/` | pulsos 100 ms ON / 100 ms OFF | GPIO15 LOW hasta cierre físico |
+
+- El sensor de puerta de ESP-imán es el `PROXIMITY` Zigbee del mismo pack.
+- ESP-imán recibe el estado por `/dashboard-api/door-events` (SSE); no hay
+  polling Tuya ni `/get` al sensor.
+- El primer arranque sin historial queda en `UNSYNCED` (sin corriente) hasta
+  una transición nueva o un snapshot contiguo.
+- El diagnóstico y el comando `check` no pulsan el imán.
+
+### Flasheo en el banco de oficina
+
+Equipo del proyecto: CH343 `/dev/ttyACM0`
+(`/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00`).
+La ESP-CAM es el FTDI `/dev/ttyUSB0` y **no se toca**.
+
+```bash
+# Respaldo completo antes de cargar (ajustar tamaño real de flash)
+esptool.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 \
+  flash_id
+esptool.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 \
+  --baud 921600 read_flash 0x0 0x800000 /tmp/r35d-pre-f97-$(date +%Y%m%d-%H%M%S).bin
+
+# Compilar y cargar
+sudo -u oficina env HOME=/home/oficina /tmp/cerraduras-tools/arduino-cli \
+  compile --fqbn esp32:esp32:esp32s3usbotg firmware/esp-iman
+sudo -u oficina env HOME=/home/oficina /tmp/cerraduras-tools/arduino-cli \
+  upload -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 \
+  --fqbn esp32:esp32:esp32s3usbotg firmware/esp-iman
+```
+
+ESP-imán conserva WiFi/NVS al cambiar el build; si se necesita volver a
+provisionar, mantener GPIO9 al arrancar.

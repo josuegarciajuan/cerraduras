@@ -36,7 +36,7 @@ final class CredentialRepositoryStub implements FactoryDeviceRepositoryInterface
     public function findByChipId(string $chipId): ?FactoryDevice { return $this->device(); }
     public function findClaimedById(int $id): ?FactoryDevice { return $this->device(); }
     public function announce(string $chipId, string $enrollmentHash): array { return [$this->device(), false]; }
-    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice
+    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null, ?string $subtype = null): ?FactoryDevice
     {
         $this->claimCalled = true;
         return $this->device();

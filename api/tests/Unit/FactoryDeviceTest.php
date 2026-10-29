@@ -53,7 +53,7 @@ final class InMemoryFactoryDeviceRepository implements FactoryDeviceRepositoryIn
     {
         return array_values(array_filter($this->items, fn (FactoryDevice $item) => $status === 'ALL' || $item->status === $status));
     }
-    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice
+    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null, ?string $subtype = null): ?FactoryDevice
     {
         $claimed = $this->claim($id, $actor, $actorClientId);
         if ($claimed !== null && $claimed->status === FactoryDevice::STATUS_CLAIMED) { $this->consumed[$id] = $claimed; unset($this->items[$id]); }
@@ -92,7 +92,7 @@ $routes = (string) file_get_contents(__DIR__ . '/../../public/index.php');
 checkFactory(str_contains($routes, 'factory-devices/{id}/claim\', [$factoryDeviceController, \'claim\'], $authFactory([\'factory:claim\'])'), 'claim requires dedicated authorization scope');
 checkFactory(str_contains($routes, 'factory-devices/announce\', [$factoryDeviceController, \'announce\']);'), 'announcement does not use a shared API key');
 $panel = (string) file_get_contents(__DIR__ . '/../../public/panel/index.html');
-checkFactory(str_contains($panel, "JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null})") && !str_contains($panel, 'fc_key'), 'panel claim sends only optional metadata and uses the record id');
+checkFactory(str_contains($panel, "JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null,subtype:subtype})") && !str_contains($panel, 'fc_key'), 'panel claim sends only optional metadata and uses the record id');
 $firmwarePath = __DIR__ . '/../../../docs/esp32-qr-reader/scanner-relay-prod.ino';
 $firmware = (string) file_get_contents($firmwarePath);
 checkFactory(

@@ -2938,3 +2938,61 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 - **RF-173.4**: la prueba se considera correcta si un QR de control produce una
   trama y el mismo llavero produce el mismo identificador en lecturas repetidas.
 - **RF-173.5**: el diagnóstico no introduce polling ni consumo de cuota Tuya.
+
+---
+
+## RF-174: Dos variantes de ESP (cerradura e imán)
+
+- **RF-174.1**: los ESP siguen siendo `kind=RPI`; `subtype` declara el actuador:
+  `CERRADURA` (ESP-cerradura) o `IMAN` (ESP-imán).
+- **RF-174.2**: un alta o reclamación sin subtipo se interpreta como
+  `CERRADURA` para no romper clientes existentes. Los RPI históricos se
+  migran a `CERRADURA`.
+- **RF-174.3**: el panel permite elegir la variante al crear o reclamar un
+  ESP y no permite cambiarla después desde la edición ordinaria.
+- **RF-174.4**: el subtipo no cambia el hardware: solo identifica qué sketch
+  debe cargarse. La variante declarada por el firmware se registra aparte.
+
+## RF-175: Telemetría de variante y versión del firmware
+
+- **RF-175.1**: el heartbeat del ESP envía `firmware_variant` y
+  `firmware_version`; se persisten sin alterar el subtipo configurado.
+- **RF-175.2**: si la variante del sketch no coincide con el subtipo del
+  panel, el heartbeat responde `variant_mismatch=true` y el desajuste queda
+  visible en la respuesta/log del dispositivo.
+
+## RF-176: Canal push de puerta Zigbee para ESP-imán
+
+- **RF-176.1**: el ESP-imán conoce el estado de puerta por el sensor
+  `PROXIMITY` con `transport=ZIGBEE2MQTT` de su mismo pack. No se consulta
+  Tuya ni se hace `/get` al sensor.
+- **RF-176.2**: el canal es `GET /dashboard-api/door-events`, autenticado con
+  la credencial individual del ESP; solo puede escuchar la puerta de su pack.
+- **RF-176.3**: el snapshot incluye `door_state`, `last_event_id` y
+  `contiguous`. `contiguous=true` solo si no se ha perdido ningún evento
+  aplicado desde el `since_id` presentado por el ESP.
+- **RF-176.4**: si el hueco no es demostrable, el firmware no rearma el imán
+  con el estado cacheado: exige una transición nueva del contacto.
+- **RF-176.5**: los eventos de puerta se entregan ordenados por id, sin
+  replay de eventos antiguos y sin interpretar batería/availability como
+  transición.
+- **RF-176.6**: sin sondeo periódico a Tuya; el canal usa push MQTT ya
+  persistido y una conexión SSE de vida acotada.
+
+## RF-177: Control seguro del imán
+
+- **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
+  corriente pulsada configurable (inicial 100 ms ON / 100 ms OFF) para no
+  sobrecalentar la fuente.
+- **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
+  hasta 4 s la apertura física.
+- **RF-177.3**: si la puerta no se abre en la ventana, se rearma solo si el
+  estado sigue siendo cerrado y el canal es fiable.
+- **RF-177.4**: si la puerta se abre, el imán queda sin corriente de forma
+  indefinida; ningún temporizador lo rearma.
+- **RF-177.5**: al confirmarse el cierre estable (300 ms) se rearma; una
+  reapertura durante la confirmación cancela el rearme.
+- **RF-177.6**: un arranque o una pérdida de canal se resuelven en OFF hasta
+  disponer de snapshot contiguo o de una transición nueva.
+- **RF-177.7**: el diagnóstico de dispositivos y el comando `check` nunca
+  pulsan el imán. Un único controlador escribe GPIO15.

@@ -6034,3 +6034,71 @@ de diagnóstico, no el firmware productivo:
 - Antes de flashear se respalda la flash completa; la restauración preferente
   es reescribir ese respaldo para conservar WiFi/NVS y el marcador de build.
 - El runbook operativo está en `docs/esp32-qr-reader/r35d-tag-probe.md`.
+
+---
+
+# F97 — ESP-cerradura y ESP-imán (RF-174..RF-177)
+
+## 97.1 Modelo
+
+`devices.kind=RPI` sigue identificando al ESP. `devices.subtype` declara el
+actuador:
+
+| subtype | Sketch | Reposo | Apertura |
+|---|---|---|---|
+| `CERRADURA` | `esp-cerradura.ino` | sin corriente | secuencia del proveedor |
+| `IMAN` | `esp-iman.ino` | corriente pulsada | corte de corriente |
+
+Los RPI existentes se migran a `CERRADURA`. Un alta sin subtipo conserva ese
+valor. `firmware_variant`/`firmware_version` (migración 0131) registran lo que
+declara el sketch, separado del subtipo configurado.
+
+## 97.2 Firmware
+
+- `docs/esp32-qr-reader/esp-cerradura.ino` + `firmware/esp-cerradura/` son
+  copia exacta del sketch productivo anterior.
+- `docs/esp32-qr-reader/esp-iman.ino` + `firmware/esp-iman/` parten de esa
+  base y sustituyen la secuencia de cerradura por el controlador del imán.
+- ESP-imán conserva WiFi/NVS al cambiar el build; el reset de provisioning
+  sigue disponible manteniendo GPIO9 al arrancar.
+- El QR, la credencial individual, TLS, heartbeat, command-queue, identify y
+  announce se conservan.
+
+## 97.3 Máquina de estados del imán
+
+| Estado | Salida | Transición |
+|---|---|---|
+| `UNSYNCED` | OFF | snapshot contiguo + estado conocido, o evento nuevo |
+| `HOLDING` | 100/100 ms | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
+| `WAIT_OPEN` | OFF | apertura → `OPEN`; 4 s cerrada → `HOLDING`; fallo → `UNSYNCED` |
+| `OPEN` | OFF | cierre → `CLOSING`; fallo → `UNSYNCED` |
+| `CLOSING` | OFF | 300 ms cerrada → `HOLDING`; apertura → `OPEN` |
+
+El vencimiento de la ventana **nunca** rearma si la puerta está abierta o el
+estado es desconocido. GPIO15 lo escribe solo `imanControlTask`; QR y
+diagnóstico envían intenciones.
+
+## 97.4 Canal de puerta
+
+`GET /dashboard-api/door-events?external_id=<chip>&since_id=<id>` autentica
+la credencial individual (`api_clients.device_id`), exige `kind=RPI` +
+`subtype=IMAN` y resuelve el `PROXIMITY` Zigbee del mismo pack.
+
+- `snapshot`: estado actual, último id y `contiguous`.
+- `door`: eventos aplicados posteriores, ordenados por id.
+- `ping` cada 5 s; `close` a los 60 s (el ESP reconecta con `since_id`).
+- `contiguous=true` solo si el cliente demuestra que no perdió eventos.
+- Una pérdida de canal superior a la gracia (5 s) deja el imán en OFF.
+- No hay polling a Tuya ni `/get`; el origen es `presence_events`.
+
+## 97.5 Operación y flasheo
+
+El flasheo se realiza desde el nodo `oficina` con `arduino-cli`, FQBN
+`esp32:esp32:esp32s3usbotg`, sobre el CH343 del ESP del proyecto. El ESP-CAM
+(FTDI) no se toca. Antes de cargar se respalda la flash completa. Después se
+verifican arranque, credencial, pack, variante y recepción de puerta.
+
+El primer arranque tras el flasheo, sin historial de eventos, queda en
+`UNSYNCED` (OFF) hasta que el sensor reporte una transición o exista un
+snapshot contiguo. Es una decisión de seguridad: no se rearma con un cierre
+cacheado.

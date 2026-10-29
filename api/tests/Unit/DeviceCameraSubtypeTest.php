@@ -66,9 +66,11 @@ $matrix = [
     ['CAMERA', 'SALON', false],
     ['CAMERA', '', false],
     ['CAMERA', null, false],
-    ['RPI', null, true],
-    ['RPI', '', true],
-    ['RPI', 'EXTERIOR', false],      // non-camera must not carry subtype
+    ['RPI', null, false],            // el servicio lo normaliza a CERRADURA
+    ['RPI', '', false],              // el servicio lo normaliza a CERRADURA
+    ['RPI', 'CERRADURA', true],
+    ['RPI', 'IMAN', true],
+    ['RPI', 'EXTERIOR', false],
     ['PRESENCE', 'INTERIOR', false],
     ['LOCK', null, true],
 ];

@@ -2206,10 +2206,24 @@ $router->post(
 
         $rpi = $deviceRepo->findByKindAndExternalId(\App\Domain\Devices\Device::KIND_RPI, $extId);
 
+        // F97/RF-175: the sketch declares its actuator variant and version.
+        // Informational: never changes subtype/behaviour by itself.
+        $firmwareVariant = isset($body['firmware_variant']) && is_string($body['firmware_variant'])
+            ? strtoupper(trim($body['firmware_variant'])) : null;
+        $firmwareVersion = isset($body['firmware_version']) && is_string($body['firmware_version'])
+            ? trim($body['firmware_version']) : null;
+        $variantMismatch = false;
+
         // RPI: precise liveness update (external_id match).
         $ownerPack = null;
         if ($rpi !== null) {
             $deviceRepo->updateLastSeen($rpi->id);
+            if ($firmwareVariant !== null || $firmwareVersion !== null) {
+                $deviceRepo->updateFirmwareInfo($rpi->id, $firmwareVariant, $firmwareVersion);
+            }
+            $expectedVariant = $rpi->subtype !== null && $rpi->subtype !== ''
+                ? strtoupper($rpi->subtype) : \App\Domain\Devices\Device::SUBTYPE_ESP_CERRADURA;
+            $variantMismatch = $firmwareVariant !== null && $firmwareVariant !== $expectedVariant;
             $ownerPack = $rpi->packId;
         }
 
@@ -2236,6 +2250,9 @@ $router->post(
         return \App\Http\Response::json(200, [
             'ok' => true,
             'has_pending_commands' => $hasPending,
+            'firmware_variant' => $firmwareVariant,
+            'firmware_version' => $firmwareVersion,
+            'variant_mismatch' => $variantMismatch,
         ]);
     }
 );
@@ -4041,6 +4058,12 @@ if ($requestPath === '/dashboard-api/event-stream' && ($_SERVER['REQUEST_METHOD'
         (new EventStreamController($pdo))->stream($roomId);
         // stream() calls exit() — execution ends here for SSE clients
     }
+}
+
+// --- SSE del ESP-imán (F97/RF-176) — bypass middleware ---
+if ($requestPath === '/dashboard-api/door-events' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    (new \App\Http\Controllers\ImanEventStreamController($pdoProvider()))->stream();
+    // stream() calls exit()
 }
 
 // --- SSE del almacén (F65/RF-74.3) — bypass middleware ---

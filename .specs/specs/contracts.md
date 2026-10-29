@@ -3710,3 +3710,69 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
   `content` y una pista (`possible-EM-UID`, `possible-QR/text`, `unknown`).
 - `[ALIVE] uptime`, `frames`, `bytes`, `heap` cada 5 s.
 - No hay contrato HTTP: el sketch no llama a la API.
+
+---
+
+# F97 — Contratos de variantes ESP y canal de puerta
+
+## Dispositivos
+
+`GET /api/v1/devices`, `GET /api/v1/rooms/{id}/devices` y el detalle de pack
+añaden, de forma aditiva:
+
+```json
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.0-iman"}
+```
+
+- `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
+  `subtype` para `kind=RPI`: `CERRADURA|IMAN`. Omitirlo equivale a `CERRADURA`.
+- `PATCH /api/v1/devices/{id}` acepta `subtype`, pero el panel no lo ofrece
+  para un RPI ya creado.
+- Un subtipo no válido responde `422 subtype_invalid`.
+- `POST /api/v1/factory-devices/{id}/claim` acepta `subtype`; sin él crea
+  `CERRADURA`.
+
+## Heartbeat
+
+`POST /dashboard-api/device-heartbeat` acepta aditivamente:
+
+```json
+{"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
+ "firmware_variant":"IMAN","firmware_version":"2.0-iman"}
+```
+
+Respuesta aditiva:
+
+```json
+{"ok":true,"has_pending_commands":false,
+ "firmware_variant":"IMAN","firmware_version":"2.0-iman","variant_mismatch":false}
+```
+
+`variant_mismatch` compara la variante declarada con el subtipo configurado.
+No cambia el subtipo ni bloquea la operación.
+
+## SSE de puerta para ESP-imán
+
+`GET /dashboard-api/door-events?external_id=<chip>&since_id=<id>`
+con `X-API-Key` de la credencial individual del ESP.
+
+- `401` sin credencial válida.
+- `403 device_mismatch` si `external_id` no es el del cliente.
+- `403 variant_mismatch` si el dispositivo no es `RPI` + `IMAN`.
+- `409 device_without_pack|room_not_found|door_sensor_unavailable` si falta la
+  asociación o no hay `PROXIMITY` Zigbee en el pack.
+- `200 text/event-stream` con:
+
+```text
+event: snapshot
+data: {"protocol":1,"door_state":"CLOSED","last_event_id":123,"contiguous":true,
+       "since_id":123,"sensor_external_id":"0x...","ts":"..."}
+
+event: door
+data: {"protocol":1,"event_id":124,"state":"OPEN",
+       "occurred_at":"...","received_at":"..."}
+```
+
+`contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
+eventos aplicados intermedios. El firmware no rearma con un snapshot no
+contiguo.

@@ -210,7 +210,7 @@ function crm(){return{
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,_factoryTimer:null,
   deviceStatus:{},deviceStatusTick:0,
-  devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',external_id:'',label:'',pack_id:null,transport:'UNKNOWN',meta:{}},roomForm:{code:'',room_type_id:null,notes:'',pack_id:null},
+  devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',subtype:'CERRADURA',external_id:'',label:'',pack_id:null,transport:'UNKNOWN',meta:{}},roomForm:{code:'',room_type_id:null,notes:'',pack_id:null},
 
   async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);setInterval(()=>{this.checkAnomalyAlerts();this.computeWorkerAlerts()},15000)}catch(e){window.location.href='/panel/login'}},
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
@@ -243,8 +243,8 @@ function crm(){return{
    render(){switch(this.p){case'db':return this.db();case'ro':return this.roomsPage();case'dv':return this.devPage();case'pk':return this.packPage();case'st':return this.stayPage();case'qr':return this.qrPage();case'dbts':return this.debtPage();case'w':return this.workersPage();case'ky':return this.keysPage();case'nc':return this.nfcPage();case'ac':return this.accessesPage();case'fd':return this.factoryPage();case'wr':return this.workerRolesPage();case'mon':return this.monitorPage();case'us':return this.crmUserPage();case'cl':return this.apiClientPage();case'an':return this.anomalyPage();case'he':return this.healthPage();case'cfg':return this.settingsPage();default:return this.db()}},
 
      async loadFactoryDevices(silent){try{let d=await this.api('/api/v1/factory-devices?status=ALL');this.factoryDevices=d.data||[]}catch(e){if(!silent)this.toastErr(e.message)}},
-       openFactoryClaim(id){let d=this.factoryDevices.find(function(x){return x.id===id}),that=this,packs=this.packs.map(function(p){return'<option value="'+p.id+'">'+that.esc(p.code||p.name||('Pack '+p.id))+'</option>'}).join('');this.modal.content='<h2>Reclamar equipo</h2><div class="field field--mono"><label>chip_id (informativo)</label><code>'+that.esc(d?.chip_id||'')+'</code></div><div class="field"><label>Etiqueta (opcional)</label><input id="fc_label"></div><div class="field"><label>Pack (opcional)</label><select id="fc_pack"><option value="">Sin pack</option>'+packs+'</select></div><p class="field-hint">La credencial individual permanece protegida en el dispositivo y no se solicita al operador.</p><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="claimFactoryDevice('+id+')">Reclamar</button></div>';this.modal.show=true},
-       async claimFactoryDevice(id){if(!document.getElementById('fc_label')){this.openFactoryClaim(id);return}let label=document.getElementById('fc_label')?.value||'',pack=document.getElementById('fc_pack')?.value||'';try{await this.api('/api/v1/factory-devices/'+id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null})});this.modal.show=false;this.modal.content='';this.toastOk('Equipo reclamado');await this.loadFactoryDevices();await this.loadPacks()}catch(e){this.toastErr(e.message)}},
+       openFactoryClaim(id){let d=this.factoryDevices.find(function(x){return x.id===id}),that=this,packs=this.packs.map(function(p){return'<option value="'+p.id+'">'+that.esc(p.code||p.name||('Pack '+p.id))+'</option>'}).join('');this.modal.content='<h2>Reclamar equipo</h2><div class="field field--mono"><label>chip_id (informativo)</label><code>'+that.esc(d?.chip_id||'')+'</code></div><div class="field"><label>Variante del ESP</label><select id="fc_subtype"><option value="CERRADURA">ESP-cerradura</option><option value="IMAN">ESP-imán</option></select><p class="field-hint">Debe coincidir con el sketch que se cargará en la placa.</p></div><div class="field"><label>Etiqueta (opcional)</label><input id="fc_label"></div><div class="field"><label>Pack (opcional)</label><select id="fc_pack"><option value="">Sin pack</option>'+packs+'</select></div><p class="field-hint">La credencial individual permanece protegida en el dispositivo y no se solicita al operador.</p><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="claimFactoryDevice('+id+')">Reclamar</button></div>';this.modal.show=true},
+       async claimFactoryDevice(id){if(!document.getElementById('fc_label')){this.openFactoryClaim(id);return}let label=document.getElementById('fc_label')?.value||'',pack=document.getElementById('fc_pack')?.value||'',subtype=document.getElementById('fc_subtype')?.value||'CERRADURA';try{await this.api('/api/v1/factory-devices/'+id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:label||null,pack_id:pack?parseInt(pack):null,subtype:subtype})});this.modal.show=false;this.modal.content='';this.toastOk('Equipo reclamado');await this.loadFactoryDevices();await this.loadPacks()}catch(e){this.toastErr(e.message)}},
     factoryPage(){let that=this;return'<div class="ph"><h1>🏭 Identificación de fábrica</h1><p>Equipos anunciados antes del montaje · '+this.factoryDevices.length+'</p></div><table><tr><th>chip_id</th><th>Estado</th><th>Dispositivo</th><th>Primer anuncio</th><th>Último anuncio</th><th></th></tr>'+this.factoryDevices.map(function(d){return'<tr><td><code>'+that.esc(d.chip_id)+'</code></td><td>'+that.statusBadge(d.status)+'</td><td>'+(d.device_id?'<code>RPI #'+d.device_id+'</code>':'<span class="dim">—</span>')+'</td><td>'+that.esc(d.first_announced_at)+'</td><td>'+that.esc(d.last_announced_at)+'</td><td>'+(d.status==='PENDING'?'<button class="btn btn-p btn-sm" @click="claimFactoryDevice('+d.id+')">Reclamar</button>':(d.device_id?'<button class="btn btn-o btn-sm" @click="nav(\'dv\')">Asignar pack</button>':'<span class="dim">Reclamado por '+that.esc(d.claimed_by||'—')+'</span>'))+'</td></tr>'}).join('')+'</table>'},
 
 
@@ -638,6 +638,8 @@ function crm(){return{
   },
   // ═══ Packs y Dispositivos — helpers y vistas (F25) ═══
   DEV_KINDS:['RPI','LOCK','PROXIMITY','PRESENCE','SWITCH','SCANNER'],
+  ESP_VARIANTS:['CERRADURA','IMAN'],
+  ESP_VARIANT_NAME:{CERRADURA:'ESP-cerradura',IMAN:'ESP-imán'},
   KIND_COLOR:{RPI:'#e6b85c',LOCK:'#5ec2cf',PROXIMITY:'#62c99b',PRESENCE:'#e0904f',SWITCH:'#7d9ce8',SCANNER:'#a8b2c3'},
   KIND_BG:{RPI:'rgba(230,184,92,.12)',LOCK:'rgba(94,194,207,.12)',PROXIMITY:'rgba(98,201,155,.12)',PRESENCE:'rgba(224,144,79,.12)',SWITCH:'rgba(125,156,232,.12)',SCANNER:'rgba(168,178,195,.12)'},
   KIND_NAME:{RPI:'ESP32 lector QR',LOCK:'Cerradura',PROXIMITY:'Sensor puerta',PRESENCE:'Sensor presencia',SWITCH:'Interruptor luz',SCANNER:'Lector QR'},
@@ -712,14 +714,15 @@ function crm(){return{
     else if(d.kind==='PROXIMITY')batt=this.battHtml(null,true);
     let loc=d.kind==='RPI'?'<button class="icon-btn" title="Localizar (parpadeo LED)" @click="identifyDevice('+d.id+')">'+this.crosshairSvg()+'</button>':'';
     let acts='<div class="dv-acts">'+loc+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
-    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
+    let variant=(d.kind==='RPI'&&d.subtype)?'<span class="tchip" style="--tc:#c9a35b;--tcbg:rgba(201,163,91,.14)">'+this.esc(this.ESP_VARIANT_NAME[d.subtype]||d.subtype)+'</span>':'';
+    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
   },
   deriveDevices(){
     let out=[];
     (this.packs||[]).forEach(p=>{(p.devices||[]).forEach(d=>{out.push(Object.assign({},d,{pack_id:p.id,pack_name:p.name,pack_code:p.code,room_id:p.room_id}))})});
     this.devices=out;
   },
-   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:null,pack_id:null,kind:x.kind,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null),transport:x.transport||'UNKNOWN',integration_status:x.integration_status||null}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
+   async loadDevices(){if(!this.packs||!this.packs.length){await this.loadPacks()}else{this.deriveDevices()}let all=[];try{let d=await this.api('/api/v1/devices');all=d.items||[]}catch(e){this.toastErr('Error cargando dispositivos: '+e.message)}let unassigned=all.filter(x=>!x.pack_id).map(x=>({id:x.id,room_id:null,pack_id:null,kind:x.kind,subtype:x.subtype||null,external_id:x.external_id,label:x.label||('RPI '+x.external_id),meta:x.meta||null,battery_pct:(x.battery_pct!==undefined&&x.battery_pct!==null?x.battery_pct:null),transport:x.transport||'UNKNOWN',firmware_variant:x.firmware_variant||null,firmware_version:x.firmware_version||null,integration_status:x.integration_status||null}));this.devices=this.devices.filter(x=>x.pack_id).concat(unassigned)},
   packPage(){
     let q=(this.pkQ||'').toLowerCase();
     let packs=this.packs.filter(p=>{
@@ -820,12 +823,13 @@ function crm(){return{
     await this.loadPacks();
     let d=id?this.devices.find(x=>x.id===id):null;
     let kind=d?d.kind:'RPI';
-    this.devForm={kind:kind,external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),transport:d?(d.transport||'UNKNOWN'):'UNKNOWN',meta:d&&d.meta?Object.assign({},d.meta):{}};
+    this.devForm={kind:kind,subtype:d?(d.subtype||'CERRADURA'):'CERRADURA',external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),transport:d?(d.transport||'UNKNOWN'):'UNKNOWN',meta:d&&d.meta?Object.assign({},d.meta):{}};
     let that=this;
     let seg=this.DEV_KINDS.map(k=>{
       let dis=d?' disabled':'';
       return'<button type="button" class="seg-btn'+(kind===k?' act':'')+'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
     }).join('');
+    let subtypeSeg=this.ESP_VARIANTS.map(v=>'<button type="button" class="seg-btn'+(this.devForm.subtype===v?' act':'')+'" @click="devForm.subtype=\''+v+'\'"'+(d?' disabled':'')+'>'+that.ESP_VARIANT_NAME[v]+'</button>').join('');
     let packOpts=(d?'<option value="">Sin pack</option>':'')+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
     if(!this.packs.length&&!d){packOpts='<option value="">Primero crea un pack</option>'}
     let transportOpts=[['UNKNOWN','Sin declarar'],['ZIGBEE2MQTT','Zigbee2MQTT local'],['TUYA','Tuya cloud'],['LOCAL','ESP32 / local'],['SIMULATED','Simulado']].map(function(x){return'<option value="'+x[0]+'"'+(that.devForm.transport===x[0]?' selected':'')+'>'+x[1]+'</option>'}).join('');
@@ -839,6 +843,7 @@ function crm(){return{
     let hint=d?'<p class="field-hint">El tipo no se puede cambiar: es la identidad física del hardware.</p>':'<p class="field-hint">'+that.KIND_HINT[kind]+'</p>';
     this.modal.content='<h2 id="modal-title">'+(d?'Editar dispositivo':'Nuevo dispositivo')+'</h2>'
       +'<div class="field"><label>Tipo de dispositivo</label><div class="seg" role="radiogroup" aria-label="Tipo de dispositivo">'+seg+'</div>'+hint+'</div>'
+      +'<div class="field" x-show="devForm.kind===\'RPI\'"><label>Variante del ESP</label><div class="seg" role="radiogroup" aria-label="Variante del ESP">'+subtypeSeg+'</div><p class="field-hint">Debe coincidir con el sketch cargado. No cambia el hardware por sí solo.</p></div>'
       +'<div class="field field--mono"><label for="dvf_ext">ID externo</label><input id="dvf_ext" x-model="devForm.external_id" placeholder="wbr3-2f01" autocomplete="off"><p class="field-hint">Identificador físico estable: chip, MAC o IEEE del dispositivo.</p></div>'
       +'<div class="field"><label for="dvf_label">Etiqueta</label><input id="dvf_label" x-model="devForm.label" placeholder="Zigbee · Puerta · almacenZigbee" autocomplete="off"><p class="field-hint">Opcional. Nombre legible para el personal.</p></div>'
       +'<div class="field"><label for="dvf_transport">Origen / transporte</label><select id="dvf_transport" x-model="devForm.transport">'+transportOpts+'</select><p class="field-hint">Se declara explícitamente; no se infiere del tipo ni del nombre. Para el pack Zigbee usa <b>Zigbee2MQTT local</b>.</p></div>'
@@ -858,9 +863,11 @@ function crm(){return{
     try{
       if(id){
         let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,transport:transport,meta:meta};
+        if(k==='RPI')body.subtype=f.subtype||'CERRADURA';
         await this.api('/api/v1/devices/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       }else{
         let body={kind:k,external_id:f.external_id.trim(),pack_id:parseInt(f.pack_id),transport:transport,meta:meta};
+        if(k==='RPI')body.subtype=f.subtype||'CERRADURA';
         let d=await this.api('/api/v1/devices/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(f.label&&f.label.trim()){await this.api('/api/v1/devices/'+d.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:f.label.trim()})})}
       }

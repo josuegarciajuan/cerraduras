@@ -32,6 +32,14 @@ final class Device
     public const SUBTYPE_CAMERA_INTERIOR = 'INTERIOR';
 
     /**
+     * ESP actuator variants (F97/RF-174). Stored on `kind=RPI` devices.
+     *   CERRADURA: idle without power; pulse on open (legacy behaviour).
+     *   IMAN:      pulsed hold power; cut power on open until the door closes.
+     */
+    public const SUBTYPE_ESP_CERRADURA = 'CERRADURA';
+    public const SUBTYPE_ESP_IMAN      = 'IMAN';
+
+    /**
      * Explicit transport/origin (F91/RF-144.4). The stored column is nullable:
      * NULL means "not classified yet" and is presented as UNKNOWN. Transport is
      * never inferred from kind, external_id, label or pack.
@@ -56,6 +64,10 @@ final class Device
     public ?string $transport;
     /** Last received event (UTC DB datetime), not a probe. */
     public ?string $lastSeenAt;
+    /** Last variant reported by the firmware (aditivo, F97). */
+    public ?string $firmwareVariant = null;
+    /** Last firmware version reported by the device (aditivo, F97). */
+    public ?string $firmwareVersion = null;
     public ?int $batteryPct = null;
     public bool $isIdentified;
     public ?string $identifiedAt;
@@ -76,7 +88,9 @@ final class Device
         ?string $identifiedAt = null,
         ?string $subtype = null,
         ?string $transport = null,
-        ?string $lastSeenAt = null
+        ?string $lastSeenAt = null,
+        ?string $firmwareVariant = null,
+        ?string $firmwareVersion = null
     ) {
         $this->id = $id;
         $this->packId = $packId;
@@ -91,6 +105,8 @@ final class Device
         $this->identifiedAt = $identifiedAt;
         $this->transport = self::normalizeTransport($transport);
         $this->lastSeenAt = $lastSeenAt;
+        $this->firmwareVariant = $firmwareVariant;
+        $this->firmwareVersion = $firmwareVersion;
     }
 
     /** @return array<string,mixed> */
@@ -107,6 +123,8 @@ final class Device
             'meta' => $this->meta,
             'battery_pct' => $this->batteryPct,
             'transport' => $this->transport ?? self::TRANSPORT_UNKNOWN,
+            'firmware_variant' => $this->firmwareVariant,
+            'firmware_version' => $this->firmwareVersion,
         ];
     }
 
@@ -162,9 +180,23 @@ final class Device
         return [self::SUBTYPE_CAMERA_EXTERIOR, self::SUBTYPE_CAMERA_INTERIOR];
     }
 
+    /** @return list<string> */
+    public static function espVariants(): array
+    {
+        return [self::SUBTYPE_ESP_CERRADURA, self::SUBTYPE_ESP_IMAN];
+    }
+
+    /** Legacy RPI rows without subtype behave as ESP-cerradura. */
+    public static function normalizeEspVariant(?string $subtype): string
+    {
+        $value = strtoupper(trim((string) $subtype));
+        return $value === '' ? self::SUBTYPE_ESP_CERRADURA : $value;
+    }
+
     /**
-     * Pure subtype validity matrix (F60/RF-68.2):
+     * Pure subtype validity matrix (F60/RF-68.2, F97/RF-174):
      *  - CAMERA requires EXTERIOR|INTERIOR.
+     *  - RPI requires CERRADURA|IMAN.
      *  - Any other kind must carry no subtype (null or '').
      */
     public static function isValidSubtype(string $kind, ?string $subtype): bool
@@ -172,6 +204,10 @@ final class Device
         if ($kind === self::KIND_CAMERA) {
             return $subtype !== null && $subtype !== ''
                 && in_array($subtype, self::cameraPositions(), true);
+        }
+        if ($kind === self::KIND_RPI) {
+            return $subtype !== null && $subtype !== ''
+                && in_array($subtype, self::espVariants(), true);
         }
         return $subtype === null || $subtype === '';
     }
