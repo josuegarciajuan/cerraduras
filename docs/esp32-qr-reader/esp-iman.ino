@@ -805,18 +805,14 @@ static void imanHandleSnapshot(const String &data) {
   if (!contiguous) {
     imanNeedFreshEvent = true;
     imanDoorKnown = false;
-  } else if (!imanNeedFreshEvent) {
-    if (state == "OPEN") {
-      imanDoorKnown = true;
-      imanDoorOpen = true;
-    } else if (state == "CLOSED") {
-      imanDoorKnown = true;
-      imanDoorOpen = false;
-    } else {
-      imanDoorKnown = false;
-    }
+  } else if (state == "OPEN" || state == "CLOSED") {
+    // Snapshot contiguo: no se perdió ningún evento aplicado desde since_id,
+    // por lo que el estado autoritativo del servidor es confiable.
+    imanNeedFreshEvent = false;
+    imanDoorKnown = true;
+    imanDoorOpen = (state == "OPEN");
   } else {
-    // Hueco previo no demostrable: se conserva la exigencia de evento nuevo.
+    imanNeedFreshEvent = true;
     imanDoorKnown = false;
   }
   saveImanPersistedState();
