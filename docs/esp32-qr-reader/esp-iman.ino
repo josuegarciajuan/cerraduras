@@ -4,8 +4,9 @@
  *
  * Variante F97: mismo hardware y misma base que ESP-cerradura, pero el
  * actuador es un imán. En reposo se mantiene la retención con corriente
- * pulsada. Perfil de ensayo F97.1: 950 ms ON / 50 ms OFF (antes 100/100,
- * que hacía caer demasiado la fuerza). Al autorizar un QR se corta la
+ * pulsada. Perfil de ensayo F97.2: CONTINUO a máxima potencia (sin parpadeo).
+ * Sustituye al perfil F97.1 (950/50), que seguía dando poca fuerza. Al
+ * autorizar un QR se corta la
  * corriente y NO se rearma hasta que el sensor Zigbee del pack confirma el
  * cierre físico de la puerta. La puerta puede quedar abierta indefinidamente.
  *
@@ -129,12 +130,14 @@ const int   API_PORT     = 443;
 
 // ── F97: variante y parámetros del imán ────────────────────────────────────
 #define IMAN_VARIANT                 "IMAN"
-#define IMAN_VERSION                 "2.1-iman-hold950"
-// F97.1 (ensayo): el imán perdía fuerza con 100/100. Mantener casi toda la
-// corriente reduce la caída entre pulsos; el consumo baja muy poco respecto a
-// alimentación continua, así que la temperatura debe vigilarse en banco.
-#define IMAN_HOLD_ON_MS              950   // corriente 950 ms
-#define IMAN_HOLD_OFF_MS             50    // reposo 50 ms
+#define IMAN_VERSION                 "2.2-iman-continuous"
+// F97.2 (ensayo de máxima potencia): mantener la salida encendida sin
+// parpadeo. Es la referencia para comprobar la fuerza real del imán. El
+// consumo y el calentamiento son los de alimentación continua: prueba
+// vigilada y con corte inmediato si algo se calienta.
+#define IMAN_HOLD_CONTINUOUS         1     // 1 = continuo; 0 = pulsado 950/50
+#define IMAN_HOLD_ON_MS              950   // solo si IMAN_HOLD_CONTINUOUS=0
+#define IMAN_HOLD_OFF_MS             50    // solo si IMAN_HOLD_CONTINUOUS=0
 #define IMAN_OPEN_WAIT_MS            4000  // espera de apertura tras el QR
 #define IMAN_CLOSE_STABLE_MS         300   // cierre estable antes de rearmar
 #define IMAN_LINK_GRACE_MS           15000 // tolerancia de reconexión SSE
@@ -672,13 +675,18 @@ static void imanControlTask(void *arg) {
           imanEnter(IMAN_OPEN);
           imanOutput(false);
         } else {
-          // Corriente pulsada para no sobrecalentar la fuente/conversor.
+#if IMAN_HOLD_CONTINUOUS
+          // F97.2: máxima potencia, sin conmutación de mantenimiento.
+          if (!imanOutputOn) imanOutput(true);
+#else
+          // Perfil pulsado: reduce el consumo medio a costa de fuerza.
           const unsigned long interval = holdPhaseOn ? IMAN_HOLD_ON_MS : IMAN_HOLD_OFF_MS;
           if ((now - lastPulse) >= interval) {
             holdPhaseOn = !holdPhaseOn;
             lastPulse = now;
             imanOutput(holdPhaseOn);
           }
+#endif
         }
         break;
 
@@ -726,8 +734,12 @@ static void imanControlTask(void *arg) {
 }
 
 void startImanTask() {
+#if IMAN_HOLD_CONTINUOUS
+  Serial.println("[IMAN] mantenimiento CONTINUO (ensayo F97.2 máxima potencia)");
+#else
   Serial.printf("[IMAN] mantenimiento %d ms ON / %d ms OFF\n",
                 IMAN_HOLD_ON_MS, IMAN_HOLD_OFF_MS);
+#endif
   imanOutput(false);
   xTaskCreatePinnedToCore(imanControlTask, "iman-state", 4096, nullptr, 2,
                           &imanTaskHandle, 1);

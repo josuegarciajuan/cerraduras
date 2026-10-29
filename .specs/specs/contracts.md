@@ -3721,7 +3721,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -3738,14 +3738,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950"}
+ "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -7499,7 +7499,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -7516,14 +7516,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950"}
+ "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.1-iman-hold950","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.

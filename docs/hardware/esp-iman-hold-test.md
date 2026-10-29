@@ -1,42 +1,45 @@
-# ESP-imán — ensayo de mantenimiento 950/50 (F97.1)
+# ESP-imán — ensayos de mantenimiento (F97)
 
-> Estado: **ensayo en banco**. No es un valor definitivo hasta medir fuerza,
+> Estado: **ensayo en banco**. Los valores no son definitivos hasta medir fuerza,
 > temperatura y estabilidad de la alimentación.
 
-## Motivo
+## Historial de perfiles
 
-Con el perfil 100 ms ON / 100 ms OFF el imán perdía demasiada fuerza. El corte
-de 100 ms permite que la corriente de la bobina caiga y la atracción disminuye.
-El perfil 950/50 mantiene corriente el 95 % del tiempo y reduce mucho la caída,
-a costa de consumir casi lo mismo que en alimentación continua.
+| Perfil | Mantenimiento | Resultado |
+|---|---|---|
+| F97.1 | 950 ms ON / 50 ms OFF | Seguía dando poca fuerza |
+| **F97.2 (actual)** | **Continuo a máxima potencia** | Pendiente de medir |
 
-## Firmware
+## F97.2 — máxima potencia (actual)
+
+Objetivo: comprobar la fuerza real del imán sin ningún parpadeo de
+mantenimiento. Es la referencia de máxima potencia y también la de mayor
+consumo y calentamiento.
 
 - Sketch: `firmware/esp-iman/`
-- Versión: `2.1-iman-hold950`
-- Mantenimiento: `IMAN_HOLD_ON_MS=950`, `IMAN_HOLD_OFF_MS=50`
+- Versión: `2.2-iman-continuous`
+- `IMAN_HOLD_CONTINUOUS=1`: la salida permanece encendida.
+- `IMAN_HOLD_CONTINUOUS=0` recupera el perfil pulsado 950/50.
+- El arranque registra por serie:
+  `[IMAN] mantenimiento CONTINUO (ensayo F97.2 máxima potencia)`.
 - Apertura sin cambios: QR → OFF; `OPEN` → OFF indefinido; cierre estable →
   vuelta a mantenimiento.
-- El arranque registra por serie:
-  `[IMAN] mantenimiento 950 ms ON / 50 ms OFF`.
 
 ## Respaldo
-
-Antes del ensayo ya se guardó la flash completa del equipo:
 
 ```text
 /home/oficina/esp-backups/r35d-pre-f97-20261029-131734.bin
 ```
 
-## Protocolo
+## Protocolo de medida
 
-1. Puerta cerrada y sensor Zigbee en `CLOSED`; confirmar estado `HOLDING`.
+1. Puerta cerrada y sensor Zigbee en `CLOSED`; confirmar `HOLDING`.
 2. Medir fuerza de retención con dinamómetro o báscula, siempre en el mismo
    punto y ángulo. Anotar el valor.
 3. Medir temperatura ambiente y de la fuente/conversor antes de empezar.
-4. Comprobar a 1, 5, 15 y 30 minutos:
+4. Comprobar a **1, 3, 5, 10 y 15 minutos**:
    - fuerza de retención;
-   - temperatura de fuente/conversor;
+   - temperatura de fuente/conversor y del imán;
    - ruido, vibración u olor;
    - reinicios del ESP o pérdida del canal SSE.
 5. Probar apertura y cierre:
@@ -53,21 +56,24 @@ Detener el ensayo y desenergizar si:
 - hay olor, zumbido anómalo o calentamiento del imán;
 - el ESP se reinicia o pierde el canal de puerta.
 
-## Resultados
+## Resultados F97.2
 
 | Tiempo | Fuerza | Temp. fuente | Temp. imán | Observaciones |
 |---|---|---|---|---|
 | 0 min | | | | |
 | 1 min | | | | |
+| 3 min | | | | |
 | 5 min | | | | |
+| 10 min | | | | |
 | 15 min | | | | |
-| 30 min | | | | |
 
 ## Decisión
 
-- Si la fuerza es aceptable y la temperatura se mantiene dentro de límites:
-  conservar 950/50 como base de pruebas.
-- Si la fuerza mejora pero la temperatura es alta: revisar alimentación y etapa
-  de potencia; no seguir reduciendo el tiempo de corte a ciegas.
-- Si la fuerza sigue siendo insuficiente: valorar alimentación continua o una
-  etapa PWM/MOSFET validada por el ingeniero.
+- Si a máxima potencia la fuerza es suficiente pero la temperatura es alta:
+  revisar alimentación y etapa de potencia; no volver a bajar el tiempo de
+  corte a ciegas.
+- Si a máxima potencia la fuerza sigue siendo insuficiente: el problema no es
+  el perfil de mantenimiento; revisar el imán, el voltaje real en la bobina,
+  el cableado y la mecánica de la puerta.
+- Si se necesita reducir consumo más adelante: valorar PWM/MOSFET validado por
+  el ingeniero, no un relé mecánico conmutando rápido.
