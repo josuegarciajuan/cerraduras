@@ -6102,3 +6102,178 @@ El primer arranque tras el flasheo, sin historial de eventos, queda en
 `UNSYNCED` (OFF) hasta que el sensor reporte una transición o exista un
 snapshot contiguo. Es una decisión de seguridad: no se rearma con un cierre
 cacheado.
+
+---
+
+# F98 — Panel de gestión de llaves (/llaves)
+
+## 98.1 Objetivo y alcance
+
+UI independiente en `https://cerraduras.duckdns.org/llaves` para el encargado
+del hotel, con login simple y dos apartados: **Empleados** (CRUD) y **Llaves**
+(CRUD y asignación). La gestión de fichas NFC **no** forma parte de esta UI:
+solo se pueden elegir fichas ya registradas y disponibles, creadas por el
+administrador desde `/panel`.
+
+La interfaz debe ser extremadamente simple, visual, accesible y apta para
+personas con bajas capacidades: botones grandes con icono y texto, alto
+contraste, formularios por pasos, mensajes claros, sin tablas densas,
+responsive, navegable por teclado y con foco visible.
+
+## 98.2 Roles, sesión y acceso
+
+- Nuevo rol CRM `key_manager` en `crm_users.role`. Los roles son valores de la
+  columna; no existe tabla de roles CRM.
+- Se reutilizan `crm_users`, `crm_sessions`, la cookie `crm_session` y
+  `POST /api/v1/crm/login`, `POST /api/v1/crm/logout`, `GET /api/v1/crm/me`.
+- `GET /llaves/login` es público. `GET /llaves` y `GET /llaves/*` exigen
+  sesión con rol `key_manager` o `admin`; sin sesión redirigen a
+  `/llaves/login`.
+- `GET /panel` y `GET /panel/*` quedan restringidos a `admin`, `operator` y
+  `viewer`. Un `key_manager` recibe `403` o redirección a `/llaves`.
+- `key_manager` no puede gestionar usuarios CRM ni fichas NFC. La denegación
+  es server-side en los scopes; la UI no es la autoridad.
+
+`CrmUser::ROLES` incorpora `key_manager` y `AuthApiKeyMiddleware::scopesForRole()`
+lo mapea al cliente sintético de la sesión. `CrmSessionMiddleware` gana la
+comprobación de rol para páginas: `/llaves*` admite `key_manager|admin`,
+`/panel*` admite `admin|operator|viewer`; las APIs siguen denegando por scope.
+
+## 98.3 Permisos del rol
+
+| Scope | `key_manager` | Uso |
+|---|---|---|
+| `workers:read` | sí | listar y abrir empleados |
+| `workers:write` | sí | alta, edición y baja lógica |
+| `worker-roles:read` | sí | elegir rol existente |
+| `rooms:read` | sí | listar tipos de sala y defaults |
+| `keys:read` | sí | listar y consultar llaves |
+| `keys:write` | sí | crear, editar, regenerar y revocar |
+| `nfc-cards:write` | **no** | fichas solo desde `/panel` |
+| `audit:read` | **no** | historial no visible aquí |
+| `rooms:write` | **no** | no configura salas |
+| `qr:*`, `locks:*` | **no** | no opera lectores ni cerraduras |
+
+Las rutas `/api/v1/keys/*` pasan de `rooms:read`/`rooms:write` a
+`keys:read`/`keys:write`. `admin` y `operator` ya tienen ambos scopes, por lo
+que su comportamiento no cambia.
+
+## 98.4 API reutilizada y endpoint acotado de fichas
+
+Se reutilizan sin cambios de forma:
+
+- `POST /api/v1/crm/login`, `POST /api/v1/crm/logout`, `GET /api/v1/crm/me`.
+- `GET/POST /api/v1/workers`; `GET/PATCH/DELETE /api/v1/workers/{id}`.
+- `GET /api/v1/worker-roles`; `GET /api/v1/room-types`.
+- `GET /api/v1/keys`; `POST /api/v1/keys`; `PATCH/DELETE /api/v1/keys/{id}`;
+  `POST /api/v1/keys/{id}/qr`;
+  `GET /api/v1/keys/defaults?worker_id=|role_id=`.
+
+Se añade **solo** para esta UI:
+
+```http
+GET /api/v1/llaves/nfc-available
+```
+
+```json
+{"data":[{"id":1,"number":"F-001"}]}
+```
+
+Devuelve únicamente fichas `AVAILABLE`, con `id` y `number`, nunca `code_hash`
+ni `code_last4` completo. Exige `keys:read`.
+
+## 98.5 Datos y migración 0132
+
+No se crean tablas nuevas. La migración `0132` documenta el rol
+`key_manager` (valor admitido en `crm_users.role`; no hay tabla de roles) y
+amplía de forma **idempotente** los scopes de los `api_clients` que ya tienen
+`rooms:write`, añadiendo:
+
+`keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
+`workers:read`, `workers:write`, `worker-roles:read`.
+
+No elimina scopes ni modifica datos de llaves, trabajadores o fichas.
+
+## 98.6 Estructura de la UI
+
+- `GET /llaves` sirve `public/llaves/index.html` (aplicación de dos apartados).
+- `GET /llaves/login` sirve `public/llaves/login.html`.
+- `GET /llaves/{path}` sirve los assets de `public/llaves/` (JS, CSS, iconos).
+- Sin frameworks pesados; estado y render en JS local, mensajes en español y
+  un único flujo principal por pantalla.
+- Cabecera con nombre del usuario y salir. Navegación por dos pestañas
+  grandes: **Empleados** y **Llaves**.
+
+## 98.7 Empleados
+
+Listado con búsqueda y tarjetas (no tabla densa). Alta/edición en formulario
+por pasos: nombre → rol existente → notas. Baja lógica con confirmación. Tras
+crear, se ofrece **Crear llave** con el empleado ya preseleccionado.
+
+La baja no borra historial ni llaves. Una llave personal de un empleado
+inactivo no abre porque `AccessKeyService` ya valida el trabajador activo; esta
+fase no duplica esa regla.
+
+## 98.8 Llaves
+
+Listado con etiqueta, titular, tipo (`QR`/`Ficha`), número de ficha, caducidad
+y estado (`Activa`/`Caducada`/`Desactivada`), con filtros de búsqueda, estado y
+tipo.
+
+Asistente de creación en cuatro pasos:
+
+1. **Titular**: empleado activo o rol compartido. Se explica que la llave
+   compartida no identifica a una persona.
+2. **Tipo**: `QR` o `Ficha`. Para ficha se consulta
+   `GET /api/v1/llaves/nfc-available` y solo se muestran `id` y `number`.
+3. **Permisos y caducidad**: permisos precargados desde
+   `GET /api/v1/keys/defaults` según trabajador o rol y editables; la
+   caducidad se introduce en la hora local del hotel y se convierte a UTC
+   antes de enviarla.
+4. **Resumen y crear**.
+
+Si entre la selección y el `POST /api/v1/keys` la ficha deja de estar
+disponible, la API responde `409` con un mensaje claro; la UI avisa y recarga
+la lista de fichas disponibles sin perder el resto del formulario.
+
+## 98.9 QR, ficha, edición y revocación
+
+- Un QR se muestra y se descarga como PNG **solo** en la respuesta de creación
+  o de regeneración. No se puede recuperar después.
+- Regenerar exige confirmación y advierte de que el QR anterior deja de
+  funcionar.
+- En una llave de ficha, la UI indica qué ficha física entregar (número), sin
+  mostrar su código.
+- Edición: etiqueta, caducidad, permisos y, solo si es NFC, la ficha asignada.
+- Revocación: confirmación explícita; la llave queda `DESACTIVADA` y conserva
+  su historial.
+- Titular y tipo son inmutables; para cambiarlos se crea otra llave.
+
+## 98.10 Seguridad y mínima exposición
+
+La UI nunca recibe códigos de ficha ni tokens QR fuera de la respuesta de
+creación/regeneración. El endpoint `nfc-available` solo expone `id` y
+`number`. No se muestran `code_hash`, `code_last4`, tokens ni secretos en
+listados, filtros ni mensajes de error.
+
+## 98.11 No funcionales
+
+- Sin llamadas a Tuya, sin pollers y sin cambios en el pipeline de sensores.
+- `/panel` mantiene su funcionamiento actual para `admin`, `operator` y
+  `viewer`.
+- La UI es responsive, con targets grandes, alto contraste, foco visible,
+  etiquetas `aria` y mensajes de error junto al campo.
+- Los formularios conservan los datos ante errores recuperables (por ejemplo,
+  `409` de ficha) y no usan tablas de más de dos columnas.
+
+## 98.12 Verificación
+
+- Unitarios de roles/permisos: `key_manager` obtiene exactamente sus scopes;
+  no obtiene `nfc-cards:write`, `audit:read`, `rooms:write`, `qr:*` ni
+  `locks:*`; `admin|operator|viewer` conservan `/panel`.
+- Unitarios del cambio de scopes de `/api/v1/keys/*`.
+- Bloque HTTP F98: login `key_manager`, denegación de `/panel`, CRUD de
+  empleado, creación de llave QR, ficha disponible, `409` de ficha no
+  disponible, denegación de `POST /api/v1/nfc-cards`, `403` sin sesión y
+  regeneración de QR.
+- Regresión completa con `bash bin/run-tests.sh` en verde.

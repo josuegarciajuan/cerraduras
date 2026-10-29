@@ -5285,3 +5285,152 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [ ] Compilar y cargar `firmware/esp-iman`.
 - [ ] Verificar arranque, credencial, pack y recepción de puerta.
 - [ ] Prueba física de retención, apertura, cierre y temperatura.
+
+---
+
+# Fase 98: Panel de gestión de llaves (/llaves)
+
+## TSK-F98-01: Rol key_manager, scopes y guardas de sesión
+
+**Trazabilidad**: RF-178, RF-179
+
+- [ ] Añadir `key_manager` a `CrmUser::ROLES`.
+- [ ] Mapear en `AuthApiKeyMiddleware::scopesForRole()` exactamente
+  `workers:read`, `workers:write`, `worker-roles:read`, `rooms:read`,
+  `keys:read`, `keys:write`.
+- [ ] Denegar `nfc-cards:write`, `audit:read`, `rooms:write`, `qr:*` y
+  `locks:*` a `key_manager`.
+- [ ] Hacer `CrmSessionMiddleware` consciente del rol: `/llaves*` admite
+  `key_manager|admin`; `/panel*` admite `admin|operator|viewer`.
+- [ ] Redirección a `/llaves/login` sin sesión y a `/llaves` para
+  `key_manager` que intente `/panel`.
+
+**Archivos**: `api/src/Domain/Crm/CrmUser.php`,
+`api/src/Http/Middlewares/AuthApiKeyMiddleware.php`,
+`api/src/Http/Middlewares/CrmSessionMiddleware.php`,
+`api/public/index.php`.
+
+**Verificación**: unit de `scopesForRole`; `GET /panel` con cookie
+`key_manager` no devuelve el panel; `/llaves` sin sesión redirige.
+
+## TSK-F98-02: Migración 0132, scopes de llaves y endpoint de fichas
+
+**Trazabilidad**: RF-179, RF-182
+
+- [ ] Migración `0132` idempotente: documentar `key_manager` y ampliar scopes
+  de `api_clients` con `rooms:write`.
+- [ ] Cambiar `/api/v1/keys/*` de `rooms:read`/`rooms:write` a
+  `keys:read`/`keys:write`.
+- [ ] Añadir `GET /api/v1/llaves/nfc-available` (`keys:read`) que devuelve solo
+  `{id, number}` de fichas `AVAILABLE`.
+- [ ] Mantener `admin`/`operator` sin cambios funcionales.
+
+**Archivos**: `api/migrations/0132_key_manager_scopes.sql`,
+`api/public/index.php`, `api/src/Http/Controllers/AccessKeyController.php`
+(o controlador específico de fichas disponibles).
+
+**Verificación**: unit del endpoint (solo `AVAILABLE`, sin códigos) y HTTP con
+`key_manager` (200) y sin sesión (401).
+
+## TSK-F98-03: Rutas y estructura de la UI /llaves
+
+**Trazabilidad**: RF-178, NFR-F98.1
+
+- [ ] Servir `public/llaves/index.html` en `GET /llaves`.
+- [ ] Servir `public/llaves/login.html` en `GET /llaves/login`.
+- [ ] Servir assets de `public/llaves/` en `GET /llaves/{path}` sin salir del
+  directorio.
+- [ ] Shell accesible: dos apartados grandes, cabecera con usuario y salir,
+  mensajes claros, responsive, foco visible y targets grandes.
+
+**Archivos**: `api/public/index.php`, `api/src/Http/Controllers/CrmController.php`
+(o controlador de páginas de llaves), `api/public/llaves/index.html`,
+`api/public/llaves/login.html`, `api/public/llaves/assets/*`.
+
+**Verificación**: carga de las tres rutas, login/logout y redirección sin
+sesión; revisión de teclado y contraste.
+
+## TSK-F98-04: Empleados
+
+**Trazabilidad**: RF-180
+
+- [ ] Listado con búsqueda por nombre y tarjetas legibles.
+- [ ] Alta por pasos: nombre, rol existente y notas.
+- [ ] Edición y baja lógica con confirmación.
+- [ ] Tras crear, ofrecer crear llave con el empleado preseleccionado.
+- [ ] No borrar historial ni llaves al dar de baja.
+
+**Archivos**: `api/public/llaves/index.html`,
+`api/public/llaves/assets/llaves.js`, `api/public/llaves/assets/llaves.css`.
+
+**Verificación**: flujo HTTP de alta/edición/baja con `key_manager`; la llave
+de un empleado inactivo sigue denegando la apertura.
+
+## TSK-F98-05: Listado y filtros de llaves
+
+**Trazabilidad**: RF-181
+
+- [ ] Listar etiqueta, titular, tipo, número de ficha, caducidad y estado.
+- [ ] Filtros de búsqueda, estado y tipo.
+- [ ] Mostrar “compartida” para titular `ROLE`, sin inventar trabajador.
+- [ ] No renderizar códigos de ficha ni tokens.
+
+**Archivos**: `api/public/llaves/assets/llaves.js`,
+`api/public/llaves/assets/llaves.css`.
+
+**Verificación**: filtros combinados y revisión de que el DOM no contiene
+tokens ni códigos.
+
+## TSK-F98-06: Asistente de creación
+
+**Trazabilidad**: RF-182
+
+- [ ] Paso 1: empleado activo o rol compartido, con aviso de llave compartida.
+- [ ] Paso 2: QR o ficha; fichas desde `/api/v1/llaves/nfc-available`.
+- [ ] Paso 3: permisos precargados desde `/api/v1/keys/defaults`, editables;
+  caducidad local del hotel convertida a UTC.
+- [ ] Paso 4: resumen y `POST /api/v1/keys`.
+- [ ] Ante `409` de ficha no disponible: mensaje claro y recarga de fichas sin
+  perder el formulario.
+
+**Archivos**: `api/public/llaves/assets/llaves.js`,
+`api/public/llaves/assets/llaves.css`, `api/public/llaves/index.html`.
+
+**Verificación**: flujo HTTP de llave QR y llave ficha; simulación de ficha
+ocupada entre pasos → `409` y recarga.
+
+## TSK-F98-07: QR, ficha, edición y revocación
+
+**Trazabilidad**: RF-183, RF-184
+
+- [ ] Mostrar y descargar el QR solo al crear o regenerar; no recuperarlo
+  después.
+- [ ] Regenerar con advertencia de que el QR anterior deja de funcionar.
+- [ ] Indicar el número de ficha física a entregar, sin su código.
+- [ ] Editar etiqueta, caducidad, permisos y ficha (solo NFC).
+- [ ] Revocar con confirmación; titular y tipo no editables.
+
+**Archivos**: `api/public/llaves/assets/llaves.js`,
+`api/public/llaves/assets/llaves.css`, `api/public/llaves/index.html`.
+
+**Verificación**: descarga PNG, regeneración invalidando el token anterior,
+edición y revocación; intento de cambiar titular/tipo no disponible en UI.
+
+## TSK-F98-08: Tests y regresión
+
+**Trazabilidad**: RF-178…RF-184, NFR-F98.1…NFR-F98.4
+
+- [ ] Unit de roles/permisos: `key_manager` exacto y `admin|operator|viewer`
+  con `/panel`.
+- [ ] Unit del endpoint `nfc-available`: solo `AVAILABLE`, solo `id`/`number`.
+- [ ] BLOCK HTTP F98: login `key_manager`, CRUD empleado, llave QR, ficha
+  disponible, `409` de ficha no disponible, denegación de `/panel`,
+  denegación de `POST /api/v1/nfc-cards`, `403` sin sesión y regeneración.
+- [ ] Regresión completa con `bash bin/run-tests.sh` en verde.
+- [ ] Comprobar que no hay llamadas Tuya, pollers ni cambios en sensores.
+
+**Archivos**: `api/tests/Unit/KeyManagerRoleTest.php`,
+`api/tests/Unit/NfcAvailableTest.php`, `api/bin/run-tests.sh` (BLOCK 71).
+
+**Verificación**: `bash bin/run-tests.sh` con 0 fallos y revisión de
+trazabilidad RF/TSK.

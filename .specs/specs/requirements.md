@@ -2996,3 +2996,119 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
   disponer de snapshot contiguo o de una transición nueva.
 - **RF-177.7**: el diagnóstico de dispositivos y el comando `check` nunca
   pulsan el imán. Un único controlador escribe GPIO15.
+
+
+# Fase 98: Panel de gestión de llaves (/llaves)
+
+**Motivo**: el encargado del hotel necesita gestionar empleados y llaves de
+acceso sin entrar en el panel técnico ni en la administración de fichas NFC. La
+herramienta debe ser independiente, muy simple y usable por personas con bajas
+capacidades.
+
+**Nota de numeración**: RF-177 ya está asignado en F97 (control seguro del
+imán). Para no duplicar identificadores, F98 usa RF-178…RF-184 conservando la
+correspondencia funcional 1:1 con la numeración solicitada:
+
+| Solicitado | Documentado | Tema |
+|---|---|---|
+| RF-177 | RF-178 | Acceso al panel de llaves |
+| RF-178 | RF-179 | Permisos del rol `key_manager` |
+| RF-179 | RF-180 | Gestión de empleados |
+| RF-180 | RF-181 | Gestión y listado de llaves |
+| RF-181 | RF-182 | Asistente de creación |
+| RF-182 | RF-183 | QR y ficha NFC |
+| RF-183 | RF-184 | Edición y desactivación |
+
+## RF-178: Acceso al panel de llaves
+
+- **RF-178.1**: existe una UI independiente servida en `/llaves`
+  (`https://cerraduras.duckdns.org/llaves`) con login simple de usuario y
+  contraseña. No reutiliza la interfaz de `/panel`.
+- **RF-178.2**: se añade el rol CRM `key_manager`. El login reutiliza
+  `crm_users`, `crm_sessions`, la cookie `crm_session` y los endpoints
+  `POST /api/v1/crm/login`, `POST /api/v1/crm/logout` y `GET /api/v1/crm/me`.
+- **RF-178.3**: `/llaves/login` es público. `/llaves` y `/llaves/*` exigen
+  sesión con rol `key_manager` o `admin`; sin sesión se redirige a
+  `/llaves/login`.
+- **RF-178.4**: `key_manager` no puede acceder a `/panel`, a la gestión de
+  usuarios CRM ni a la gestión de fichas NFC. Recibe `403` en API y
+  redirección a `/llaves` en páginas.
+- **RF-178.5**: `admin`, `operator` y `viewer` conservan el acceso actual a
+  `/panel`; `key_manager` no altera ese comportamiento.
+
+## RF-179: Permisos del rol key_manager
+
+- **RF-179.1**: el rol `key_manager` recibe exactamente los scopes
+  `workers:read`, `workers:write`, `worker-roles:read`, `rooms:read` (solo para
+  listar tipos de sala y defaults), `keys:read` y `keys:write`.
+- **RF-179.2**: no recibe `nfc-cards:write`, `audit:read`, `rooms:write`,
+  `qr:*` ni `locks:*`.
+- **RF-179.3**: los permisos se aplican en el servidor al construir el cliente
+  sintético de la sesión CRM; la UI solo oculta lo que el servidor ya deniega.
+- **RF-179.4**: las rutas `/api/v1/keys/*` pasan a exigir `keys:read` o
+  `keys:write` en lugar de `rooms:read`/`rooms:write`.
+
+## RF-180: Gestión de empleados
+
+- **RF-180.1**: la sección Empleados lista trabajadores con búsqueda por
+  nombre.
+- **RF-180.2**: el alta pide nombre, rol existente y notas opcionales. El rol
+  se elige de `GET /api/v1/worker-roles`.
+- **RF-180.3**: se puede editar el empleado y darlo de baja lógica. La baja no
+  borra su historial ni sus llaves.
+- **RF-180.4**: tras crear un empleado se ofrece crear su llave.
+- **RF-180.5**: una llave personal de un empleado inactivo no abre; la
+  validación existente de `AccessKeyService` sigue siendo la autoridad.
+
+## RF-181: Gestión y listado de llaves
+
+- **RF-181.1**: la sección Llaves lista etiqueta, titular, tipo (`QR`/`Ficha`
+  o `NFC`), número de ficha, caducidad y estado (`Activa`, `Caducada`,
+  `Desactivada`).
+- **RF-181.2**: se puede filtrar por búsqueda, estado y tipo.
+- **RF-181.3**: la UI no muestra códigos de ficha ni tokens QR; solo el número
+  de ficha y los datos de la llave.
+
+## RF-182: Asistente de creación de llaves
+
+- **RF-182.1**: la creación es un asistente de cuatro pasos:
+  1. titular: empleado activo o rol compartido, explicando que la llave
+     compartida no identifica a una persona;
+  2. tipo `QR` o `Ficha`; para ficha solo se ofrecen las fichas `AVAILABLE`
+     mediante el endpoint acotado que devuelve `id` y `number`;
+  3. permisos precargados del rol, editables, y caducidad introducida en la
+     hora local del hotel y convertida a UTC;
+  4. resumen y confirmación de creación.
+- **RF-182.2**: si la ficha deja de estar disponible antes de confirmar, la API
+  responde `409` con un mensaje claro y la UI recarga las fichas disponibles.
+- **RF-182.3**: el titular y el tipo no se pueden cambiar después; para
+  corregirlos se crea otra llave.
+
+## RF-183: QR y ficha NFC
+
+- **RF-183.1**: el QR se muestra y se descarga al crear la llave o al
+  regenerarlo; después no se puede recuperar.
+- **RF-183.2**: regenerar advierte de forma explícita que el QR anterior deja
+  de funcionar.
+- **RF-183.3**: en una llave de ficha, la UI indica qué ficha física se debe
+  entregar, sin exponer su código.
+
+## RF-184: Edición y desactivación
+
+- **RF-184.1**: se puede editar la etiqueta, la caducidad, los permisos y, solo
+  si es NFC, la ficha asignada.
+- **RF-184.2**: la revocación exige confirmación y desactiva la llave; el
+  historial se conserva.
+- **RF-184.3**: el titular y el tipo no son editables.
+
+## Requisitos no funcionales de F98
+
+- **NFR-F98.1**: la UI es extremadamente simple, visual y accesible: botones
+  grandes con icono y texto, alto contraste, formularios por pasos, mensajes
+  claros, sin tablas densas, responsive, navegable por teclado y con foco
+  visible.
+- **NFR-F98.2**: no se añaden llamadas a Tuya, pollers ni cambios en el
+  pipeline de sensores.
+- **NFR-F98.3**: `/panel` y sus funcionalidades existentes siguen funcionando
+  igual para sus roles actuales.
+- **NFR-F98.4**: la UI de `/llaves` no expone códigos de ficha ni tokens.

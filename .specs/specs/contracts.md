@@ -3776,3 +3776,118 @@ data: {"protocol":1,"event_id":124,"state":"OPEN",
 `contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
 eventos aplicados intermedios. El firmware no rearma con un snapshot no
 contiguo.
+
+---
+
+# §F98 — Panel de gestión de llaves (/llaves)
+
+## §F98.1 Páginas
+
+| Método | Ruta | Respuesta |
+|---|---|---|
+| `GET` | `/llaves` | `public/llaves/index.html` |
+| `GET` | `/llaves/login` | `public/llaves/login.html` |
+| `GET` | `/llaves/{path}` | assets de `public/llaves/` |
+
+- `/llaves/login` es público.
+- `/llaves` y `/llaves/*` exigen cookie `crm_session` válida con rol
+  `key_manager` o `admin`.
+- Sin sesión: `302` a `/llaves/login`.
+- Sesión con rol no autorizado: `403` en API o redirección a `/llaves` en
+  página.
+- `/panel` y `/panel/*` quedan restringidos a `admin`, `operator` y `viewer`.
+  Un `key_manager` recibe `403` o redirección a `/llaves`.
+
+## §F98.2 Autenticación reutilizada
+
+- `POST /api/v1/crm/login` `{username, password}` → `200 {user, expires_in}` y
+  cookie `crm_session` (`HttpOnly`, `SameSite=Lax`).
+- `POST /api/v1/crm/logout` → `200 {ok:true}` y borra la cookie.
+- `GET /api/v1/crm/me` → `200 {user}`; `401` sin sesión.
+- `crm_users.role ∈ {admin, operator, viewer, key_manager}`.
+
+## §F98.3 Scopes
+
+`key_manager` recibe exactamente:
+
+```text
+workers:read workers:write worker-roles:read rooms:read keys:read keys:write
+```
+
+No recibe `nfc-cards:write`, `audit:read`, `rooms:write`, `qr:*` ni `locks:*`.
+
+Las rutas `/api/v1/keys/*` cambian de `rooms:read`/`rooms:write` a
+`keys:read`/`keys:write`:
+
+| Método | Ruta | Scope |
+|---|---|---|
+| `GET` | `/api/v1/keys` | `keys:read` |
+| `POST` | `/api/v1/keys` | `keys:write` |
+| `GET` | `/api/v1/keys/{id}` | `keys:read` |
+| `PATCH` | `/api/v1/keys/{id}` | `keys:write` |
+| `DELETE` | `/api/v1/keys/{id}` | `keys:write` |
+| `POST` | `/api/v1/keys/{id}/revoke` | `keys:write` |
+| `POST` | `/api/v1/keys/{id}/qr` | `keys:write` |
+| `GET` | `/api/v1/keys/defaults` | `keys:read` |
+
+`admin` y `operator` ya tienen ambos scopes. La migración `0132` amplía de
+forma idempotente los `api_clients` existentes que ya tienen `rooms:write`
+añadiendo `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
+`workers:read`, `workers:write`, `worker-roles:read`.
+
+## §F98.4 API reutilizada
+
+- `GET /api/v1/workers?q=` · `POST /api/v1/workers`
+- `GET/PATCH/DELETE /api/v1/workers/{id}`
+- `GET /api/v1/worker-roles`
+- `GET /api/v1/room-types`
+- `GET /api/v1/keys?status=&owner_type=&worker_id=&role_id=&key_type=&q=`
+- `POST /api/v1/keys` `{label, owner_type, worker_id|role_id, key_type,
+  valid_until, all_room_types, room_type_ids[], nfc_card_id?, notes?}` →
+  `201 {data:key}`; el QR incluye `qr_token` **solo en esta respuesta**.
+- `PATCH /api/v1/keys/{id}` `{label?, valid_until?, all_room_types?,
+  room_type_ids?, nfc_card_id?}`.
+- `DELETE /api/v1/keys/{id}` revoca con confirmación de UI.
+- `POST /api/v1/keys/{id}/qr` regenera el token; solo para QR activo no
+  caducado. El token anterior deja de funcionar.
+- `GET /api/v1/keys/defaults?worker_id=|role_id=` →
+  `{room_type_ids, source}`.
+
+## §F98.5 Fichas disponibles
+
+```http
+GET /api/v1/llaves/nfc-available
+```
+
+Scope: `keys:read`.
+
+Respuesta `200`:
+
+```json
+{"data":[{"id":1,"number":"F-001"}]}
+```
+
+Solo incluye fichas `AVAILABLE`. Nunca devuelve `code_hash`, el código
+completo ni datos de fichas asignadas o deshabilitadas.
+
+## §F98.6 Errores
+
+| Código | HTTP | Cuándo |
+|---|---|---|
+| `unauthorized` | `401` | API sin sesión CRM válida |
+| `forbidden` | `403` | rol sin el scope requerido |
+| `nfc_card_unavailable` | `409` | la ficha dejó de estar `AVAILABLE` al crear/editar |
+| `key_expired` | `422` | caducidad no futura o ya vencida |
+| `key_revoked` | `409` | operación sobre llave revocada |
+
+La UI traduce `409 nfc_card_unavailable` a un mensaje claro y recarga
+`GET /api/v1/llaves/nfc-available`.
+
+## §F98.7 Migración 0132
+
+- Documenta el rol `key_manager` como valor válido de `crm_users.role`; no crea
+  tabla de roles ni usuarios.
+- Amplía scopes de `api_clients` con `rooms:write` de forma idempotente:
+  `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
+  `workers:read`, `workers:write`, `worker-roles:read`.
+- No borra scopes ni modifica llaves, trabajadores o fichas existentes.
