@@ -6413,7 +6413,8 @@ block "BLOCK 68 — F95: flujo universal de sensores"
 
 for f in public/assets/sensor-tests-v2.json public/assets/sensor-wizard-v2.js \
          src/Http/Controllers/SensorWizardController.php src/Infrastructure/Sensors/SensorVerdict.php \
-         src/Infrastructure/Sensors/DeviceHealth.php src/Domain/Presence/DoorPolarity.php; do
+         src/Infrastructure/Sensors/DeviceHealth.php src/Domain/Sensors/AttemptEvidence.php \
+         src/Domain/Presence/DoorPolarity.php; do
     if [ -f "$f" ]; then pass "F95: $f presente"; else fail "F95: $f" "falta"; fi
 done
 if grep -q "sensores/v2/preflight" public/index.php \
@@ -6435,6 +6436,13 @@ if ! grep -qi "tuyaPresenceApi\|openapi.tuya" src/Http/Controllers/SensorWizardC
     pass "F95: sin llamadas a Tuya"
 else
     fail "F95: sin Tuya" "aparece Tuya en el flujo universal"
+fi
+if grep -q "attempt/events" public/index.php \
+    && grep -q "attempt/events" public/assets/sensor-wizard-v2.js \
+    && grep -q "data.fresh" public/assets/sensor-wizard-v2.js; then
+    pass "F95: evidencia por intento y telemetría fresca cableadas"
+else
+    fail "F95: evidencia/telemetría" "faltan attempt/events o el uso de fresh"
 fi
 if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
     pass "F95: polaridad aplicada en el ingress"
@@ -6504,6 +6512,24 @@ print('ok' if not bad else 'bad '+','.join(bad))
         F95_AID=$(printf '%s' "$F95_ATT" | python3 -c "import sys,json; print((json.load(sys.stdin).get('attempt') or {}).get('attempt_id',''))" 2>/dev/null)
         if [ -n "$F95_AID" ]; then
             pass "F95: attempt/start abre una ventana"
+            F95_EV_CODE=$(curl -s -o /tmp/f95_events.json -w "%{http_code}" --max-time 5 \
+                "${API_BASE}/dashboard-api/sensores/v2/attempt/events?run_id=$F95_RID&step_id=radar_inside&attempt_id=$F95_AID" 2>/dev/null)
+            if [ "$F95_EV_CODE" = "200" ]; then
+                F95_EV_OK=$(python3 -c "
+import json
+try: d=json.load(open('/tmp/f95_events.json'))
+except Exception: print('bad'); raise SystemExit
+print('ok' if isinstance(d.get('door'),dict) and isinstance(d.get('presence'),dict) and 'elapsed_seconds' in d else 'bad')
+" 2>/dev/null)
+                if [ "$F95_EV_OK" = "ok" ]; then
+                    pass "F95: attempt/events devuelve ciclos y presencia de la ventana"
+                else
+                    fail "F95: attempt/events" "respuesta incompleta"
+                fi
+            else
+                skip "F95 attempt/events" "endpoint aún sin desplegar (HTTP $F95_EV_CODE)"
+            fi
+            rm -f /tmp/f95_events.json
             F95_DUP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
                 -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\",\"step_id\":\"radar_outside\"}")
             if [ "$F95_DUP_CODE" = "409" ]; then

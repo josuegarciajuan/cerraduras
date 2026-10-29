@@ -15,7 +15,8 @@
   var S = {
     rooms: [], catalog: null, preflight: null, run: null,
     stepId: null, attempt: null, busy: false,
-    human: { on: null, off: null, telemetry_on: null, telemetry_off: null },
+    human: { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null },
+    lightPhase: 'idle', attemptData: null, pollTimer: null, pollStep: null, pollBusy: false,
     lastSwitch: null, lastEvents: [], eventsTimer: null
   };
 
@@ -284,12 +285,28 @@
       + '<div class="expect"><b>Debe pasar:</b> ' + esc(c.expected) + '</div>';
   }
 
+  var STATUS_LABEL = { PASS: 'Verificada', FAIL: 'Necesita revisión', SKIP: 'Omitida', UNVERIFIED: 'No verificada' };
+  var REASON_LABEL = {
+    door_ok: 'Tres ciclos correctos.', door_must_start_closed: 'La puerta no estaba cerrada al empezar.',
+    door_too_few_cycles: 'Faltan ciclos por registrar.', door_too_many_transitions: 'Demasiados ciclos en la ventana.',
+    door_sequence_mismatch: 'La secuencia apertura/cierre no coincide.', door_not_closed_at_end: 'La puerta no quedó cerrada.',
+    no_door_events: 'No se recibió ningún evento de la puerta.',
+    presence_detected_inside: 'Presencia continua durante la prueba.', no_presence_detected: 'No se detectó presencia.',
+    presence_not_continuous: 'La presencia se perdió durante la prueba.', hold_too_short: 'Aún no hay 30 s de presencia.',
+    step_too_short: 'La prueba terminó antes de tiempo.', presence_stale: 'El radar dejó de enviar datos.',
+    no_presence_outside: 'No se detectó presencia fuera.', presence_detected_outside: 'Se detectó presencia fuera de la sala.',
+    absence_not_confirmed: 'La ausencia aún no está confirmada.', light_ok: 'Encendido y apagado correctos.',
+    lamp_not_prepared_off: 'La lámpara no estaba apagada al empezar.', human_not_confirmed: 'La confirmación física no es positiva.',
+    telemetry_mismatch: 'La lámpara y la telemetría no coinciden.', no_switch: 'No hay interruptor asociado.'
+  };
   function resultBox(st, verdict) {
     if (!isFinal(st) || !verdict) return '';
     var v = verdict;
-    return '<div class="result ' + esc(st) + '" role="status" tabindex="-1"><h3>' + esc(st) + '</h3>'
-      + '<div>' + esc(v.reason || '') + '</div>'
-      + '<details style="margin-top:8px"><summary>Detalle</summary><pre style="white-space:pre-wrap;font-size:11px">'
+    var label = STATUS_LABEL[st] || st;
+    var reason = REASON_LABEL[v.reason] || v.reason || '';
+    return '<div class="result ' + esc(st) + '" role="status" tabindex="-1"><h3>' + esc(label) + '</h3>'
+      + '<div>' + esc(reason) + '</div>'
+      + '<details style="margin-top:8px"><summary>Detalle de la prueba</summary><pre style="white-space:pre-wrap;font-size:11px">'
       + esc(JSON.stringify(v.details || {}, null, 2)) + '</pre></details></div>';
   }
 
@@ -305,6 +322,7 @@
     var html = '<div class="card">' + stepHeader(stepId);
     html += resultBox(st, last && last.verdict);
     if (isFinal(st)) {
+      stopPolling();
       html += '<div class="actions"><button class="primary" data-action="advance">Continuar</button>'
         + '<button class="ghost" data-action="restart" data-step="' + stepId + '">Repetir paso</button></div></div>';
       host.innerHTML = html;
@@ -315,7 +333,9 @@
     else if (stepId === 'light') html += renderLight(step);
     html += '</div>';
     host.innerHTML = html;
-    if (stepId === 'radar_inside' || stepId === 'radar_outside') renderLiveRadar();
+    if ((stepId === 'door' || stepId === 'radar_inside' || stepId === 'radar_outside') && activeAttemptFor(stepId)) {
+      startPolling(stepId);
+    }
   }
 
   function renderDoor(step) {
@@ -332,17 +352,43 @@
       + '<span class="timestamp">' + esc(pol.checked_at || '') + '</span></div>';
     var att = activeAttemptFor('door');
     if (!att) {
-      html += '<p class="hint">Ahora abre y cierra tres veces: normal, despacio y rápido. Empieza la ventana cuando estés listo.</p>'
+      html += '<p class="hint">Ahora abre y cierra tres veces: normal, despacio y rápido. La ventana empieza al pulsar el botón.</p>'
         + '<div class="actions"><button class="primary" data-action="start-attempt" data-step="door">Empezar ciclos</button></div>';
       return html;
     }
-    html += '<div class="divider"></div><h2>2. Ciclos</h2>'
-      + '<p class="hint">Abre y cierra tres veces (normal, lento, rápido), terminando con la puerta cerrada.</p>'
-      + '<div class="checklist" id="doorChecks"><div class="check"><span class="dot"></span> Esperando eventos de la puerta…</div></div>'
-      + '<div class="actions"><button class="primary" data-action="check" data-step="door">Validar puerta</button>'
-      + '<button class="ghost" data-action="cancel" data-step="door">Cancelar prueba</button></div>';
-    refreshDoorChecks();
+    var d = (S.attemptData && S.attemptData.door) || { count: 0, target: 3, waiting_for: 'open', complete: false };
+    var count = d.count || 0;
+    var target = d.target || 3;
+    var waiting = d.waiting_for;
+    var instruction = waiting === 'close'
+      ? 'Apertura recibida. Cierra la puerta.'
+      : (count >= target ? 'Tres ciclos registrados. Comprueba que la puerta está cerrada.' : 'Abre la puerta.');
+    html += '<div class="divider"></div><h2>2. Ciclos</h2>';
+    html += '<div class="readout">' + Math.min(count, target) + ' / ' + target + '</div>';
+    html += '<div class="action" style="font-weight:700">' + esc(instruction) + '</div>';
+    html += '<div class="checklist">';
+    ['Normal', 'Despacio', 'Rápido'].forEach(function (label, i) {
+      var done = i < count;
+      var current = i === count;
+      html += '<div class="check"><span class="dot ' + (done ? 'ok' : (current ? 'warn' : '')) + '"></span> '
+        + label + (done ? ' · apertura y cierre recibidos' : (current ? ' · pendiente' : '')) + '</div>';
+    });
+    html += '</div>';
+    html += '<p class="hint">Solo cuentan los eventos de esta prueba. Los anteriores están en «Eventos de la sala» y no se suman.</p>';
+    html += '<div class="actions">';
+    if (count >= target) {
+      html += '<button class="primary" data-action="check" data-step="door">Validar puerta</button>';
+    } else {
+      html += '<button class="primary" disabled>Esperando ' + (target - count) + ' ciclo' + ((target - count) === 1 ? '' : 's') + '…</button>';
+    }
+    html += '<button class="ghost" data-action="cancel" data-step="door">Cancelar prueba</button></div>';
     return html;
+  }
+
+  function radarSettingsLabel() {
+    var st = (S.preflight && S.preflight.settings) || {};
+    if (st.maximum_range == null) return 'Ajustes —';
+    return 'Alcance ' + st.maximum_range + ' m · sens ' + st.radar_sensitivity + '/9';
   }
 
   function renderRadar(stepId, step) {
@@ -353,17 +399,45 @@
       return html;
     }
     var inside = stepId === 'radar_inside';
+    var target = inside ? 30 : 60;
+    var a = S.attemptData || { elapsed_seconds: 0, presence: {} };
+    var elapsed = Math.max(0, Math.floor(a.elapsed_seconds || 0));
+    var remain = Math.max(0, target - elapsed);
+    var p = a.presence || {};
+    var span = Math.max(0, Math.floor(p.span_seconds || 0));
     html += '<div class="divider"></div>';
-    html += '<div class="row"><span class="pill dim" id="radarPresence">Presencia —</span>'
-      + '<span class="pill dim" id="radarSettings">Ajustes —</span></div>';
-    html += '<div class="hint" id="radarElapsed" style="margin-top:8px">Ventana abierta</div>';
-    if (!inside) {
-      html += '<div class="actions"><button class="ghost" data-action="tune" data-phase="outside">Ajustar si detecta de más</button>';
-    } else {
-      html += '<div class="actions"><button class="ghost" data-action="tune" data-phase="inside">Ajustar si no detecta</button>';
+    html += '<div class="row"><span class="pill ' + (p.active ? 'ok' : 'dim') + '" id="radarPresence">Presencia: '
+      + (p.active ? 'DETECTADA' : 'sin detección') + '</span>'
+      + '<span class="pill dim" id="radarSettings">' + radarSettingsLabel() + '</span></div>';
+    if (remain > 0) {
+      html += '<div style="text-align:center;margin:18px 0">';
+      html += '<div class="readout" style="font-size:56px" id="radarTimer" aria-live="off">' + remain + ' s</div>';
+      html += '<div class="action" style="font-weight:700">' + (inside ? 'No te muevas' : 'Mantente fuera') + '</div>';
+      html += '<div class="hint">' + (inside ? 'Permanece en el punto más lejano.' : 'Pasa 3 veces por delante y espera fuera.') + '</div>';
+      html += '</div>';
+      html += '<div class="actions"><button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
+      return html;
     }
-    html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar</button>'
-      + '<button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
+    html += '<div class="hint">' + (inside
+      ? 'Tiempo mínimo cumplido. Presencia detectada durante ' + span + ' de 30 s.'
+      : 'Tiempo mínimo cumplido.') + '</div>';
+    html += '<div class="actions">';
+    if (inside) {
+      var canValidate = span >= 30 && p.continuous !== false;
+      if (canValidate) {
+        html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar radar</button>';
+      } else if (!p.presents) {
+        html += '<button class="ghost" data-action="tune" data-phase="inside">Ajustar si no detecta</button>';
+        html += '<div class="hint">Aún no se detecta presencia. Puedes ajustar el radar y seguir en la posición.</div>';
+      } else {
+        html += '<div class="hint">Aún no hay 30 s de presencia continua; sigue quieto.</div>';
+        html += '<button class="ghost" data-action="tune" data-phase="inside">Ajustar si no detecta</button>';
+      }
+    } else {
+      html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar radar</button>';
+      if (p.active) html += '<button class="ghost" data-action="tune" data-phase="outside">Ajustar si detecta de más</button>';
+    }
+    html += '<button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
     return html;
   }
 
@@ -372,30 +446,70 @@
     if (!att) {
       return '<div class="actions"><button class="primary" data-action="start-attempt" data-step="light">Empezar prueba</button></div>';
     }
+    if (S.lightPhase === 'idle') {
+      return '<div class="divider"></div><div class="expect">La prueba de luz ya estaba abierta y las confirmaciones visuales no se conservan al recargar. Cancela y repite para registrar una observación nueva.</div>'
+        + '<div class="actions"><button class="danger" data-action="cancel" data-step="light">Cancelar y repetir</button></div>';
+    }
     var h = S.human;
     var html = '<div class="divider"></div>';
-    html += '<div class="row"><span class="pill ' + (h.on === true ? 'ok' : h.on === false ? 'bad' : 'dim') + '">Encender: '
+    html += '<div class="row"><span class="pill ' + (h.prep_off === true ? 'ok' : h.prep_off === false ? 'bad' : 'dim') + '">Apagada al empezar: '
+      + (h.prep_off === true ? 'sí' : h.prep_off === false ? 'no' : 'pendiente') + '</span>'
+      + '<span class="pill ' + (h.on === true ? 'ok' : h.on === false ? 'bad' : 'dim') + '">Encender: '
       + (h.on === true ? 'confirmado' : h.on === false ? 'falló' : 'pendiente') + '</span>'
       + '<span class="pill ' + (h.off === true ? 'ok' : h.off === false ? 'bad' : 'dim') + '">Apagar: '
       + (h.off === true ? 'confirmado' : h.off === false ? 'falló' : 'pendiente') + '</span></div>';
-    html += '<div class="actions"><button data-action="switch" data-on="ON">Encender luz</button>';
-    if (h.on === null && S.lastSwitch) {
-      html += '<div class="row"><button class="primary" data-action="human" data-field="on" data-value="1">Sí, encendió</button>'
+    if (S.lightPhase === 'prep') {
+      html += '<p class="hint">Primero dejamos la lámpara apagada para que el encendido demuestre un cambio real.</p>'
+        + '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Apagar lámpara</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
+      return html;
+    }
+    if (S.lightPhase === 'prep_sent') {
+      if (h.prep_off === false) {
+        html += '<div class="expect">La lámpara no está apagada. Vuelve a intentarlo.</div>'
+          + '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Reintentar apagado</button>'
+          + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
+      } else {
+        html += '<div class="action">¿La lámpara está apagada?</div>'
+          + '<div class="actions"><button class="primary" data-action="human" data-field="prep_off" data-value="1">Sí, está apagada</button>'
+          + '<button class="danger" data-action="human" data-field="prep_off" data-value="0">No, sigue encendida</button></div>';
+      }
+      return html;
+    }
+    if (S.lightPhase === 'ready_on') {
+      html += '<div class="actions"><button class="primary" data-action="switch" data-on="ON">Encender luz</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
+      return html;
+    }
+    if (S.lightPhase === 'on_sent') {
+      if (h.telemetry_on === null) html += '<p class="hint">Sin confirmación de telemetría para el encendido; tu observación manda.</p>';
+      if (h.telemetry_on === false) html += '<p class="hint">La telemetría dice que sigue apagada; se tendrá en cuenta.</p>';
+      html += '<div class="action">¿Se encendió la lámpara?</div>'
+        + '<div class="actions"><button class="primary" data-action="human" data-field="on" data-value="1">Sí, está encendida</button>'
         + '<button class="danger" data-action="human" data-field="on" data-value="0">No, sigue apagada</button></div>';
+      return html;
     }
-    html += '<button data-action="switch" data-on="OFF">Apagar luz</button>';
-    if (h.off === null && S.lastSwitch) {
-      html += '<div class="row"><button class="primary" data-action="human" data-field="off" data-value="1">Sí, apagó</button>'
+    if (S.lightPhase === 'ready_off') {
+      html += '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Apagar luz</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
+      return html;
+    }
+    if (S.lightPhase === 'off_sent') {
+      if (h.telemetry_off === null) html += '<p class="hint">Sin confirmación de telemetría para el apagado; tu observación manda.</p>';
+      if (h.telemetry_off === false) html += '<p class="hint">La telemetría dice que sigue encendida; se tendrá en cuenta.</p>';
+      html += '<div class="action">¿Se apagó la lámpara?</div>'
+        + '<div class="actions"><button class="primary" data-action="human" data-field="off" data-value="1">Sí, está apagada</button>'
         + '<button class="danger" data-action="human" data-field="off" data-value="0">No, sigue encendida</button></div>';
+      return html;
     }
-    html += '<button class="primary" data-action="check" data-step="light">Validar luz</button>'
+    html += '<div class="actions"><button class="primary" data-action="check" data-step="light">Validar luz</button>'
       + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
     return html;
   }
 
   function renderFinishCta(host) {
-    host.innerHTML = '<div class="card"><div class="eyebrow">Fin</div><h1>Todo comprobado</h1>'
-      + '<p class="hint">Genera el veredicto y el informe.</p>'
+    host.innerHTML = '<div class="card"><div class="eyebrow">Fin</div><h1>Pasos finalizados</h1>'
+      + '<p class="hint">Genera el veredicto con los resultados disponibles.</p>'
       + '<div class="actions"><button class="primary" data-action="finish">Ver veredicto</button></div></div>';
   }
 
@@ -404,6 +518,7 @@
     var labels = { door: 'Puerta', presence: 'Presencia', light: 'Luz' };
     var icons = { PASS: '✓', FAIL: '✕', UNVERIFIED: '?', SKIP: '—', NOT_INSTALLED: '—' };
     var cls = { PASS: 'ok', FAIL: 'bad', UNVERIFIED: 'warnc', SKIP: 'warnc', NOT_INSTALLED: 'muted' };
+    var stLabel = STATUS_LABEL;
     var title = {
       CORRECT: 'Verificación correcta', WITH_RESERVES: 'Correcta con reservas',
       REVIEW: 'Revisar instalación', INCOMPLETE: 'Verificación incompleta', NOT_EVALUABLE: 'No evaluable'
@@ -415,13 +530,14 @@
     Object.keys(labels).forEach(function (k) {
       var st = (v.devices || {})[k] || 'PENDING';
       html += '<div class="techrow"><span>' + labels[k] + '</span><span class="' + (cls[st] || '') + '">'
-        + (icons[st] || '·') + ' ' + esc(st) + '</span></div>';
+        + (icons[st] || '·') + ' ' + esc(stLabel[st] || st) + '</span></div>';
     });
-    html += '<div class="techrow"><span>Reposo</span><span>' + esc((v.soak || 'PENDING')) + '</span></div>';
+    var soakLabel = { PASS: 'Correcto', FAIL: 'Revisar', PENDING: 'Pendiente' }[v.soak || 'PENDING'] || 'Pendiente';
+    html += '<div class="techrow"><span>Reposo</span><span>' + esc(soakLabel) + '</span></div>';
     html += '</div>';
     var settings = (S.run.calibration && S.run.calibration.initial_settings) || {};
     if (settings.maximum_range != null) {
-      html += '<p class="hint">Configuración final: sensibilidad ' + settings.radar_sensitivity
+      html += '<p class="hint">Configuración inicial: sensibilidad ' + settings.radar_sensitivity
         + '/9 · alcance ' + settings.maximum_range + ' m · fading ' + settings.fading_time + ' s</p>';
     }
     if (v.soak !== 'PASS') {
@@ -481,7 +597,9 @@
       S.run = data.run;
       S.stepId = currentStep();
       S.attempt = null;
-      S.human = { on: null, off: null, telemetry_on: null, telemetry_off: null };
+      S.attemptData = null;
+      S.lightPhase = 'idle';
+      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
       saveRunLocal();
       render();
     } catch (e) { banner(e.message, 'bad'); }
@@ -490,16 +608,23 @@
 
   async function startAttempt(stepId) {
     busy(true);
+    stopPolling();
     try {
       var data = await api(V2 + '/attempt/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId })
       });
       S.attempt = data.attempt;
-      S.human = { on: null, off: null, telemetry_on: null, telemetry_off: null };
+      S.attemptData = null;
+      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
       S.lastSwitch = null;
+      S.lightPhase = stepId === 'light' ? 'prep' : 'idle';
+      S.radarKey = null;
       await reloadRun();
       render();
+      if (stepId === 'light') {
+        await switchTest('OFF');
+      }
     } catch (e) {
       banner(e.message, 'bad');
       if (e.data && e.data.active) {
@@ -511,10 +636,11 @@
   async function checkAttempt(stepId) {
     var att = activeAttemptFor(stepId);
     if (!att) { toast('Primero empieza la prueba'); return; }
-    if (stepId === 'light' && (S.human.on === null || S.human.off === null)) {
-      toast('Confirma encendido y apagado');
+    if (stepId === 'light' && (S.human.prep_off === null || S.human.on === null || S.human.off === null)) {
+      toast('Completa la preparación, el encendido y el apagado');
       return;
     }
+    stopPolling();
     busy(true);
     try {
       var body = {
@@ -528,6 +654,7 @@
       });
       await reloadRun();
       await loadPreflight();
+      S.attemptData = null;
       render();
       var res = document.querySelector('.result');
       if (res) res.focus();
@@ -539,6 +666,7 @@
     var att = activeAttemptFor(stepId);
     if (!att) return;
     if (!confirm('¿Cancelar esta prueba? La ventana se cerrará sin veredicto.')) return;
+    stopPolling();
     busy(true);
     try {
       await api(V2 + '/attempt/cancel', {
@@ -546,6 +674,8 @@
         body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id })
       });
       await reloadRun();
+      S.attemptData = null;
+      S.lightPhase = 'idle';
       render();
     } catch (e) { banner(e.message, 'bad'); }
     finally { busy(false); }
@@ -589,14 +719,26 @@
   async function switchTest(action) {
     busy(true);
     try {
+      var phaseBefore = S.lightPhase;
       var data = await api(V2 + '/switch/test', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room_id: roomId(), action: action })
       });
       S.lastSwitch = data;
-      S.human.telemetry_on = action === 'ON' ? (data.reported_state === 'ON' ? true : (data.reported_state === 'OFF' ? false : null)) : S.human.telemetry_on;
-      S.human.telemetry_off = action === 'OFF' ? (data.reported_state === 'OFF' ? true : (data.reported_state === 'ON' ? false : null)) : S.human.telemetry_off;
-      if (!data.ok) banner('La orden no salió: ' + (data.error || 'desconocido'), 'bad');
+      if (!data.ok) {
+        banner('No se pudo enviar la orden: ' + (data.error || 'desconocido') + '. Comprueba la lámpara antes de reintentar.', 'bad');
+        render();
+        return;
+      }
+      if (action === 'ON') {
+        S.lightPhase = 'on_sent';
+        S.human.telemetry_on = data.fresh ? (data.reported_state === 'ON') : null;
+      } else if (phaseBefore === 'ready_off') {
+        S.lightPhase = 'off_sent';
+        S.human.telemetry_off = data.fresh ? (data.reported_state === 'OFF') : null;
+      } else {
+        S.lightPhase = 'prep_sent';
+      }
       render();
     } catch (e) { banner(e.message, 'bad'); }
     finally { busy(false); }
@@ -642,7 +784,11 @@
   }
 
   function advance() {
+    stopPolling();
     S.attempt = null;
+    S.attemptData = null;
+    S.lightPhase = 'idle';
+    S.radarKey = null;
     S.stepId = currentStep();
     if (!S.stepId) { finishRun(); return; }
     render();
@@ -650,12 +796,80 @@
 
   async function restart(stepId) {
     if (!confirm('¿Repetir este paso? Se abrirá una ventana nueva.')) return;
+    stopPolling();
     S.stepId = stepId;
     S.attempt = null;
+    S.attemptData = null;
+    S.lightPhase = 'idle';
+    S.radarKey = null;
     // El check anterior queda en el informe; se permite un intento nuevo.
     var step = S.run.steps[stepId];
     if (step) step.status = 'PENDING';
     render();
+  }
+
+  // ── polling de la ventana del intento ────────────────────────────────
+  function updateRadarDom() {
+    var a = S.attemptData || {};
+    var inside = S.stepId === 'radar_inside';
+    var target = inside ? 30 : 60;
+    var elapsed = Math.max(0, Math.floor(a.elapsed_seconds || 0));
+    var remain = Math.max(0, target - elapsed);
+    var p = (a.presence) || {};
+    var span = Math.max(0, Math.floor(p.span_seconds || 0));
+    var timer = $('radarTimer');
+    if (timer) timer.textContent = remain + ' s';
+    var chip = $('radarPresence');
+    if (chip) {
+      chip.textContent = 'Presencia: ' + (p.active ? 'DETECTADA' : 'sin detección');
+      chip.className = 'pill ' + (p.active ? 'ok' : 'dim');
+    }
+    var key = remain > 0 ? 'wait' : ('ready:' + (p.active ? '1' : '0') + ':' + (span >= 30 ? '1' : '0') + ':' + (p.presents ? '1' : '0'));
+    if (S.radarKey !== key) {
+      S.radarKey = key;
+      return false;
+    }
+    return true;
+  }
+
+  function stopPolling() {
+    if (S.pollTimer) clearInterval(S.pollTimer);
+    S.pollTimer = null;
+    S.pollStep = null;
+  }
+
+  function startPolling(stepId) {
+    S.attempt = S.attempt || activeAttemptFor(stepId);
+    if (S.pollTimer && S.pollStep === stepId) return;
+    stopPolling();
+    S.pollStep = stepId;
+    S.pollTimer = setInterval(function () {
+      if (!document.hidden) pollAttempt();
+    }, 1000);
+    pollAttempt();
+  }
+
+  async function pollAttempt() {
+    var att = S.attempt;
+    if (!att || S.pollBusy) return;
+    S.pollBusy = true;
+    try {
+      var d = await api(V2 + '/attempt/events?run_id=' + encodeURIComponent(S.run.run_id)
+        + '&step_id=' + encodeURIComponent(S.stepId)
+        + '&attempt_id=' + encodeURIComponent(att.attempt_id), { cache: 'no-store' });
+      if (S.attempt && S.attempt.attempt_id === att.attempt_id) {
+        S.attemptData = d;
+        if (S.stepId === 'radar_inside' || S.stepId === 'radar_outside') {
+          if (!updateRadarDom()) render();
+        } else {
+          render();
+        }
+      }
+    } catch (e) {
+      if (e.status === 409) stopPolling();
+    } finally {
+      S.pollBusy = false;
+    }
   }
 
   // ── eventos / tech ───────────────────────────────────────────────────
@@ -731,9 +945,13 @@
       else {
         html = '<table class="runs"><thead><tr><th>Run</th><th>Sala</th><th>Técnico</th><th>Resultado</th><th></th></tr></thead><tbody>';
         list.forEach(function (r) {
-          var v = r.status === 'finished' ? (r.summary && r.summary.green ? 'Correcta' : 'Revisar') : 'En curso';
+          var vv = (r.verdict && r.verdict.verdict) || '';
+          var label = {
+            CORRECT: 'Correcta', WITH_RESERVES: 'Con reservas', REVIEW: 'Revisar',
+            INCOMPLETE: 'Incompleta', NOT_EVALUABLE: 'No evaluable'
+          }[vv] || (r.status === 'finished' ? 'Finalizada' : 'En curso');
           html += '<tr><td>' + esc(r.run_id) + '</td><td>' + esc(r.room_id) + '</td><td>' + esc(r.operator || '—')
-            + '</td><td>' + esc(v) + '</td><td><button data-open="' + esc(r.run_id) + '">Abrir</button></td></tr>';
+            + '</td><td>' + esc(label) + '</td><td><button data-open="' + esc(r.run_id) + '">Abrir</button></td></tr>';
         });
         html += '</tbody></table>';
       }
@@ -797,7 +1015,11 @@
       else if (a === 'switch') switchTest(b.getAttribute('data-on'));
       else if (a === 'human') {
         var f = b.getAttribute('data-field');
-        S.human[f] = b.getAttribute('data-value') === '1';
+        var val = b.getAttribute('data-value') === '1';
+        S.human[f] = val;
+        if (f === 'prep_off') S.lightPhase = val ? 'ready_on' : 'prep';
+        else if (f === 'on') S.lightPhase = 'ready_off';
+        else if (f === 'off') S.lightPhase = 'done';
         render();
       } else if (a === 'advance') advance();
       else if (a === 'restart') restart(step);

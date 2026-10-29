@@ -141,6 +141,7 @@ final class SensorRunStore
                 'created_at' => (string) ($decoded['created_at'] ?? ''),
                 'updated_at' => (string) ($decoded['updated_at'] ?? ''),
                 'summary' => (array) ($decoded['summary'] ?? []),
+                'verdict' => $decoded['verdict'] ?? null,
             ];
         }
         return $out;

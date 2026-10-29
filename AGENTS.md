@@ -191,6 +191,12 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `ZigbeeRadarCalibrationService`.
 - **Luz**: `switch/test` con gateway Zigbee + confirmación humana; discrepancia
   con telemetría → FAIL.
+- **Evidencia (RF-168)**: `attempt/events` resume solo la ventana del intento; la
+  puerta muestra `0/3` y solo cuenta pares de esa ventana; el radar tiene cuenta
+  atrás y bloquea validar/ajustar durante la espera (cancelar sigue disponible).
+- **Luz (RF-169)**: preparación OFF + confirmación, una pregunta por orden y
+  telemetría solo si el reporte es posterior a la orden (`fresh`); sin reporte
+  fresco la observación humana manda.
 - **Salud (RF-163.4)**: `DeviceHealth` distingue `online`/`idle`/`stale`/`missing`.
   El radar (Router) sin push es `SIN DATOS`; puerta y luz (EndDevice, solo emiten al
   cambiar) quedan `RECONOCIDO` con “sin actividad”, no `SIN DATOS` ni rojo.
@@ -198,9 +204,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `NOT_EVALUABLE`; reposo de 30 min diferido bajo demanda.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
-  ampliaciones de `SensorCalibrationValidatorTest` (73) y `SensorRunStoreTest` (23).
-  Regresión: **750 passed, 0 failed, 13 skipped** (incluye el flujo HTTP v2).
-  Prueba física pendiente.
+  `AttemptEvidenceTest` (17), ampliaciones de `SensorCalibrationValidatorTest` (76)
+  y `SensorRunStoreTest` (23). Regresión: **791 passed, 0 failed, 13 skipped**
+  (incluye el flujo HTTP v2 y `attempt/events`). Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 
