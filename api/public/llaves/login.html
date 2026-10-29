@@ -4,27 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>Gestión de llaves — Acceso</title>
+<title>Gestión de llaves — Hotel Vía Valentia</title>
+<meta name="theme-color" content="#0c4b7f">
+<link rel="stylesheet" href="/llaves/assets/brand-tokens.css">
 <style>
   :root {
-    --paper: #f4f1ea;
-    --surface: #fffefb;
-    --surface-2: #f0ece2;
-    --ink: #14201c;
-    --ink-soft: #34423d;
-    --muted: #55615c;
-    --line: #c8c2b4;
-    --line-strong: #9f9a8d;
-    --accent: #0b5d4f;
-    --accent-strong: #08463c;
-    --accent-soft: #e1efe9;
-    --accent-ink: #074137;
-    --danger: #9f2626;
-    --danger-strong: #7f1d1d;
-    --danger-soft: #f9e4e1;
-    --focus: #0b5d9a;
-    --shadow: 0 30px 80px -40px rgba(20, 32, 28, .55);
-    --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --paper: var(--vv-paper, #f6f3ec);
+    --surface: var(--vv-surface, #fffdf8);
+    --surface-2: var(--vv-surface-2, #f2eee5);
+    --ink: var(--vv-ink, #17212b);
+    --ink-soft: var(--vv-ink-soft, #33414f);
+    --muted: var(--vv-muted, #59636e);
+    --line: var(--vv-line, #d5cfc1);
+    --line-strong: var(--vv-line-strong, #a8a193);
+    --accent: var(--vv-blue, #0c4b7f);
+    --accent-strong: var(--vv-blue-strong, #083a63);
+    --accent-soft: var(--vv-blue-soft, #e6eef6);
+    --accent-ink: var(--vv-blue-ink, #062f50);
+    --brand-gold: var(--vv-gold, #dea139);
+    --danger: var(--vv-danger, #9f2626);
+    --danger-strong: var(--vv-danger-strong, #7f1d1d);
+    --danger-soft: var(--vv-danger-soft, #f9e4e1);
+    --focus: var(--vv-focus, #0c4b7f);
+    --shadow: var(--vv-shadow, 0 30px 80px -40px rgba(23, 33, 43, .55));
+    --font-ui: var(--vv-font-ui, "Heebo", "Lato", "Segoe UI", system-ui, -apple-system, sans-serif);
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -52,24 +55,30 @@
   .card {
     background: var(--surface);
     border: 1px solid var(--line);
+    border-top: 5px solid var(--brand-gold);
     border-radius: 26px;
     padding: clamp(26px, 6vw, 42px);
     box-shadow: var(--shadow);
   }
-  .mark {
-    width: 72px;
-    height: 72px;
-    display: grid;
-    place-items: center;
-    margin-bottom: 22px;
-    border-radius: 22px;
-    background: var(--accent);
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+  .brand {
+    margin-bottom: 24px;
   }
-  .mark svg { width: 38px; height: 38px; }
+  .brand-logo {
+    display: block;
+    width: auto;
+    height: 62px;
+    max-width: 100%;
+  }
+  .brand-rule {
+    width: 54px;
+    height: 4px;
+    margin-top: 16px;
+    border-radius: 999px;
+    background: var(--brand-gold);
+  }
   h1 {
     margin: 0;
+    color: var(--accent-ink);
     font-size: clamp(30px, 7vw, 38px);
     line-height: 1.05;
     letter-spacing: -.035em;
@@ -108,7 +117,7 @@
   }
   input:focus {
     border-color: var(--accent);
-    outline: 3px solid rgba(11, 93, 154, .28);
+    outline: 3px solid rgba(12, 75, 127, .28);
     outline-offset: 1px;
   }
   .password-wrap { position: relative; }
@@ -144,7 +153,7 @@
     font-size: 20px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 18px 36px -22px rgba(11, 93, 79, .95);
+    box-shadow: 0 18px 36px -22px rgba(12, 75, 127, .95);
     transition: background .18s ease, transform .18s ease;
   }
   .submit:hover { background: var(--accent-strong); }
@@ -166,16 +175,13 @@
 <body>
 <main class="wrap">
   <div class="card">
-    <div class="mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="8" cy="8" r="4"></circle>
-        <path d="m11 11 9 9"></path>
-        <path d="m17 17 2-2"></path>
-        <path d="m20 20 2-2"></path>
-      </svg>
+    <div class="brand">
+      <img class="brand-logo" src="/llaves/assets/via-valentia-logo.png"
+           alt="Hotel Vía Valentia" width="181" height="56">
+      <div class="brand-rule" aria-hidden="true"></div>
     </div>
     <h1>Gestión de llaves</h1>
-    <p class="subtitle">Acceso para el encargado</p>
+    <p class="subtitle">Hotel Vía Valentia · Acceso para el encargado</p>
 
     <div id="form-error" class="alert" role="alert" aria-live="assertive">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">

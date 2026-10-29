@@ -5438,3 +5438,24 @@ edición y revocación; intento de cambiar titular/tipo no disponible en UI.
 
 **Verificación**: `bash bin/run-tests.sh` con 0 fallos y revisión de
 trazabilidad RF/TSK.
+
+## TSK-F98-09: Identidad corporativa Vía Valentia
+
+**Trazabilidad**: RF-185, NFR-F98.5, NFR-F98.6
+
+- [x] Añadir `assets/via-valentia-logo.png` (181×56, PNG transparente).
+- [x] Crear `assets/brand-tokens.css` con azul `#0c4b7f`, oro `#dea139` y
+  neutros cálidos.
+- [x] Cargar tokens en `index.html` y `login.html`; mapearlos en `llaves.css`
+  y en el CSS inline del login con valores de respaldo.
+- [x] Sustituir el icono genérico por el logo corporativo en login y cabecera.
+- [x] Mantener semántica de estados, contraste, foco y tamaños accesibles.
+- [x] Ampliar BLOCK 71: assets, enlaces, PNG local, ausencia de dependencia
+  externa y HTTP 200 de los nuevos estáticos.
+
+**Archivos**: `api/public/llaves/{login,index}.html`,
+`api/public/llaves/assets/{brand-tokens.css,llaves.css,via-valentia-logo.png}`,
+`api/bin/run-tests.sh`.
+
+**Verificación**: `node --check` del JS, `bash -n` del runner, `php
+tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.

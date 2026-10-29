@@ -7693,3 +7693,18 @@ La UI traduce `409 nfc_card_unavailable` a un mensaje claro y recarga
   `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
   `workers:read`, `workers:write`, `worker-roles:read`.
 - No borra scopes ni modifica llaves, trabajadores o fichas existentes.
+
+## §F98.8 Assets de marca
+
+| Ruta | Tipo | Público |
+|---|---|---|
+| `/llaves/assets/brand-tokens.css` | `text/css` | sí |
+| `/llaves/assets/via-valentia-logo.png` | `image/png` | sí |
+
+- Ambas rutas usan el servidor de estáticos de `/llaves/assets/{path}` y no
+  requieren sesión.
+- El logo es una copia local del original corporativo (181×56). No se
+  enlaza `viavalentia.com` desde el panel.
+- Los tokens exponen variables `--vv-*`; `llaves.css` y el CSS inline del
+  login las consumen con fallback.
+- No hay cambios en endpoints, permisos, sesión ni datos.

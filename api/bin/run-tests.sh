@@ -6805,13 +6805,40 @@ block "BLOCK 71 — F98: panel de llaves"
 F98_DIR="$PROJECT_DIR/public/llaves"
 
 # --- Estáticos: ficheros del panel -----------------------------------------
-for f in index.html login.html assets/llaves.js assets/llaves.css; do
+for f in index.html login.html assets/llaves.js assets/llaves.css \
+         assets/brand-tokens.css assets/via-valentia-logo.png; do
   if [ -f "$F98_DIR/$f" ]; then
     pass "F98: existe public/llaves/$f"
   else
     fail "F98: existe public/llaves/$f" "fichero no encontrado"
   fi
 done
+
+# Identidad corporativa Vía Valentia (F98 branding).
+if grep -q '#0c4b7f' "$F98_DIR/assets/brand-tokens.css" 2>/dev/null \
+   && grep -q '#dea139' "$F98_DIR/assets/brand-tokens.css" 2>/dev/null; then
+  pass "F98: tokens de marca Vía Valentia (azul y oro)"
+else
+  fail "F98: tokens de marca" "faltan los colores corporativos"
+fi
+for page in index.html login.html; do
+  if grep -q '/llaves/assets/brand-tokens.css' "$F98_DIR/$page" 2>/dev/null \
+     && grep -q '/llaves/assets/via-valentia-logo.png' "$F98_DIR/$page" 2>/dev/null; then
+    pass "F98: $page carga tokens y logo corporativo"
+  else
+    fail "F98: $page branding" "no enlaza tokens o logo local"
+  fi
+done
+if file "$F98_DIR/assets/via-valentia-logo.png" 2>/dev/null | grep -q 'PNG image'; then
+  pass "F98: el logo corporativo es un PNG local"
+else
+  fail "F98: logo corporativo" "no es un PNG válido"
+fi
+if grep -rqs 'viavalentia.com/wp-content' "$F98_DIR"; then
+  fail "F98: branding sin dependencia externa" "el panel carga el logo desde la web del hotel"
+else
+  pass "F98: branding sin dependencia externa"
+fi
 
 # index.html enlaza la hoja y el script del panel.
 if grep -q '/llaves/assets/llaves.css' "$F98_DIR/index.html" 2>/dev/null \
@@ -6858,8 +6885,10 @@ else
 fi
 rm -f "$F98_LOGIN_FILE"
 
-http_test GET /llaves/assets/llaves.js  200 "F98: GET /llaves/assets/llaves.js"
-http_test GET /llaves/assets/llaves.css 200 "F98: GET /llaves/assets/llaves.css"
+http_test GET /llaves/assets/llaves.js        200 "F98: GET /llaves/assets/llaves.js"
+http_test GET /llaves/assets/llaves.css       200 "F98: GET /llaves/assets/llaves.css"
+http_test GET /llaves/assets/brand-tokens.css 200 "F98: GET /llaves/assets/brand-tokens.css"
+http_test GET /llaves/assets/via-valentia-logo.png 200 "F98: GET /llaves/assets/via-valentia-logo.png"
 
 # /llaves sin cookie → 302 a /llaves/login.
 F98_LLAVES_HDR="$PROJECT_DIR/logs/_f98_llaves_headers.tmp"

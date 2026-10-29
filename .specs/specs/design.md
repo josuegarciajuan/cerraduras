@@ -12399,3 +12399,22 @@ listados, filtros ni mensajes de error.
   disponible, denegación de `POST /api/v1/nfc-cards`, `403` sin sesión y
   regeneración de QR.
 - Regresión completa con `bash bin/run-tests.sh` en verde.
+
+## 98.8 Identidad corporativa (Hotel Vía Valentia)
+
+- Assets locales: `assets/brand-tokens.css` y
+  `assets/via-valentia-logo.png` (181×56, PNG transparente).
+- Paleta: azul de marca `#0c4b7f` (acción principal, foco, enlaces),
+  oro `#dea139` (línea superior y detalles decorativos), neutros cálidos
+  (`#f6f3ec`, `#fffdf8`, `#ece7dc`) y texto `#17212b`/`#59636e`.
+- Semántica intacta: éxito `#146c43`, aviso `#764900`, error `#9f2626`.
+- Login: logo sobre la tarjeta, filete dorado y título en azul; el formulario
+  y su comportamiento no cambian.
+- Panel: logo en la cabecera, filete dorado superior y botones/pestañas en
+  azul. El nombre «Gestión de llaves» se mantiene y «Hotel Vía Valentia»
+  aparece como identificación secundaria.
+- El logo tiene dimensiones declaradas y `alt` corporativo; si no carga, el
+  texto de marca sigue visible.
+- `brand-tokens.css` se carga antes de `llaves.css`; este último solo mapea
+  los tokens con valores de respaldo.
+- Sin fuentes, scripts ni imágenes externas.

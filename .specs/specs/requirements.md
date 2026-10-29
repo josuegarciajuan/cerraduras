@@ -6134,3 +6134,19 @@ correspondencia funcional 1:1 con la numeración solicitada:
 - **NFR-F98.3**: `/panel` y sus funcionalidades existentes siguen funcionando
   igual para sus roles actuales.
 - **NFR-F98.4**: la UI de `/llaves` no expone códigos de ficha ni tokens.
+
+## RF-185: Identidad corporativa del Hotel Vía Valentia
+
+- **RF-185.1**: `/llaves/login` y `/llaves` muestran el logotipo oficial del
+  Hotel Vía Valentia servido desde el propio dominio, sin depender de la web
+  externa del hotel.
+- **RF-185.2**: la paleta usa el azul `#0c4b7f` y el oro `#dea139` del
+  logotipo, sobre fondos claros y cálidos coherentes con la web corporativa.
+- **RF-185.3**: los estados conservan su semántica y no dependen solo del
+  color: activa, caducada, desactivada y error mantienen texto e indicadores.
+- **RF-185.4**: se mantienen contraste, foco visible, tamaños de objetivo y
+  navegación por teclado; el oro no se usa como color de texto pequeño.
+- **RF-185.5**: no se alteran flujos, permisos, endpoints ni datos de F98.
+- **NFR-F98.5**: los tokens de marca se definen una sola vez en
+  `brand-tokens.css` y los consumen login y panel.
+- **NFR-F98.6**: el cambio no añade dependencias, CDNs ni llamadas externas.

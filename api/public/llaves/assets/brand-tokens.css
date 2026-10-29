@@ -1,0 +1,49 @@
+/* F98 — Identidad corporativa Hotel Vía Valentia.
+ *
+ * Paleta derivada del logotipo oficial:
+ *   azul  #0c4b7f
+ *   oro   #dea139
+ *
+ * Los colores de estado (éxito, aviso, error) se mantienen porque comunican
+ * significado y no deben confundirse con la marca.
+ */
+
+:root {
+  /* Marca */
+  --vv-blue: #0c4b7f;
+  --vv-blue-strong: #083a63;
+  --vv-blue-soft: #e6eef6;
+  --vv-blue-ink: #062f50;
+  --vv-gold: #dea139;
+  --vv-gold-strong: #b97d1f;
+  --vv-gold-soft: #fbf0dd;
+
+  /* Neutros cálidos, alineados con la web del hotel */
+  --vv-paper: #f6f3ec;
+  --vv-paper-2: #ece7dc;
+  --vv-surface: #fffdf8;
+  --vv-surface-2: #f2eee5;
+  --vv-ink: #17212b;
+  --vv-ink-soft: #33414f;
+  --vv-muted: #59636e;
+  --vv-line: #d5cfc1;
+  --vv-line-strong: #a8a193;
+
+  /* Foco y semántica */
+  --vv-focus: #0c4b7f;
+  --vv-danger: #9f2626;
+  --vv-danger-strong: #7f1d1d;
+  --vv-danger-soft: #f9e4e1;
+  --vv-warn: #764900;
+  --vv-warn-soft: #fdf0d2;
+  --vv-success: #146c43;
+  --vv-success-soft: #e2f1e8;
+
+  /* Sombras */
+  --vv-shadow: 0 18px 44px -26px rgba(23, 33, 43, .42);
+  --vv-shadow-soft: 0 8px 24px -18px rgba(23, 33, 43, .5);
+
+  /* Tipografía */
+  --vv-font-ui: "Heebo", "Lato", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --vv-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
