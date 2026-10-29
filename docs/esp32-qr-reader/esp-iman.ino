@@ -853,7 +853,8 @@ static void imanDoorEventTask(void *arg) {
   }
   client->setCACert(CERRADURAS_API_CA_PEM);
   client->setHandshakeTimeout(10);
-  client->setTimeout(IMAN_SSE_READ_TIMEOUT_MS / 1000);
+  // Timeout corto de lectura: la tarea es dedicada y no debe quedar dormida.
+  client->setTimeout(2);
 
   for (;;) {
     if (WiFi.status() != WL_CONNECTED) {
@@ -882,37 +883,52 @@ static void imanDoorEventTask(void *arg) {
     unsigned long lastData = millis();
     String currentEvent;
     String currentData;
+    String lineBuf;
+    lineBuf.reserve(256);
+    bool sawData = false;
+    Serial.printf("[IMAN] SSE conectado (%lu ms)\n", millis());
 
-    while (client->connected() || client->available()) {
-      if (client->available()) {
-        String line = client->readStringUntil('\n');
-        line.trim();
-        lastData = millis();
-        imanLinkHealthyAt = lastData;
-
-        if (line.startsWith("event:")) {
-          currentEvent = line.substring(6);
-          currentEvent.trim();
-        } else if (line.startsWith("data:")) {
-          currentData = line.substring(5);
-          currentData.trim();
-        } else if (line.length() == 0 && currentData.length() > 0) {
-          if (currentEvent == "snapshot") {
-            imanHandleSnapshot(currentData);
-          } else if (currentEvent == "door") {
-            imanHandleDoor(currentData);
-          } else if (currentEvent == "close") {
-            Serial.println("[IMAN] SSE close (reconexión)");
-          }
-          currentEvent = "";
-          currentData = "";
-        }
-      } else {
+    while (client->connected()) {
+      int ch = client->read();
+      if (ch < 0) {
         if ((millis() - lastData) > IMAN_SSE_READ_TIMEOUT_MS) {
           Serial.println("[IMAN] SSE sin datos; reconexión");
           break;
         }
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      lastData = millis();
+      imanLinkHealthyAt = lastData;
+      if (!sawData) {
+        sawData = true;
+        Serial.println("[IMAN] SSE primer byte recibido");
+      }
+      if (ch == '\r') continue;
+      if (ch != '\n') {
+        if (lineBuf.length() < 1024) lineBuf += (char) ch;
+        continue;
+      }
+
+      String line = lineBuf;
+      lineBuf = "";
+      line.trim();
+      if (line.startsWith("event:")) {
+        currentEvent = line.substring(6);
+        currentEvent.trim();
+      } else if (line.startsWith("data:")) {
+        currentData = line.substring(5);
+        currentData.trim();
+      } else if (line.length() == 0 && currentData.length() > 0) {
+        if (currentEvent == "snapshot") {
+          imanHandleSnapshot(currentData);
+        } else if (currentEvent == "door") {
+          imanHandleDoor(currentData);
+        } else if (currentEvent == "close") {
+          Serial.println("[IMAN] SSE close (reconexión)");
+        }
+        currentEvent = "";
+        currentData = "";
       }
     }
 
@@ -923,7 +939,7 @@ static void imanDoorEventTask(void *arg) {
 }
 
 void startDoorEventTask() {
-  xTaskCreatePinnedToCore(imanDoorEventTask, "iman-door-sse", 8192, nullptr, 1,
+  xTaskCreatePinnedToCore(imanDoorEventTask, "iman-door-sse", 16384, nullptr, 1,
                           &doorTaskHandle, 0);
   if (doorTaskHandle == nullptr) {
     Serial.println("[IMAN] ⚠ no se pudo crear la tarea SSE");
