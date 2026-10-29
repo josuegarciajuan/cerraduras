@@ -3830,9 +3830,12 @@ Las rutas `/api/v1/keys/*` cambian de `rooms:read`/`rooms:write` a
 | `POST` | `/api/v1/keys/{id}/qr` | `keys:write` |
 | `GET` | `/api/v1/keys/defaults` | `keys:read` |
 
-`admin` y `operator` ya tienen ambos scopes. La migración `0132` amplía de
-forma idempotente los `api_clients` existentes que ya tienen `rooms:write`
-añadiendo `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
+`admin` y `operator` ya tienen ambos scopes. Las rutas de fichas
+(`/api/v1/nfc-cards`, GET y mutaciones) pasan a exigir `nfc-cards:read` /
+`nfc-cards:write`; `key_manager` no recibe ninguno de los dos, por lo que no
+puede ni listarlas ni gestionarlas. La migración `0132` amplía de forma
+idempotente los `api_clients` existentes que ya tienen `rooms:write` añadiendo
+`keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
 `workers:read`, `workers:write`, `worker-roles:read`.
 
 ## §F98.4 API reutilizada

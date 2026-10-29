@@ -5321,11 +5321,11 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
   de `api_clients` con `rooms:write`.
 - [ ] Cambiar `/api/v1/keys/*` de `rooms:read`/`rooms:write` a
   `keys:read`/`keys:write`.
-- [ ] Añadir `GET /api/v1/llaves/nfc-available` (`keys:read`) que devuelve solo
+- [x] Añadir `GET /api/v1/llaves/nfc-available` (`keys:read`) que devuelve solo
   `{id, number}` de fichas `AVAILABLE`.
 - [ ] Mantener `admin`/`operator` sin cambios funcionales.
 
-**Archivos**: `api/migrations/0132_key_manager_scopes.sql`,
+**Archivos**: `api/migrations/0132_key_manager_panel.sql`,
 `api/public/index.php`, `api/src/Http/Controllers/AccessKeyController.php`
 (o controlador específico de fichas disponibles).
 
