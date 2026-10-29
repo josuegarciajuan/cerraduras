@@ -12530,3 +12530,6 @@ correspondencia funcional 1:1 con la numeración solicitada:
 - **RF-186.8**: el heartbeat publica `actuator_state`, `actuator_reason`,
   `output_on`, `door_link` y `door_state`; el panel los muestra junto al
   subtipo y la versión del firmware.
+- **RF-186.9**: tras un hueco de reconexión con estado procedente de eventos,
+  el SSE reproduce los eventos aplicados perdidos en orden, para no dejar el
+  imán apagado tras un OPEN/CLOSED ocurrido durante el hueco.

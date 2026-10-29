@@ -3815,7 +3815,9 @@ data: {"protocol":1,"event_id":124,"state":"OPEN",
 
 `contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
 eventos aplicados intermedios. El firmware no rearma con un snapshot no
-contiguo.
+contiguo. Si `state_source=event` y `since_id>0`, el servidor reproduce los
+eventos aplicados perdidos (en orden) para reconstruir la transición. Con
+`manual_confirm`/`invalidated` no se reenvía historia antigua.
 # Contracts — Cerraduras Hotel
 
 > **F92 — Estado**: aprobado; implementación en curso.
@@ -7593,7 +7595,9 @@ data: {"protocol":1,"event_id":124,"state":"OPEN",
 
 `contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
 eventos aplicados intermedios. El firmware no rearma con un snapshot no
-contiguo.
+contiguo. Si `state_source=event` y `since_id>0`, el servidor reproduce los
+eventos aplicados perdidos (en orden) para reconstruir la transición. Con
+`manual_confirm`/`invalidated` no se reenvía historia antigua.
 
 
 ## §F95.5 Evidencia del intento
@@ -11525,7 +11529,9 @@ data: {"protocol":1,"event_id":124,"state":"OPEN",
 
 `contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
 eventos aplicados intermedios. El firmware no rearma con un snapshot no
-contiguo.
+contiguo. Si `state_source=event` y `since_id>0`, el servidor reproduce los
+eventos aplicados perdidos (en orden) para reconstruir la transición. Con
+`manual_confirm`/`invalidated` no se reenvía historia antigua.
 # Contracts — Cerraduras Hotel
 
 > **F92 — Estado**: aprobado; implementación en curso.
@@ -15303,7 +15309,9 @@ data: {"protocol":1,"event_id":124,"state":"OPEN",
 
 `contiguous` es `false` si `since_id` es 0, mayor que el último id o si hay
 eventos aplicados intermedios. El firmware no rearma con un snapshot no
-contiguo.
+contiguo. Si `state_source=event` y `since_id>0`, el servidor reproduce los
+eventos aplicados perdidos (en orden) para reconstruir la transición. Con
+`manual_confirm`/`invalidated` no se reenvía historia antigua.
 
 
 ## §F95.5 Evidencia del intento

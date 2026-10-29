@@ -11022,6 +11022,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 **Trazabilidad**: RF-186.7..RF-186.8
 
 - [x] Reconexión inmediata tras `close`.
+- [x] Reproducción ordenada de eventos perdidos tras un hueco.
 - [x] Validación del estado HTTP.
 - [x] Gracia de enlace sin depender de `connected()`.
 - [x] Heartbeat con estado del actuador y canal.

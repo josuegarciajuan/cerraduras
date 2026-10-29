@@ -129,6 +129,10 @@ checkEsp(str_contains($controller, 'RoomSensorStateRepository')
     && str_contains($controller, 'state_value')
     && str_contains($controller, 'state_source'),
     'SSE usa el estado físico independiente del ciclo de estancia');
+checkEsp(str_contains($controller, '$replayFrom')
+    && str_contains($controller, "stateSource === 'event'")
+    && str_contains($controller, 'min($sinceId, $barrier)'),
+    'SSE reproduce eventos perdidos sin saltarse transiciones OPEN/CLOSED');
 checkEsp(str_contains($stateMigration, 'CREATE TABLE IF NOT EXISTS `room_sensor_state`')
     && str_contains($stateMigration, 'received_at') && str_contains($stateMigration, 'last_event_id'),
     'migración del estado físico por sala/sensor/transporte');
