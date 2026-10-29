@@ -2982,7 +2982,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  corriente pulsada configurable (perfil de ensayo F97.1: 950 ms ON / 50 ms OFF) para no
+  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.
@@ -5980,7 +5980,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  corriente pulsada configurable (perfil de ensayo F97.1: 950 ms ON / 50 ms OFF) para no
+  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.
