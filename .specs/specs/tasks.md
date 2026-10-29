@@ -7,6 +7,61 @@
 
 ---
 
+# Fase 99: Reactivar llaves desactivadas
+
+## TSK-99.00: Especificación
+
+**Trazabilidad**: RF-186..RF-189
+
+- [x] Documentar requisitos, diseño, contrato y tareas de la reactivación.
+- [x] Definir que la credencial existente se conserva.
+
+**Verificación**: coherencia entre los cuatro documentos SDD.
+
+## TSK-99.01: Política y persistencia
+
+**Trazabilidad**: RF-187, RF-188
+
+- [x] Crear `AccessKeyReactivationPolicy` (regla pura).
+- [x] Añadir `AccessKeyRepository::reactivate()` con transición atómica.
+- [x] Añadir `AccessKeyService::reactivate()` con validaciones y reasignación
+  de ficha dentro de la transacción.
+- [x] Unit `AccessKeyReactivationTest.php` (10 casos).
+
+**Verificación**: `php tests/Unit/AccessKeyReactivationTest.php` → 10/10.
+
+## TSK-99.02: API
+
+**Trazabilidad**: RF-188
+
+- [x] `AccessKeyController::reactivate()`.
+- [x] Ruta `POST /api/v1/keys/{id}/reactivate` con `keys:write`.
+- [x] Errores 404/422/409 según contrato.
+
+**Verificación**: `php -l` y pruebas HTTP del runner.
+
+## TSK-99.03: Panel `/llaves`
+
+**Trazabilidad**: RF-186
+
+- [x] Botón «Reactivar» en tarjeta y detalle de llaves desactivadas no caducadas.
+- [x] Confirmación, recarga y aviso de resultado.
+- [x] Errores accesibles sin perder los filtros.
+
+**Verificación**: `node --check` y revisión manual del flujo.
+
+## TSK-99.04: Pruebas y regresión
+
+**Trazabilidad**: RF-189
+
+- [x] BLOCK 71 del runner (QR conservado, doble reactivación, caducidad,
+  titular de baja y ficha NFC).
+- [ ] Ejecutar `bash api/bin/run-tests.sh` completo en un entorno seguro.
+
+**Verificación**: 0 fallos y limpieza de datos de prueba.
+
+---
+
 # Fase 92: Estado de conectividad por transporte
 
 ## TSK-92.00: Especificación de la liveness por transporte

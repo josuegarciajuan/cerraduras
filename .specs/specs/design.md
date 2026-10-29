@@ -8,6 +8,63 @@
 
 ---
 
+# Fase 99: Reactivación de llaves desactivadas
+
+## Decisión
+
+La reactivación es una operación explícita, distinta de la edición. `PATCH`
+sigue rechazando llaves revocadas y se añade `POST /keys/{id}/reactivate`.
+La regla se extrae a `AccessKeyReactivationPolicy`, una función pura sin BD ni
+reloj propio, para poder probarla de forma determinista.
+
+## Flujo
+
+```text
+GET key -> validar REVOKED + no caducada + titular activo + ficha disponible
+        -> BEGIN
+           UPDATE access_keys SET status='ACTIVE', revoked_at=NULL WHERE id=? AND status='REVOKED'
+           (NFC) releaseFromKey + assignToKey
+           COMMIT
+        -> devolver la llave actualizada
+```
+
+- Una llave QR conserva `token_hash`/`token_jti`: el mismo QR vuelve a abrir.
+- Una llave NFC recupera su ficha; si otra llave se la hubiera asignado, la
+  operación falla con `409 nfc_card_unavailable`.
+- `revoked_at` se limpia. No se toca `valid_until`, permisos ni titular.
+- La comprobación se repite dentro de la transacción mediante el `WHERE
+  status='REVOKED'`, de modo que dos peticiones simultáneas no reactivan dos
+  veces.
+
+## Errores
+
+| Caso | HTTP | Código |
+|---|---|---|
+| Llave inexistente | 404 | `not_found` |
+| No está revocada | 422 | `not_revoked` |
+| Caducada | 422 | `key_expired` |
+| Titular inactivo | 422 | `worker_inactive` |
+| Ficha no disponible o inexistente | 409 | `nfc_card_unavailable` |
+
+## Panel
+
+`llaves.js` añade `isExpiredKey()` y muestra «Reactivar» solo en llaves
+desactivadas no caducadas, tanto en la tarjeta como en el modal de detalle.
+La acción reutiliza `confirmDialog`, `loadKeys` y los toasts existentes.
+
+## No objetivos
+
+- No se rota la credencial ni se emite un QR nuevo automáticamente.
+- No se permite reactivar llaves caducadas ni de titulares de baja.
+- No se cambian los permisos, el titular ni la vigencia.
+- No se altera el pipeline de sensores ni se añade polling.
+
+## Verificación
+
+Unit `AccessKeyReactivationTest.php` (política) y BLOCK 71 del runner.
+
+---
+
 # Fase 92: Estado de conectividad por transporte
 
 ## Decisión

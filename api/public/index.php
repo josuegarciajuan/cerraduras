@@ -3314,6 +3314,7 @@ $router->get('/api/v1/keys/{id}',                  [$accessKeyController, 'show'
 $router->patch('/api/v1/keys/{id}',                [$accessKeyController, 'update'],        $authFactory(['keys:write']));
 $router->delete('/api/v1/keys/{id}',               [$accessKeyController, 'revoke'],        $authFactory(['keys:write']));
 $router->post('/api/v1/keys/{id}/revoke',          [$accessKeyController, 'revoke'],        $authFactory(['keys:write']));
+$router->post('/api/v1/keys/{id}/reactivate',      [$accessKeyController, 'reactivate'],    $authFactory(['keys:write']));
 $router->post('/api/v1/keys/{id}/qr',              [$accessKeyController, 'regenerateQr'],  $authFactory(['keys:write']));
 $router->get('/api/v1/keys/{id}/accesses',         [$accessKeyController, 'keyAccesses'],   $authFactory(['audit:read']));
 

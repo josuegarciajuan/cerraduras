@@ -9,6 +9,53 @@
 
 ---
 
+# Fase 99: Reactivar llaves desactivadas
+
+**Motivo**: en `/llaves` una llave desactivada no ofrecía ninguna acción para
+volver a habilitarla, aunque el caso de uso (baja temporal, error del operador)
+es habitual. F99 añade una reactivación explícita y restringida.
+
+## RF-186: Acción de reactivación en el panel
+
+- **RF-186.1**: cada tarjeta y el detalle de una llave `REVOKED` no caducada
+  muestran un botón «Reactivar».
+- **RF-186.2**: la acción pide confirmación, informa del resultado y actualiza
+  la tarjeta sin perder los filtros activos.
+- **RF-186.3**: los errores se muestran con el mecanismo accesible existente y
+  la llave permanece desactivada.
+- **RF-186.4**: las llaves caducadas no muestran la acción; la regla también se
+  aplica en el servidor.
+
+## RF-187: Reglas de reactivación
+
+- **RF-187.1**: solo se reactiva una llave en estado `REVOKED`.
+- **RF-187.2**: la llave no puede estar caducada (`valid_until` en el pasado).
+- **RF-187.3**: si el titular es un trabajador, debe seguir activo.
+- **RF-187.4**: si la llave es de ficha NFC, la ficha debe existir y estar
+  disponible o seguir vinculada a esa misma llave.
+- **RF-187.5**: la reactivación conserva la credencial existente: el QR no se
+  rota y la ficha física vuelve a asignarse. No se generan credenciales nuevas.
+
+## RF-188: Contrato y persistencia
+
+- **RF-188.1**: nuevo endpoint `POST /api/v1/keys/{id}/reactivate` con ámbito
+  `keys:write`.
+- **RF-188.2**: devuelve la llave reactivada con `status=ACTIVE` y
+  `revoked_at=null`.
+- **RF-188.3**: transición atómica `REVOKED → ACTIVE`; para NFC también se
+  reasigna la ficha en la misma transacción.
+- **RF-188.4**: las respuestas y rutas existentes no cambian de forma.
+
+## RF-189: Verificación
+
+- **RF-189.1**: unit de la política de reactivación (estados, caducidad,
+  trabajador inactivo y ficha).
+- **RF-189.2**: bloque de runner que cubre QR conservado, doble reactivación,
+  caducidad, titular de baja y ficha NFC.
+- **RF-189.3**: regresión completa `bash api/bin/run-tests.sh` con 0 fallos.
+
+---
+
 # Fase 92: Estado de conectividad por transporte (Zigbee y cámaras)
 
 ## Contexto
