@@ -6771,6 +6771,245 @@ $MYSQL -e "DELETE FROM devices WHERE external_id LIKE 'f97%'; DELETE FROM api_cl
 pass "F97: limpieza de datos de prueba"
 
 # =============================================================================
+# BLOCK 71 — F98: panel de llaves (/llaves)
+# Trazabilidad: RF-178..RF-184, TSK-F98-08
+# =============================================================================
+block "BLOCK 71 — F98: panel de llaves"
+
+F98_DIR="$PROJECT_DIR/public/llaves"
+
+# --- Estáticos: ficheros del panel -----------------------------------------
+for f in index.html login.html assets/llaves.js assets/llaves.css; do
+  if [ -f "$F98_DIR/$f" ]; then
+    pass "F98: existe public/llaves/$f"
+  else
+    fail "F98: existe public/llaves/$f" "fichero no encontrado"
+  fi
+done
+
+# index.html enlaza la hoja y el script del panel.
+if grep -q '/llaves/assets/llaves.css' "$F98_DIR/index.html" 2>/dev/null \
+   && grep -q '/llaves/assets/llaves.js' "$F98_DIR/index.html" 2>/dev/null; then
+  pass "F98: index.html enlaza llaves.css y llaves.js"
+else
+  fail "F98: index.html enlaza llaves.css y llaves.js" "falta algún enlace"
+fi
+
+# login.html es autocontenido (CSS/JS inline) y llama al login CRM.
+if grep -q '/llaves/assets/llaves.css' "$F98_DIR/login.html" 2>/dev/null \
+   && grep -q '/llaves/assets/llaves.js' "$F98_DIR/login.html" 2>/dev/null; then
+  pass "F98: login.html enlaza llaves.css y llaves.js"
+elif grep -q '/api/v1/crm/login' "$F98_DIR/login.html" 2>/dev/null; then
+  pass "F98: login.html autocontenido (estilo/script inline) usa /api/v1/crm/login"
+else
+  fail "F98: login.html" "no enlaza los assets ni contiene el flujo de login CRM"
+fi
+
+# llaves.js consume los endpoints del panel de llaves.
+for ep in '/api/v1/llaves/nfc-available' '/api/v1/keys/defaults' '/api/v1/workers'; do
+  if grep -q "$ep" "$F98_DIR/assets/llaves.js" 2>/dev/null; then
+    pass "F98: llaves.js usa $ep"
+  else
+    fail "F98: llaves.js usa $ep" "endpoint no referenciado"
+  fi
+done
+
+# Sin llamadas a Tuya desde el panel de llaves.
+if grep -rqiE 'tuya|openapi\.tuya' "$F98_DIR" 2>/dev/null; then
+  fail "F98: el panel /llaves no llama a Tuya" "referencia a Tuya encontrada"
+else
+  pass "F98: el panel /llaves no llama a Tuya"
+fi
+
+# --- HTTP público -----------------------------------------------------------
+F98_LOGIN_FILE="$PROJECT_DIR/logs/_f98_login.html"
+F98_LOGIN_CODE=$(curl -s -o "$F98_LOGIN_FILE" -w '%{http_code}' --max-time 10 \
+  "${API_BASE}/llaves/login" 2>/dev/null || echo "000")
+if [ "$F98_LOGIN_CODE" = "200" ] && grep -q 'Gestión de llaves' "$F98_LOGIN_FILE" 2>/dev/null; then
+  pass "F98: GET /llaves/login 200 con 'Gestión de llaves'"
+else
+  fail "F98: GET /llaves/login" "HTTP $F98_LOGIN_CODE o falta el título"
+fi
+rm -f "$F98_LOGIN_FILE"
+
+http_test GET /llaves/assets/llaves.js  200 "F98: GET /llaves/assets/llaves.js"
+http_test GET /llaves/assets/llaves.css 200 "F98: GET /llaves/assets/llaves.css"
+
+# /llaves sin cookie → 302 a /llaves/login.
+F98_LLAVES_HDR="$PROJECT_DIR/logs/_f98_llaves_headers.tmp"
+F98_LLAVES_CODE=$(curl -s -o /dev/null -D "$F98_LLAVES_HDR" -w '%{http_code}' --max-time 10 \
+  "${API_BASE}/llaves" 2>/dev/null || echo "000")
+if [ "$F98_LLAVES_CODE" = "302" ] \
+   && grep -qi '^Location: /llaves/login' "$F98_LLAVES_HDR"; then
+  pass "F98: GET /llaves sin cookie → 302 /llaves/login"
+else
+  fail "F98: GET /llaves sin cookie" "HTTP $F98_LLAVES_CODE, Location=$(grep -i '^Location:' "$F98_LLAVES_HDR" 2>/dev/null | tr -d '\r')"
+fi
+rm -f "$F98_LLAVES_HDR"
+
+http_test GET /api/v1/llaves/nfc-available 401 \
+  "F98: GET /api/v1/llaves/nfc-available sin credencial → 401"
+
+# --- HTTP autenticado con ADMIN-CLI (clave de API) --------------------------
+F98_KEYS_FILE="$PROJECT_DIR/logs/_f98_keys.json"
+F98_KEYS_CODE=$(curl -s -o "$F98_KEYS_FILE" -w '%{http_code}' --max-time 10 \
+  -H "X-API-Key: $ADMIN_KEY" "${API_BASE}/api/v1/keys" 2>/dev/null || echo "000")
+if [ "$F98_KEYS_CODE" = "200" ]; then
+  pass "F98: GET /api/v1/keys con ADMIN-CLI → 200"
+elif [ "$F98_KEYS_CODE" = "403" ]; then
+  skip "F98: GET /api/v1/keys con ADMIN-CLI" "aplica migración 0132"
+else
+  fail "F98: GET /api/v1/keys con ADMIN-CLI" "Esperado 200, recibido $F98_KEYS_CODE"
+fi
+rm -f "$F98_KEYS_FILE"
+
+http_test GET /api/v1/llaves/nfc-available 200 \
+  "F98: GET /api/v1/llaves/nfc-available con ADMIN-CLI → 200" --key ADMIN-CLI
+
+# --- Flujo condicional key_manager -----------------------------------------
+# No crea trabajadores ni llaves reales; solo un usuario CRM temporal que se
+# elimina al final con la cookie de admin.
+CRM_TEST_ADMIN_USER="${CRM_TEST_ADMIN_USER:-admin}"
+CRM_TEST_ADMIN_PASSWORD="${CRM_TEST_ADMIN_PASSWORD:-admin123}"
+F98_ADMIN_JAR="$PROJECT_DIR/logs/_f98_admin.cookies"
+F98_KM_JAR="$PROJECT_DIR/logs/_f98_km.cookies"
+F98_ADMIN_JSON="$PROJECT_DIR/logs/_f98_admin_login.json"
+F98_USER_JSON="$PROJECT_DIR/logs/_f98_user.json"
+F98_KM_LOGIN_JSON="$PROJECT_DIR/logs/_f98_km_login.json"
+F98_USER_ID=""
+
+_f98_cleanup() {
+  if [ -n "$F98_USER_ID" ]; then
+    curl -s --max-time 10 -b "$F98_ADMIN_JAR" -X DELETE \
+      "${API_BASE}/api/v1/crm/users/$F98_USER_ID" -o /dev/null 2>/dev/null || true
+  fi
+  rm -f "$F98_ADMIN_JAR" "$F98_KM_JAR" "$F98_ADMIN_JSON" \
+        "$F98_USER_JSON" "$F98_KM_LOGIN_JSON" "$F98_KM_ME_JSON" \
+        "$F98_KM_NFC_JSON" 2>/dev/null || true
+}
+
+F98_ADMIN_CODE=$(curl -s --max-time 10 -c "$F98_ADMIN_JAR" -o "$F98_ADMIN_JSON" \
+  -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$CRM_TEST_ADMIN_USER\",\"password\":\"$CRM_TEST_ADMIN_PASSWORD\"}" \
+  "${API_BASE}/api/v1/crm/login" 2>/dev/null || echo "000")
+
+if [ "$F98_ADMIN_CODE" != "200" ]; then
+  skip "F98: flujo key_manager" \
+    "login admin falló (HTTP $F98_ADMIN_CODE); define CRM_TEST_ADMIN_USER/CRM_TEST_ADMIN_PASSWORD"
+  _f98_cleanup
+else
+  pass "F98: login CRM del admin"
+
+  F98_UNAME="keydesk-test-$(date +%s)"
+  F98_UPASS="F98-Test-Pass-$(date +%s)-$RANDOM"
+  F98_CREATE_CODE=$(curl -s --max-time 10 -b "$F98_ADMIN_JAR" -c "$F98_ADMIN_JAR" \
+    -o "$F98_USER_JSON" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$F98_UNAME\",\"password\":\"$F98_UPASS\",\"role\":\"key_manager\"}" \
+    "${API_BASE}/api/v1/crm/users" 2>/dev/null || echo "000")
+
+  if [ "$F98_CREATE_CODE" != "201" ]; then
+    fail "F98: crear usuario key_manager temporal" \
+      "Esperado 201, recibido $F98_CREATE_CODE: $(head -c 200 "$F98_USER_JSON" 2>/dev/null)"
+  else
+    pass "F98: crear usuario key_manager temporal"
+    F98_USER_ID=$(python3 -c "import sys,json;print(json.load(open(sys.argv[1])).get('id',''))" "$F98_USER_JSON" 2>/dev/null || echo "")
+
+    if [ -z "$F98_USER_ID" ]; then
+      fail "F98: id del usuario temporal" "respuesta sin id"
+    else
+      F98_KM_CODE=$(curl -s --max-time 10 -c "$F98_KM_JAR" -o "$F98_KM_LOGIN_JSON" \
+        -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "{\"username\":\"$F98_UNAME\",\"password\":\"$F98_UPASS\"}" \
+        "${API_BASE}/api/v1/crm/login" 2>/dev/null || echo "000")
+
+      if [ "$F98_KM_CODE" != "200" ]; then
+        fail "F98: login del key_manager" "Esperado 200, recibido $F98_KM_CODE"
+      else
+        pass "F98: login del key_manager"
+
+        # /crm/me refleja role=key_manager.
+        F98_KM_ME_JSON="$PROJECT_DIR/logs/_f98_km_me.json"
+        F98_ME_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o "$F98_KM_ME_JSON" \
+          -w '%{http_code}' "${API_BASE}/api/v1/crm/me" 2>/dev/null || echo "000")
+        if [ "$F98_ME_CODE" = "200" ] \
+           && grep -q '"role":"key_manager"' "$F98_KM_ME_JSON" 2>/dev/null; then
+          pass "F98: GET /crm/me devuelve role=key_manager"
+        else
+          fail "F98: GET /crm/me" "HTTP $F98_ME_CODE: $(head -c 200 "$F98_KM_ME_JSON" 2>/dev/null)"
+        fi
+
+        # /panel → 302 /llaves (nunca el panel técnico).
+        F98_PANEL_HDR="$PROJECT_DIR/logs/_f98_panel_headers.tmp"
+        F98_PANEL_CODE=$(curl -s -o /dev/null -D "$F98_PANEL_HDR" -w '%{http_code}' --max-time 10 \
+          -b "$F98_KM_JAR" -H 'Accept: text/html' "${API_BASE}/panel" 2>/dev/null || echo "000")
+        if [ "$F98_PANEL_CODE" = "302" ] \
+           && grep -qi '^Location: /llaves' "$F98_PANEL_HDR"; then
+          pass "F98: key_manager en /panel → 302 /llaves"
+        else
+          fail "F98: key_manager en /panel" "HTTP $F98_PANEL_CODE, Location=$(grep -i '^Location:' "$F98_PANEL_HDR" 2>/dev/null | tr -d '\r')"
+        fi
+        rm -f "$F98_PANEL_HDR"
+
+        # Fichas NFC: lectura y escritura denegadas (sin nfc-cards:*).
+        F98_NFC_GET_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o /dev/null \
+          -w '%{http_code}' "${API_BASE}/api/v1/nfc-cards" 2>/dev/null || echo "000")
+        if [ "$F98_NFC_GET_CODE" = "403" ]; then
+          pass "F98: key_manager GET /nfc-cards → 403"
+        else
+          fail "F98: key_manager GET /nfc-cards" "Esperado 403, recibido $F98_NFC_GET_CODE"
+        fi
+
+        F98_NFC_POST_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o /dev/null \
+          -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+          -d "{\"number\":\"f98-should-not-exist-$F98_UNAME\",\"code\":\"f98code-$F98_UNAME\"}" \
+          "${API_BASE}/api/v1/nfc-cards" 2>/dev/null || echo "000")
+        if [ "$F98_NFC_POST_CODE" = "403" ]; then
+          pass "F98: key_manager POST /nfc-cards → 403"
+        else
+          fail "F98: key_manager POST /nfc-cards" "Esperado 403, recibido $F98_NFC_POST_CODE"
+        fi
+
+        # Llaves y catálogos permitidos.
+        F98_KM_KEYS_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o /dev/null \
+          -w '%{http_code}' "${API_BASE}/api/v1/keys" 2>/dev/null || echo "000")
+        if [ "$F98_KM_KEYS_CODE" = "200" ]; then
+          pass "F98: key_manager GET /api/v1/keys → 200"
+        else
+          fail "F98: key_manager GET /api/v1/keys" "Esperado 200, recibido $F98_KM_KEYS_CODE"
+        fi
+
+        for ep in '/api/v1/worker-roles' '/api/v1/room-types'; do
+          F98_CAT_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o /dev/null \
+            -w '%{http_code}' "${API_BASE}${ep}" 2>/dev/null || echo "000")
+          if [ "$F98_CAT_CODE" = "200" ]; then
+            pass "F98: key_manager GET $ep → 200"
+          else
+            fail "F98: key_manager GET $ep" "Esperado 200, recibido $F98_CAT_CODE"
+          fi
+        done
+
+        # Fichas disponibles: 200 y sin datos sensibles.
+        F98_KM_NFC_JSON="$PROJECT_DIR/logs/_f98_km_nfc.json"
+        F98_AVAIL_CODE=$(curl -s --max-time 10 -b "$F98_KM_JAR" -o "$F98_KM_NFC_JSON" \
+          -w '%{http_code}' "${API_BASE}/api/v1/llaves/nfc-available" 2>/dev/null || echo "000")
+        if [ "$F98_AVAIL_CODE" = "200" ] \
+           && ! grep -q 'code_hash' "$F98_KM_NFC_JSON" 2>/dev/null \
+           && ! grep -q 'code_last4' "$F98_KM_NFC_JSON" 2>/dev/null; then
+          pass "F98: key_manager GET /llaves/nfc-available → 200 sin code_hash/code_last4"
+        else
+          fail "F98: key_manager GET /llaves/nfc-available" \
+            "HTTP $F98_AVAIL_CODE: $(head -c 200 "$F98_KM_NFC_JSON" 2>/dev/null)"
+        fi
+      fi
+    fi
+  fi
+
+  # Limpieza del usuario temporal (siempre, aunque falle algún paso).
+  _f98_cleanup
+  pass "F98: limpieza del usuario temporal"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
