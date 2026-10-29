@@ -352,6 +352,8 @@ a { color: var(--accent-ink); }
   font-size: 17px;
 }
 .field textarea { min-height: 104px; resize: vertical; }
+/* El icono de búsqueda va dentro del campo: conservar hueco a la izquierda. */
+.field .search-wrap input { padding-left: 52px; }
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
