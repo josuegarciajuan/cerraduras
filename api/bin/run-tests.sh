@@ -6675,6 +6675,101 @@ fi
 $MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F96-%'; DELETE FROM access_keys WHERE label LIKE 'F96-%'; DELETE FROM nfc_cards WHERE number LIKE 'F96-%'; DELETE FROM key_access_events WHERE key_id IS NULL AND occurred_at >= '$F96_START'" >/dev/null 2>&1 || true
 pass "F96: limpieza de datos de prueba"
 
+
+# =============================================================================
+# BLOCK 70 — F97: variantes ESP (cerradura/imán) + canal de puerta
+# Trazabilidad: RF-174..RF-177, TSK-F97-01/02/03/06
+# =============================================================================
+block "BLOCK 70 — F97: variantes ESP + canal de puerta"
+F97_TS=$(date +%s%N)
+F97_PACK=$($MYSQL -sN -e "SELECT id FROM device_packs ORDER BY id LIMIT 1" 2>/dev/null || echo "")
+F97_CERR_EXT="f97cerr$F97_TS"
+F97_IMAN_EXT="f97iman$F97_TS"
+
+if [ -z "$F97_PACK" ]; then
+  skip "F97: variantes ESP" "no hay packs en la BD"
+else
+  # Alta sin subtipo → CERRADURA (compatibilidad).
+  http_test POST /api/v1/devices/register 201 "F97: RPI sin subtipo se registra" --key ADMIN-CLI \
+    --body "{\"pack_id\":$F97_PACK,\"kind\":\"RPI\",\"external_id\":\"$F97_CERR_EXT\"}"
+  F97_DEF_SUB=$(curl -s -H "X-API-Key: $(get_key ADMIN-CLI)" "${API_BASE}/api/v1/devices" \
+    | python3 -c "import sys,json;print(next((d.get('subtype') for d in json.load(sys.stdin).get('items',[]) if d.get('external_id')=='$F97_CERR_EXT'),''))" 2>/dev/null)
+  if [ "$F97_DEF_SUB" = "CERRADURA" ]; then
+    pass "F97: RPI sin subtipo queda como ESP-cerradura"
+  else
+    fail "F97: RPI sin subtipo queda como ESP-cerradura" "subtype='$F97_DEF_SUB'"
+  fi
+
+  # Alta explícita IMAN y subtipo inválido.
+  http_test POST /api/v1/devices/register 201 "F97: RPI con subtipo IMAN se registra" --key ADMIN-CLI \
+    --body "{\"pack_id\":$F97_PACK,\"kind\":\"RPI\",\"subtype\":\"IMAN\",\"external_id\":\"$F97_IMAN_EXT\"}"
+  http_test POST /api/v1/devices/register 422 "F97: subtipo de ESP inválido → 422" --key ADMIN-CLI \
+    --body "{\"pack_id\":$F97_PACK,\"kind\":\"RPI\",\"subtype\":\"EXTERIOR\",\"external_id\":\"f97bad$F97_TS\"}"
+
+  # Heartbeat: variante declarada y detección de desajuste.
+  F97_HB_OK=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"external_id\":\"$F97_IMAN_EXT\",\"sub_kinds\":[\"RPI\"],\"firmware_variant\":\"IMAN\",\"firmware_version\":\"2.0-iman\"}" \
+    "${API_BASE}/dashboard-api/device-heartbeat")
+  if echo "$F97_HB_OK" | grep -q '"variant_mismatch":false' \
+     && echo "$F97_HB_OK" | grep -q '"firmware_version":"2.0-iman"'; then
+    pass "F97: heartbeat registra variante/versión sin desajuste"
+  else
+    fail "F97: heartbeat registra variante/versión" "$(echo "$F97_HB_OK" | head -c 300)"
+  fi
+  F97_HB_BAD=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"external_id\":\"$F97_CERR_EXT\",\"sub_kinds\":[\"RPI\"],\"firmware_variant\":\"IMAN\",\"firmware_version\":\"2.0-iman\"}" \
+    "${API_BASE}/dashboard-api/device-heartbeat")
+  if echo "$F97_HB_BAD" | grep -q '"variant_mismatch":true'; then
+    pass "F97: desajuste panel/sketch se reporta"
+  else
+    fail "F97: desajuste panel/sketch se reporta" "$(echo "$F97_HB_BAD" | head -c 300)"
+  fi
+
+  # SSE sin credencial → 401.
+  F97_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
+    "${API_BASE}/dashboard-api/door-events?external_id=$F97_IMAN_EXT&since_id=0" 2>/dev/null)
+  if [ "$F97_CODE" = "401" ]; then
+    pass "F97: SSE de puerta exige credencial"
+  else
+    fail "F97: SSE de puerta exige credencial" "HTTP $F97_CODE"
+  fi
+
+  # Credencial temporal vinculada al ESP-imán sintético para probar el SSE.
+  F97_IMAN_ID=$($MYSQL -sN -e "SELECT id FROM devices WHERE kind='RPI' AND external_id='$F97_IMAN_EXT' LIMIT 1" 2>/dev/null || echo "")
+  if [ -n "$F97_IMAN_ID" ]; then
+    F97_SSE_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(24))')
+    F97_SSE_HASH=$(python3 -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" "$F97_SSE_KEY")
+    $MYSQL -e "INSERT INTO api_clients (code,kind,api_key_hash,scopes_csv,active,device_id) VALUES ('F97-SSE-$F97_TS','RPI','$F97_SSE_HASH','qr:validate,rooms:read,presence:write',1,$F97_IMAN_ID)" >/dev/null 2>&1 || true
+
+    F97_MISMATCH=$(curl -s --max-time 2 -H "X-API-Key: $F97_SSE_KEY" \
+      "${API_BASE}/dashboard-api/door-events?external_id=not-my-chip&since_id=0" 2>/dev/null)
+    if echo "$F97_MISMATCH" | grep -q 'device_mismatch'; then
+      pass "F97: SSE rechaza un external_id ajeno"
+    else
+      fail "F97: SSE rechaza un external_id ajeno" "$(echo "$F97_MISMATCH" | head -c 200)"
+    fi
+
+    F97_SSE_FILE="$PROJECT_DIR/logs/_f97_sse.txt"
+    F97_SSE_CODE=$(curl -sN --max-time 2 -o "$F97_SSE_FILE" -w '%{http_code}' \
+      -H "X-API-Key: $F97_SSE_KEY" \
+      "${API_BASE}/dashboard-api/door-events?external_id=$F97_IMAN_EXT&since_id=0" 2>/dev/null)
+    if [ "$F97_SSE_CODE" = "200" ] && grep -q 'event: snapshot' "$F97_SSE_FILE"; then
+      pass "F97: SSE emite snapshot autenticado"
+    elif [ "$F97_SSE_CODE" = "409" ] && grep -q 'door_sensor_unavailable' "$F97_SSE_FILE"; then
+      pass "F97: SSE autenticado sin puerta Zigbee → 409 explicativo"
+    else
+      fail "F97: SSE autenticado" "HTTP $F97_SSE_CODE body=$(head -c 200 "$F97_SSE_FILE" 2>/dev/null)"
+    fi
+    rm -f "$F97_SSE_FILE"
+  else
+    skip "F97: SSE autenticado" "no se pudo resolver el ESP-imán sintético"
+  fi
+fi
+
+# Limpieza de dispositivos sintéticos.
+$MYSQL -e "DELETE FROM devices WHERE external_id LIKE 'f97%'; DELETE FROM api_clients WHERE code LIKE 'F97-SSE-%'" >/dev/null 2>&1 || true
+pass "F97: limpieza de datos de prueba"
+
 # =============================================================================
 # RESUMEN
 # =============================================================================

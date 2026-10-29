@@ -5213,3 +5213,75 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] Compilación `esp32:esp32:esp32s3usbotg`.
 - [x] Unit estático: 14 checks.
 - [ ] Prueba física pendiente: QR de control + llavero EM (dispositivo apagado).
+
+---
+
+# Fase 97: ESP-cerradura y ESP-imán
+
+## TSK-F97-01: Especificación y modelo
+
+**Trazabilidad**: RF-174, RF-175
+
+- [x] Documentar variantes, canal de puerta y máquina de estados.
+- [x] Migración 0131: backfill `CERRADURA` y columnas de firmware.
+- [x] Validación `CERRADURA|IMAN` en `Device`/`DeviceService`.
+- [x] Alta manual, reclamación de fábrica y panel con selector de variante.
+- [x] Test unitario `EspVariantTest.php`.
+
+**Verificación**: `php tests/Unit/EspVariantTest.php`.
+
+## TSK-F97-02: Telemetría de firmware
+
+**Trazabilidad**: RF-175
+
+- [x] Heartbeat acepta y persiste variante/versión.
+- [x] Respuesta `variant_mismatch` sin alterar el subtipo.
+- [x] El sketch ESP-imán declara `IMAN`/`2.0-iman`.
+
+**Verificación**: heartbeat con variante distinta devuelve true.
+
+## TSK-F97-03: Canal SSE de puerta
+
+**Trazabilidad**: RF-176
+
+- [x] `ImanEventStreamController` con autenticación individual.
+- [x] Resolución del sensor Zigbee del pack y snapshot contiguo.
+- [x] Eventos ordenados, sin replay y sin polling a Tuya.
+- [x] Ruta bypass `/dashboard-api/door-events`.
+
+**Verificación**: 401/403/409 y snapshot con credencial válida.
+
+## TSK-F97-04: Firmware ESP-cerradura
+
+**Trazabilidad**: RF-174
+
+- [x] Copia exacta del sketch productivo en `docs` y `firmware/esp-cerradura`.
+
+**Verificación**: hash idéntico al sketch anterior.
+
+## TSK-F97-05: Firmware ESP-imán
+
+**Trazabilidad**: RF-174, RF-177
+
+- [x] Controlador de salida con pulsos 100/100 ms en tarea dedicada.
+- [x] Máquina `UNSYNCED/HOLDING/WAIT_OPEN/OPEN/CLOSING`.
+- [x] Cliente SSE dedicado con `since_id`, `contiguous` y gracia de enlace.
+- [x] Diagnóstico sin pulso; QR autorizado libera.
+- [x] Conservación de WiFi/NVS al flashear.
+
+**Verificación**: compilación `esp32:esp32:esp32s3usbotg` y pruebas de banco.
+
+## TSK-F97-06: Regresión y pruebas HTTP
+
+- [x] BLOCK 70 del runner: alta con/sin subtipo, reclamación IMAN,
+  heartbeat y autenticación del SSE.
+
+**Verificación**: `bash bin/run-tests.sh` con 0 fallos.
+
+## TSK-F97-07: Publicación y carga física
+
+- [x] Integrar en producción y aplicar migración.
+- [ ] Respaldar flash del ESP del proyecto en `oficina`.
+- [ ] Compilar y cargar `firmware/esp-iman`.
+- [ ] Verificar arranque, credencial, pack y recepción de puerta.
+- [ ] Prueba física de retención, apertura, cierre y temperatura.

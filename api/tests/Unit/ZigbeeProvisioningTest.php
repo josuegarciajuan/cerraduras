@@ -93,7 +93,7 @@ foreach ([
 }
 
 $packRepo = file_get_contents(__DIR__ . '/../../src/Domain/Devices/DevicePackRepository.php');
-if (is_string($packRepo) && str_contains($packRepo, 'SELECT id, pack_id, kind, external_id, label, transport')) {
+if (is_string($packRepo) && str_contains($packRepo, 'SELECT id, pack_id, kind, subtype, external_id, label, transport')) {
     pass('el detalle de pack incluye pack_id para integration_status');
 } else {
     fail('el detalle de pack no incluye pack_id');

@@ -55,7 +55,7 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
         } catch (\Throwable $e) { $this->pdo->rollBack(); throw $e; }
     }
 
-    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null): ?FactoryDevice
+    public function claimAndAudit(int $id, string $actor, ?int $actorClientId = null, ?string $label = null, ?int $packId = null, ?string $subtype = null): ?FactoryDevice
     {
         $this->pdo->beginTransaction();
         try {
@@ -77,8 +77,10 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                     $clientStmt = $this->pdo->prepare("INSERT INTO api_clients (code,kind,api_key_hash,scopes_csv,active,device_id) VALUES (:code,'RPI',:hash,'qr:validate,rooms:read,presence:write',1,NULL)");
                     $clientStmt->execute([':code' => 'RPI-'.$device->chipId, ':hash' => $storedHash]);
                     $clientId = (int) $this->pdo->lastInsertId();
-                    $createRpi = $this->pdo->prepare("INSERT INTO devices (pack_id, kind, external_id, label, api_client_id, meta_json) VALUES (:pack, 'RPI', :chip, :label, :client, :meta)");
-                    $createRpi->execute([':chip' => $device->chipId, ':pack' => $packId, ':label' => $label ?? ('RPI '.$device->chipId), ':client' => $clientId, ':meta' => json_encode(['source' => 'factory_claim'], JSON_UNESCAPED_UNICODE)]);
+                    $variant = strtoupper(trim((string) $subtype));
+                    if ($variant === '') $variant = 'CERRADURA';
+                    $createRpi = $this->pdo->prepare("INSERT INTO devices (pack_id, kind, subtype, external_id, label, api_client_id, meta_json) VALUES (:pack, 'RPI', :subtype, :chip, :label, :client, :meta)");
+                    $createRpi->execute([':chip' => $device->chipId, ':pack' => $packId, ':subtype' => $variant, ':label' => $label ?? ('RPI '.$device->chipId), ':client' => $clientId, ':meta' => json_encode(['source' => 'factory_claim'], JSON_UNESCAPED_UNICODE)]);
                     $deviceId = (int) $this->pdo->lastInsertId();
                     $this->pdo->prepare('UPDATE api_clients SET device_id=:device WHERE id=:client')->execute([':device'=>$deviceId, ':client'=>$clientId]);
                 } else {
@@ -108,7 +110,8 @@ final class FactoryDeviceRepository implements FactoryDeviceRepositoryInterface
                     if ($duplicateBinding->fetchColumn() !== false) {
                         throw new \App\Support\Errors\ConflictException('device_client_conflict', 'API client is already linked to another device');
                     }
-                    $this->pdo->prepare('UPDATE devices SET api_client_id=:client, pack_id=COALESCE(:pack, pack_id), label=COALESCE(:label, label) WHERE id=:device')->execute([':client'=>(int)$clientId, ':pack'=>$packId, ':label'=>$label, ':device'=>$deviceId]);
+                    $variant = strtoupper(trim((string) $subtype));
+                    $this->pdo->prepare('UPDATE devices SET api_client_id=:client, pack_id=COALESCE(:pack, pack_id), label=COALESCE(:label, label), subtype=COALESCE(:subtype, subtype) WHERE id=:device')->execute([':client'=>(int)$clientId, ':pack'=>$packId, ':label'=>$label, ':subtype'=>$variant !== '' ? $variant : null, ':device'=>$deviceId]);
                 }
                 $stmt = $this->pdo->prepare("UPDATE factory_devices SET status='CLAIMED', claimed_at=CURRENT_TIMESTAMP(3), claimed_by=:actor, device_id=:device_id, updated_at=CURRENT_TIMESTAMP(3) WHERE id=:id");
                 $stmt->execute([':id'=>$id, ':actor'=>$actor, ':device_id'=>$deviceId]);

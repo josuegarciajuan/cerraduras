@@ -76,6 +76,10 @@ final class DeviceService
         ?string $transport = null
     ): Device {
         $this->validateKind($kind);
+        // F97: legacy clients that omit subtype keep creating ESP-cerradura.
+        if ($kind === Device::KIND_RPI) {
+            $subtype = Device::normalizeEspVariant($subtype);
+        }
         $this->validateSubtype($kind, $subtype);
         $this->validateExternalId($externalId);
         $this->validateTransport($transport);
@@ -192,6 +196,9 @@ final class DeviceService
         }
         if (array_key_exists('subtype', $fields)) {
             $st = $fields['subtype'] === null ? null : (string) $fields['subtype'];
+            if ($current->kind === Device::KIND_RPI) {
+                $st = Device::normalizeEspVariant($st);
+            }
             $this->validateSubtype($current->kind, $st);
             $sanitized['subtype'] = $st;
         }
@@ -253,9 +260,16 @@ final class DeviceService
                 ['field' => 'subtype', 'allowed' => Device::cameraPositions()]
             );
         }
+        if ($kind === Device::KIND_RPI) {
+            throw new UnprocessableException(
+                'subtype_invalid',
+                'El ESP requiere subtipo CERRADURA o IMAN',
+                ['field' => 'subtype', 'allowed' => Device::espVariants()]
+            );
+        }
         throw new UnprocessableException(
             'subtype_not_allowed',
-            'Solo las cámaras admiten subtipo',
+            'Solo las cámaras y los ESP admiten subtipo',
             ['field' => 'subtype']
         );
     }
