@@ -536,8 +536,36 @@ function crm(){return{
   async loadDebts(){try{let d=await this.api('/api/v1/debts');this.debts=d.items||[]}catch(e){}},
   async loadMonitor(){try{let d=await this.api('/api/v1/admin/access-events?limit=50');this.events=d.items||[]}catch(e){};try{let d=await this.api('/api/v1/admin/outbox');this.outbox=d.items||[]}catch(e){}},
   monitorPage(){return'<div class="ph"><h1>📋 Monitor</h1></div><table><tr><th>Fecha</th><th>Hab.</th><th>Tipo</th><th>Result</th></tr>'+this.events.map(function(e){return'<tr><td style="font-size:11px">'+(e.occurred_at||'').substring(0,16)+'</td><td>'+(e.room_code||e.room_id)+'</td><td>'+(e.kind||'—')+'</td><td>'+(e.result||'—')+'</td></tr>'}).join('')+'</table>';},
-  crmUserPage(){return'<div class="ph"><h1>👥 Usuarios</h1></div><table><tr><th>Usuario</th><th>Rol</th><th>Activo</th></tr>'+this.crmUsers.map(function(u){return'<tr><td>'+this.esc(u.username)+'</td><td>'+u.role+'</td><td>'+(u.active?'✅':'❌')+'</td></tr>'}.bind(this)).join('')+'</table>';},
+  crmUserPage(){return'<div class="ph"><h1>👥 Usuarios</h1><p><button class="btn btn-p btn-sm" @click="openCrmUserForm()">+ Nuevo usuario</button></p></div><table><tr><th>Usuario</th><th>Rol</th><th>Activo</th></tr>'+this.crmUsers.map(function(u){return'<tr><td>'+this.esc(u.username)+'</td><td>'+this.esc(u.role)+'</td><td>'+(u.active?'✅':'❌')+'</td></tr>'}.bind(this)).join('')+'</table>';},
   async loadCrmUsers(){try{let d=await this.api('/api/v1/crm/users');this.crmUsers=d.items||[]}catch(e){}},
+  openCrmUserForm(){
+    this.modal.content='<h2>Nuevo usuario</h2>'
+      +'<div class="field"><label for="cu_username">Usuario</label><input id="cu_username" autocomplete="off" placeholder="encargado"></div>'
+      +'<div class="field"><label for="cu_password">Contraseña</label><input id="cu_password" type="password" autocomplete="new-password"><p class="field-hint">Mínimo 6 caracteres.</p></div>'
+      +'<div class="field"><label for="cu_display">Nombre visible</label><input id="cu_display" autocomplete="off" placeholder="Nombre y apellidos"></div>'
+      +'<div class="field"><label for="cu_role">Rol</label><select id="cu_role">'
+        +'<option value="admin">Administrador</option>'
+        +'<option value="operator">Operador</option>'
+        +'<option value="viewer">Solo lectura</option>'
+        +'<option value="key_manager">Encargado de llaves (solo /llaves)</option>'
+      +'</select></div>'
+      +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveCrmUser()">Crear usuario</button></div>';
+    this.modal.show=true;
+  },
+  async saveCrmUser(){
+    let username=(document.getElementById('cu_username')?.value||'').trim();
+    let password=document.getElementById('cu_password')?.value||'';
+    let displayName=(document.getElementById('cu_display')?.value||'').trim();
+    let role=document.getElementById('cu_role')?.value||'operator';
+    if(!username){this.toastErr('Escribe un nombre de usuario');return}
+    if(password.length<6){this.toastErr('La contraseña debe tener al menos 6 caracteres');return}
+    try{
+      await this.api('/api/v1/crm/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username,password:password,display_name:displayName||null,role:role})});
+      this.modal.show=false;this.modal.content='';
+      await this.loadCrmUsers();
+      this.toastOk('Usuario creado');
+    }catch(e){this.toastErr(e.message)}
+  },
   apiClientPage(){return'<div class="ph"><h1>🔑 API Clients</h1></div>';},
   async loadApiClients(){try{let d=await this.api('/api/v1/admin/api-clients');this.apiClients=d.items||[]}catch(e){}},
   async loadAnomalies(){

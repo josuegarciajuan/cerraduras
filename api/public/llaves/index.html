@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Gestión de llaves</title>
+<link rel="stylesheet" href="/llaves/assets/llaves.css">
+<script src="/assets/qrcode.min.js"></script>
+<script src="/llaves/assets/llaves.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Saltar al contenido</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="4"></circle>
+          <path d="m11 11 9 9"></path>
+          <path d="m17 17 2-2"></path>
+          <path d="m20 20 2-2"></path>
+        </svg>
+      </div>
+      <div class="brand-copy">
+        <strong>Gestión de llaves</strong>
+        <span>Panel del encargado</span>
+      </div>
+    </div>
+    <div class="topbar-user">
+      <div class="user-chip" id="user-chip" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M4 21a8 8 0 0 1 16 0"></path>
+        </svg>
+        <span id="user-name"></span>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="logout-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <path d="m16 17 5-5-5-5"></path>
+          <path d="M21 12H9"></path>
+        </svg>
+        Salir
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="page" id="main">
+  <nav class="tabs" role="tablist" aria-label="Secciones de gestión de llaves">
+    <button class="tab" id="tab-keys" type="button" role="tab" aria-selected="true" aria-controls="view-keys" tabindex="0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="8" cy="8" r="4"></circle>
+        <path d="m11 11 9 9"></path>
+        <path d="m17 17 2-2"></path>
+        <path d="m20 20 2-2"></path>
+      </svg>
+      Llaves
+    </button>
+    <button class="tab" id="tab-employees" type="button" role="tab" aria-selected="false" aria-controls="view-employees" tabindex="-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="8" r="4"></circle>
+        <path d="M4 21a8 8 0 0 1 16 0"></path>
+      </svg>
+      Empleados
+    </button>
+  </nav>
+
+  <div id="view-keys" role="tabpanel" aria-labelledby="tab-keys" tabindex="0">
+    <div class="empty-state" aria-live="polite">
+      <div class="empty-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="4"></circle>
+          <path d="m11 11 9 9"></path>
+          <path d="m17 17 2-2"></path>
+          <path d="m20 20 2-2"></path>
+        </svg>
+      </div>
+      <h2>Cargando llaves…</h2>
+      <p>Estamos preparando la información.</p>
+    </div>
+  </div>
+
+  <div id="view-employees" role="tabpanel" aria-labelledby="tab-employees" tabindex="0" hidden></div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="modal-root"></div>
+
+<noscript>
+  <div style="max-width:720px;margin:0 auto;padding:24px">
+    <h1>Gestión de llaves</h1>
+    <p>Esta página necesita JavaScript para funcionar. Actívalo en el navegador o pide ayuda al administrador.</p>
+  </div>
+</noscript>
+</body>
+</html>
