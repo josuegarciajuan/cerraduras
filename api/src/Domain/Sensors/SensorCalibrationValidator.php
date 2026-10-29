@@ -553,14 +553,19 @@ final class SensorCalibrationValidator
         $human = (array) ($ctx['human'] ?? []);
         $switch = (array) ($ctx['switch'] ?? []);
         $details = [
+            'human_prep_off' => $human['prep_off'] ?? null,
             'human_on' => $human['on'] ?? null,
             'human_off' => $human['off'] ?? null,
             'switch_state' => $switch['state'] ?? 'UNKNOWN',
+            'switch_state_at' => $switch['state_at'] ?? null,
             'telemetry_on' => $human['telemetry_on'] ?? null,
             'telemetry_off' => $human['telemetry_off'] ?? null,
         ];
         if (!($switch['present'] ?? false)) {
             return self::result(self::SKIP, 'no_switch', $details);
+        }
+        if (($params['require_prepare_off'] ?? false) && ($human['prep_off'] ?? null) !== true) {
+            return self::result(self::FAIL, 'lamp_not_prepared_off', $details);
         }
         if (($human['on'] ?? null) !== true || ($human['off'] ?? null) !== true) {
             return self::result(self::FAIL, 'human_not_confirmed', $details);

@@ -255,6 +255,12 @@ $lightMismatch = $light; $lightMismatch['human'] = ['on' => true, 'off' => true,
 same('light_test FAIL si telemetría contradice', v('light_test', [], $lightMismatch)['status'], 'FAIL');
 $lightNone = $light; $lightNone['switch'] = ['present' => false];
 same('light_test SKIP sin switch', v('light_test', [], $lightNone)['status'], 'SKIP');
+$lightPrepOk = $light; $lightPrepOk['human'] = ['prep_off' => true, 'on' => true, 'off' => true];
+same('light_test exige preparación apagada PASS', v('light_test', ['require_prepare_off' => true], $lightPrepOk)['status'], 'PASS');
+$lightPrepBad = $light; $lightPrepBad['human'] = ['prep_off' => false, 'on' => true, 'off' => true];
+same('light_test FAIL si no estaba apagada', v('light_test', ['require_prepare_off' => true], $lightPrepBad)['reason'], 'lamp_not_prepared_off');
+$lightNoTelemetry = $light; $lightNoTelemetry['human'] = ['prep_off' => true, 'on' => true, 'off' => true, 'telemetry_on' => null, 'telemetry_off' => null];
+same('light_test acepta telemetría desconocida', v('light_test', ['require_prepare_off' => true], $lightNoTelemetry)['status'], 'PASS');
 
 // ── catálogo ───────────────────────────────────────────────────────────
 $raw = file_get_contents(__DIR__ . '/../../public/assets/sensor-tests.json');
