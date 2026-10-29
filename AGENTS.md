@@ -175,6 +175,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F93 Calibración y veracidad de sensores (puerta + radar)** | **BLOCK 66 + units F93** | **Completado (código); pruebas físicas pendientes** |
 | **F94 Asistente de verificación física de sensores** | **BLOCK 67 + units F94** | **Completado (código); uso en campo pendiente** |
 | **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
+| **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
 
 ### F95 — Flujo universal de verificación Zigbee (RF-162…RF-167)
 
@@ -209,8 +210,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
   `AttemptEvidenceTest` (17), `RadarCalibrationTest` (22), ampliaciones de
-  `SensorCalibrationValidatorTest` (81) y `SensorRunStoreTest` (23). Regresión
-  local: **pendiente de confirmar**. Prueba física pendiente.
+  `SensorCalibrationValidatorTest` (81) y `SensorRunStoreTest` (23). Regresión:
+  **835 passed, 0 failed, 13 skipped** (incluye `attempt/events` y `radar/calibrate`).
+  Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 

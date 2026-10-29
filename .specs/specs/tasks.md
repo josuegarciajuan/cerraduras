@@ -10947,5 +10947,5 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Distancia/calidad visibles, botones medir/ajustar/reentrada/restaurar.
 
 ## TSK-F96-05: Verificación
-- [x] Regresión local en verde.
+- [x] Regresión en producción (**835 passed, 0 failed, 13 skipped**).
 - [ ] Prueba física de calibración en `almacenZigbee`.
