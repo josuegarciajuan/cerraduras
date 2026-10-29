@@ -3275,11 +3275,11 @@ $router->get('/api/v1/keys/{id}/accesses',         [$accessKeyController, 'keyAc
 // F98/RF-182.1: fichas disponibles para el asistente de /llaves (solo id/number).
 $router->get('/api/v1/llaves/nfc-available',       [$keyDeskController, 'nfcAvailable'],    $authFactory(['keys:read']));
 
-$router->get('/api/v1/nfc-cards',                  [$nfcCardController, 'list'],            $authFactory(['rooms:read']));
-$router->post('/api/v1/nfc-cards',                 [$nfcCardController, 'create'],          $authFactory(['rooms:write']));
-$router->get('/api/v1/nfc-cards/{id}',             [$nfcCardController, 'show'],            $authFactory(['rooms:read']));
-$router->patch('/api/v1/nfc-cards/{id}',           [$nfcCardController, 'update'],          $authFactory(['rooms:write']));
-$router->delete('/api/v1/nfc-cards/{id}',          [$nfcCardController, 'disable'],         $authFactory(['rooms:write']));
+$router->get('/api/v1/nfc-cards',                  [$nfcCardController, 'list'],            $authFactory(['nfc-cards:read']));
+$router->post('/api/v1/nfc-cards',                 [$nfcCardController, 'create'],          $authFactory(['nfc-cards:write']));
+$router->get('/api/v1/nfc-cards/{id}',             [$nfcCardController, 'show'],            $authFactory(['nfc-cards:read']));
+$router->patch('/api/v1/nfc-cards/{id}',           [$nfcCardController, 'update'],          $authFactory(['nfc-cards:write']));
+$router->delete('/api/v1/nfc-cards/{id}',          [$nfcCardController, 'disable'],         $authFactory(['nfc-cards:write']));
 
 // --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
 $warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);

@@ -11,7 +11,7 @@ use App\Support\Json\JsonBody;
 /**
  * NfcCardController: /api/v1/nfc-cards endpoints (F96).
  *
- * Scopes: GET → rooms:read, mutations → rooms:write.
+ * Scopes: GET → nfc-cards:read, mutations → nfc-cards:write (F98).
  */
 final class NfcCardController
 {
