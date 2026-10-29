@@ -133,7 +133,7 @@ const int   API_PORT     = 443;
 #define IMAN_HOLD_OFF_MS             100   // reposo 100 ms (ajustar en banco)
 #define IMAN_OPEN_WAIT_MS            4000  // espera de apertura tras el QR
 #define IMAN_CLOSE_STABLE_MS         300   // cierre estable antes de rearmar
-#define IMAN_LINK_GRACE_MS           5000  // tolerancia de reconexión SSE
+#define IMAN_LINK_GRACE_MS           15000 // tolerancia de reconexión SSE
 #define IMAN_SSE_READ_TIMEOUT_MS     20000
 #define IMAN_SSE_RECONNECT_MS        1000
 
