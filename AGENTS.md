@@ -204,9 +204,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `NOT_EVALUABLE`; reposo de 30 min diferido bajo demanda.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
-  ampliaciones de `SensorCalibrationValidatorTest` (73) y `SensorRunStoreTest` (23).
-  Regresión: **750 passed, 0 failed, 13 skipped** (incluye el flujo HTTP v2).
-  Prueba física pendiente.
+  `AttemptEvidenceTest` (17), ampliaciones de `SensorCalibrationValidatorTest` (76)
+  y `SensorRunStoreTest` (23). Regresión: **791 passed, 0 failed, 13 skipped**
+  (incluye el flujo HTTP v2 y `attempt/events`). Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 
