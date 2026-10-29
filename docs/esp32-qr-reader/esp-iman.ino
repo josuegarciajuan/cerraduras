@@ -4,7 +4,8 @@
  *
  * Variante F97: mismo hardware y misma base que ESP-cerradura, pero el
  * actuador es un imán. En reposo se mantiene la retención con corriente
- * pulsada (100 ms ON / 100 ms OFF, ajustable). Al autorizar un QR se corta la
+ * pulsada. Perfil de ensayo F97.1: 950 ms ON / 50 ms OFF (antes 100/100,
+ * que hacía caer demasiado la fuerza). Al autorizar un QR se corta la
  * corriente y NO se rearma hasta que el sensor Zigbee del pack confirma el
  * cierre físico de la puerta. La puerta puede quedar abierta indefinidamente.
  *
@@ -128,9 +129,12 @@ const int   API_PORT     = 443;
 
 // ── F97: variante y parámetros del imán ────────────────────────────────────
 #define IMAN_VARIANT                 "IMAN"
-#define IMAN_VERSION                 "2.0-iman"
-#define IMAN_HOLD_ON_MS              100   // corriente 100 ms
-#define IMAN_HOLD_OFF_MS             100   // reposo 100 ms (ajustar en banco)
+#define IMAN_VERSION                 "2.1-iman-hold950"
+// F97.1 (ensayo): el imán perdía fuerza con 100/100. Mantener casi toda la
+// corriente reduce la caída entre pulsos; el consumo baja muy poco respecto a
+// alimentación continua, así que la temperatura debe vigilarse en banco.
+#define IMAN_HOLD_ON_MS              950   // corriente 950 ms
+#define IMAN_HOLD_OFF_MS             50    // reposo 50 ms
 #define IMAN_OPEN_WAIT_MS            4000  // espera de apertura tras el QR
 #define IMAN_CLOSE_STABLE_MS         300   // cierre estable antes de rearmar
 #define IMAN_LINK_GRACE_MS           15000 // tolerancia de reconexión SSE
@@ -722,6 +726,8 @@ static void imanControlTask(void *arg) {
 }
 
 void startImanTask() {
+  Serial.printf("[IMAN] mantenimiento %d ms ON / %d ms OFF\n",
+                IMAN_HOLD_ON_MS, IMAN_HOLD_OFF_MS);
   imanOutput(false);
   xTaskCreatePinnedToCore(imanControlTask, "iman-state", 4096, nullptr, 2,
                           &imanTaskHandle, 1);
@@ -1304,11 +1310,11 @@ void setup() {
 
   String id = chipId();
   Serial.println("\n==============================================");
-  Serial.println(" ESP32-S3 QR Reader R35D-B + Cerradura 12V");
+  Serial.println(" ESP32-S3 QR Reader R35D-B + Electroimán 12V");
   Serial.println(" Device ID: " + id);
   Serial.printf(" Lector: UART1 %d 8N1 RX=%d TX=%d DIR=%d (LOW=lectura)\n",
                 R35D_BAUD, R35D_RX_PIN, R35D_TX_PIN, R35D_DIR_PIN);
-  Serial.println(" Cerradura: GPIO" + String(LOCK_PIN) + " (ACTIVO-ALTO, secuencia proveedor)");
+  Serial.println(" Imán: GPIO" + String(LOCK_PIN) + " (ACTIVO-ALTO, mantenimiento pulsado)");
   Serial.println(" LEDs: rojo GPIO" + String(LED_RED_PIN) + " / verde GPIO" + String(LED_GREEN_PIN));
   Serial.println(" Boton: GPIO" + String(IDENTIFY_PIN) + " (identify + factory reset al arrancar)");
   Serial.println("==============================================");
