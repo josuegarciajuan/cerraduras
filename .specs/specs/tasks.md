@@ -5237,7 +5237,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 - [x] Heartbeat acepta y persiste variante/versión.
 - [x] Respuesta `variant_mismatch` sin alterar el subtipo.
-- [x] El sketch ESP-imán declara `IMAN`/`2.0-iman`.
+- [x] El sketch ESP-imán declara `IMAN`/`2.1-iman-hold950`.
 
 **Verificación**: heartbeat con variante distinta devuelve true.
 
@@ -5264,7 +5264,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 **Trazabilidad**: RF-174, RF-177
 
-- [x] Controlador de salida con pulsos 100/100 ms en tarea dedicada.
+- [x] Controlador de salida con perfil de ensayo 950/50 ms en tarea dedicada.
 - [x] Máquina `UNSYNCED/HOLDING/WAIT_OPEN/OPEN/CLOSING`.
 - [x] Cliente SSE dedicado con `since_id`, `contiguous` y gracia de enlace.
 - [x] Diagnóstico sin pulso; QR autorizado libera.

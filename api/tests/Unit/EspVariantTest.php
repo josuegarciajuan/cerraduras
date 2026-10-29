@@ -62,11 +62,13 @@ checkEsp(str_contains($legacy, 'startLockSequence') && str_contains($legacy, 'LO
 
 // ── ESP-imán: variante, estados y seguridad eléctrica ─────────────────────
 checkEsp(str_contains($iman, '#define IMAN_VARIANT                 "IMAN"')
-    && str_contains($iman, '#define IMAN_VERSION                 "2.0-iman"'),
+    && str_contains($iman, '#define IMAN_VERSION                 "2.1-iman-hold950"'),
     'ESP-imán declara variante y versión');
-checkEsp(str_contains($iman, 'IMAN_HOLD_ON_MS              100')
-    && str_contains($iman, 'IMAN_HOLD_OFF_MS             100'),
-    'mantenimiento pulsado 100 ms ON / 100 ms OFF');
+checkEsp(str_contains($iman, 'IMAN_HOLD_ON_MS              950')
+    && str_contains($iman, 'IMAN_HOLD_OFF_MS             50'),
+    'perfil de ensayo 950 ms ON / 50 ms OFF');
+checkEsp(str_contains($iman, 'mantenimiento %d ms ON / %d ms OFF'),
+    'el arranque registra el patrón de mantenimiento');
 checkEsp(str_contains($iman, 'IMAN_OPEN_WAIT_MS            4000')
     && str_contains($iman, 'IMAN_CLOSE_STABLE_MS         300'),
     'ventana de apertura 4 s y cierre estable 300 ms');
