@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepository;
 use App\Domain\Presence\DoorPolarity;
+use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\SensorCalibrationValidator;
 use App\Http\Request;
 use App\Http\Response;
@@ -499,17 +500,58 @@ final class SensorWizardController
                 return Response::json(404, ['error' => 'switch_not_found']);
             }
             $gateway = new ZigbeeSwitchGateway($deviceRepo);
+            $commandAt = gmdate('Y-m-d\TH:i:s.v\Z');
             $result = $action === 'ON'
                 ? $gateway->turnOnForDevice($device)
                 : $gateway->turnOffForDevice($device);
-            $reported = $this->waitSwitchState($deviceRepo, (int) $device->id, $action, 6);
+            $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
             return Response::json(200, [
                 'ok' => (bool) ($result['ok'] ?? false),
                 'action' => $action,
                 'error' => $result['error'] ?? null,
+                'command_at' => $commandAt,
                 'pending_confirmation' => (bool) ($result['pending_confirmation'] ?? false),
-                'reported_state' => $reported,
+                'reported_state' => $wait['state'],
+                'state_at' => $wait['state_at'],
+                'fresh' => $wait['fresh'],
             ]);
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    public function attemptEvents(Request $request): Response
+    {
+        $runId = (string) ($request->query['run_id'] ?? '');
+        $stepId = (string) ($request->query['step_id'] ?? '');
+        $attemptId = (string) ($request->query['attempt_id'] ?? '');
+        $run = $this->store->load($runId);
+        if ($run === null) {
+            return Response::json(404, ['error' => 'run_not_found']);
+        }
+        $active = $run['steps'][$stepId]['active_attempt'] ?? null;
+        if (!is_array($active) || ($active['attempt_id'] ?? '') !== $attemptId) {
+            return Response::json(409, ['error' => 'attempt_not_active']);
+        }
+        try {
+            $ctx = $this->context();
+            $startedAt = (string) $active['started_at'];
+            $events = $ctx->eventsSince((int) $run['room_id'], $startedAt, 3000);
+            $evidence = AttemptEvidence::build($events);
+            $startedTs = strtotime($startedAt . ' UTC');
+            return Response::json(200, [
+                'ok' => true,
+                'run_id' => $runId,
+                'step_id' => $stepId,
+                'attempt_id' => $attemptId,
+                'started_at' => $startedAt,
+                'elapsed_seconds' => $startedTs !== false ? max(0, time() - $startedTs) : 0,
+                'door' => $evidence['door'],
+                'presence' => $evidence['presence'],
+                'switch' => $ctx->switchSnapshot((int) $run['room_id']),
+                'settings' => $ctx->latestSettings((int) $run['room_id'])['settings'],
+                'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
+            ])->withHeader('Cache-Control', 'no-store');
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
         }
@@ -790,20 +832,47 @@ final class SensorWizardController
         return false;
     }
 
-    private function waitSwitchState(DeviceRepository $repo, int $deviceId, string $expected, int $attempts): string
+    /**
+     * Espera un reporte NUEVO del switch (posterior a la orden). Un estado
+     * antiguo que coincide no cuenta como confirmación.
+     *
+     * @return array{state:string,state_at:?string,fresh:bool}
+     */
+    private function waitSwitchState(DeviceRepository $repo, int $deviceId, string $expected): array
     {
-        for ($i = 0; $i < max(1, $attempts); $i++) {
+        $commandTs = microtime(true);
+        $lastState = 'UNKNOWN';
+        $lastAt = null;
+        for ($i = 0; $i < 16; $i++) {
             if ($i > 0) {
                 usleep(500_000);
             }
             $device = $repo->findById($deviceId);
-            $state = strtoupper((string) (($device->meta ?? [])['switch_state'] ?? 'UNKNOWN'));
-            if ($state === $expected) {
-                return $state;
+            $meta = is_array($device->meta ?? null) ? $device->meta : [];
+            $state = strtoupper((string) ($meta['switch_state'] ?? 'UNKNOWN'));
+            $at = isset($meta['switch_state_at']) ? (string) $meta['switch_state_at'] : null;
+            $lastState = $state;
+            $lastAt = $at;
+            if ($state !== $expected || $at === null) {
+                continue;
+            }
+            $ts = $this->parseTs($at);
+            // Margen de 1 s por la resolución de timestamps del gateway.
+            if ($ts !== null && $ts >= $commandTs - 1.0) {
+                return ['state' => $state, 'state_at' => $at, 'fresh' => true];
             }
         }
-        $device = $repo->findById($deviceId);
-        return strtoupper((string) (($device->meta ?? [])['switch_state'] ?? 'UNKNOWN'));
+        return ['state' => $lastState, 'state_at' => $lastAt, 'fresh' => false];
+    }
+
+    private function parseTs(string $value): ?float
+    {
+        $v = trim($value);
+        if ($v === '') {
+            return null;
+        }
+        $ts = strtotime($v . (str_contains($v, 'T') || str_ends_with($v, 'Z') ? '' : ' UTC'));
+        return $ts === false ? null : (float) $ts;
     }
 
     /** @param array<string,mixed> $run */

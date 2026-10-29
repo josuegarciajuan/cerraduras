@@ -39,7 +39,7 @@
       "action": "Enciende la luz y confirma que la lámpara encendió. Después apágala y confirma.",
       "expected": "La orden Zigbee llega y la lámpara responde físicamente.",
       "rule": "light_test",
-      "params": {}
+      "params": { "require_prepare_off": true }
     },
     {
       "id": "verdict",
