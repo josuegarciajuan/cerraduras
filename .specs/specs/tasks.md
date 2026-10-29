@@ -5237,7 +5237,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 - [x] Heartbeat acepta y persiste variante/versión.
 - [x] Respuesta `variant_mismatch` sin alterar el subtipo.
-- [x] El sketch ESP-imán declara `IMAN`/`2.2-iman-continuous`.
+- [x] El sketch ESP-imán declara `IMAN`/`2.3-iman-projection`.
 
 **Verificación**: heartbeat con variante distinta devuelve true.
 
@@ -10698,7 +10698,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 - [x] Heartbeat acepta y persiste variante/versión.
 - [x] Respuesta `variant_mismatch` sin alterar el subtipo.
-- [x] El sketch ESP-imán declara `IMAN`/`2.2-iman-continuous`.
+- [x] El sketch ESP-imán declara `IMAN`/`2.3-iman-projection`.
 
 **Verificación**: heartbeat con variante distinta devuelve true.
 
@@ -10949,3 +10949,33 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 ## TSK-F96-05: Verificación
 - [x] Regresión en producción (**835 passed, 0 failed, 13 skipped**).
 - [ ] Prueba física de calibración en `almacenZigbee`.
+
+## TSK-F97-08: Estado físico independiente del ciclo
+
+**Trazabilidad**: RF-186.1..RF-186.6
+
+- [x] Migración `0134_room_sensor_state.sql` con backfill conservador.
+- [x] `RoomSensorStateRepository` y escritura transaccional en `IotSessionService`.
+- [x] SSE del imán lee la proyección física, no `iot_sessions`.
+- [x] Confirmación manual con barrera y polaridad invalidante.
+- [x] `RoomCycleResetter` intacto (no borra la proyección).
+
+**Verificación**: `RoomSensorStateRepositoryTest` y regresión.
+
+## TSK-F97-09: Ciclo de vida SSE y telemetría
+
+**Trazabilidad**: RF-186.7..RF-186.8
+
+- [x] Reconexión inmediata tras `close`.
+- [x] Validación del estado HTTP.
+- [x] Gracia de enlace sin depender de `connected()`.
+- [x] Heartbeat con estado del actuador y canal.
+- [x] Panel identifica subtipo, firmware, imán y salida.
+
+**Verificación**: unit estático y prueba de banco.
+
+## TSK-F97-10: Diagnóstico eléctrico
+
+- [ ] Medir tensión en bornes del imán con `output_on=true`.
+- [ ] Contrastar GPIO15, etapa de salida y alimentación.
+- [ ] Confirmar fuerza y ciclo apertura/cierre.

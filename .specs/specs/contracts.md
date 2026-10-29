@@ -3721,7 +3721,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -3738,14 +3738,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -7499,7 +7499,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -7516,14 +7516,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -11431,7 +11431,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -11448,14 +11448,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -15209,7 +15209,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -15226,14 +15226,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous"}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.2-iman-continuous","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -15437,3 +15437,44 @@ La UI traduce `409 nfc_card_unavailable` a un mensaje claro y recarga
 Estados de calidad: `good`, `fair`, `poor`. Motivos de fallo nuevos:
 `inside_not_detected_calibration`, `outside_detected_calibration`,
 `reentry_not_verified`; PASS con reentrada: `outside_and_reentry_ok`.
+
+## F97.3 — Estado físico del contacto
+
+`GET /dashboard-api/door-events` añade al snapshot:
+
+```json
+{"state_source":"event|manual_confirm|invalidated|none",
+ "state_updated_at":"2026-10-29 16:20:00.000"}
+```
+
+`door_state` sale de `room_sensor_state` (`PROXIMITY` + `ZIGBEE2MQTT`). Si no
+hay lectura fiable, es `UNKNOWN`. `last_event_id` es la barrera del estado,
+no necesariamente el máximo global.
+
+`POST /dashboard-api/sensores/v2/door/state`
+
+```json
+{"room_id":14,"state":"CLOSED","confirm":true}
+```
+
+Respuesta `200`:
+
+```json
+{"ok":true,"room_id":14,"state":"CLOSED","provider":"ZIGBEE2MQTT",
+ "state_source":"manual_confirm","barrier_event_id":123}
+```
+
+`400 confirm_required` si falta la confirmación; `422 invalid_state` si el
+valor no es `OPEN|CLOSED`.
+
+## F97.4 — Telemetría del ESP
+
+`POST /dashboard-api/device-heartbeat` acepta aditivamente:
+
+```json
+{"actuator_state":"HOLDING","actuator_reason":"holding",
+ "output_on":true,"door_link":true,"door_state":"CLOSED"}
+```
+
+Se persisten en `devices.meta_json` y se devuelven en la respuesta. No cambian
+el subtipo ni la lógica eléctrica.

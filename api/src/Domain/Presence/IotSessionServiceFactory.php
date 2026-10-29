@@ -27,7 +27,8 @@ final class IotSessionServiceFactory
         SwitchService $switchService,
         AnomalyService $anomalies,
         WorkerSessionRepositoryInterface $workerSessions,
-        WarehouseRecordingServiceInterface $warehouseRecorder
+        WarehouseRecordingServiceInterface $warehouseRecorder,
+        ?RoomSensorStateRepository $sensorStates = null
     ): IotSessionService {
         $exitEvaluator = new ExitRuleEvaluator($iotSessions, $rooms, $roomTypes, $stays);
         $exitActions = new ExitActionService(
@@ -56,7 +57,8 @@ final class IotSessionServiceFactory
             $exitActions,
             $anomalies,
             $workerSessions,
-            $warehouseRecorder
+            $warehouseRecorder,
+            $sensorStates
         );
     }
 }

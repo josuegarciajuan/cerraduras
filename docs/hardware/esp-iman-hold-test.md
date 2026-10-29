@@ -17,13 +17,31 @@ mantenimiento. Es la referencia de máxima potencia y también la de mayor
 consumo y calentamiento.
 
 - Sketch: `firmware/esp-iman/`
-- Versión: `2.2-iman-continuous`
+- Versión: `2.3-iman-projection`
 - `IMAN_HOLD_CONTINUOUS=1`: la salida permanece encendida.
 - `IMAN_HOLD_CONTINUOUS=0` recupera el perfil pulsado 950/50.
 - El arranque registra por serie:
   `[IMAN] mantenimiento CONTINUO (ensayo F97.2 máxima potencia)`.
 - Apertura sin cambios: QR → OFF; `OPEN` → OFF indefinido; cierre estable →
   vuelta a mantenimiento.
+
+## F97.3 — Diagnóstico de proyección y salida (actual)
+
+Esta versión corrige que el reset de QR apagara el imán. Para comprobar el
+estado real:
+
+1. Confirmar que el panel muestra `ESP-imán`, la versión y `imán HOLDING` /
+   `salida ON`.
+2. Si la puerta está físicamente cerrada y no hay lectura, usar la
+   confirmación manual (`POST /dashboard-api/sensores/v2/door/state` con
+   `confirm:true`) o abrir/cerrar una vez para que llegue un evento Zigbee.
+3. Medir tensión en los bornes del imán con la salida ON. Si `output_on=true`
+   y no hay tensión, el problema está entre GPIO15, la etapa de potencia o la
+   alimentación; no en el estado de puerta.
+4. Medir fuerza y temperatura a 1, 3, 5, 10 y 15 minutos.
+
+`state_source` en el snapshot del imán debe ser `event` o `manual_confirm`.
+`invalidated`/`UNKNOWN` significa que no se rearmará.
 
 ## Respaldo
 

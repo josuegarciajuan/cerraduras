@@ -743,7 +743,16 @@ function crm(){return{
     let loc=d.kind==='RPI'?'<button class="icon-btn" title="Localizar (parpadeo LED)" @click="identifyDevice('+d.id+')">'+this.crosshairSvg()+'</button>':'';
     let acts='<div class="dv-acts">'+loc+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
     let variant=(d.kind==='RPI'&&d.subtype)?'<span class="tchip" style="--tc:#c9a35b;--tcbg:rgba(201,163,91,.14)">'+this.esc(this.ESP_VARIANT_NAME[d.subtype]||d.subtype)+'</span>':'';
-    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
+    let espTel='';
+    if(d.kind==='RPI'){
+      let bits=[];
+      if(d.firmware_version)bits.push('fw '+d.firmware_version);
+      if(d.meta&&d.meta.actuator_state)bits.push('imán '+d.meta.actuator_state);
+      if(d.meta&&d.meta.output_on!==undefined)bits.push('salida '+(d.meta.output_on?'ON':'OFF'));
+      if(d.meta&&d.meta.door_state)bits.push('puerta '+d.meta.door_state);
+      if(bits.length)espTel='<span class="spec-chip mono">'+this.esc(bits.join(' · '))+'</span>';
+    }
+    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+espTel+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
   },
   deriveDevices(){
     let out=[];

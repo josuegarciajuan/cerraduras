@@ -18,6 +18,7 @@ use App\Domain\Locks\AccessEventRepository;
 use App\Domain\Presence\IotSessionRepository;
 use App\Domain\Presence\IotSessionServiceFactory;
 use App\Domain\Presence\PresenceEventRepository;
+use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomTypeRepository;
 use App\Domain\Stays\StayRepository;
@@ -85,7 +86,8 @@ final class ZigbeeMqttRuntimeFactory
             $switchService,
             $anomalies,
             $workerSessions,
-            new WarehouseRecordingService($pdo)
+            new WarehouseRecordingService($pdo),
+            new RoomSensorStateRepository($pdo)
         );
 
         return new ZigbeeMqttEventProcessor($devices, $iotService);

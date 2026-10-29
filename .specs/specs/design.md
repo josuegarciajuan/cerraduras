@@ -24863,3 +24863,45 @@ reentrada cuando hay candidato aplicado.
 
 `restore` publica los ajustes iniciales (alcance, sensibilidad, fading y retardo)
 y exige confirmación por push. No se declara restaurado con un ACK.
+
+## 97.6 Estado físico y ciclo de estancia (F97.3)
+
+`iot_sessions` sigue siendo el estado del ciclo (estancia, QR, salida). La
+posición física del contacto vive en `room_sensor_state`:
+
+| Campo | Uso |
+|---|---|
+| `room_id, sensor, provider` | Clave; el imán lee `PROXIMITY/ZIGBEE2MQTT`. |
+| `state_value` | `OPEN`, `CLOSED` o `NULL` (desconocido). |
+| `last_event_id` | Barrera de eventos; evita reproducir historia antigua. |
+| `state_source` | `event`, `manual_confirm` o `invalidated`. |
+
+`RoomCycleResetter` no toca esta tabla. El procesador Zigbee la actualiza en la
+misma transacción del evento aplicado o refrescado. La polaridad manual fija
+`manual_confirm`; restaurar polaridad fija `invalidated` con barrera.
+
+El snapshot SSE añade `state_source` y `state_updated_at`. Si la fuente es
+`manual_confirm`, el firmware puede adoptar el estado aunque `contiguous=false`.
+Nunca se rearma con `invalidated` o `UNKNOWN`.
+
+## 97.7 Ciclo de vida SSE y telemetría (F97.4)
+
+- `close` del servidor → reconexión inmediata con `since_id`.
+- Un `HTTP != 200` no se procesa como SSE.
+- `imanLinkFresh()` usa solo la marca de última recepción y la gracia de 15 s;
+  un cierre ordenado no invalida el estado mientras la ventana siga vigente.
+- El heartbeat incluye estado del actuador, motivo, salida, enlace y puerta.
+- El dashboard muestra subtipo, versión, estado del imán y salida para
+  distinguir varios ESP del mismo pack.
+
+## 97.8 Confirmación manual (F97.5)
+
+`POST /dashboard-api/sensores/v2/door/state`
+
+```json
+{"room_id":14,"state":"CLOSED","confirm":true}
+```
+
+Requiere confirmación explícita; no sustituye una lectura del sensor. Fija
+`manual_confirm` y una barrera con el último evento aplicado. No modifica
+`iot_sessions` (ciclo).

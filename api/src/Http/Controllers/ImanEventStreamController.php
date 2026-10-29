@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Domain\Auth\ApiClientRepository;
+use App\Domain\Presence\RoomSensorStateRepository;
 use PDO;
 
 /**
@@ -87,24 +88,34 @@ final class ImanEventStreamController
         }
 
         $sinceId = max(0, (int) ($_GET['since_id'] ?? 0));
-        $lastId = $this->lastDoorEventId($roomId);
-        $doorState = $this->doorState($roomId);
-        $contiguous = $this->isContiguous($roomId, $sinceId, $lastId);
+        $repo = new RoomSensorStateRepository($this->pdo);
+        $state = $repo->get($roomId, 'PROXIMITY', 'ZIGBEE2MQTT');
+        $maxApplied = $repo->maxAppliedEventId($roomId, 'PROXIMITY', 'ZIGBEE2MQTT');
+        $lastEventId = $state !== null && $state['last_event_id'] !== null
+            ? (int) $state['last_event_id'] : 0;
+        $barrier = max($lastEventId, $maxApplied);
+        $doorState = $state !== null && in_array((string) $state['state_value'], ['OPEN', 'CLOSED'], true)
+            ? (string) $state['state_value'] : 'UNKNOWN';
+        $stateSource = $state !== null ? (string) $state['state_source'] : 'none';
+        $contiguous = $doorState !== 'UNKNOWN'
+            && $this->isContiguous($roomId, $sinceId, $barrier);
 
         $this->openStream();
         $this->send('snapshot', [
             'protocol' => 1,
             'door_state' => $doorState,
-            'last_event_id' => $lastId,
+            'last_event_id' => $barrier,
             'contiguous' => $contiguous,
             'since_id' => $sinceId,
-            'sensor_external_id' => (string) $sensor['external_id'],
+            'state_source' => $stateSource,
+            'state_updated_at' => $state['updated_at'] ?? null,
+            'sensor_external_id' => (string) ($state['external_id'] ?? $sensor['external_id']),
             'ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ]);
 
         // Nunca reenviar eventos anteriores: el estado actual viaja en el
-        // snapshot y el firmware decide si puede confiar en él (`contiguous`).
-        $lastSent = $lastId;
+        // snapshot (incluidas las barreras manuales) y `contiguous` decide.
+        $lastSent = $barrier;
         $started = time();
         $lastPing = time();
 
@@ -184,26 +195,6 @@ final class ImanEventStreamController
         $stmt->execute([':pack' => $packId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row === false ? null : $row;
-    }
-
-    private function lastDoorEventId(int $roomId): int
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT MAX(id) FROM presence_events
-              WHERE room_id = :room AND sensor = 'PROXIMITY' AND applied = 1"
-        );
-        $stmt->execute([':room' => $roomId]);
-        $value = $stmt->fetchColumn();
-        return $value === false || $value === null ? 0 : (int) $value;
-    }
-
-    private function doorState(int $roomId): string
-    {
-        $stmt = $this->pdo->prepare('SELECT door_state FROM iot_sessions WHERE room_id = :room LIMIT 1');
-        $stmt->execute([':room' => $roomId]);
-        $value = $stmt->fetchColumn();
-        $state = $value === false ? 'UNKNOWN' : strtoupper((string) $value);
-        return in_array($state, ['OPEN', 'CLOSED'], true) ? $state : 'UNKNOWN';
     }
 
     private function isContiguous(int $roomId, int $sinceId, int $lastId): bool

@@ -12352,3 +12352,134 @@ correspondencia funcional 1:1 con la numeración solicitada:
 - **RF-173.3**: se distingue “detectado”, “sin datos” y “no verificado”; la
   distancia no fiable se muestra como tal.
 - **RF-173.4**: el informe incluye medidas, calidad, ajustes y resultado final.
+
+## RF-186: Acceso al panel de llaves
+
+- **RF-186.1**: existe una UI independiente servida en `/llaves`
+  (`https://cerraduras.duckdns.org/llaves`) con login simple de usuario y
+  contraseña. No reutiliza la interfaz de `/panel`.
+- **RF-186.2**: se añade el rol CRM `key_manager`. El login reutiliza
+  `crm_users`, `crm_sessions`, la cookie `crm_session` y los endpoints
+  `POST /api/v1/crm/login`, `POST /api/v1/crm/logout` y `GET /api/v1/crm/me`.
+- **RF-186.3**: `/llaves/login` es público. `/llaves` y `/llaves/*` exigen
+  sesión con rol `key_manager` o `admin`; sin sesión se redirige a
+  `/llaves/login`.
+- **RF-186.4**: `key_manager` no puede acceder a `/panel`, a la gestión de
+  usuarios CRM ni a la gestión de fichas NFC. Recibe `403` en API y
+  redirección a `/llaves` en páginas.
+- **RF-186.5**: `admin`, `operator` y `viewer` conservan el acceso actual a
+  `/panel`; `key_manager` no altera ese comportamiento.
+
+## RF-179: Permisos del rol key_manager
+
+- **RF-179.1**: el rol `key_manager` recibe exactamente los scopes
+  `workers:read`, `workers:write`, `worker-roles:read`, `rooms:read` (solo para
+  listar tipos de sala y defaults), `keys:read` y `keys:write`.
+- **RF-179.2**: no recibe `nfc-cards:write`, `audit:read`, `rooms:write`,
+  `qr:*` ni `locks:*`.
+- **RF-179.3**: los permisos se aplican en el servidor al construir el cliente
+  sintético de la sesión CRM; la UI solo oculta lo que el servidor ya deniega.
+- **RF-179.4**: las rutas `/api/v1/keys/*` pasan a exigir `keys:read` o
+  `keys:write` en lugar de `rooms:read`/`rooms:write`.
+
+## RF-180: Gestión de empleados
+
+- **RF-180.1**: la sección Empleados lista trabajadores con búsqueda por
+  nombre.
+- **RF-180.2**: el alta pide nombre, rol existente y notas opcionales. El rol
+  se elige de `GET /api/v1/worker-roles`.
+- **RF-180.3**: se puede editar el empleado y darlo de baja lógica. La baja no
+  borra su historial ni sus llaves.
+- **RF-180.4**: tras crear un empleado se ofrece crear su llave.
+- **RF-180.5**: una llave personal de un empleado inactivo no abre; la
+  validación existente de `AccessKeyService` sigue siendo la autoridad.
+
+## RF-181: Gestión y listado de llaves
+
+- **RF-181.1**: la sección Llaves lista etiqueta, titular, tipo (`QR`/`Ficha`
+  o `NFC`), número de ficha, caducidad y estado (`Activa`, `Caducada`,
+  `Desactivada`).
+- **RF-181.2**: se puede filtrar por búsqueda, estado y tipo.
+- **RF-181.3**: la UI no muestra códigos de ficha ni tokens QR; solo el número
+  de ficha y los datos de la llave.
+
+## RF-182: Asistente de creación de llaves
+
+- **RF-182.1**: la creación es un asistente de cuatro pasos:
+  1. titular: empleado activo o rol compartido, explicando que la llave
+     compartida no identifica a una persona;
+  2. tipo `QR` o `Ficha`; para ficha solo se ofrecen las fichas `AVAILABLE`
+     mediante el endpoint acotado que devuelve `id` y `number`;
+  3. permisos precargados del rol, editables, y caducidad introducida en la
+     hora local del hotel y convertida a UTC;
+  4. resumen y confirmación de creación.
+- **RF-182.2**: si la ficha deja de estar disponible antes de confirmar, la API
+  responde `409` con un mensaje claro y la UI recarga las fichas disponibles.
+- **RF-182.3**: el titular y el tipo no se pueden cambiar después; para
+  corregirlos se crea otra llave.
+
+## RF-183: QR y ficha NFC
+
+- **RF-183.1**: el QR se muestra y se descarga al crear la llave o al
+  regenerarlo; después no se puede recuperar.
+- **RF-183.2**: regenerar advierte de forma explícita que el QR anterior deja
+  de funcionar.
+- **RF-183.3**: en una llave de ficha, la UI indica qué ficha física se debe
+  entregar, sin exponer su código.
+
+## RF-184: Edición y desactivación
+
+- **RF-184.1**: se puede editar la etiqueta, la caducidad, los permisos y, solo
+  si es NFC, la ficha asignada.
+- **RF-184.2**: la revocación exige confirmación y desactiva la llave; el
+  historial se conserva.
+- **RF-184.3**: el titular y el tipo no son editables.
+
+## Requisitos no funcionales de F98
+
+- **NFR-F98.1**: la UI es extremadamente simple, visual y accesible: botones
+  grandes con icono y texto, alto contraste, formularios por pasos, mensajes
+  claros, sin tablas densas, responsive, navegable por teclado y con foco
+  visible.
+- **NFR-F98.2**: no se añaden llamadas a Tuya, pollers ni cambios en el
+  pipeline de sensores.
+- **NFR-F98.3**: `/panel` y sus funcionalidades existentes siguen funcionando
+  igual para sus roles actuales.
+- **NFR-F98.4**: la UI de `/llaves` no expone códigos de ficha ni tokens.
+
+## RF-185: Identidad corporativa del Hotel Vía Valentia
+
+- **RF-185.1**: `/llaves/login` y `/llaves` muestran el logotipo oficial del
+  Hotel Vía Valentia servido desde el propio dominio, sin depender de la web
+  externa del hotel.
+- **RF-185.2**: la paleta usa el azul `#0c4b7f` y el oro `#dea139` del
+  logotipo, sobre fondos claros y cálidos coherentes con la web corporativa.
+- **RF-185.3**: los estados conservan su semántica y no dependen solo del
+  color: activa, caducada, desactivada y error mantienen texto e indicadores.
+- **RF-185.4**: se mantienen contraste, foco visible, tamaños de objetivo y
+  navegación por teclado; el oro no se usa como color de texto pequeño.
+- **RF-185.5**: no se alteran flujos, permisos, endpoints ni datos de F98.
+- **NFR-F98.5**: los tokens de marca se definen una sola vez en
+  `brand-tokens.css` y los consumen login y panel.
+- **NFR-F98.6**: el cambio no añade dependencias, CDNs ni llamadas externas.
+
+## RF-186: Estado físico del contacto independiente del ciclo
+
+- **RF-186.1**: la última lectura física aplicada de un `PROXIMITY` se guarda
+  por sala, sensor y transporte en `room_sensor_state`, fuera de `iot_sessions`.
+- **RF-186.2**: crear o reiniciar un QR/estancia no borra esa lectura ni apaga
+  el imán. El reset sigue limpiando el ciclo en `iot_sessions`.
+- **RF-186.3**: un cambio de polaridad o de sensor invalida la proyección con
+  una barrera de eventos; no se restaura un estado antiguo a ciegas.
+- **RF-186.4**: el operador puede confirmar manualmente `OPEN`/`CLOSED` con
+  `confirm=true`; la confirmación fija la posición y una barrera.
+- **RF-186.5**: el SSE del imán usa `room_sensor_state` (provider
+  `ZIGBEE2MQTT`), no `iot_sessions.door_state`.
+- **RF-186.6**: el snapshot incluye `state_source` y `state_updated_at`; una
+  confirmación manual es adoptable aunque el hueco no sea contiguo.
+- **RF-186.7**: un cierre ordenado del SSE se reconecta de inmediato y no
+  corta la salida dentro de la ventana de gracia; una respuesta HTTP distinta
+  de 200 no se marca como canal sano.
+- **RF-186.8**: el heartbeat publica `actuator_state`, `actuator_reason`,
+  `output_on`, `door_link` y `door_state`; el panel los muestra junto al
+  subtipo y la versión del firmware.
