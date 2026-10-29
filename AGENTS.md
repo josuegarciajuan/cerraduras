@@ -202,11 +202,15 @@ hasta el momento (regresión completa). Debe ejecutarse:
   cambiar) quedan `RECONOCIDO` con “sin actividad”, no `SIN DATOS` ni rojo.
 - **Veredicto**: `CORRECT`, `WITH_RESERVES`, `REVIEW`, `INCOMPLETE`,
   `NOT_EVALUABLE`; reposo de 30 min diferido bajo demanda.
+- **Calibración (RF-170…RF-173)**: `RadarDistanceQuality` evalúa las muestras de
+  `target_distance`; `RadarCalibrationPlanner` propone alcance por separación o por
+  comportamiento. `v2/radar/calibrate` mide dentro/fuera, aplica, exige reentrada y
+  permite restaurar. La ventana se reinicia tras cada ajuste.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68) + units
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
-  `AttemptEvidenceTest` (17), ampliaciones de `SensorCalibrationValidatorTest` (76)
-  y `SensorRunStoreTest` (23). Regresión: **791 passed, 0 failed, 13 skipped**
-  (incluye el flujo HTTP v2 y `attempt/events`). Prueba física pendiente.
+  `AttemptEvidenceTest` (17), `RadarCalibrationTest` (22), ampliaciones de
+  `SensorCalibrationValidatorTest` (81) y `SensorRunStoreTest` (23). Regresión
+  local: **pendiente de confirmar**. Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 

@@ -7,6 +7,8 @@ use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepository;
 use App\Domain\Presence\DoorPolarity;
 use App\Domain\Sensors\AttemptEvidence;
+use App\Domain\Sensors\RadarCalibrationPlanner;
+use App\Domain\Sensors\RadarDistanceQuality;
 use App\Domain\Sensors\SensorCalibrationValidator;
 use App\Http\Request;
 use App\Http\Response;
@@ -229,6 +231,8 @@ final class SensorWizardController
             );
             $data['initial_live'] = (array) ($active['initial_live'] ?? []);
             $data['attempt_started_at'] = (string) $active['started_at'];
+            $data['calibration_session'] = (array) ($run['calibration_session'] ?? []);
+            $data['calibration_since'] = $run['calibration_session']['candidate']['applied_at'] ?? null;
             $data['door_polarity'] = $this->doorPolarity((int) $run['room_id']);
             $data['human'] = $human;
             $data['switch'] = array_merge($ctx->switchSnapshot((int) $run['room_id']),
@@ -538,6 +542,16 @@ final class SensorWizardController
             $startedAt = (string) $active['started_at'];
             $events = $ctx->eventsSince((int) $run['room_id'], $startedAt, 3000);
             $evidence = AttemptEvidence::build($events);
+            $samples = [];
+            foreach ($events as $e) {
+                if (strtoupper((string) ($e['sensor'] ?? '')) !== 'PRESENCE') {
+                    continue;
+                }
+                $settings = is_array($e['meta']['settings'] ?? null) ? $e['meta']['settings'] : [];
+                if (array_key_exists('target_distance', $settings)) {
+                    $samples[] = (float) $settings['target_distance'];
+                }
+            }
             $startedTs = strtotime($startedAt . ' UTC');
             return Response::json(200, [
                 'ok' => true,
@@ -548,10 +562,206 @@ final class SensorWizardController
                 'elapsed_seconds' => $startedTs !== false ? max(0, time() - $startedTs) : 0,
                 'door' => $evidence['door'],
                 'presence' => $evidence['presence'],
+                'distance' => RadarDistanceQuality::evaluate($samples),
+                'calibration_session' => (array) ($run['calibration_session'] ?? []),
                 'switch' => $ctx->switchSnapshot((int) $run['room_id']),
                 'settings' => $ctx->latestSettings((int) $run['room_id'])['settings'],
                 'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
             ])->withHeader('Cache-Control', 'no-store');
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    public function radarCalibrate(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $runId = (string) ($body['run_id'] ?? '');
+        $stepId = (string) ($body['step_id'] ?? '');
+        $attemptId = (string) ($body['attempt_id'] ?? '');
+        $action = (string) ($body['action'] ?? '');
+        $run = $this->store->load($runId);
+        if ($run === null) {
+            return Response::json(404, ['error' => 'run_not_found']);
+        }
+        $active = $run['steps'][$stepId]['active_attempt'] ?? null;
+        if (!is_array($active) || ($active['attempt_id'] ?? '') !== $attemptId) {
+            return Response::json(409, ['error' => 'attempt_not_active']);
+        }
+        if (!in_array($stepId, ['radar_inside', 'radar_outside'], true)) {
+            return Response::json(400, ['error' => 'step_not_radar']);
+        }
+        try {
+            $pdo = $this->pdo();
+            $ctx = $this->context();
+            $startedAt = (string) $active['started_at'];
+            $events = $ctx->eventsSince((int) $run['room_id'], $startedAt, 3000);
+            $evidence = AttemptEvidence::build($events);
+            $samples = [];
+            foreach ($events as $e) {
+                if (strtoupper((string) ($e['sensor'] ?? '')) !== 'PRESENCE') {
+                    continue;
+                }
+                $settings = is_array($e['meta']['settings'] ?? null) ? $e['meta']['settings'] : [];
+                if (array_key_exists('target_distance', $settings)) {
+                    $samples[] = (float) $settings['target_distance'];
+                }
+            }
+            $stats = RadarDistanceQuality::evaluate($samples);
+            $phase = $stepId === 'radar_inside' ? 'inside' : 'outside';
+            $session = (array) ($run['calibration_session'] ?? []);
+
+            if ($action === 'measure') {
+                $measureSince = $startedAt;
+                $appliedAt = (string) ($session['candidate']['applied_at'] ?? '');
+                if ($appliedAt !== '' && strtotime($appliedAt . ' UTC') > strtotime($startedAt . ' UTC')) {
+                    $measureSince = $appliedAt;
+                }
+                $filtered = array_values(array_filter($events, static function (array $e) use ($measureSince): bool {
+                    $ts = strtotime((string) ($e['occurred_at'] ?? '') . ' UTC');
+                    return $ts !== false && $ts >= strtotime($measureSince . ' UTC');
+                }));
+                $measureEvidence = AttemptEvidence::build($filtered);
+                $measureSamples = [];
+                foreach ($filtered as $e) {
+                    if (strtoupper((string) ($e['sensor'] ?? '')) !== 'PRESENCE') continue;
+                    $st = is_array($e['meta']['settings'] ?? null) ? $e['meta']['settings'] : [];
+                    if (array_key_exists('target_distance', $st)) $measureSamples[] = (float) $st['target_distance'];
+                }
+                $stats = RadarDistanceQuality::evaluate($measureSamples);
+                $session[$phase] = [
+                    'stats' => $stats,
+                    'presence' => (bool) ($measureEvidence['presence']['presents'] > 0 && $measureEvidence['presence']['active']),
+                    'span_seconds' => $measureEvidence['presence']['span_seconds'],
+                    'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'attempt_id' => $attemptId,
+                ];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return Response::json(200, ['ok' => true, 'phase' => $phase,
+                    'session' => $session, 'distance' => $stats, 'presence' => $measureEvidence['presence']]);
+            }
+
+            if ($action === 'apply') {
+                if (empty($session['inside']) && empty($session['outside'])) {
+                    return Response::json(409, ['error' => 'measure_first',
+                        'message' => 'Mide primero el punto interior o el exterior.']);
+                }
+                $settings = $ctx->latestSettings((int) $run['room_id'])['settings'];
+                $caps = [
+                    'range_min' => (float) ZigbeeRadarCalibrationService::PARAMETERS['maximum_range']['min'],
+                    'range_max' => (float) ZigbeeRadarCalibrationService::PARAMETERS['maximum_range']['max'],
+                    // Paso de ajuste práctico: 0,75 m (múltiplo del paso real 0,15).
+                    'range_step' => 0.75,
+                    'sens_min' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['min'],
+                    'sens_max' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['max'],
+                ];
+                $plan = RadarCalibrationPlanner::plan(
+                    (array) ($session['inside']['stats'] ?? []),
+                    (array) ($session['outside']['stats'] ?? []),
+                    $settings,
+                    $caps,
+                    [
+                        'inside_present' => (bool) ($session['inside']['presence'] ?? false),
+                        'outside_present' => (bool) ($session['outside']['presence'] ?? false),
+                    ]
+                );
+                if ($plan['action'] !== 'apply') {
+                    return Response::json(200, ['ok' => true, 'action' => $plan['action'],
+                        'plan' => $plan, 'session' => $session, 'settings' => $settings]);
+                }
+                $devices = new DeviceRepository($pdo);
+                $presence = $devices->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+                if ($presence === null) {
+                    return Response::json(404, ['error' => 'presence_device_missing']);
+                }
+                $cal = new ZigbeeRadarCalibrationService($pdo);
+                $result = $cal->apply((int) $run['room_id'], [
+                    'id' => (int) $presence->id,
+                    'external_id' => (string) $presence->externalId,
+                    'meta' => is_array($presence->meta) ? $presence->meta : [],
+                ], $plan['params'], true);
+                $session['candidate'] = [
+                    'params' => $plan['params'],
+                    'reason' => $plan['reason'],
+                    'confidence' => $plan['confidence'],
+                    'applied' => (bool) ($result['applied'] ?? false),
+                    'applied_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'warning' => $result['warning'] ?? null,
+                ];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return Response::json(200, ['ok' => true, 'action' => 'apply',
+                    'plan' => $plan, 'applied' => (bool) ($result['applied'] ?? false),
+                    'warning' => $result['warning'] ?? null,
+                    'session' => $session, 'settings' => $result['status']['settings'] ?? $settings]);
+            }
+
+            if ($action === 'reentry') {
+                $real = false;
+                $firstPresentAt = null;
+                $cut = $this->parseTs((string) ($session['candidate']['applied_at'] ?? ''));
+                foreach ($events as $e) {
+                    if (strtoupper((string) ($e['sensor'] ?? '')) !== 'PRESENCE'
+                        || (string) ($e['value'] ?? '') !== 'PRESENT') {
+                        continue;
+                    }
+                    $src = strtolower((string) (($e['meta'] ?? [])['source'] ?? ''));
+                    if ($src === 'resync') continue;
+                    $ts = $this->parseTs((string) ($e['occurred_at'] ?? ''));
+                    if ($cut === null || ($ts !== null && $ts >= $cut)) {
+                        $real = true;
+                        $firstPresentAt = (string) ($e['occurred_at'] ?? null);
+                        break;
+                    }
+                }
+                $session['reentry'] = [
+                    'detected' => $real,
+                    'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'first_present_at' => $firstPresentAt,
+                    'presence' => $evidence['presence'],
+                ];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return Response::json(200, ['ok' => true, 'action' => 'reentry',
+                    'detected' => $real, 'session' => $session]);
+            }
+
+            if ($action === 'restore') {
+                $initial = (array) ($run['calibration']['initial_settings'] ?? []);
+                $params = [];
+                foreach (['maximum_range', 'radar_sensitivity', 'fading_time', 'detection_delay'] as $key) {
+                    if (isset($initial[$key]) && is_numeric($initial[$key])) {
+                        $params[$key] = (float) $initial[$key];
+                    }
+                }
+                if ($params === []) {
+                    return Response::json(400, ['error' => 'no_initial_settings']);
+                }
+                $devices = new DeviceRepository($pdo);
+                $presence = $devices->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+                if ($presence === null) {
+                    return Response::json(404, ['error' => 'presence_device_missing']);
+                }
+                $cal = new ZigbeeRadarCalibrationService($pdo);
+                $result = $cal->apply((int) $run['room_id'], [
+                    'id' => (int) $presence->id,
+                    'external_id' => (string) $presence->externalId,
+                    'meta' => is_array($presence->meta) ? $presence->meta : [],
+                ], $params, true);
+                $session['restored'] = [
+                    'ok' => (bool) ($result['applied'] ?? false),
+                    'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'settings' => $result['status']['settings'] ?? [],
+                ];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return Response::json(200, ['ok' => (bool) ($result['applied'] ?? false),
+                    'action' => 'restore', 'session' => $session,
+                    'settings' => $result['status']['settings'] ?? []]);
+            }
+
+            return Response::json(400, ['error' => 'unknown_action']);
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
         }

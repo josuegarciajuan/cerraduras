@@ -442,9 +442,17 @@ final class SensorCalibrationValidator
         $hold = (int) ($params['hold_seconds'] ?? 30);
         $grace = (int) ($params['grace_seconds'] ?? 20);
         $real = self::realPresence($ctx);
+        $since = self::ms($ctx['calibration_since'] ?? null);
+        if ($since !== null) {
+            $real = array_values(array_filter($real, static function (array $e) use ($since): bool {
+                $ts = self::ms($e['occurred_at'] ?? null) ?? 0;
+                return $ts >= $since;
+            }));
+        }
         $presents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'PRESENT'));
         $absents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'ABSENT'));
         $stale = (bool) ($ctx['live']['presence_stale'] ?? false);
+        $session = (array) ($ctx['calibration_session'] ?? []);
         $details = [
             'real_presents' => count($presents),
             'real_absents' => count($absents),
@@ -452,7 +460,12 @@ final class SensorCalibrationValidator
             'grace_seconds' => $grace,
             'stale' => $stale,
             'settings_age_seconds' => $ctx['settings_age_seconds'] ?? null,
+            'calibration_inside' => $session['inside'] ?? null,
+            'calibration_since' => $ctx['calibration_since'] ?? null,
         ];
+        if (!empty($session['inside']) && ($session['inside']['presence'] ?? false) !== true) {
+            return self::result(self::FAIL, 'inside_not_detected_calibration', $details);
+        }
         if ($stale) {
             return self::result(self::UNVERIFIED, 'presence_stale', $details);
         }
@@ -494,15 +507,24 @@ final class SensorCalibrationValidator
         $minElapsed = (int) ($params['min_elapsed_seconds'] ?? 50);
         $grace = (int) ($params['grace_seconds'] ?? 20);
         $startedAt = self::ms($ctx['attempt_started_at'] ?? null);
+        $since = self::ms($ctx['calibration_since'] ?? null);
+        $session = (array) ($ctx['calibration_session'] ?? []);
         $real = self::realPresence($ctx);
-        $presents = array_values(array_filter($real, static function (array $e) use ($startedAt, $grace): bool {
+        $reentryFirst = self::ms($session['reentry']['first_present_at'] ?? null);
+        $presents = array_values(array_filter($real, static function (array $e) use ($startedAt, $grace, $since, $reentryFirst): bool {
             if (($e['value'] ?? '') !== 'PRESENT') {
                 return false;
+            }
+            $ts = self::ms($e['occurred_at'] ?? null) ?? 0;
+            if ($reentryFirst !== null && $ts >= $reentryFirst) {
+                return false; // el PRESENT de reentrada no es una detección exterior
+            }
+            if ($since !== null) {
+                return $ts >= $since;
             }
             if ($startedAt === null) {
                 return true;
             }
-            $ts = self::ms($e['occurred_at'] ?? null) ?? 0;
             return $ts >= $startedAt + ($grace * 1000);
         }));
         $stale = (bool) ($ctx['live']['presence_stale'] ?? false);
@@ -518,7 +540,19 @@ final class SensorCalibrationValidator
             'elapsed_seconds' => $ctx['elapsed_seconds'] ?? null,
             'grace_seconds' => $grace,
             'effects_delta' => $delta,
+            'calibration_outside' => $session['outside'] ?? null,
+            'calibration_candidate' => $session['candidate'] ?? null,
+            'calibration_reentry' => $session['reentry'] ?? null,
+            'calibration_since' => $ctx['calibration_since'] ?? null,
         ];
+        if (!empty($session['outside']) && ($session['outside']['presence'] ?? false) === true) {
+            return self::result(self::FAIL, 'outside_detected_calibration', $details);
+        }
+        $candidateApplied = (bool) ($session['candidate']['applied'] ?? false);
+        $reentryDetected = ($session['reentry']['detected'] ?? false) === true;
+        if ($candidateApplied && !$reentryDetected) {
+            return self::result(self::FAIL, 'reentry_not_verified', $details);
+        }
         if ((float) ($ctx['elapsed_seconds'] ?? 0) < $minElapsed) {
             return self::result(self::SKIP, 'step_too_short', $details);
         }
@@ -532,6 +566,12 @@ final class SensorCalibrationValidator
             if ((int) ($delta[$key] ?? 0) !== 0) {
                 return self::result(self::FAIL, 'false_effect:' . $key, $details);
             }
+        }
+        // Si hubo ajuste y reentrada verificada, el estado vivo es PRESENT
+        // porque el técnico ya está dentro; la ausencia exterior se juzgó en la
+        // ventana anterior a la reentrada.
+        if ($candidateApplied && $reentryDetected) {
+            return self::result(self::PASS, 'outside_and_reentry_ok', $details);
         }
         if (!in_array($live, ['ABSENT', 'UNKNOWN'], true) && $decision !== 'ABSENT_CONFIRMED') {
             return self::result(self::UNVERIFIED, 'absence_not_confirmed', $details);

@@ -6414,6 +6414,7 @@ block "BLOCK 68 — F95: flujo universal de sensores"
 for f in public/assets/sensor-tests-v2.json public/assets/sensor-wizard-v2.js \
          src/Http/Controllers/SensorWizardController.php src/Infrastructure/Sensors/SensorVerdict.php \
          src/Infrastructure/Sensors/DeviceHealth.php src/Domain/Sensors/AttemptEvidence.php \
+         src/Domain/Sensors/RadarDistanceQuality.php src/Domain/Sensors/RadarCalibrationPlanner.php \
          src/Domain/Presence/DoorPolarity.php; do
     if [ -f "$f" ]; then pass "F95: $f presente"; else fail "F95: $f" "falta"; fi
 done
@@ -6443,6 +6444,13 @@ if grep -q "attempt/events" public/index.php \
     pass "F95: evidencia por intento y telemetría fresca cableadas"
 else
     fail "F95: evidencia/telemetría" "faltan attempt/events o el uso de fresh"
+fi
+if grep -q "radar/calibrate" public/index.php \
+    && grep -q "radar/calibrate" public/assets/sensor-wizard-v2.js \
+    && grep -q "RadarCalibrationPlanner" src/Http/Controllers/SensorWizardController.php; then
+    pass "F96: calibración guiada cableada"
+else
+    fail "F96: calibración" "faltan endpoints o planificador"
 fi
 if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
     pass "F95: polaridad aplicada en el ingress"
@@ -6523,6 +6531,26 @@ print('ok' if isinstance(d.get('door'),dict) and isinstance(d.get('presence'),di
 " 2>/dev/null)
                 if [ "$F95_EV_OK" = "ok" ]; then
                     pass "F95: attempt/events devuelve ciclos y presencia de la ventana"
+                    F95_CAL_CODE=$(curl -s -o /tmp/f95_cal.json -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/calibrate" \
+                        -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F95_AID\",\"action\":\"measure\"}")
+                    if [ "$F95_CAL_CODE" = "200" ]; then
+                        F95_CAL_OK=$(python3 -c "
+import json
+try: d=json.load(open('/tmp/f95_cal.json'))
+except Exception: print('bad'); raise SystemExit
+dist=d.get('distance') or {}
+ok = isinstance(d.get('session'),dict) and 'quality' in dist and 'valid' in dist
+print('ok' if ok else 'bad')
+" 2>/dev/null)
+                        if [ "$F95_CAL_OK" = "ok" ]; then
+                            pass "F96: measure guarda distancia y calidad de la ventana"
+                        else
+                            fail "F96: measure" "respuesta incompleta"
+                        fi
+                    else
+                        skip "F96 measure" "endpoint aún sin desplegar (HTTP $F95_CAL_CODE)"
+                    fi
+                    rm -f /tmp/f95_cal.json
                 else
                     fail "F95: attempt/events" "respuesta incompleta"
                 fi

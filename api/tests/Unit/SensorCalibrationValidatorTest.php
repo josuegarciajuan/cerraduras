@@ -244,6 +244,37 @@ $outsideStale = ctx([], ['presence_state' => 'ABSENT', 'presence_stale' => true]
 $outsideStale['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
 same('radar_outside UNVERIFIED si stale', v('radar_outside', ['min_elapsed_seconds' => 50], $outsideStale)['status'], 'UNVERIFIED');
 
+// ── F96 calibración guiada ─────────────────────────────────────────────
+$calInsideBad = ctx([ev('PRESENCE', 'PRESENT', 0), ev('PRESENCE', 'PRESENT', 31)],
+    ['presence_state' => 'PRESENT'], [], [], 40);
+$calInsideBad['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+$calInsideBad['calibration_session'] = ['inside' => ['presence' => false]];
+same('radar_inside FAIL si la medición interior no detectó', v('radar_inside', [], $calInsideBad)['reason'], 'inside_not_detected_calibration');
+
+$calOutsideBad = ctx([], ['presence_state' => 'ABSENT'], [], [], 60);
+$calOutsideBad['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+$calOutsideBad['calibration_session'] = ['outside' => ['presence' => true]];
+same('radar_outside FAIL si la medición exterior detectó', v('radar_outside', ['min_elapsed_seconds' => 50], $calOutsideBad)['reason'], 'outside_detected_calibration');
+
+$calReentry = ctx([], ['presence_state' => 'ABSENT'], [], [], 60);
+$calReentry['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+$calReentry['calibration_session'] = [
+    'outside' => ['presence' => false],
+    'candidate' => ['applied' => true, 'applied_at' => '2026-10-28T10:00:20Z'],
+    'reentry' => ['detected' => false],
+];
+same('radar_outside FAIL sin reentrada verificada', v('radar_outside', ['min_elapsed_seconds' => 50], $calReentry)['reason'], 'reentry_not_verified');
+
+$calOk = $calReentry;
+$calOk['calibration_session']['reentry'] = ['detected' => true, 'at' => '2026-10-28T10:00:40Z'];
+same('radar_outside PASS con reentrada', v('radar_outside', ['min_elapsed_seconds' => 50], $calOk)['status'], 'PASS');
+
+$calSince = ctx([ev('PRESENCE', 'PRESENT', 5)], ['presence_state' => 'ABSENT'], [], [], 60);
+$calSince['attempt_started_at'] = '2026-10-28T10:00:00.000Z';
+$calSince['calibration_since'] = '2026-10-28T10:00:20.000Z';
+$calSince['calibration_session'] = ['outside' => ['presence' => false]];
+same('radar_outside ignora PRESENT anterior al ajuste', v('radar_outside', ['min_elapsed_seconds' => 50], $calSince)['status'], 'PASS');
+
 // ── F95 light_test ─────────────────────────────────────────────────────
 $light = ctx();
 $light['human'] = ['on' => true, 'off' => true, 'telemetry_on' => true, 'telemetry_off' => true];
