@@ -7687,6 +7687,8 @@ La UI traduce `409 nfc_card_unavailable` a un mensaje claro y recarga
 
 - Documenta el rol `key_manager` como valor válido de `crm_users.role`; no crea
   tabla de roles ni usuarios.
+- La migración `0133` amplía `crm_users.role` para admitir `key_manager`
+  (ENUM original: admin/operator/viewer). No crea usuarios.
 - Amplía scopes de `api_clients` con `rooms:write` de forma idempotente:
   `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
   `workers:read`, `workers:write`, `worker-roles:read`.

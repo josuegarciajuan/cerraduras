@@ -12304,6 +12304,8 @@ No se crean tablas nuevas. La migración `0132` documenta el rol
 amplía de forma **idempotente** los scopes de los `api_clients` que ya tienen
 `rooms:write`, añadiendo:
 
+La migración `0133` amplía el ENUM `crm_users.role` para admitir
+`key_manager` (sin crear usuarios). `0132` amplía los scopes:
 `keys:read`, `keys:write`, `nfc-cards:read`, `nfc-cards:write`,
 `workers:read`, `workers:write`, `worker-roles:read`.
 

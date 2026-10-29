@@ -5327,6 +5327,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [ ] Mantener `admin`/`operator` sin cambios funcionales.
 
 **Archivos**: `api/migrations/0132_key_manager_panel.sql`,
+`api/migrations/0133_crm_user_role_key_manager.sql`,
 `api/public/index.php`, `api/src/Http/Controllers/AccessKeyController.php`
 (o controlador específico de fichas disponibles).
 
