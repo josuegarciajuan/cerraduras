@@ -5281,7 +5281,9 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 ## TSK-F97-07: Publicación y carga física
 
 - [x] Integrar en producción y aplicar migración.
-- [ ] Respaldar flash del ESP del proyecto en `oficina`.
-- [ ] Compilar y cargar `firmware/esp-iman`.
-- [ ] Verificar arranque, credencial, pack y recepción de puerta.
+- [x] Respaldar flash del ESP del proyecto en `oficina`
+  (`/home/oficina/esp-backups/r35d-pre-f97-20261029-131734.bin`, 16 MB).
+- [x] Compilar y cargar `firmware/esp-iman` (app en 0x10000, 115200 baudios).
+- [x] Verificar arranque, credencial, pack (`PACK_ZIGBEE`), variante IMAN,
+  heartbeat y snapshot SSE `contiguous=true` con estado `CLOSED` → `HOLDING`.
 - [ ] Prueba física de retención, apertura, cierre y temperatura.

@@ -6098,6 +6098,11 @@ El flasheo se realiza desde el nodo `oficina` con `arduino-cli`, FQBN
 (FTDI) no se toca. Antes de cargar se respalda la flash completa. Después se
 verifican arranque, credencial, pack, variante y recepción de puerta.
 
+El vhost `cerraduras.josue.ink` debe publicar `/dashboard-api/door-events`
+directamente contra la API (`flushpackets=on`) antes del `panel-gate`; si no,
+el ESP recibe el HTML del patrón en lugar del SSE. El resto de
+`/dashboard-api` sigue detrás del gate.
+
 El primer arranque tras el flasheo, sin historial de eventos, queda en
 `UNSYNCED` (OFF) hasta que el sensor reporte una transición o exista un
 snapshot contiguo. Es una decisión de seguridad: no se rearma con un cierre
