@@ -6551,6 +6551,18 @@ print('ok' if not bad else 'bad '+','.join(bad))
             pending) skip "F95 salud" "API aún sin desplegar DeviceHealth" ;;
             *) fail "F95: salud de dispositivos" "$F95_HEALTH" ;;
         esac
+        F95_RADAR_VALID=$(printf '%s' "$F95_PRE" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print('pending'); raise SystemExit
+v=d.get('radar_settings_valid')
+print('ok' if v is True else ('pending' if v is None else 'bad'))
+" 2>/dev/null)
+        case "$F95_RADAR_VALID" in
+            ok) pass "F96: preflight expone configuración válida del radar" ;;
+            pending) skip "F96 radar settings" "campo aún sin desplegar" ;;
+            *) fail "F96: configuración del radar" "radar_settings_valid no es true" ;;
+        esac
     else
         fail "F95: preflight" "$(printf '%s' "$F95_PRE" | head -c 200)"
     fi
