@@ -25062,3 +25062,24 @@ cuando cambia: la autoridad sigue siendo `FirmwareOtaService`.
 `php tests/Unit/PanelDeviceEditTest.php` (31 checks estáticos) + regresión de
 `PanelProvisioningUiTest`, `FirmwareOtaTest` y `EspVariantTest`. Sin consultas a
 Tuya ni cambios de contrato.
+
+
+## 102.1 Estados de operación
+
+`PENDING_PUBLISH`, `MEASURING`, `MEASURED`, `AWAITING_CONFIRM`, `STABILIZING`,
+`CONFIRMED`, `INDETERMINATE`, `INVALID_SETTINGS`, `CANCELLED`, `REJECTED`,
+`DONE`.
+
+`reconcileRadarRecord()` se ejecuta en `radar/state`, `attempt/events` y al
+abrir la corrida. No hay procesos de fondo.
+
+## 102.2 Ventanas y estabilización
+
+Interior: 20 s, 8 reportes, 10 s de span. Exterior y pasada: 20 s. Reentrada:
+20 s desde el clic. Estabilización: `max(8, min(60, fading_time + 5))`.
+
+## 102.3 UI
+
+El radar se pinta desde `phase`, `state`, `next_actions` y `countdown`. Se
+reconstruye solo al cambiar la fase/acciones; el temporizador y la presencia se
+actualizan en nodos existentes.

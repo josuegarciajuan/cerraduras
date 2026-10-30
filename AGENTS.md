@@ -176,6 +176,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F94 Asistente de verificación física de sensores** | **BLOCK 67 + units F94** | **Completado (código); uso en campo pendiente** |
 | **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
+| **F102 Motor de calibración por operaciones** | **BLOCK 68B + units F102** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
@@ -251,6 +252,26 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `SensorCalibrationValidatorTest` (45) y `SensorRunStoreTest` (17). Regresión:
   **725 passed, 0 failed, 15 skipped** (incluye el flujo HTTP run→step→finish). Uso en
   campo pendiente.
+
+### F102 — Motor de calibración por operaciones (RF-174…RF-178)
+
+- **Operación única**: `POST /dashboard-api/sensores/v2/radar/operation` con
+  `start_measure|finish_measure|adjust|check_confirmation|start_reentry|finish_reentry|restore|cancel`.
+  Una sola operación activa; segunda petición `409`.
+- **Confirmación tardía**: `publish()` no bloquea; `confirm()` reconcilia el
+  último reporte. `AWAITING_CONFIRM` → `STABILIZING`; un timeout es
+  `INDETERMINATE`, no fallo definitivo.
+- **Ventanas**: `RadarMeasurement` acota por tiempo, exige 8 reportes y 10 s,
+  detecta cambio de configuración y no mezcla mediciones de distinta
+  `config_version`.
+- **Protección**: el planificador no baja del límite interior conocido
+  (`would_break_inside`); una reentrada fallida prioriza recuperar detección.
+- **UI**: `/radar/state` es la fuente única; `radar-view`/DOM estable, sin
+  re-render continuo; fases y acciones vienen del servidor.
+- **Verificación**: `bash bin/run-tests.sh` (BLOCK 68B) + units
+  `RadarMeasurementTest` (21) y `RadarCalibrationTest` (28). Regresión:
+  **867 passed, 0 failed, 13 skipped** (incluye el flujo HTTP `radar/state`
+  y la operación única). Prueba física pendiente.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 

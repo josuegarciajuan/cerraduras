@@ -341,7 +341,7 @@
     var last = (step.attempts && step.attempts.length) ? step.attempts[step.attempts.length - 1] : null;
     var titleOverride = null, actionOverride = null, expectedOverride;
     var isRadar = stepId === 'radar_inside' || stepId === 'radar_outside';
-    if (isRadar && S.radarState) {
+    if (isRadar && S.radarState && S.radarState.step_id === stepId) {
       titleOverride = S.radarState.title || null;
       actionOverride = S.radarState.instruction || null;
       expectedOverride = '';
@@ -615,6 +615,7 @@
     rows.push(['Sala', (p.room && p.room.code) || '—']);
     rows.push(['Actor', (p.room && p.room.room_type_code) || '—']);
     rows.push(['Run', (S.run && S.run.run_id) || '—']);
+    rows.push(['Versión', 'F102']);
     rows.push(['Técnico', (S.run && S.run.operator) || operator() || '—']);
     ['proximity', 'presence', 'switch'].forEach(function (k) {
       var dev = d[k];
