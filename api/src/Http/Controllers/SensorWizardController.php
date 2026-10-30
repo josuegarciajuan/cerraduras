@@ -740,12 +740,58 @@ final class SensorWizardController
         if ($run === null) {
             return Response::json(404, ['error' => 'run_not_found']);
         }
+        if (!in_array($stepId, ['radar_inside', 'radar_outside'], true)) {
+            return Response::json(400, ['error' => 'step_not_radar']);
+        }
+        // F96.5: restaurar no exige una ventana activa; sirve precisamente
+        // cuando el radar ha quedado en un estado inválido y hay que recuperarlo.
+        if ($action === 'restore') {
+            try {
+                $pdo = $this->pdo();
+                $initial = (array) ($run['calibration']['initial_settings'] ?? []);
+                $params = [];
+                foreach (['maximum_range', 'radar_sensitivity', 'fading_time', 'detection_delay'] as $key) {
+                    if (isset($initial[$key]) && is_numeric($initial[$key])) {
+                        $params[$key] = (float) $initial[$key];
+                    }
+                }
+                if ($params === []) {
+                    return Response::json(400, ['error' => 'no_initial_settings']);
+                }
+                $devices = new DeviceRepository($pdo);
+                $presence = $devices->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+                if ($presence === null) {
+                    return Response::json(404, ['error' => 'presence_device_missing']);
+                }
+                $cal = new ZigbeeRadarCalibrationService($pdo);
+                $result = $cal->apply((int) $run['room_id'], [
+                    'id' => (int) $presence->id,
+                    'external_id' => (string) $presence->externalId,
+                    'meta' => is_array($presence->meta) ? $presence->meta : [],
+                ], $params, true);
+                $session = (array) ($run['calibration_session'] ?? []);
+                $session['restored'] = [
+                    'ok' => (bool) ($result['applied'] ?? false),
+                    'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'settings' => $result['status']['settings'] ?? [],
+                    'warning' => $result['warning'] ?? null,
+                ];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return Response::json(200, [
+                    'ok' => (bool) ($result['applied'] ?? false),
+                    'action' => 'restore',
+                    'session' => $session,
+                    'settings' => $result['status']['settings'] ?? [],
+                    'warning' => $result['warning'] ?? null,
+                ]);
+            } catch (Throwable $e) {
+                return Response::json(500, ['error' => $e->getMessage()]);
+            }
+        }
         $active = $run['steps'][$stepId]['active_attempt'] ?? null;
         if (!is_array($active) || ($active['attempt_id'] ?? '') !== $attemptId) {
             return Response::json(409, ['error' => 'attempt_not_active']);
-        }
-        if (!in_array($stepId, ['radar_inside', 'radar_outside'], true)) {
-            return Response::json(400, ['error' => 'step_not_radar']);
         }
         try {
             $pdo = $this->pdo();
@@ -849,9 +895,12 @@ final class SensorWizardController
                 ];
                 $run['calibration_session'] = $session;
                 $this->store->save($run);
+                $invalid = str_starts_with((string) ($result['warning'] ?? ''), 'invalid_device_settings');
                 return Response::json(200, ['ok' => true, 'action' => 'apply',
                     'plan' => $plan, 'applied' => (bool) ($result['applied'] ?? false),
                     'warning' => $result['warning'] ?? null,
+                    'invalid_settings' => $invalid,
+                    'settings_invalid_reason' => $result['settings_invalid_reason'] ?? null,
                     'session' => $session, 'settings' => $result['status']['settings'] ?? $settings]);
             }
 

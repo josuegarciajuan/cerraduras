@@ -48,6 +48,26 @@ same('claves ajenas se ignoran', ZigbeeRadarCalibrationService::normalizeCommand
 same('sin parámetros válidos devuelve vacío', ZigbeeRadarCalibrationService::normalizeCommands(['state' => 'ON']), []);
 throws('valor no numérico rechazado', static fn () => ZigbeeRadarCalibrationService::normalizeCommands(['maximum_range' => 'abc']));
 
+// F96.5: valores válidos/inválidos del dispositivo
+check('settings válidos', \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings([
+    'maximum_range' => 5.25, 'minimum_range' => 0.6, 'radar_sensitivity' => 7,
+]));
+check('maximum_range 0.01 inválido', !\App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings([
+    'maximum_range' => 0.01, 'minimum_range' => 0.01, 'radar_sensitivity' => 6,
+]));
+check('maximum_range 4866048.01 inválido', !\App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings([
+    'maximum_range' => 4866048.01, 'minimum_range' => 0.6, 'radar_sensitivity' => 7,
+]));
+check('mínimo mayor que máximo inválido', !\App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings([
+    'maximum_range' => 3.0, 'minimum_range' => 3.5, 'radar_sensitivity' => 7,
+]));
+check('sensibilidad 10 inválida', !\App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings([
+    'maximum_range' => 5.25, 'minimum_range' => 0.6, 'radar_sensitivity' => 10,
+]));
+same('motivo max fuera de rango', \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::settingsInvalidReason([
+    'maximum_range' => 0.01, 'minimum_range' => 0.01, 'radar_sensitivity' => 6,
+]), 'maximum_range_out_of_bounds');
+
 // Contrato del publicador: no permite escribir estado del relé ni valores raros.
 $helper = dirname(__DIR__, 2) . '/bin/zigbee-ingress/publish-json.js';
 if (!is_file($helper)) {

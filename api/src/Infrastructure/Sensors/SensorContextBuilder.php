@@ -310,6 +310,10 @@ final class SensorContextBuilder
             'live' => $live,
             'events' => $this->eventsSince($roomId, $sinceUtc),
             'settings' => $latest['settings'],
+            'radar_settings_valid' => $settingsValid,
+            'radar_settings_invalid_reason' => $settingsValid
+                ? null
+                : \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::settingsInvalidReason((array) ($latest['settings'] ?? [])),
             'settings_at' => $latest['settings_at'],
             'settings_age_seconds' => $latest['settings_age_seconds'],
             'initial_settings' => $initialSettings,
@@ -351,6 +355,12 @@ final class SensorContextBuilder
             $issues[] = 'presence_stale';
         }
         $hasSwitch = $devices['switch'] !== null;
+        $settingsValid = \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::isValidSettings(
+            (array) ($latest['settings'] ?? [])
+        );
+        if (!$settingsValid) {
+            $issues[] = 'radar_settings_invalid';
+        }
         $canStart = $devices['proximity'] !== null && $devices['presence'] !== null;
         $plan = ['door', 'radar_inside', 'radar_outside'];
         if ($hasSwitch) {

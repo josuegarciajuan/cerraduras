@@ -32,6 +32,54 @@ final class ZigbeeRadarCalibrationService
         'fading_time'       => ['min' => 0.5, 'max' => 1500.0, 'step' => 1.0, 'unit' => 's'],
     ];
 
+    /**
+     * F96.5: valores que el dispositivo puede reportar y que tienen sentido.
+     * Un alcance máximo de 0,01 m o 4.866.048,01 m deja el radar inservible;
+     * hay que detectarlo y ofrecer restauración, nunca seguir calibrando.
+     *
+     * @param array<string,mixed> $settings
+     */
+    public static function isValidSettings(array $settings): bool
+    {
+        $max = $settings['maximum_range'] ?? null;
+        $min = $settings['minimum_range'] ?? null;
+        $sens = $settings['radar_sensitivity'] ?? null;
+        if (!is_numeric($max) || !is_numeric($min) || !is_numeric($sens)) {
+            return false;
+        }
+        $max = (float) $max;
+        $min = (float) $min;
+        $sens = (float) $sens;
+        if ($max < 0.15 || $max > 9.5 || $min < 0.0 || $min > 9.5) {
+            return false;
+        }
+        if ($min > $max || $sens < 0 || $sens > 9) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param array<string,mixed> $settings
+     */
+    public static function settingsInvalidReason(array $settings): ?string
+    {
+        $max = $settings['maximum_range'] ?? null;
+        $min = $settings['minimum_range'] ?? null;
+        $sens = $settings['radar_sensitivity'] ?? null;
+        if (!is_numeric($max) || !is_numeric($min) || !is_numeric($sens)) {
+            return 'settings_missing';
+        }
+        $max = (float) $max;
+        $min = (float) $min;
+        $sens = (float) $sens;
+        if ($max < 0.15 || $max > 9.5) return 'maximum_range_out_of_bounds';
+        if ($min < 0.0 || $min > 9.5) return 'minimum_range_out_of_bounds';
+        if ($min > $max) return 'minimum_greater_than_maximum';
+        if ($sens < 0 || $sens > 9) return 'sensitivity_out_of_bounds';
+        return null;
+    }
+
     /** @var callable(string,string):array{ok:bool,error:?string} */
     private $publisher;
 
@@ -110,6 +158,8 @@ final class ZigbeeRadarCalibrationService
             'mode'               => 'ON',
             'effective_presence' => $presence,
             'settings'           => $settings,
+            'settings_valid'     => self::isValidSettings($settings),
+            'settings_invalid_reason' => self::settingsInvalidReason($settings),
             'settings_at'        => $snapshot['last_at'],
             'settings_age_seconds' => $snapshot['age_seconds'],
             'stale'              => $stale,
@@ -151,7 +201,7 @@ final class ZigbeeRadarCalibrationService
         // Se acepta solo un evento NUEVO (id > beforeId) que refleje lo pedido.
         $applied = false;
         $latest = null;
-        for ($attempt = 0; $attempt < 6; $attempt++) {
+        for ($attempt = 0; $attempt < 12; $attempt++) {
             if ($attempt > 0) {
                 usleep(700_000);
             }
@@ -174,6 +224,20 @@ final class ZigbeeRadarCalibrationService
         }
 
         $snapshotForStatus = $latest ?? $this->latestSnapshot($roomId);
+        $invalidReason = self::settingsInvalidReason($snapshotForStatus['settings']);
+        if ($applied && $invalidReason !== null) {
+            // El dispositivo confirmó el comando pero quedó en un estado inválido
+            // (p. ej. max 0,01 m). No se persiste ni se sigue calibrando.
+            return [
+                'ok' => true,
+                'applied' => false,
+                'persisted' => false,
+                'error' => null,
+                'warning' => 'invalid_device_settings:' . $invalidReason,
+                'settings_invalid_reason' => $invalidReason,
+                'status' => $this->status($roomId, $device),
+            ];
+        }
 
         $saved = null;
         if ($persist && $applied) {

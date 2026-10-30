@@ -254,7 +254,8 @@
     }
     var issues = (p.issues || []).map(function (i) {
       return { door_missing: 'No hay sensor de puerta',
-        presence_missing: 'No hay radar de presencia', presence_stale: 'El radar no envía datos recientes' }[i] || i;
+        presence_missing: 'No hay radar de presencia', presence_stale: 'El radar no envía datos recientes',
+        radar_settings_invalid: 'La configuración del radar no es válida; restaura los valores iniciales antes de continuar' }[i] || i;
     });
     var idle = ['proximity', 'presence', 'switch'].some(function (k) {
       var d = p.devices && p.devices[k];
@@ -266,6 +267,12 @@
     html += '<h1>Comprobar los sensores de ' + esc(p.room.code) + '</h1>';
     html += '<p class="hint">' + (p.can_start ? 'Los dispositivos necesarios están disponibles.' : 'Falta un dispositivo necesario.') + '</p>';
     if (issues.length) html += '<div class="expect">' + issues.map(esc).join('<br>') + '</div>';
+    if (p.radar_settings_valid === false) {
+      html += '<div class="expect" style="border-color:var(--fail);color:var(--fail)">El radar reporta una configuración inválida (alcance '
+        + (p.settings && p.settings.maximum_range != null ? p.settings.maximum_range : '?') + ' m, mínimo '
+        + (p.settings && p.settings.minimum_range != null ? p.settings.minimum_range : '?') + ' m). '
+        + 'Entra en Radar y pulsa Restaurar ajustes iniciales.</div>';
+    }
     if (idle) html += '<p class="hint">La puerta y la luz solo envían al cambiar: “sin actividad” no es un fallo. Se actualizarán al abrirlas o conmutarlas.</p>';
     if (p.settings && p.settings.maximum_range != null) {
       html += '<div class="row" style="margin-top:10px"><span class="pill dim">Alcance ' + p.settings.maximum_range + ' m</span>'
@@ -422,6 +429,16 @@
   function renderRadar(stepId, step) {
     var att = activeAttemptFor(stepId);
     var html = '';
+    if (S.preflight && S.preflight.radar_settings_valid === false) {
+      var st = S.preflight.settings || {};
+      html += '<div class="divider"></div><div class="expect" style="border-color:var(--fail);color:var(--fail)">'
+        + 'El radar está en una configuración inválida: alcance ' + (st.maximum_range != null ? st.maximum_range : '?')
+        + ' m, mínimo ' + (st.minimum_range != null ? st.minimum_range : '?') + ' m, sensibilidad '
+        + (st.radar_sensitivity != null ? st.radar_sensitivity : '?') + '. No se puede calibrar así.</div>'
+        + '<div class="actions"><button class="primary" data-action="calibrate" data-op="restore">Restaurar ajustes iniciales</button>'
+        + '<button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar</button></div>';
+      return html;
+    }
     if (!att) {
       html += '<div class="actions"><button class="primary" data-action="start-attempt" data-step="' + stepId + '">Empezar prueba</button></div>';
       return html;
@@ -632,6 +649,7 @@
         + ' s · fading ' + settings.fading_time + ' s']);
     }
     if (p.settings_age_seconds != null) rows.push(['Config recibida', age(p.settings_age_seconds)]);
+    if (p.radar_settings_valid === false) rows.push(['Config radar', 'INVÁLIDA — restaurar']);
     if (S.run && S.run.door_polarity) rows.push(['Polaridad puerta', S.run.door_polarity.value]);
     body.innerHTML = rows.map(function (r) {
       return '<div class="techrow"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>';
@@ -802,11 +820,11 @@
 
   async function calibrateCall(action) {
     var att = activeAttemptFor(S.stepId);
-    if (!att) throw new Error('Primero empieza la prueba');
+    if (!att && action !== 'restore') throw new Error('Primero empieza la prueba');
     return await api(V2 + '/radar/calibrate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_id: S.run.run_id, step_id: S.stepId,
-        attempt_id: att.attempt_id, action: action })
+        attempt_id: att ? att.attempt_id : '', action: action })
     });
   }
 
