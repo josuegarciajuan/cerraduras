@@ -25,6 +25,7 @@ BACKUP_DIR="${BACKUP_DIR:-/root/onx-backups}"
 DO_BACKUP=1
 VERIFY=1
 PROFILE="${ARDUINO_PROFILE:-esp32s3usbotg}"
+ESPTOOL_BAUD="${ESPTOOL_BAUD:-460800}"
 FQBN="${ARDUINO_FQBN:-esp32:esp32:esp32s3usbotg}"
 
 usage() {
@@ -122,8 +123,12 @@ if [ "$DO_BACKUP" = 1 ]; then
     mkdir -p "$BACKUP_DIR"
     BACKUP="$BACKUP_DIR/${SKETCH}-$(date -u +%Y%m%dT%H%M%SZ).bin"
     echo "[flash] backup del flash actual → $BACKUP"
-    "$ESPTOOL_BIN" --chip esp32s3 --port "$PORT" --baud 921600 \
-      read_flash 0 0x800000 "$BACKUP"
+    READ_CMD="read_flash"
+    if "$ESPTOOL_BIN" read-flash --help >/dev/null 2>&1; then
+      READ_CMD="read-flash"
+    fi
+    "$ESPTOOL_BIN" --chip esp32s3 --port "$PORT" --baud "$ESPTOOL_BAUD" \
+      "$READ_CMD" 0 0x800000 "$BACKUP"
     sha256sum "$BACKUP"
   fi
 fi
