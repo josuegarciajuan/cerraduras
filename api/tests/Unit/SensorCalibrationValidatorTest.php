@@ -407,16 +407,16 @@ same('v2 outside FAIL por efecto falso antes de reentrada', v('radar_outside', [
 
 // ── F104: sesión v3 (barrido + verificación exterior) ──────────────────
 echo "\nF104 · validador con sesión v3\n";
-$sessionV3 = v2session(['version' => 3, 'model' => 'boundary_scan_v1']);
-$sessionV3['outside_scan'] = ['sufficient' => true, 'boundary_distance' => 4.2,
-    'reason' => 'boundary_found', 'config_version' => 2];
+$sessionV3 = v2session(['version' => 3, 'model' => 'outside_point_v1']);
+$sessionV3['outside_measure'] = ['sufficient' => true, 'detected' => true,
+    'distance' => ['median' => 1.5, 'quality' => 'good'], 'config_version' => 2];
 $outsideV3 = $outsideV2;
 $outsideV3['calibration_session'] = $sessionV3;
 same('v3 outside PASS con barrido y verificación', v('radar_outside', [], $outsideV3)['status'], 'PASS');
 same('v3 outside motivo', v('radar_outside', [], $outsideV3)['reason'], 'no_presence_outside');
 
 $v3Inside = $insideV2;
-$v3Inside['calibration_session'] = v2session(['version' => 3, 'model' => 'boundary_scan_v1',
+$v3Inside['calibration_session'] = v2session(['version' => 3, 'model' => 'outside_point_v1',
     'phase' => 'INSIDE', 'state' => 'MEASURED', 'result' => null]);
 same('v3 inside PASS', v('radar_inside', [], $v3Inside)['status'], 'PASS');
 

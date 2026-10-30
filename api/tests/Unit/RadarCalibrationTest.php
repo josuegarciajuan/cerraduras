@@ -182,5 +182,40 @@ $tight = RadarCalibrationPlanner::planMidpoint(
 same('separación mínima → punto medio', $tight['action'], 'apply');
 check('candidato dentro de márgenes', $tight['candidate'] >= 3.15 && $tight['candidate'] <= 3.35);
 
+// ── F104.2: punto exterior estático ────────────────────────────────────
+echo "\nRadar outside-point planner (F104.2)\n";
+$insidePoint = ['detected' => true, 'sufficient' => true,
+    'distance' => ['quality' => 'good', 'min' => 0.9, 'max' => 1.0, 'median' => 0.95]];
+$outsidePoint = ['detected' => true, 'sufficient' => true,
+    'distance' => ['quality' => 'good', 'min' => 3.0, 'max' => 3.2, 'median' => 3.1]];
+$outsidePlan = RadarCalibrationPlanner::planFromOutsidePoint(
+    $insidePoint, $outsidePoint, ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $fineCaps);
+same('punto exterior → apply', $outsidePlan['action'], 'apply');
+same('punto medio interior/exterior (rejilla 0,15)', $outsidePlan['candidate'], 1.95);
+same('motivo midpoint', $outsidePlan['reason'], 'midpoint');
+same('referencia interior', $outsidePlan['inside_reference'], 1.0);
+same('punto exterior', $outsidePlan['outside_point'], 3.0);
+
+$outsideClear = RadarCalibrationPlanner::planFromOutsidePoint(
+    $insidePoint, ['detected' => false, 'sufficient' => true,
+        'distance' => ['quality' => 'poor', 'min' => null, 'max' => null, 'median' => null]],
+    ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $fineCaps);
+same('exterior ya sin detección → none', $outsideClear['action'], 'none');
+same('motivo outside_already_clear', $outsideClear['reason'], 'outside_already_clear');
+
+$outsideNoDistance = RadarCalibrationPlanner::planFromOutsidePoint(
+    $insidePoint, ['detected' => true, 'sufficient' => true,
+        'distance' => ['quality' => 'poor', 'min' => null, 'max' => null, 'median' => null]],
+    ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $fineCaps);
+same('exterior detectado sin distancia → stop', $outsideNoDistance['action'], 'stop');
+same('motivo outside_distance_missing', $outsideNoDistance['reason'], 'outside_distance_missing');
+
+$outsideTooClose = RadarCalibrationPlanner::planFromOutsidePoint(
+    ['detected' => true, 'distance' => ['quality' => 'good', 'min' => 2.5, 'max' => 2.6, 'median' => 2.55]],
+    ['detected' => true, 'distance' => ['quality' => 'good', 'min' => 1.0, 'max' => 1.1, 'median' => 1.05]],
+    ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $fineCaps);
+same('exterior más cerca que interior → stop', $outsideTooClose['action'], 'stop');
+same('motivo no_distance_separation', $outsideTooClose['reason'], 'no_distance_separation');
+
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);

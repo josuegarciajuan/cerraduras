@@ -12726,24 +12726,23 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 
 # Fase 104 — Autocalibración del radar por frontera (RF-213..RF-218)
 
-## RF-213: Barrido de salida
-- Tras la medición interior, el paso exterior comienza con el técnico dentro y
-  el radar en `PRESENT` fresco. La app abre una ventana de barrido.
-- El técnico camina hacia fuera hasta que el radar lo pierde. La app registra la
-  última distancia válida con `PRESENT` antes del primer `ABSENT` (`B`) y exige
-  una ausencia mantenida (6 s o 2 reportes) para cerrar la ventana.
-- Un barrido sin `PRESENT`, sin transición, sin distancia o sin ausencia
-  suficiente no se usa para ajustar: se detiene y se pide repetir.
+## RF-213: Medición del punto exterior
+- Tras la medición interior, la app pide colocarse en el punto donde NO debe
+  detectarse (por ejemplo, justo al otro lado de la puerta) y abre una ventana
+  estática de 20-30 s.
+- La app mide la distancia `P` en ese punto mientras el radar aún detecta. No se
+  camina hasta que el radar pierda la presencia.
+- Si el radar ya no detecta en ese punto, no hay distancia que promediar: se
+  mantiene el alcance actual y se continúa con la verificación/pasada.
 
 ## RF-214: Punto medio y márgenes
 - `I` es la referencia interior (máximo de las muestras de `target_distance`
   de la medición interior; si no hay muestras, la última distancia conocida).
-- Si `B - I >= 0.45 m`, el candidato es `R = (I + B) / 2`, ajustado a la rejilla
-  de 0,15 m y acotado a `[I + 0.15, B - 0.15]`.
-- Si el punto exterior detectado tiene distancia `P`, también debe cumplirse
-  `P - I >= 0.45 m` y `R <= P - 0.15 m`.
-- Si no existe separación por distancia, la app **no** cambia el alcance ni baja
-  la sensibilidad a ciegas: detiene la prueba y lo notifica.
+- `P` es la distancia medida en el punto exterior elegido.
+- Si `P - I >= 0.45 m`, el candidato es `R = (I + P) / 2`, ajustado a la rejilla
+  de 0,15 m y acotado a `[I + 0.15, P - 0.15]`.
+- Si no existe separación por distancia (`P <= I`), la app **no** cambia el
+  alcance ni baja la sensibilidad a ciegas: detiene la prueba y lo notifica.
 
 ## RF-215: Aplicación automática
 - El candidato se publica por MQTT (`<topic>/set`), se confirma con un reporte
@@ -12753,18 +12752,18 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   escribir de nuevo en el dispositivo.
 
 ## RF-216: Verificación y sensibilidad
-- Tras aplicar, se verifica el punto exterior (20-30 s). Si sigue detectando y
-  hay separación válida, se baja la sensibilidad un paso y se repite, con un
-  máximo de 3 intentos.
+- Tras aplicar, se verifica el mismo punto exterior (20-30 s). Si sigue
+  detectando y hay separación válida, se baja la sensibilidad un paso y se
+  repite, con un máximo de 3 intentos.
 - La reentrada debe detectar `PRESENT`. Si falla, se sube sensibilidad o alcance
   un paso y se reintenta; si se agota, se detiene y se ofrece restaurar.
 - La pasada de tres veces por delante de la puerta se mantiene.
 
 ## RF-217: Estados, UI y trazabilidad
-- Sesión de calibración v3 (`model=boundary_scan_v1`), fases `OUTSIDE_SCAN` y
+- Sesión de calibración v3 (`model=outside_point_v1`), fases `OUTSIDE_MEASURE` y
   `OUTSIDE_VERIFY`.
-- `/radar/state` expone `scan`, `scan_preview`, `calibration` y las acciones
-  `start_scan`, `finish_scan`, `start_verify`, `finish_verify`.
+- `/radar/state` expone `outside_measure` y `calibration`; la medición exterior
+  usa `start_measure`/`finish_measure` y la verificación `start_verify`/`finish_verify`.
 - La UI muestra `I`, `B`, `R`, sensibilidad e intentos. El cierre del barrido y
   de la verificación se dispara al detectar la transición/ventana.
 - Sin migración de BD, sin pollers y sin llamadas a Tuya.

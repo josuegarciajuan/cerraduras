@@ -110,6 +110,9 @@ final class RadarMeasurement
         $absents = 0;
         $absentsAfterFirstPresent = 0;
         $samples = [];
+        $seedDistance = isset($seed['distance']) && is_numeric($seed['distance'])
+            ? (float) $seed['distance'] : null;
+        $seedDistanceUsed = false;
         foreach ($reports as $r) {
             if ($r['value'] === 'PRESENT') {
                 $presents++;
@@ -122,6 +125,17 @@ final class RadarMeasurement
             if (array_key_exists('target_distance', $r['settings'])) {
                 $samples[] = (float) $r['settings']['target_distance'];
             }
+        }
+        $hasPositiveSample = false;
+        foreach ($samples as $sample) {
+            if ((float) $sample > 0) {
+                $hasPositiveSample = true;
+                break;
+            }
+        }
+        if (!$hasPositiveSample && $seedFresh && $seedDistance !== null && $seedDistance > 0) {
+            $samples[] = $seedDistance;
+            $seedDistanceUsed = true;
         }
         $distance = RadarDistanceQuality::evaluate($samples);
 
@@ -193,6 +207,8 @@ final class RadarMeasurement
             'span_seconds' => round($span, 3),
             'held_seconds' => $evidenceMode === self::EVIDENCE_STATE_HOLD ? round($windowSeconds, 3) : 0.0,
             'distance' => $distance,
+            'seed_distance' => $seedDistance,
+            'seed_distance_used' => $seedDistanceUsed,
         ];
     }
 
@@ -209,7 +225,7 @@ final class RadarMeasurement
     {
         return match (strtoupper($phase)) {
             'INSIDE' => (bool) ($measurement['continuous'] ?? false),
-            'OUTSIDE_FIXED', 'OUTSIDE_PASS' => (bool) ($measurement['any_present'] ?? false),
+            'OUTSIDE_FIXED', 'OUTSIDE_PASS', 'OUTSIDE_MEASURE' => (bool) ($measurement['any_present'] ?? false),
             'REENTRY' => ((int) ($measurement['presence_reports'] ?? 0) > 0)
                 && (($measurement['last_value'] ?? '') === 'PRESENT'),
             default => (bool) ($measurement['detected'] ?? false),

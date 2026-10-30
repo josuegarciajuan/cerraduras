@@ -22,16 +22,16 @@ ZBMINIL2):
    Si la medición es suficiente y no detecta, `Ajustar y volver a medir` propone
    un cambio y lo confirma por push; el ajuste interior no exige una medición
    exterior.
-4. **Radar fuera (autocalibración)**: vuelve al punto interior y pulsa
-   `Empezar barrido`. Sal caminando despacio y recto hasta que la app te pierda.
-   La app registra la frontera (`B`) y calcula el punto medio entre la referencia
-   interior (`I`) y `B`; lo aplica sola y espera confirmación por push. Después
-   te pide quedarte en el punto donde NO quieres que te detecte para verificar,
-   entrar para comprobar la reentrada y pasar tres veces por delante de la puerta.
-   Si el punto exterior está más cerca que el interior (`B <= I` o `P <= I`), la
-   app **no** baja la sensibilidad a ciegas: se detiene y pide revisar la
-   colocación/repetir el barrido. `Restaurar ajustes iniciales` revierte
-   alcance/sensibilidad/fading/retardo y exige confirmación por push.
+4. **Radar fuera (autocalibración)**: colócate en el punto donde NO quieres que
+   te detecte (por ejemplo, justo al otro lado de la puerta) y pulsa
+   `Medir punto exterior`. Permanece quieto 20-30 s. La app mide tu distancia
+   `P` ahí y calcula el punto medio entre la referencia interior (`I`) y `P`;
+   lo aplica sola y espera confirmación por push. Después verifica el mismo
+   punto, la reentrada y la pasada por el pasillo. Si el radar ya no te detecta
+   en ese punto, no hay `P`: se mantiene el alcance actual y se continúa. Si
+   `P <= I`, la app **no** baja la sensibilidad a ciegas: se detiene y pide
+   revisar la colocación/repetir la medición exterior. `Restaurar ajustes
+   iniciales` revierte alcance/sensibilidad/fading/retardo y exige confirmación.
 5. **Luz**: al empezar se apaga y confirmas que está apagada; después enciendes y
    confirmas, y por último apagas y confirmas. Una pregunta por orden. La telemetría
    solo cuenta si es posterior a la orden; si no llega, manda tu observación.

@@ -294,6 +294,54 @@ final class RadarCalibrationPlanner
     }
 
     /**
+     * F104.2: calibración usando una medición estática del punto exterior.
+     *
+     * El técnico se coloca donde NO debe detectarse. Con el alcance actual el
+     * radar puede seguir detectándolo y reportar su distancia `P`. El candidato
+     * es el punto medio entre la referencia interior `I` y `P`; no se camina
+     * hasta que el radar pierda la presencia.
+     *
+     * Si el radar ya no detecta en el punto exterior, no hay distancia que
+     * promediar: se mantiene el alcance actual (`outside_already_clear`).
+     *
+     * @param array{detected?:bool,sufficient?:bool,reference?:?float,distance?:array<string,mixed>,quality?:string} $inside
+     * @param array{detected?:bool,reference?:?float,distance?:array<string,mixed>,quality?:string} $outside
+     * @param array<string,mixed> $settings
+     * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int,min_separation?:float,margin?:float,coarse_step?:float} $caps
+     * @param array{reentry_failed?:bool,inside_present?:bool,attempts?:int,tried?:list<array<string,mixed>>} $observed
+     * @return array{action:string,params:array<string,int|float>,reason:string,confidence:string,candidate:?float,inside_reference:?float,boundary:?float,outside_point:?float}
+     */
+    public static function planFromOutsidePoint(
+        array $inside,
+        array $outside,
+        array $settings,
+        array $caps,
+        array $observed = []
+    ): array {
+        $I = self::ref($inside, 'inside');
+        $detected = (bool) ($outside['detected'] ?? false);
+        $P = $detected ? self::ref($outside, 'outside') : null;
+        $confidence = self::confidenceFromQuality(
+            (string) ($inside['quality'] ?? ($inside['distance']['quality'] ?? RadarDistanceQuality::POOR)),
+            (string) ($outside['quality'] ?? ($outside['distance']['quality'] ?? RadarDistanceQuality::POOR))
+        );
+        if (!$detected) {
+            return self::result('none', [], 'outside_already_clear', $confidence, null, $I, null, null);
+        }
+        if ($P === null || $P <= 0) {
+            return self::result('stop', [], 'outside_distance_missing', $confidence, null, $I, null, null);
+        }
+        $scan = [
+            'sufficient' => true,
+            'boundary_distance' => $P,
+            'reason' => 'outside_point',
+            'distance' => (array) ($outside['distance'] ?? []),
+        ];
+        $observed['outside_present'] = true;
+        return self::planMidpoint($inside, $scan, $outside, $settings, $caps, $observed);
+    }
+
+    /**
      * Referencia de distancia: interior usa el máximo (debe detectar hasta ahí)
      * y exterior el mínimo (no debe detectar desde ahí).
      *

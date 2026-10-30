@@ -15640,36 +15640,25 @@ ventana no ha terminado. `restore` no exige intento activo.
 - `start_measure` en fase `REENTRY` se interpreta como reentrada.
 - Un ajuste en `REENTRY` reinicia la fase a `OUTSIDE_FIXED`.
 
-## §F104 Autocalibración por barrido
+## §F104 Autocalibración por punto exterior
 
 `GET /dashboard-api/sensores/v2/radar/state` añade de forma aditiva:
 
-- `model`: `boundary_scan_v1` en sesiones nuevas.
-- `scan`: último barrido cerrado (`sufficient`, `reason`, `boundary_distance`,
-  `boundary_samples`, `distance`, `presents`, `absents`, `first_absent_at`,
-  `clear_seconds`, `config_version`).
-- `scan_preview`: resumen en vivo cuando el barrido ya es suficiente.
-- `calibration`: `inside_reference`, `boundary`, `outside_point`,
-  `target_range`, `sensitivity`, `confidence`, `attempts`, `reason`,
-  `updated_at`.
-- `next_actions` puede incluir `start_scan`, `finish_scan`, `start_verify`,
-  `finish_verify` además de las existentes.
+- `model`: `outside_point_v1` en sesiones nuevas.
+- `outside_measure`: medición estática del punto exterior (`sufficient`,
+  `detected`, `distance`, `reports`, `config_version`, `seed_distance_used`).
+- `calibration`: `inside_reference`, `outside_point`, `target_range`,
+  `sensitivity`, `confidence`, `attempts`, `reason`, `applied`, `updated_at`.
+- `next_actions`: `start_measure`/`finish_measure` para el punto exterior y
+  `start_verify`/`finish_verify` para la verificación.
 
-`POST /dashboard-api/sensores/v2/radar/operation` acciones nuevas:
+`POST /dashboard-api/sensores/v2/radar/operation`:
 
-- `start_scan`: solo en `OUTSIDE_SCAN`; exige `PRESENT` crudo fresco.
-  `409 scan_must_start_inside` si no.
-- `finish_scan`: cierra el barrido y aplica automáticamente el punto medio si
-  procede.
-- `start_verify`: abre la verificación exterior (20-30 s).
-- `finish_verify`: cierra la verificación; si no detecta pasa a `OUTSIDE_PASS`.
-- `finish_reentry`: además de las acciones existentes.
-
-Errores/estados nuevos: `scan_insufficient:*`, `verify_insufficient:*`,
-`no_distance_separation`, `boundary_missing`, `inside_reference_missing`,
-`scan_must_start_inside`. En `no_distance_separation` no se publica ningún
-ajuste de sensibilidad; se detiene y se ofrece `start_scan`/`restore`.
-
-`restore` en v3 vuelve a `INSIDE` (si se estaba midiendo dentro) o a
-`OUTSIDE_SCAN` (si se estaba fuera), limpia la evidencia de la calibración
-fallida y conserva la referencia interior cuando el paso era el exterior.
+- `start_measure` en `OUTSIDE_MEASURE`: abre la ventana estática de 20-30 s.
+- `finish_measure`: mide `P`. Si `detected=false`, mantiene el alcance y pasa a
+  `OUTSIDE_PASS`. Si `detected=true`, aplica el punto medio `(I+P)/2`.
+- `start_verify`/`finish_verify`: verifican el mismo punto.
+- Errores/estados nuevos: `outside_insufficient:*`,
+  `outside_distance_missing`, `outside_already_clear`, `no_distance_separation`.
+- `start_scan`/`finish_scan` quedan solo como compatibilidad con sesiones
+  antiguas; el flujo nuevo no los usa.

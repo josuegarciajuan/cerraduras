@@ -107,6 +107,18 @@ same('seed caducado no es suficiente', $stale['sufficient'], false);
 same('seed caducado → motivo', $stale['reason'], 'stale_state');
 same('seed caducado no se usa', $stale['seed_used'], false);
 
+$seedDistance = $seedPresent + ['distance' => 1.5];
+$holdDistance = RadarMeasurement::build([], $start, $end, 3, $expected, [], $seedDistance);
+same('seed con distancia → state_hold suficiente', $holdDistance['sufficient'], true);
+same('seed con distancia → detectado', $holdDistance['detected'], true);
+same('seed con distancia → muestra usada', $holdDistance['seed_distance_used'], true);
+same('seed con distancia → mediana', $holdDistance['distance']['median'], 1.5);
+same('seed con distancia → outcome exterior', RadarMeasurement::outcomeForPhase($holdDistance, 'OUTSIDE_MEASURE'), true);
+
+$withSamplesAndSeed = RadarMeasurement::build([ev('PRESENT', 0, 2.4)], $start, $end, 3, $expected, [], $seedDistance);
+same('muestra real manda sobre seed', $withSamplesAndSeed['distance']['median'], 2.4);
+same('seed no se usa si hay muestra real', $withSamplesAndSeed['seed_distance_used'], false);
+
 $lost = RadarMeasurement::build([ev('ABSENT', 5, 0)], $start, $end, 3, $expected, [], $seedPresent);
 same('PRESENT inicial + ABSENT → suficiente', $lost['sufficient'], true);
 same('PRESENT inicial + ABSENT → continuidad falsa', $lost['continuous'], false);
