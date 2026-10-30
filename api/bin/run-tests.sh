@@ -6459,6 +6459,13 @@ if grep -q "sensores/v2/run/reset" public/index.php \
 else
     fail "F95: reinicio global" "falta el botón o endpoint run/reset"
 fi
+if grep -q "reentry_failed" src/Domain/Sensors/RadarCalibrationPlanner.php \
+    && grep -q "reentry_failed" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "apply-only" public/assets/sensor-wizard-v2.js; then
+    pass "F96: reentrada fallida ofrece ajuste/restauración"
+else
+    fail "F96: reentrada" "no se detecta la remediación de reentrada"
+fi
 if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
     pass "F95: polaridad aplicada en el ingress"
 else

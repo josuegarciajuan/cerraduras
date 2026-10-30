@@ -32,6 +32,38 @@ final class RadarCalibrationPlanner
         $currentSens = (int) round((float) ($settings['radar_sensitivity'] ?? 0));
         $insidePresent = (bool) ($observed['inside_present'] ?? false);
         $outsidePresent = (bool) ($observed['outside_present'] ?? false);
+        $reentryFailed = (bool) ($observed['reentry_failed'] ?? false);
+
+        // Si el ajuste anterior dejó de detectar al reentrar, el candidato no
+        // vale: priorizar recuperar detección antes que seguir bajando alcance.
+        if ($reentryFailed) {
+            if ($currentSens < $caps['sens_max']) {
+                return [
+                    'action' => 'apply',
+                    'params' => ['radar_sensitivity' => $currentSens + 1],
+                    'reason' => 'reentry_failed_sensitivity',
+                    'confidence' => self::confidence($inside, $outside),
+                    'candidate' => null,
+                ];
+            }
+            if ($currentMax < $caps['range_max'] - 0.001) {
+                $next = self::snap($currentMax + $caps['range_step'], $caps);
+                return [
+                    'action' => 'apply',
+                    'params' => ['maximum_range' => $next],
+                    'reason' => 'reentry_failed_range',
+                    'confidence' => self::confidence($inside, $outside),
+                    'candidate' => $next,
+                ];
+            }
+            return [
+                'action' => 'reposition',
+                'params' => [],
+                'reason' => 'reentry_failed_limits',
+                'confidence' => self::confidence($inside, $outside),
+                'candidate' => null,
+            ];
+        }
 
         $insideUsable = in_array($inside['quality'] ?? '', [RadarDistanceQuality::GOOD, RadarDistanceQuality::FAIR], true)
             && isset($inside['max']) && $inside['max'] !== null;

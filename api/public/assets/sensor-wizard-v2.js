@@ -17,6 +17,7 @@
     stepId: null, attempt: null, busy: false,
     human: { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null },
     lightPhase: 'idle', attemptData: null, pollTimer: null, pollStep: null, pollBusy: false,
+    doorKey: null, radarPhaseKey: null,
     lastSwitch: null, lastEvents: [], eventsTimer: null
   };
 
@@ -282,12 +283,12 @@
     host.innerHTML = html;
   }
 
-  function stepHeader(stepId) {
+  function stepHeader(stepId, titleOverride, actionOverride) {
     var c = catalogStep(stepId) || { title: stepId, action: '', expected: '' };
     var idx = plan().indexOf(stepId) + 1;
     return '<div class="eyebrow">Paso ' + idx + ' de ' + plan().length + ' · ' + esc(c.device || '') + '</div>'
-      + '<h1>' + esc(c.title) + '</h1>'
-      + '<div class="action">' + esc(c.action) + '</div>'
+      + '<h1>' + esc(titleOverride || c.title) + '</h1>'
+      + '<div class="action">' + esc(actionOverride || c.action) + '</div>'
       + '<div class="expect"><b>Debe pasar:</b> ' + esc(c.expected) + '</div>';
   }
 
@@ -329,7 +330,20 @@
     var step = S.run.steps[stepId] || {};
     var st = step.status || 'PENDING';
     var last = (step.attempts && step.attempts.length) ? step.attempts[step.attempts.length - 1] : null;
-    var html = '<div class="card">' + stepHeader(stepId);
+    var titleOverride = null, actionOverride = null;
+    if (stepId === 'radar_outside') {
+      var rs = S.run.calibration_session || {};
+      var cand = rs.candidate;
+      var re = rs.reentry;
+      if (cand && cand.applied && !(re && re.detected)) {
+        titleOverride = 'Comprobar reentrada';
+        actionOverride = 'Entra, cierra la puerta y colócate dentro. Después pulsa «Comprobar reentrada».';
+      } else if (cand && cand.applied && re && re.detected) {
+        titleOverride = 'Radar · fuera verificado';
+        actionOverride = 'La reentrada se ha detectado. Valida el radar para cerrar la calibración exterior.';
+      }
+    }
+    var html = '<div class="card">' + stepHeader(stepId, titleOverride, actionOverride);
     html += resultBox(st, last && last.verdict);
     if (isFinal(st)) {
       stopPolling();
@@ -443,7 +457,16 @@
       html += '<div class="actions"><button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
       return html;
     }
+    var reentryFailed = !inside && candidate && candidate.applied && reentry && reentry.detected === false;
     html += '<div class="actions">';
+    if (reentryFailed) {
+      html += '<div class="expect" style="border-color:var(--fail);color:var(--fail)">No se detectó presencia al volver a entrar. El ajuste ha reducido demasiado la detección: no sigas intentando la reentrada con estos valores.</div>';
+      html += '<button class="primary" data-action="calibrate" data-op="apply-only">Ajustar de nuevo</button>';
+      html += '<button data-action="calibrate" data-op="measure">Volver a medir exterior</button>';
+      html += '<button data-action="calibrate" data-op="restore">Restaurar ajustes iniciales</button>';
+      html += '<button class="ghost" data-action="cancel" data-step="' + stepId + '">Cancelar prueba</button></div>';
+      return html;
+    }
     if (!phase) {
       html += '<button class="primary" data-action="calibrate" data-op="measure">Medir este punto</button>';
       html += '<div class="hint">' + (inside
@@ -460,7 +483,7 @@
       html += '<button class="ghost" data-action="calibrate" data-op="measure">Volver a medir</button>';
     } else if (!inside && candidate && candidate.applied && !(reentry && reentry.detected)) {
       html += '<button class="primary" data-action="calibrate" data-op="reentry">Comprobar reentrada</button>';
-      html += '<div class="hint">Vuelve a entrar y colócate dentro; después pulsa el botón.</div>';
+      html += '<div class="hint">Entra, cierra la puerta y colócate dentro; después pulsa el botón. No vuelvas a salir.</div>';
     } else {
       html += '<button class="primary" data-action="check" data-step="' + stepId + '">Validar radar</button>';
       html += '<button class="ghost" data-action="calibrate" data-op="measure">Repetir medición</button>';
@@ -651,6 +674,8 @@
       S.lastSwitch = null;
       S.lightPhase = stepId === 'light' ? 'prep' : 'idle';
       S.radarKey = null;
+      S.doorKey = null;
+      S.radarPhaseKey = null;
       await reloadRun();
       render();
       if (stepId === 'light') {
@@ -897,6 +922,8 @@
     S.attemptData = null;
     S.lightPhase = 'idle';
     S.radarKey = null;
+    S.doorKey = null;
+    S.radarPhaseKey = null;
     S.stepId = currentStep();
     if (!S.stepId) { finishRun(); return; }
     render();
@@ -910,6 +937,8 @@
     S.attemptData = null;
     S.lightPhase = 'idle';
     S.radarKey = null;
+    S.doorKey = null;
+    S.radarPhaseKey = null;
     // El check anterior queda en el informe; se permite un intento nuevo.
     var step = S.run.steps[stepId];
     if (step) step.status = 'PENDING';
@@ -931,11 +960,6 @@
     if (chip) {
       chip.textContent = 'Presencia: ' + (p.active ? 'DETECTADA' : 'sin detección');
       chip.className = 'pill ' + (p.active ? 'ok' : 'dim');
-    }
-    var key = remain > 0 ? 'wait' : ('ready:' + (p.active ? '1' : '0') + ':' + (span >= 30 ? '1' : '0') + ':' + (p.presents ? '1' : '0'));
-    if (S.radarKey !== key) {
-      S.radarKey = key;
-      return false;
     }
     return true;
   }
@@ -968,7 +992,22 @@
       if (S.attempt && S.attempt.attempt_id === att.attempt_id) {
         S.attemptData = d;
         if (S.stepId === 'radar_inside' || S.stepId === 'radar_outside') {
-          if (!updateRadarDom()) render();
+          var target = S.stepId === 'radar_inside' ? 30 : 60;
+          var remain = Math.max(0, target - Math.floor(d.elapsed_seconds || 0));
+          var key = S.stepId + ':' + (remain > 0 ? 'wait' : 'ready');
+          if (S.radarPhaseKey !== key) {
+            S.radarPhaseKey = key;
+            render();
+          } else {
+            updateRadarDom();
+          }
+        } else if (S.stepId === 'door') {
+          var door = (d.door) || {};
+          var dk = (door.count || 0) + ':' + (door.waiting_for || '');
+          if (S.doorKey !== dk) {
+            S.doorKey = dk;
+            render();
+          }
         } else {
           render();
         }
@@ -1125,6 +1164,7 @@
       else if (a === 'calibrate') {
         var op = b.getAttribute('data-op');
         if (op === 'apply') applyAndMeasure();
+        else if (op === 'apply-only') calibrate('apply');
         else calibrate(op);
       }
       else if (a === 'switch') switchTest(b.getAttribute('data-on'));

@@ -820,6 +820,8 @@ final class SensorWizardController
                     [
                         'inside_present' => (bool) ($session['inside']['presence'] ?? false),
                         'outside_present' => (bool) ($session['outside']['presence'] ?? false),
+                        'reentry_failed' => (bool) (($session['candidate']['applied'] ?? false)
+                            && (($session['reentry']['detected'] ?? null) === false)),
                     ]
                 );
                 if ($plan['action'] !== 'apply') {
@@ -871,16 +873,26 @@ final class SensorWizardController
                         break;
                     }
                 }
+                $attempts = (int) ($session['reentry']['attempts'] ?? 0) + 1;
                 $session['reentry'] = [
                     'detected' => $real,
                     'at' => gmdate('Y-m-d\TH:i:s\Z'),
                     'first_present_at' => $firstPresentAt,
+                    'attempts' => $attempts,
                     'presence' => $evidence['presence'],
                 ];
                 $run['calibration_session'] = $session;
                 $this->store->save($run);
-                return Response::json(200, ['ok' => true, 'action' => 'reentry',
-                    'detected' => $real, 'session' => $session]);
+                return Response::json(200, [
+                    'ok' => true,
+                    'action' => 'reentry',
+                    'detected' => $real,
+                    'attempts' => $attempts,
+                    'message' => $real
+                        ? 'Reentrada detectada. Ya puedes validar el radar.'
+                        : 'No se detectó presencia al volver a entrar. Este ajuste ha reducido demasiado la detección: ajusta de nuevo o restaura los valores iniciales.',
+                    'session' => $session,
+                ]);
             }
 
             if ($action === 'restore') {
