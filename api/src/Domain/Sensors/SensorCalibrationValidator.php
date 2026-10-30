@@ -466,6 +466,12 @@ final class SensorCalibrationValidator
         if (!empty($session['inside']) && ($session['inside']['presence'] ?? false) !== true) {
             return self::result(self::FAIL, 'inside_not_detected_calibration', $details);
         }
+        if (!empty($session['inside_valid'])) {
+            $iv = (array) $session['inside_valid'];
+            if (($iv['sufficient'] ?? false) !== true || ($iv['detected'] ?? false) !== true) {
+                return self::result(self::FAIL, 'inside_not_detected_calibration', $details);
+            }
+        }
         if ($stale) {
             return self::result(self::UNVERIFIED, 'presence_stale', $details);
         }
@@ -548,10 +554,36 @@ final class SensorCalibrationValidator
         if (!empty($session['outside']) && ($session['outside']['presence'] ?? false) === true) {
             return self::result(self::FAIL, 'outside_detected_calibration', $details);
         }
+        foreach (['outside_valid', 'outside_pass'] as $key) {
+            if (empty($session[$key])) {
+                continue;
+            }
+            $m = (array) $session[$key];
+            if (($m['sufficient'] ?? false) !== true) {
+                return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
+            }
+            if (($m['detected'] ?? false) === true) {
+                return self::result(self::FAIL, 'outside_detected_calibration', $details);
+            }
+        }
+        $newSession = (int) ($session['version'] ?? 0) === 2;
+        if ($newSession && empty($session['outside_valid'])) {
+            return self::result(self::FAIL, 'outside_not_measured', $details);
+        }
+        if ($newSession && empty($session['outside_pass'])) {
+            return self::result(self::FAIL, 'outside_pass_not_measured', $details);
+        }
+        if ($newSession && empty($session['inside_valid'])) {
+            return self::result(self::FAIL, 'inside_not_measured', $details);
+        }
+        $hasAdjustment = !empty($session['candidates']);
         $candidateApplied = (bool) ($session['candidate']['applied'] ?? false);
         $reentryDetected = ($session['reentry']['detected'] ?? false) === true;
-        if ($candidateApplied && !$reentryDetected) {
+        if (($hasAdjustment || $candidateApplied) && !$reentryDetected) {
             return self::result(self::FAIL, 'reentry_not_verified', $details);
+        }
+        if (array_key_exists('settings_valid', $ctx) && $ctx['settings_valid'] !== true) {
+            return self::result(self::FAIL, 'invalid_device_settings', $details);
         }
         if ((float) ($ctx['elapsed_seconds'] ?? 0) < $minElapsed) {
             return self::result(self::SKIP, 'step_too_short', $details);

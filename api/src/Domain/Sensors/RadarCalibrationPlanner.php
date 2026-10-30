@@ -94,9 +94,22 @@ final class RadarCalibrationPlanner
         }
 
         // Comportamiento: no hay separación fiable por distancia.
+        $insideLower = null;
+        if ($insideUsable && isset($inside['max']) && $inside['max'] !== null) {
+            $insideLower = (float) $inside['max'] + 0.30;
+        }
         if ($outsidePresent) {
             if ($currentMax > $caps['range_min'] + 0.001) {
                 $next = self::snap($currentMax - $caps['range_step'], $caps);
+                if ($insideLower !== null && $next < $insideLower) {
+                    return [
+                        'action' => 'reposition',
+                        'params' => [],
+                        'reason' => 'would_break_inside',
+                        'confidence' => self::confidence($inside, $outside),
+                        'candidate' => null,
+                    ];
+                }
                 return [
                     'action' => 'apply',
                     'params' => ['maximum_range' => $next],

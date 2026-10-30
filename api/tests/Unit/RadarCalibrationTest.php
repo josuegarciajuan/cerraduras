@@ -78,6 +78,15 @@ $reentryExhausted = RadarCalibrationPlanner::plan($insideGood, $outsideBad,
     ['inside_present' => true, 'outside_present' => false, 'reentry_failed' => true]);
 same('reentrada fallida sin margen → reposition', $reentryExhausted['action'], 'reposition');
 
+$protect = RadarCalibrationPlanner::plan(
+    ['quality' => 'good', 'min' => 4.5, 'max' => 5.0, 'median' => 4.8],
+    ['quality' => 'fair', 'min' => 4.6, 'max' => 4.9, 'median' => 4.7],
+    ['maximum_range' => 5.25, 'radar_sensitivity' => 7], $caps,
+    ['inside_present' => true, 'outside_present' => true]
+);
+same('protege el interior → reposition', $protect['action'], 'reposition');
+same('motivo would_break_inside', $protect['reason'], 'would_break_inside');
+
 $overlap = ['quality' => 'good', 'min' => 3.05, 'max' => 3.2, 'median' => 3.1];
 $plan6 = RadarCalibrationPlanner::plan($insideGood, $overlap, $settings, $caps,
     ['inside_present' => true, 'outside_present' => true]);

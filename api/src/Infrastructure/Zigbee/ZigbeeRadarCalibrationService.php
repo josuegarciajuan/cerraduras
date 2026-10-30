@@ -168,6 +168,63 @@ final class ZigbeeRadarCalibrationService
     }
 
     /**
+     * F102/RF-175: publica sin bloquear a la espera de confirmación.
+     * La confirmación se reconcilia después con `confirm()`.
+     *
+     * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
+     * @param array<string,mixed> $input
+     * @return array{ok:bool,commands:array<string,int|float>,before_event_id:int,published_at:string,error:?string}
+     */
+    public function publish(int $roomId, array $device, array $input): array
+    {
+        $commands = self::normalizeCommands($input);
+        if ($commands === []) {
+            return ['ok' => false, 'commands' => [], 'before_event_id' => 0,
+                'published_at' => gmdate('Y-m-d\TH:i:s\Z'), 'error' => 'no_parameters'];
+        }
+        $beforeId = $this->latestEventId($roomId);
+        $publishedAt = gmdate('Y-m-d\TH:i:s.v\Z');
+        $result = ($this->publisher)($this->setTopic($device), json_encode($commands, JSON_UNESCAPED_SLASHES));
+        return [
+            'ok' => (bool) ($result['ok'] ?? false),
+            'commands' => $commands,
+            'before_event_id' => $beforeId,
+            'published_at' => $publishedAt,
+            'error' => ($result['ok'] ?? false) ? null : (string) ($result['error'] ?? 'publish_failed'),
+        ];
+    }
+
+    /**
+     * Reconcilia una orden publicada contra el último reporte del radar.
+     *
+     * @param array<string,int|float> $requested
+     * @return array{state:string,settings:array<string,mixed>,event_id:?int,at:?string,reason:?string}
+     */
+    public function confirm(int $roomId, int $beforeEventId, array $requested): array
+    {
+        $snapshot = $this->latestSnapshot($roomId);
+        if ($snapshot['id'] === null || $snapshot['id'] <= $beforeEventId) {
+            return ['state' => 'pending', 'settings' => $snapshot['settings'],
+                'event_id' => $snapshot['id'], 'at' => $snapshot['last_at'], 'reason' => 'no_new_report'];
+        }
+        $settings = $snapshot['settings'];
+        $invalid = self::settingsInvalidReason($settings);
+        if ($invalid !== null) {
+            return ['state' => 'invalid', 'settings' => $settings,
+                'event_id' => $snapshot['id'], 'at' => $snapshot['last_at'], 'reason' => $invalid];
+        }
+        foreach ($requested as $key => $expected) {
+            $actual = $this->num($settings[$key] ?? null);
+            if ($actual === null || abs($actual - (float) $expected) > 0.001) {
+                return ['state' => 'mismatch', 'settings' => $settings,
+                    'event_id' => $snapshot['id'], 'at' => $snapshot['last_at'], 'reason' => 'value_not_applied'];
+            }
+        }
+        return ['state' => 'confirmed', 'settings' => $settings,
+            'event_id' => $snapshot['id'], 'at' => $snapshot['last_at'], 'reason' => null];
+    }
+
+    /**
      * Publica los parámetros y espera confirmación REAL por push.
      *
      * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device

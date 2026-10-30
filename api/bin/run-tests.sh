@@ -6706,6 +6706,76 @@ elif [ "$SERVER_UP" = true ]; then
 fi
 
 # =============================================================================
+# BLOCK 68B — F102: motor de calibración del radar (operaciones)
+# Trazabilidad: RF-174..RF-178
+# =============================================================================
+block "BLOCK 68B — F102: motor de calibración del radar"
+
+for f in src/Domain/Sensors/RadarMeasurement.php src/Domain/Sensors/RadarCalibrationPlanner.php; do
+    if [ -f "$f" ]; then pass "F102: $f presente"; else fail "F102: $f" "falta"; fi
+done
+if grep -q "radar/state" public/index.php \
+    && grep -q "radar/operation" public/index.php \
+    && grep -q "radar/state" public/assets/sensor-wizard-v2.js \
+    && grep -q "radar-op" public/assets/sensor-wizard-v2.js; then
+    pass "F102: estado y operaciones del radar cableados"
+else
+    fail "F102: rutas/UI" "faltan radar/state, radar/operation o radar-op"
+fi
+if grep -q "operation_pending" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "AWAITING_CONFIRM" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "STABILIZING" src/Http/Controllers/SensorWizardController.php; then
+    pass "F102: máquina de estados con confirmación y estabilización"
+else
+    fail "F102: estados" "faltan estados de operación"
+fi
+
+F102_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=x&step_id=radar_inside" 2>/dev/null)
+if [ "$SERVER_UP" = true ] && [ "$F102_PING" != "404" ]; then
+    F102_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-f102"}')
+    F102_RID=$(printf '%s' "$F102_RUN" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+    if [ -n "$F102_RID" ]; then
+        F102_ATT=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\"}")
+        F102_AID=$(printf '%s' "$F102_ATT" | python3 -c "import sys,json;print((json.load(sys.stdin).get('attempt') or {}).get('attempt_id',''))" 2>/dev/null)
+        if [ -n "$F102_AID" ]; then
+            F102_ST=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=$F102_RID&step_id=radar_inside")
+            F102_OK=$(printf '%s' "$F102_ST" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('state')=='IDLE' and 'start_measure' in (d.get('next_actions') or []) else 'bad')" 2>/dev/null)
+            if [ "$F102_OK" = "ok" ]; then
+                pass "F102: radar/state expone fase y acciones"
+            else
+                fail "F102: radar/state" "estado inesperado"
+            fi
+            F102_OP=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"start_measure\"}")
+            F102_OP_OK=$(printf '%s' "$F102_OP" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('state')=='MEASURING' and (d.get('countdown') or {}).get('kind')=='measure' else 'bad')" 2>/dev/null)
+            if [ "$F102_OP_OK" = "ok" ]; then
+                pass "F102: start_measure abre una sola ventana"
+            else
+                fail "F102: start_measure" "no abre ventana"
+            fi
+            F102_DUP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"start_measure\"}")
+            if [ "$F102_DUP" = "409" ]; then
+                pass "F102: segunda operación rechazada (409)"
+            else
+                fail "F102: operación única" "esperado 409, got $F102_DUP"
+            fi
+            curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"cancel\"}" >/dev/null
+        else
+            fail "F102: attempt/start" "$(printf '%s' "$F102_ATT" | head -c 200)"
+        fi
+        rm -f "run/sensores/${F102_RID}.json" "run/sensores/${F102_RID}.jsonl" "run/sensores/locks/${F102_RID}.lock"
+    else
+        fail "F102: run/start" "$(printf '%s' "$F102_RUN" | head -c 200)"
+    fi
+elif [ "$SERVER_UP" = true ]; then
+    skip "F102 HTTP" "endpoint aún sin desplegar (HTTP $F102_PING)"
+fi
+
+# =============================================================================
 # BLOCK 69 — F96: llaves de acceso, fichas NFC y auditoría
 # Trazabilidad: RF-168..RF-175
 # =============================================================================
