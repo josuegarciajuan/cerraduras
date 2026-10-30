@@ -7004,6 +7004,43 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
+# Trazabilidad: RF-219, RF-220
+# =============================================================================
+block "BLOCK 68D — F104.3: polaridad y arranque de puerta"
+
+for f in src/Domain/Presence/DoorPolarityEvidence.php \
+         tests/Unit/DoorPolarityEvidenceTest.php; do
+    if [ -f "$f" ]; then
+        pass "F104.3: $f presente"
+    else
+        fail "F104.3: $f" "falta"
+    fi
+done
+
+if grep -q "DoorPolarityEvidence::infer" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "confirmDoorClosedForAttempt" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "door_closed_confirmed_at" src/Http/Controllers/SensorWizardController.php; then
+    pass "F104.3: polaridad estable y confirmación de puerta cerrada cableadas"
+else
+    fail "F104.3: cableado" "faltan DoorPolarityEvidence/confirmDoorClosedForAttempt/door_closed_confirmed_at"
+fi
+
+if grep -q "invert-polarity" public/assets/sensor-wizard-v2.js \
+    && grep -q "Cierra la puerta para validar" public/assets/sensor-wizard-v2.js \
+    && grep -q "waiting !== 'close'" public/assets/sensor-wizard-v2.js; then
+    pass "F104.3: UI bloquea validar con apertura pendiente y ofrece invertir"
+else
+    fail "F104.3: UI" "faltan gating o botón de inversión"
+fi
+
+if ! grep -q "El último evento de la puerta es antiguo" src/Http/Controllers/SensorWizardController.php; then
+    pass "F104.3: polaridad no bloquea por evento antiguo"
+else
+    fail "F104.3: polaridad" "sigue el aviso de evento antiguo"
+fi
+
+# =============================================================================
 # BLOCK 69 — F96: llaves de acceso, fichas NFC y auditoría
 # Trazabilidad: RF-168..RF-175
 # =============================================================================

@@ -182,3 +182,15 @@ el candidato antes de promoverlo.
   prueba que el firmware la aplicó.
 - El radar 24G puede detectar respiración/movimiento mínimo; no cuenta personas.
 - La latencia física total incluye sensor + radio + broker + worker + panel.
+
+## 10. Polaridad y ciclos de puerta (F104.3)
+
+- La polaridad se infiere de la última evidencia de puerta **cerrada**, no del
+  último evento. Si el último evento es una apertura, la polaridad no cambia.
+- Si no hay evidencia de cerrada, se mantiene la polaridad actual; no se pide
+  abrir/cerrar antes de empezar.
+- Al pulsar **Empezar ciclos**, el servidor confirma `CLOSED` y pone una barrera
+  para ignorar aperturas atrasadas.
+- **Validar puerta** solo se habilita cuando el último evento es un cierre. Si
+  queda una apertura pendiente, la app pide cerrar.
+- Si la secuencia empieza por `CLOSED`, aparece **Invertir polaridad y repetir**.
