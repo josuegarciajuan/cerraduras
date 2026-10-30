@@ -11055,3 +11055,13 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
       compilar ambos sketches con `arduino-cli` (requiere toolchain/hardware).
 - [ ] **TSK-F100-10** Pruebas físicas: upgrade de cada variante, conversión en ambos
       sentidos, corte de red/alimentación y rollback.
+
+## F101 — Tareas de corrección del formulario de dispositivos
+
+- [x] **TSK-F101-01** Segmentos de tipo y variante reactivos con `:class`/`:aria-checked`.
+- [x] **TSK-F101-02** Aviso de variante efectiva, cambio solicitado y capacidad OTA.
+- [x] **TSK-F101-03** Guardado atómico: OTA antes del PATCH y compensación con `cancel`.
+- [x] **TSK-F101-04** Reutilizar una operación ya solicitada sin duplicarla.
+- [x] **TSK-F101-05** Conservar `error.code` en `api()` y traducir errores de dispositivo.
+- [x] **TSK-F101-06** Cancelación de operaciones `WAITING` desde la tarjeta.
+- [x] **TSK-F101-07** Unit test `PanelDeviceEditTest.php` y regresión F96–F100.

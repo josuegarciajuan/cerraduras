@@ -177,6 +177,24 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
+| **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
+
+### F101 — Edición fiable de dispositivos en el panel (RF-201…RF-206)
+
+- **Bug**: en `/panel` → Dispositivos, la variante del ESP no cambiaba al pulsarla.
+  La clase `act` se generaba como texto fijo al abrir el modal; `@click` actualizaba
+  `devForm.subtype` pero el botón no tenía binding reactivo.
+- **UI**: segmentos de tipo y variante con `:class`/`:aria-checked`; aviso de variante
+  efectiva, cambio solicitado, capacidad OTA y firmware publicado por variante.
+- **Guardado**: si cambia la variante se solicita la OTA **antes** del `PATCH`; si la
+  OTA falla no se guarda nada; si el `PATCH` falla se cancela la operación recién
+  creada. Reintentar la misma variante no duplica la operación.
+- **Errores**: `api()` conserva `error.code`; el formulario traduce `ota_not_capable`,
+  `firmware_release_not_found`, `firmware_operation_active`, etc.
+- **Cancelar**: la tarjeta permite cancelar una operación `WAITING`.
+- **Verificación**: `php api/tests/Unit/PanelDeviceEditTest.php` (31 checks) +
+  `PanelProvisioningUiTest`, `FirmwareOtaTest`, `EspVariantTest`. Sin cambios de
+  contrato ni polling a Tuya.
 
 ### F95 — Flujo universal de verificación Zigbee (RF-162…RF-167)
 
