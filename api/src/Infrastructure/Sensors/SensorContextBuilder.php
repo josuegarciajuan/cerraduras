@@ -310,10 +310,6 @@ final class SensorContextBuilder
             'live' => $live,
             'events' => $this->eventsSince($roomId, $sinceUtc),
             'settings' => $latest['settings'],
-            'radar_settings_valid' => $settingsValid,
-            'radar_settings_invalid_reason' => $settingsValid
-                ? null
-                : \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::settingsInvalidReason((array) ($latest['settings'] ?? [])),
             'settings_at' => $latest['settings_at'],
             'settings_age_seconds' => $latest['settings_age_seconds'],
             'initial_settings' => $initialSettings,
@@ -377,6 +373,10 @@ final class SensorContextBuilder
             'devices' => $devices,
             'switch' => $devices['switch'],
             'settings' => $latest['settings'],
+            'radar_settings_valid' => $settingsValid,
+            'radar_settings_invalid_reason' => $settingsValid
+                ? null
+                : \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService::settingsInvalidReason((array) ($latest['settings'] ?? [])),
             'settings_at' => $latest['settings_at'],
             'settings_age_seconds' => $latest['settings_age_seconds'],
             'live' => $live,
