@@ -6730,8 +6730,10 @@ else
     fail "F102: estados" "faltan estados de operación"
 fi
 
-F102_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=x&step_id=radar_inside" 2>/dev/null)
-if [ "$SERVER_UP" = true ] && [ "$F102_PING" != "404" ]; then
+F102_PING_BODY=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=x&step_id=radar_inside" 2>/dev/null)
+F102_DEPLOYED=no
+if printf '%s' "$F102_PING_BODY" | grep -q "run_not_found"; then F102_DEPLOYED=yes; fi
+if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
     F102_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
         -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-f102"}')
     F102_RID=$(printf '%s' "$F102_RUN" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
@@ -6772,7 +6774,7 @@ if [ "$SERVER_UP" = true ] && [ "$F102_PING" != "404" ]; then
         fail "F102: run/start" "$(printf '%s' "$F102_RUN" | head -c 200)"
     fi
 elif [ "$SERVER_UP" = true ]; then
-    skip "F102 HTTP" "endpoint aún sin desplegar (HTTP $F102_PING)"
+    skip "F102 HTTP" "endpoint aún sin desplegar"
 fi
 
 # =============================================================================
