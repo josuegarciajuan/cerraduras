@@ -6884,50 +6884,50 @@ PYFIX
 fi
 
 # =============================================================================
-# BLOCK 68C — F104: autocalibración del radar por barrido y punto medio
+# BLOCK 68C — F104.2: autocalibración del radar por punto exterior
 # Trazabilidad: RF-213, RF-214, RF-215, RF-216
 # =============================================================================
-block "BLOCK 68C — F104: autocalibración del radar"
+block "BLOCK 68C — F104.2: autocalibración del radar por punto exterior"
 
-for f in src/Domain/Sensors/RadarBoundaryScan.php src/Domain/Sensors/RadarCalibrationPlanner.php \
-         tests/Unit/RadarBoundaryScanTest.php tests/Unit/RadarWizardV3Test.php \
+for f in src/Domain/Sensors/RadarCalibrationPlanner.php \
+         tests/Unit/RadarMeasurementTest.php tests/Unit/RadarWizardV3Test.php \
          public/assets/sensor-wizard-v2.js public/assets/sensor-tests-v2.json; do
     if [ -f "$f" ]; then
-        pass "F104: $f presente"
+        pass "F104.2: $f presente"
     else
-        fail "F104: $f" "falta"
+        fail "F104.2: $f" "falta"
     fi
 done
 
-if grep -q "planMidpoint" src/Domain/Sensors/RadarCalibrationPlanner.php \
-    && grep -q "RadarBoundaryScan" src/Http/Controllers/SensorWizardController.php \
+if grep -q "planFromOutsidePoint" src/Domain/Sensors/RadarCalibrationPlanner.php \
+    && grep -q "outside_measure" src/Http/Controllers/SensorWizardController.php \
     && grep -q "persistCalibration" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php; then
-    pass "F104: dominio y persistencia cableados"
+    pass "F104.2: dominio, medición exterior y persistencia cableados"
 else
-    fail "F104: cableado" "faltan planMidpoint/RadarBoundaryScan/persistCalibration"
+    fail "F104.2: cableado" "faltan planFromOutsidePoint/outside_measure/persistCalibration"
 fi
 
-if grep -q "start_scan" public/assets/sensor-wizard-v2.js \
-    && grep -q "finish_scan" public/assets/sensor-wizard-v2.js \
-    && grep -q "start_verify" public/assets/sensor-wizard-v2.js \
-    && grep -q "finish_verify" public/assets/sensor-wizard-v2.js; then
-    pass "F104: UI con barrido y verificación exterior"
+if grep -q "start_verify" public/assets/sensor-wizard-v2.js \
+    && grep -q "finish_verify" public/assets/sensor-wizard-v2.js \
+    && ! grep -q "hasta que el radar te pierda" public/assets/sensor-wizard-v2.js \
+    && ! grep -q "hasta que la app te pierda" public/assets/sensor-tests-v2.json; then
+    pass "F104.2: UI mide el punto exterior sin caminar hasta perder"
 else
-    fail "F104: UI" "faltan acciones del flujo nuevo"
+    fail "F104.2: UI" "quedan textos o acciones del barrido"
 fi
 
-if grep -q "OUTSIDE_SCAN" src/Http/Controllers/SensorWizardController.php \
+if grep -q "OUTSIDE_MEASURE" src/Http/Controllers/SensorWizardController.php \
     && grep -q "OUTSIDE_VERIFY" src/Http/Controllers/SensorWizardController.php \
     && grep -q "no_distance_separation" src/Http/Controllers/SensorWizardController.php; then
-    pass "F104: máquina de estados con frontera y parada segura"
+    pass "F104.2: máquina de estados con punto exterior y parada segura"
 else
-    fail "F104: estados" "faltan OUTSIDE_SCAN/OUTSIDE_VERIFY/no_distance_separation"
+    fail "F104.2: estados" "faltan OUTSIDE_MEASURE/OUTSIDE_VERIFY/no_distance_separation"
 fi
 
 if ! grep -q "El último evento de la puerta es antiguo" src/Http/Controllers/SensorWizardController.php; then
-    pass "F104: polaridad no exige un evento reciente (puerta cerrada confirmada)"
+    pass "F104.2: polaridad no exige un evento reciente (puerta cerrada confirmada)"
 else
-    fail "F104: polaridad" "sigue rechazando eventos antiguos"
+    fail "F104.2: polaridad" "sigue rechazando eventos antiguos"
 fi
 
 if [ "$SERVER_UP" = true ]; then
@@ -6940,25 +6940,25 @@ base = {
     "plan": ["radar_inside", "radar_outside"],
     "calibration": {"initial_settings": {"maximum_range": 6, "radar_sensitivity": 7}},
     "calibration_session": {
-        "version": 3, "model": "boundary_scan_v1", "config_version": 1,
-        "phase": "OUTSIDE_SCAN", "state": "IDLE",
+        "version": 3, "model": "outside_point_v1", "config_version": 1,
+        "phase": "OUTSIDE_MEASURE", "state": "IDLE",
         "current": {"maximum_range": 6, "radar_sensitivity": 7},
         "inside_valid": {"sufficient": True, "detected": True, "config_version": 1},
-        "inside_ref": {"reference": 3.0, "quality": "good",
-                        "distance": {"max": 3.0, "quality": "good"}},
-        "outside_scan": None, "outside_valid": None, "outside_pass": None,
+        "inside_ref": {"reference": 1.0, "quality": "good",
+                        "distance": {"max": 1.0, "quality": "good"}},
+        "outside_measure": None, "outside_valid": None, "outside_pass": None,
         "reentry": None, "last_measurement": None, "calibration": None,
         "candidates": [], "active_operation": None, "operations": [], "measurements": [],
     },
 }
 json.dump(base, open(sys.argv[1], "w"))
 PYFIX
-    F104_SCAN=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
-    F104_SCAN_OK=$(printf '%s' "$F104_SCAN" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('model')=='boundary_scan_v1' and d.get('phase')=='OUTSIDE_SCAN' and 'start_scan' in a else 'bad')" 2>/dev/null)
-    if [ "$F104_SCAN_OK" = "ok" ]; then
-        pass "F104: radar/state expone barrido y start_scan"
+    F104_OUT=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
+    F104_OUT_OK=$(printf '%s' "$F104_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('model')=='outside_point_v1' and d.get('phase')=='OUTSIDE_MEASURE' and 'start_measure' in a and 'start_scan' not in a else 'bad')" 2>/dev/null)
+    if [ "$F104_OUT_OK" = "ok" ]; then
+        pass "F104.2: radar/state expone punto exterior y start_measure"
     else
-        fail "F104: radar/state" "$(printf '%s' "$F104_SCAN" | head -c 300)"
+        fail "F104.2: radar/state" "$(printf '%s' "$F104_OUT" | head -c 300)"
     fi
 
     python3 - "$F104_FIX" <<'PYFIX'
@@ -6970,34 +6970,37 @@ s["result"] = "no_distance_separation"
 json.dump(d, open(sys.argv[1], "w"))
 PYFIX
     F104_STOP=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
-    F104_STOP_OK=$(printf '%s' "$F104_STOP" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin separación por distancia' and 'start_scan' in a and 'restore' in a else 'bad')" 2>/dev/null)
+    F104_STOP_OK=$(printf '%s' "$F104_STOP" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin separación por distancia' and 'start_measure' in a and 'restore' in a else 'bad')" 2>/dev/null)
     if [ "$F104_STOP_OK" = "ok" ]; then
-        pass "F104: sin separación → parar y ofrecer repetir/restaurar"
+        pass "F104.2: sin separación → parar y ofrecer repetir/restaurar"
     else
-        fail "F104: parada segura" "$(printf '%s' "$F104_STOP" | head -c 300)"
+        fail "F104.2: parada segura" "$(printf '%s' "$F104_STOP" | head -c 300)"
     fi
 
     python3 - "$F104_FIX" <<'PYFIX'
 import json, sys
 d = json.load(open(sys.argv[1]))
 s = d["calibration_session"]
-s["state"] = "SCAN_READY"
+s["phase"] = "OUTSIDE_VERIFY"
+s["state"] = "VERIFY_READY"
 s["result"] = None
-s["active_operation"] = {"operation_id": "op-f104", "kind": "SCAN", "state": "MEASURING",
-    "window_start": "2026-10-30T12:00:00Z", "window_end": "2026-10-30T12:01:00Z",
+s["outside_measure"] = {"sufficient": True, "detected": True,
+    "distance": {"median": 1.5, "quality": "good"}}
+s["active_operation"] = {"operation_id": "op-f104v", "kind": "VERIFY", "state": "MEASURING",
+    "window_start": "2026-10-30T12:00:00Z", "window_end": "2026-10-30T12:00:20Z",
     "config_version": 1, "seed": {}}
 json.dump(d, open(sys.argv[1], "w"))
 PYFIX
     F104_READY=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
-    F104_READY_OK=$(printf '%s' "$F104_READY" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if 'finish_scan' in a else 'bad')" 2>/dev/null)
+    F104_READY_OK=$(printf '%s' "$F104_READY" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if 'finish_verify' in a and (d.get('outside_measure') or {}).get('detected') is True else 'bad')" 2>/dev/null)
     if [ "$F104_READY_OK" = "ok" ]; then
-        pass "F104: frontera detectada → finish_scan automático"
+        pass "F104.2: verificación exterior lista → finish_verify automático"
     else
-        fail "F104: SCAN_READY" "$(printf '%s' "$F104_READY" | head -c 300)"
+        fail "F104.2: VERIFY_READY" "$(printf '%s' "$F104_READY" | head -c 300)"
     fi
     rm -f "$F104_FIX" "run/sensores/locks/f104-state-fixture.lock"
 else
-    skip "F104 HTTP" "servidor no disponible"
+    skip "F104.2 HTTP" "servidor no disponible"
 fi
 
 # =============================================================================

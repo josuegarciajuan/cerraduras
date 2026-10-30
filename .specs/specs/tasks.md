@@ -11120,22 +11120,22 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] RF-213..RF-218, diseño §104, contratos §F104.
 
 ## TSK-F104-02: Dominio
-- [x] `RadarBoundaryScan` (transición, frontera, ausencia mantenida, config).
-- [x] `RadarCalibrationPlanner::planMidpoint()` (punto medio, márgenes, parada
-      segura, sensibilidad, reentrada, dedupe).
-- [x] Units `RadarBoundaryScanTest` y ampliación de `RadarCalibrationTest`.
+- [x] `RadarMeasurement` con respaldo de distancia del seed (`state_hold`).
+- [x] `RadarCalibrationPlanner::planFromOutsidePoint()` (punto medio I/P,
+      márgenes, `outside_already_clear`, parada segura, sensibilidad).
+- [x] Units `RadarMeasurementTest`, `RadarCalibrationTest` y `RadarWizardV3Test`.
 
 ## TSK-F104-03: Controlador
-- [x] Sesión v3 (`boundary_scan_v1`), fases `OUTSIDE_SCAN`/`OUTSIDE_VERIFY`.
-- [x] Acciones `start_scan`, `finish_scan`, `start_verify`, `finish_verify`.
-- [x] Cierre automático en `radar/state` (`SCAN_READY`/`VERIFY_READY`).
+- [x] Sesión v3 (`outside_point_v1`), fases `OUTSIDE_MEASURE`/`OUTSIDE_VERIFY`.
+- [x] Acciones `start_measure`/`finish_measure` para el punto exterior.
+- [x] `outside_already_clear`: si no detecta, mantiene el alcance.
 - [x] Persistencia de la calibración confirmada y `config_version` condicional.
-- [x] Restauración segura y compatibilidad con sesiones v2.
+- [x] Restauración segura y migración de `OUTSIDE_SCAN`.
 
 ## TSK-F104-04: UI
-- [x] Catálogo y textos del barrido; sin «Ajustar y volver a medir».
-- [x] Auto-cierre de barrido/verificación y lectura de `I/B/R`.
-- [x] Mensaje de parada por `no_distance_separation`.
+- [x] Catálogo y textos del punto exterior; sin «camina hasta que te pierda».
+- [x] Medición estática y lectura de `I/P/R`.
+- [x] Mensajes de `outside_already_clear` y `no_distance_separation`.
 
 ## TSK-F104-05: Verificación
 - [x] `RadarWizardV3Test` + `SensorCalibrationValidatorTest` v3.

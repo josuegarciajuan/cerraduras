@@ -15,8 +15,8 @@ namespace App\Domain\Sensors;
 final class RadarEvidencePolicy
 {
     /**
-     * @param array{value?:?string,settings_at?:?string,settings_age_seconds?:?int} $raw
-     * @return array{state:?string,occurred_at:?string,age_seconds:?int,fresh:bool}
+     * @param array{value?:?string,settings_at?:?string,settings_age_seconds?:?int,settings?:array<string,mixed>} $raw
+     * @return array{state:?string,occurred_at:?string,age_seconds:?int,fresh:bool,distance:?float}
      */
     public static function seed(array $raw, int $staleSeconds): array
     {
@@ -27,12 +27,16 @@ final class RadarEvidencePolicy
         $age = isset($raw['settings_age_seconds']) && is_numeric($raw['settings_age_seconds'])
             ? max(0, (int) $raw['settings_age_seconds']) : null;
         $fresh = $state !== '' && $age !== null && $age <= max(1, $staleSeconds);
+        $distance = $raw['settings']['target_distance'] ?? null;
         return [
             'state' => $state !== '' ? $state : null,
             'occurred_at' => isset($raw['settings_at']) && $raw['settings_at'] !== null
                 ? (string) $raw['settings_at'] : null,
             'age_seconds' => $age,
             'fresh' => $fresh,
+            // F104.2: si el radar está en state_hold, la última distancia
+            // conocida sigue siendo la referencia del punto actual.
+            'distance' => is_numeric($distance) && (float) $distance > 0 ? (float) $distance : null,
         ];
     }
 

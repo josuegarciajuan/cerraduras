@@ -178,7 +178,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
 | **F102 Motor de calibración por operaciones** | **BLOCK 68B + units F102** | **Completado (código); prueba física pendiente** |
 | **F103 Evidencia event-driven del calibrador de radar** | **BLOCK 68B + units F103** | **Completado (código); prueba física pendiente** |
-| **F104 Autocalibración del radar por barrido y punto medio** | **BLOCK 68C + units F104** | **Completado (código); prueba física pendiente** |
+| **F104 Autocalibración del radar por punto exterior y punto medio** | **BLOCK 68C + units F104** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
@@ -294,37 +294,37 @@ hasta el momento (regresión completa). Debe ejecutarse:
   distinguen "sin reportes nuevos" de "sensor sin datos". Sin polling Tuya ni
   migración.
 
-### F104 — Autocalibración del radar por barrido y punto medio (RF-213…RF-218)
+### F104 — Autocalibración del radar por punto exterior y punto medio (RF-213…RF-218)
 
-- **Motivo**: en el paso 3, si el radar detectaba fuera, la app pedía pulsar
-  `Ajustar y volver a medir`; el planificador usaba `outsideMin - 0.3` o bajaba
-  el alcance en pasos de 0,75 m y, si eso rompía el interior, devolvía
-  `reposition` sin probar la sensibilidad. Si no detectaba fuera, no había
-  distancia y no se calculaba nada. Resultado: bucle de mediciones manuales.
-- **Barrido (RF-213)**: `RadarBoundaryScan` resume la ventana; `B` es el máximo
-  de las últimas 3 distancias válidas con `PRESENT` antes del primer `ABSENT`,
-  con ausencia mantenida (6 s o 2 reportes). `start_scan` exige `PRESENT` crudo.
-- **Punto medio (RF-214)**: `I` = referencia interior; si `B - I >= 0.45 m`,
-  `R = snap((I+B)/2, 0.15)` acotado a `[I+0.15, B-0.15]`. Si el punto exterior
-  detectado `P` está más cerca que `I`, se detiene con `no_distance_separation`;
-  no se baja la sensibilidad a ciegas.
-- **Automático (RF-215)**: `finish_scan` publica el candidato, espera confirmación
-  por push, estabiliza y pasa a `OUTSIDE_VERIFY`. La calibración confirmada se
-  persiste en `devices.meta_json.calibration`.
+- **Motivo**: el primer enfoque de F104 pedía caminar hasta que el radar
+  perdiera la presencia; con alcance 6 m y puerta a 1 m obligaba a alejarse
+  varios metros. El flujo correcto mide el punto exterior elegido.
+- **Punto exterior (RF-213)**: `OUTSIDE_MEASURE` abre 20-30 s en el punto donde
+  NO debe detectarse. `P` sale de `target_distance` mientras el radar detecta;
+  si está en `state_hold`, se usa la última distancia del seed. No se camina.
+- **Punto medio (RF-214)**: `I` = referencia interior; si `P - I >= 0.45 m`,
+  `R = snap((I+P)/2, 0.15)` acotado a `[I+0.15, P-0.15]`. Si `P <= I`, se
+  detiene con `no_distance_separation`; no se baja la sensibilidad a ciegas.
+- **Sin detección exterior**: si el radar ya no detecta en el punto, no hay
+  `P`; se mantiene el alcance actual (`outside_already_clear`) y se sigue con
+  la pasada.
+- **Automático (RF-215)**: `finish_measure` publica el candidato, espera
+  confirmación por push, estabiliza y pasa a `OUTSIDE_VERIFY`. La calibración
+  confirmada se persiste en `devices.meta_json.calibration`.
 - **Verificación (RF-216)**: ventana exterior de 20-30 s; si sigue detectando y
   hay separación válida, baja sensibilidad un paso (máx. 3 intentos). Reentrada
   fallida sube sensibilidad/alcance o se detiene. Se mantiene la pasada de 3.
-- **UI/contrato (RF-217)**: sesión v3 `boundary_scan_v1`, fases `OUTSIDE_SCAN` y
-  `OUTSIDE_VERIFY`, acciones `start_scan/finish_scan/start_verify/finish_verify`,
-  `scan/scan_preview/calibration` aditivos. Cierre automático en `radar/state`.
+- **UI/contrato (RF-217)**: sesión v3 `outside_point_v1`, fases
+  `OUTSIDE_MEASURE`/`OUTSIDE_VERIFY`, `outside_measure` y `calibration`
+  aditivos. La medición exterior usa `start_measure`/`finish_measure`.
 - **Restauración (RF-218)**: `restore` vuelve al inicio del paso y limpia la
-  evidencia fallida; las sesiones v2 conservan el motor anterior.
+  evidencia fallida; `OUTSIDE_SCAN` se migra a `OUTSIDE_MEASURE`.
 - **Polaridad (F104.1)**: al empezar, la puerta se asume cerrada. `door/polarity`
   usa el último reporte del SNZB-04P aunque sea antiguo (es edge-triggered), sin
   pedir «abre y cierra una vez».
-- **Verificación**: units `RadarBoundaryScanTest`, `RadarWizardV3Test`,
-  ampliaciones de `RadarCalibrationTest` y `SensorCalibrationValidatorTest`;
-  BLOCK 68C del runner. Sin migración ni polling a Tuya.
+- **Verificación**: units `RadarMeasurementTest`, `RadarCalibrationTest`,
+  `RadarWizardV3Test`, `SensorCalibrationValidatorTest`; BLOCK 68C del runner.
+  Sin migración ni polling a Tuya.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 

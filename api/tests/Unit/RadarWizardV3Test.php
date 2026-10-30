@@ -39,13 +39,13 @@ function sess(array $overrides = []): array
 {
     return array_replace_recursive([
         'version' => 3,
-        'model' => 'boundary_scan_v1',
-        'phase' => 'OUTSIDE_SCAN',
+        'model' => 'outside_point_v1',
+        'phase' => 'OUTSIDE_MEASURE',
         'state' => 'IDLE',
         'config_version' => 1,
         'inside_ref' => ['reference' => 3.0, 'quality' => 'good', 'distance' => ['max' => 3.0]],
         'inside_valid' => ['sufficient' => true, 'detected' => true, 'config_version' => 1],
-        'outside_scan' => ['sufficient' => true, 'boundary_distance' => 4.2, 'reason' => 'boundary_found'],
+        'outside_measure' => ['sufficient' => true, 'detected' => true, 'distance' => ['median' => 1.5, 'quality' => 'good']],
         'outside_valid' => null,
         'outside_pass' => null,
         'reentry' => null,
@@ -58,8 +58,8 @@ function sess(array $overrides = []): array
 
 echo "Radar wizard v3 (F104)\n";
 
-same('scan IDLE → empezar barrido', $next->invoke($controller, sess()),
-    ['start_scan', 'restore', 'cancel']);
+same('outside measure IDLE → medir punto exterior', $next->invoke($controller, sess()),
+    ['start_measure', 'restore', 'cancel']);
 same('verify IDLE → verificar fuera', $next->invoke($controller, sess(['phase' => 'OUTSIDE_VERIFY'])),
     ['start_verify', 'restore', 'cancel']);
 same('pass IDLE → medir pasada', $next->invoke($controller, sess(['phase' => 'OUTSIDE_PASS'])),
@@ -67,15 +67,13 @@ same('pass IDLE → medir pasada', $next->invoke($controller, sess(['phase' => '
 same('reentry IDLE → entrar', $next->invoke($controller, sess(['phase' => 'REENTRY'])),
     ['start_reentry', 'restore', 'cancel']);
 
-same('SCAN_READY → cerrar barrido', $next->invoke($controller, sess(['state' => 'SCAN_READY'])),
-    ['finish_scan', 'cancel']);
 same('VERIFY_READY → cerrar verificación', $next->invoke($controller, sess([
     'phase' => 'OUTSIDE_VERIFY', 'state' => 'VERIFY_READY'])), ['finish_verify', 'cancel']);
 
-$scanOp = ['operation_id' => 'op-1', 'kind' => 'SCAN', 'state' => 'MEASURING',
+$measureOp = ['operation_id' => 'op-1', 'kind' => 'MEASURE', 'state' => 'MEASURING',
     'window_end' => gmdate('Y-m-d\TH:i:s\Z', time() + 30)];
-same('SCAN midiendo → solo cancelar', $next->invoke($controller, sess([
-    'state' => 'MEASURING', 'active_operation' => $scanOp])), ['cancel']);
+same('punto exterior midiendo → solo cancelar', $next->invoke($controller, sess([
+    'state' => 'MEASURING', 'active_operation' => $measureOp])), ['cancel']);
 
 $verifyOp = ['operation_id' => 'op-2', 'kind' => 'VERIFY', 'state' => 'MEASURING',
     'window_end' => gmdate('Y-m-d\TH:i:s\Z', time() - 1), 'published_at' => gmdate('Y-m-d\TH:i:s\Z')];
@@ -83,9 +81,9 @@ same('VERIFY vencido → cerrar', $next->invoke($controller, sess([
     'phase' => 'OUTSIDE_VERIFY', 'state' => 'MEASURING', 'active_operation' => $verifyOp])),
     ['finish_verify', 'cancel']);
 
-same('STOPPED scan → repetir barrido', $next->invoke($controller, sess([
+same('STOPPED exterior → repetir medición', $next->invoke($controller, sess([
     'state' => 'STOPPED', 'result' => 'no_distance_separation'])),
-    ['start_scan', 'restore', 'cancel']);
+    ['start_measure', 'restore', 'cancel']);
 same('STOPPED verify → repetir verificación', $next->invoke($controller, sess([
     'phase' => 'OUTSIDE_VERIFY', 'state' => 'STOPPED', 'result' => 'no_distance_separation'])),
     ['start_verify', 'restore', 'cancel']);
@@ -97,17 +95,17 @@ same('texto sin separación', $noSep['title'], 'Sin separación por distancia');
 check('texto avisa de no bajar sensibilidad a ciegas',
     str_contains($noSep['instruction'], 'No voy a bajar la sensibilidad a ciegas'));
 
-$scanCopy = $copy->invoke($controller, sess(['state' => 'MEASURING',
-    'active_operation' => $scanOp]));
-same('texto barrido', $scanCopy['title'], 'Barrido de salida');
-check('texto pide caminar hasta perder', str_contains($scanCopy['instruction'], 'hasta que el radar te pierda'));
+$measureCopy = $copy->invoke($controller, sess(['state' => 'MEASURING',
+    'active_operation' => $measureOp]));
+same('texto medición exterior', $measureCopy['title'], 'Midiendo el punto exterior');
+check('texto pide quedarse donde no debe detectar', str_contains($measureCopy['instruction'], 'NO quieres que te detecte'));
 
 $verifyCopy = $copy->invoke($controller, sess(['phase' => 'OUTSIDE_VERIFY']));
 same('texto verificación', $verifyCopy['title'], 'Verificar el punto exterior');
 check('texto pide punto sin detección', str_contains($verifyCopy['instruction'], 'NO quieres que te detecte'));
 
-$cdScan = $countdown->invoke($controller, sess(['state' => 'MEASURING', 'active_operation' => $scanOp]));
-same('countdown barrido', $cdScan['kind'], 'scan');
+$cdMeasure = $countdown->invoke($controller, sess(['state' => 'MEASURING', 'active_operation' => $measureOp]));
+same('countdown medición exterior', $cdMeasure['kind'], 'measure');
 $cdVerify = $countdown->invoke($controller, sess(['phase' => 'OUTSIDE_VERIFY',
     'state' => 'MEASURING', 'active_operation' => $verifyOp]));
 same('countdown verificación', $cdVerify['kind'], 'verify');
