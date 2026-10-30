@@ -25026,3 +25026,39 @@ botón de reentrada: muestra que el candidato no vale y ofrece **ajustar de nuev
 ajustes iniciales**. El planificador recibe `reentry_failed` y no sigue bajando
 el alcance. El sondeo de eventos actualiza solo los textos del temporizador y la
 presencia; no reconstruye la tarjeta en cada reporte.
+
+## F101 — Edición fiable de dispositivos en el panel
+
+### Diagnóstico
+Alpine 3.14 inicializa las directivas del contenido inyectado con `x-html`
+(`el.innerHTML = ...; initTree(el)`). Por tanto `@click` y `x-model` del formulario
+sí funcionaban: lo único que no reaccionaba era la clase `act`, porque se generaba
+como texto fijo al abrir el modal:
+
+```js
+// Antes: estado congelado al construir el HTML
+'<button class="seg-btn'+(this.devForm.subtype===v?' act':'')+'" ...>'
+```
+
+### Corrección
+1. Los segmentos usan `class="seg-btn"` + `:class="devForm.subtype==='X'?'act':''"` y
+   `:aria-checked`, igual que el tipo de dispositivo. El valor de estado sigue siendo
+   `devForm.kind` / `devForm.subtype`.
+2. `openDeviceForm` captura `effectiveSubtype` (variante confirmada) y muestra un aviso
+   con la variante efectiva, la operación solicitada y la capacidad OTA del equipo.
+3. `saveDevice` solicita la OTA **antes** del `PATCH` cuando la variante cambia. Si la
+   OTA falla, aborta sin guardar el resto. Si el `PATCH` falla, cancela la operación
+   recién creada (`WAITING`). Si la variante ya estaba solicitada, no crea otra.
+4. `api()` adjunta `error.code`; `deviceSaveError()` traduce los códigos de dominio.
+5. La tarjeta permite cancelar una operación `WAITING` (`cancelFirmwareOp`).
+
+### Campos
+ID externo, etiqueta, transporte, pack y ficha técnica mantienen sus bindings
+`x-model`. La ficha se reconstruye borrando solo las claves declaradas en `KIND_META`
+y conservando el resto de `meta` (runtime). La variante no se envía en el `PATCH`
+cuando cambia: la autoridad sigue siendo `FirmwareOtaService`.
+
+### Verificación
+`php tests/Unit/PanelDeviceEditTest.php` (31 checks estáticos) + regresión de
+`PanelProvisioningUiTest`, `FirmwareOtaTest` y `EspVariantTest`. Sin consultas a
+Tuya ni cambios de contrato.

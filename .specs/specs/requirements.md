@@ -12586,3 +12586,43 @@ esperada.
   tales y requieren una carga inicial por cable. WiFi/credenciales sobreviven a la
   actualización y al rollback. Se preservan QR, secuencias eléctricas, SSE, LEDs,
   watchdog y heartbeat. No se introduce ningún sondeo periódico a Tuya.
+
+## F101 — Edición fiable de dispositivos en el panel
+
+**Trazabilidad:** RF-201..RF-206 · `design.md §F101` · `contracts.md §F101`
+
+### Objetivo
+Corregir el formulario de edición de dispositivos del panel (`/panel` → Dispositivos)
+para que cualquier campo pueda editarse y guardarse de forma verificable. El síntoma
+reportado fue que, al editar un dispositivo RPI, pulsar la otra variante del ESP no
+cambiaba la selección visible.
+
+### Causa raíz
+La clase `act` de los segmentos de tipo y variante se concatenaba al construir el HTML
+del modal, una sola vez al abrirlo. El `@click` sí actualizaba `devForm.subtype`, pero
+el botón no tenía ningún binding reactivo: la interfaz seguía mostrando la variante
+anterior. Además, el guardado aplicaba el `PATCH` de los demás campos antes de solicitar
+la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y silencioso.
+
+### Requisitos
+
+- **RF-201 — Selección reactiva.** Los segmentos de tipo de dispositivo y variante del
+  ESP reflejan el valor actual de `devForm` mediante `:class`/`:aria-checked`; el cambio
+  es inmediato con ratón y teclado, sin recargar el panel.
+- **RF-202 — Todos los campos editables.** ID externo, etiqueta, origen/transporte,
+  pack y ficha técnica del tipo se guardan y se pueden volver a editar. La ficha
+  reemplaza solo sus claves declaradas y conserva los metadatos de runtime
+  (`ota_capable`, telemetría del actuador, etc.).
+- **RF-203 — Guardado atómico de la variante.** Si la variante elegida difiere de la
+  efectiva, la operación OTA se solicita antes del `PATCH`. Si la operación falla, no se
+  aplica ningún otro cambio. Si el `PATCH` falla después de crear la operación, esta se
+  cancela para no dejar un cambio a medias.
+- **RF-204 — Efectiva vs solicitada.** El formulario muestra la variante efectiva
+  confirmada, la variante ya solicitada y su estado. Volver a guardar la misma variante
+  solicitada no crea otra operación. Una operación `WAITING` puede cancelarse desde la
+  tarjeta del dispositivo.
+- **RF-205 — Mensajes de error.** La API del panel conserva `error.code` y el guardado
+  traduce los errores de dominio: sin OTA, sin firmware publicado, operación activa,
+  ID externo duplicado, transporte o variante inválidos.
+- **RF-206 — Compatibilidad.** Sin cambios de contrato HTTP, sin nuevas rutas, sin
+  polling a Tuya y sin afectar a la tarjeta del dispositivo ni a la regresión F96–F100.

@@ -15584,3 +15584,20 @@ Solo `ok:true` con variante y versión coincidentes consolida `devices.subtype`.
 ### Errores
 `firmware_operation_mismatch` (403), `firmware_invalid_transition` (409),
 `firmware_completion_requires_confirmation` (422), `firmware_binary_corrupt` (409).
+
+## F101 — Edición fiable de dispositivos en el panel
+
+Sin rutas ni cuerpos nuevos. El panel compone los contratos F100 existentes:
+
+1. `POST /api/v1/devices/{id}/firmware-update` con `{"variant":"IMAN"}` cuando la
+   variante difiere de la efectiva. Si responde `422`/`409`, no se envía el `PATCH`.
+2. `PATCH /api/v1/devices/{id}` con `external_id`, `label`, `pack_id`, `transport` y
+   `meta`. `subtype` solo se envía cuando **no** cambia.
+3. `POST /api/v1/firmware-operations/{id}/cancel` para compensar un `PATCH` fallido y
+   para que el operador cancele una operación `WAITING`.
+
+Invariantes:
+- `devices.subtype` sigue siendo la variante efectiva; la solicitada vive en la operación.
+- Un fallo de OTA nunca deja aplicados cambios parciales del formulario.
+- El panel muestra el `error.code` de dominio traducido; no inventa estados.
+- Sin polling a Tuya.

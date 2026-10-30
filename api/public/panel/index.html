@@ -213,7 +213,7 @@ function crm(){return{
   devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',subtype:'CERRADURA',external_id:'',label:'',pack_id:null,transport:'UNKNOWN',meta:{}},roomForm:{code:'',room_type_id:null,notes:'',pack_id:null},
 
   async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);await this.loadFirmwareOps();this._fwTimer=setInterval(()=>{this.refreshFirmwareOps();this.checkAnomalyAlerts();this.computeWorkerAlerts()},5000)}catch(e){window.location.href='/panel/login'}},
-  async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
+  async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));let e=new Error(d.error?.message||('Error '+r.status));e.code=d.error?.code||null;e.status=r.status;throw e}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
   async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
    nav(p){this.p=p;this.modal.show=false;if(this._healthTimer){clearInterval(this._healthTimer);this._healthTimer=null}if(this._factoryTimer){clearInterval(this._factoryTimer);this._factoryTimer=null}if(p==='ro'){this.monTab='rooms';this.loadRoomTypes();this.loadDeviceStatus()}if(p==='dv')this.loadDevices();if(p==='pk')this.loadPacks();if(p==='st')this.loadStays();if(p==='qr')this.loadQrs();if(p==='dbts')this.loadDebts();if(p==='w')this.loadWorkers();if(p==='ky'){this.loadWorkers();this.loadWorkerRoles();this.loadRoomTypes();this.loadKeys()}if(p==='nc'){this.loadNfcCards()}if(p==='ac'){this.loadWorkers();this.loadAccessKeysForFilter();this.loadKeyAccesses()}if(p==='fd'){this.loadFactoryDevices();this._factoryTimer=setInterval(()=>this.loadFactoryDevices(true),5000)}if(p==='wr')this.loadWorkerRoles();if(p==='mon')this.loadMonitor();if(p==='us')this.loadCrmUsers();if(p==='cl')this.loadApiClients();if(p==='an'){this.loadAnomalies();this.loadEnabledTypes()}if(p==='db'){this.loadDashboard();this.loadAnomalySummary()}if(p==='he'){this.loadHealth();this._healthTimer=setInterval(function(){this.loadHealth()}.bind(this),15000)}if(p==='cfg')this.loadSettings()},
@@ -759,7 +759,8 @@ function crm(){return{
     if(op){
       let col=op.finished?(op.status==='COMPLETED'?'#62c99b':op.status==='UNCONFIRMED'?'#e0b94e':'#e0556a'):'#7d9ce8';
       let pct=(op.status==='DOWNLOADING'||op.status==='VALIDATING')?' '+op.progress_pct+'%':'';
-      fwStatus='<span class="tchip" style="--tc:'+col+';--tcbg:rgba(108,142,224,.14)" title="Cambio solicitado: '+this.esc(op.to_variant+' '+op.to_version)+'">'+this.esc(op.status_label||op.status)+pct+'</span>';
+      let cancel=(!op.finished&&op.status==='WAITING')?' <button class="icon-btn" title="Cancelar actualización de firmware" @click="cancelFirmwareOp('+d.id+')">✕</button>':'';
+      fwStatus='<span class="tchip" style="--tc:'+col+';--tcbg:rgba(108,142,224,.14)" title="Cambio solicitado: '+this.esc(op.to_variant+' '+op.to_version)+'">'+this.esc(op.status_label||op.status)+pct+'</span>'+cancel;
     }
     return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+fwStatus+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+espTel+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
   },
@@ -869,13 +870,27 @@ function crm(){return{
     await this.loadPacks();
     let d=id?this.devices.find(x=>x.id===id):null;
     let kind=d?d.kind:'RPI';
-    this.devForm={kind:kind,subtype:d?(d.subtype||'CERRADURA'):'CERRADURA',external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),transport:d?(d.transport||'UNKNOWN'):'UNKNOWN',meta:d&&d.meta?Object.assign({},d.meta):{}};
+    this.devForm={kind:kind,subtype:d?(d.subtype||'CERRADURA'):'CERRADURA',effectiveSubtype:d?(d.subtype||'CERRADURA'):null,external_id:d?d.external_id:'',label:d?(d.label||''):'',pack_id:d?d.pack_id:(presetPackId||null),transport:d?(d.transport||'UNKNOWN'):'UNKNOWN',meta:d&&d.meta?Object.assign({},d.meta):{}};
     let that=this;
     let seg=this.DEV_KINDS.map(k=>{
       let dis=d?' disabled':'';
-      return'<button type="button" class="seg-btn'+(kind===k?' act':'')+'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
+      return'<button type="button" role="radio" aria-checked="false" class="seg-btn" :class="devForm.kind===\''+k+'\'?\'act\':\'\'" :aria-checked="devForm.kind===\''+k+'\'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
     }).join('');
-    let subtypeSeg=this.ESP_VARIANTS.map(v=>'<button type="button" class="seg-btn'+(this.devForm.subtype===v?' act':'')+'" @click="devForm.subtype=\''+v+'\'">'+that.ESP_VARIANT_NAME[v]+'</button>').join('');
+    let haveCatalogue=Array.isArray(this.fwReleases)&&this.fwReleases.length>0;
+    let subtypeSeg=this.ESP_VARIANTS.map(v=>{
+      let hasRelease=!haveCatalogue||!!this.fwReleases.find(r=>r.variant===v);
+      return'<button type="button" role="radio" aria-checked="false" class="seg-btn" :class="devForm.subtype===\''+v+'\'?\'act\':\'\'" :aria-checked="devForm.subtype===\''+v+'\'" data-variant="'+v+'"'+(hasRelease?'':' title="Sin firmware publicado para esta variante"')+' @click="devForm.subtype=\''+v+'\'">'+that.ESP_VARIANT_NAME[v]+(hasRelease?'':' <span class="dim">(sin firmware)</span>')+'</button>';
+    }).join('');
+    let activeOp=id?(this.fwOps[id]||null):null;
+    let variantHint='<p class="field-hint">Debe coincidir con el sketch cargado. No cambia el hardware por sí solo.</p>';
+    if(d&&kind==='RPI'){
+      let eff=this.ESP_VARIANT_NAME[d.subtype||'CERRADURA']||(d.subtype||'CERRADURA');
+      let bits=['Variante efectiva confirmada: <b>'+this.esc(eff)+'</b>.'];
+      if(activeOp&&!activeOp.finished)bits.push('Cambio solicitado a <b>'+this.esc(this.ESP_VARIANT_NAME[activeOp.to_variant]||activeOp.to_variant)+'</b> · '+this.esc(activeOp.status_label||activeOp.status)+'.');
+      if(d.meta&&(d.meta.ota_capable===true||d.meta.ota_protocol))bits.push('El cambio se aplica cuando el equipo reinicia con el firmware nuevo.');
+      else bits.push('El equipo aún no anuncia OTA: el cambio requiere una carga inicial por cable.');
+      variantHint='<p class="field-hint">'+bits.join(' ')+'</p>';
+    }
     let packOpts=(d?'<option value="">Sin pack</option>':'')+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
     if(!this.packs.length&&!d){packOpts='<option value="">Primero crea un pack</option>'}
     let transportOpts=[['UNKNOWN','Sin declarar'],['ZIGBEE2MQTT','Zigbee2MQTT local'],['TUYA','Tuya cloud'],['LOCAL','ESP32 / local'],['SIMULATED','Simulado']].map(function(x){return'<option value="'+x[0]+'"'+(that.devForm.transport===x[0]?' selected':'')+'>'+x[1]+'</option>'}).join('');
@@ -889,7 +904,7 @@ function crm(){return{
     let hint=d?'<p class="field-hint">El tipo no se puede cambiar: es la identidad física del hardware.</p>':'<p class="field-hint">'+that.KIND_HINT[kind]+'</p>';
     this.modal.content='<h2 id="modal-title">'+(d?'Editar dispositivo':'Nuevo dispositivo')+'</h2>'
       +'<div class="field"><label>Tipo de dispositivo</label><div class="seg" role="radiogroup" aria-label="Tipo de dispositivo">'+seg+'</div>'+hint+'</div>'
-      +'<div class="field" x-show="devForm.kind===\'RPI\'"><label>Variante del ESP</label><div class="seg" role="radiogroup" aria-label="Variante del ESP">'+subtypeSeg+'</div><p class="field-hint">Debe coincidir con el sketch cargado. No cambia el hardware por sí solo.</p></div>'
+      +'<div class="field" x-show="devForm.kind===\'RPI\'"><label>Variante del ESP</label><div class="seg" role="radiogroup" aria-label="Variante del ESP">'+subtypeSeg+'</div>'+variantHint+'</div>'
       +'<div class="field field--mono"><label for="dvf_ext">ID externo</label><input id="dvf_ext" x-model="devForm.external_id" placeholder="wbr3-2f01" autocomplete="off"><p class="field-hint">Identificador físico estable: chip, MAC o IEEE del dispositivo.</p></div>'
       +'<div class="field"><label for="dvf_label">Etiqueta</label><input id="dvf_label" x-model="devForm.label" placeholder="Zigbee · Puerta · almacenZigbee" autocomplete="off"><p class="field-hint">Opcional. Nombre legible para el personal.</p></div>'
       +'<div class="field"><label for="dvf_transport">Origen / transporte</label><select id="dvf_transport" x-model="devForm.transport">'+transportOpts+'</select><p class="field-hint">Se declara explícitamente; no se infiere del tipo ni del nombre. Para el pack Zigbee usa <b>Zigbee2MQTT local</b>.</p></div>'
@@ -906,35 +921,61 @@ function crm(){return{
     let prev=id?this.devices.find(x=>x.id===id):null;
     // Conserva metadatos de runtime (ota_capable, telemetría del actuador...)
     // que el formulario no edita; solo sustituye las claves declaradas.
-    let meta=(prev&&prev.meta)?Object.assign({},prev.meta):{};
+    let meta=(prev&&prev.meta)?Object.assign({},prev.meta):Object.assign({},(f.meta||{}));
     Object.keys(this.KIND_META[k]||{}).forEach(key=>{
       delete meta[key];
       let v=(f.meta||{})[key];
       if(v!==undefined&&v!==null&&String(v).trim()!=='')meta[key]=String(v).trim();
     });
     let transport=(f.transport||'UNKNOWN').toUpperCase();
-    let variantChanged=!!(id&&k==='RPI'&&prev&&(prev.subtype||'CERRADURA')!==(f.subtype||'CERRADURA'));
+    let targetVariant=f.subtype||'CERRADURA';
+    let effectiveVariant=f.effectiveSubtype||(prev?(prev.subtype||'CERRADURA'):targetVariant);
+    let variantChanged=!!(id&&k==='RPI'&&effectiveVariant!==targetVariant);
+    let activeOp=id?(this.fwOps[id]||null):null;
+    let variantAlreadyRequested=!!(variantChanged&&activeOp&&!activeOp.finished&&activeOp.to_variant===targetVariant);
+    let createdOp=null;
     try{
+      if(variantChanged&&!variantAlreadyRequested){
+        // La variante efectiva solo cambia con una operación OTA confirmada.
+        // Se solicita antes del PATCH para no dejar el resto de campos a medias.
+        let r=await this.api('/api/v1/devices/'+id+'/firmware-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({variant:targetVariant})});
+        createdOp=(r&&r.operation)||null;
+        if(createdOp)this.fwOps[id]=createdOp;
+      }
       if(id){
         let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,transport:transport,meta:meta};
-        if(k==='RPI'&&!variantChanged)body.subtype=f.subtype||'CERRADURA';
+        if(k==='RPI'&&!variantChanged)body.subtype=targetVariant;
         await this.api('/api/v1/devices/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(variantChanged){
-          let r=await this.api('/api/v1/devices/'+id+'/firmware-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({variant:f.subtype})});
-          if(r.operation)this.fwOps[id]=r.operation;
-          this.toastOk('Cambio solicitado: '+this.ESP_VARIANT_NAME[f.subtype]+'. Actualización en curso.');
-        }
       }else{
         let body={kind:k,external_id:f.external_id.trim(),pack_id:parseInt(f.pack_id),transport:transport,meta:meta};
-        if(k==='RPI')body.subtype=f.subtype||'CERRADURA';
+        if(k==='RPI')body.subtype=targetVariant;
         let d=await this.api('/api/v1/devices/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(f.label&&f.label.trim()){await this.api('/api/v1/devices/'+d.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:f.label.trim()})})}
       }
       this.modal.show=false;await this.loadPacks();
       if(this.p==='dv'){await this.loadDevices()}
       await this.loadFirmwareOps();
-      if(!variantChanged)this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
-    }catch(e){this.toastErr(e.message)}
+      if(variantChanged)this.toastOk('Dispositivo actualizado · cambio a '+this.ESP_VARIANT_NAME[targetVariant]+(variantAlreadyRequested?' ya solicitado':' solicitado')+'. Se aplicará al reiniciar con el firmware nuevo.');
+      else this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
+    }catch(e){
+      // Si la operación OTA ya se creó, se cancela para no dejar un cambio parcial.
+      if(createdOp){try{await this.api('/api/v1/firmware-operations/'+createdOp.id+'/cancel',{method:'POST'})}catch(_e){}delete this.fwOps[id]}
+      this.toastErr(this.deviceSaveError(e));
+    }
+  },
+  deviceSaveError(e){
+    let m={
+      ota_not_capable:'Este ESP no anuncia soporte OTA. La variante solo puede cambiarse con una carga por cable.',
+      firmware_release_not_found:'No hay firmware publicado para la variante elegida. Publica una versión antes de cambiar la variante.',
+      firmware_operation_active:'Ya hay una actualización de firmware en curso para este dispositivo. Cancélala y vuelve a intentarlo.',
+      firmware_update_required:'El cambio de variante requiere iniciar una actualización de firmware; vuelve a guardar.',
+      device_external_id_taken:'Otro dispositivo del mismo tipo ya usa ese ID externo.',
+      invalid_transport:'El origen o transporte seleccionado no es válido.',
+      invalid_external_id:'El ID externo no es válido.',
+      subtype_invalid:'La variante del ESP no es válida.',
+      device_not_rpi:'Solo los ESP pueden cambiar de variante.'
+    };
+    return m[e&&e.code]||(e&&e.message)||'No se pudo guardar el dispositivo';
   },
   async deleteDevice(id){
     if(!confirm('¿Eliminar este dispositivo?'))return;
@@ -964,7 +1005,16 @@ function crm(){return{
       let r=await this.api('/api/v1/devices/'+id+'/firmware-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({upgrade:true})});
       if(r.operation)this.fwOps[id]=r.operation;
       this.toastOk('Actualización solicitada');
-    }catch(e){this.toastErr(e.message)}
+    }catch(e){this.toastErr(this.deviceSaveError(e))}
+  },
+  async cancelFirmwareOp(id){
+    let op=this.fwOps[id];if(!op)return;
+    if(!confirm('¿Cancelar la actualización de firmware en curso?'))return;
+    try{
+      let r=await this.api('/api/v1/firmware-operations/'+op.id+'/cancel',{method:'POST'});
+      this.fwOps[id]=r;await this.loadFirmwareOps();await this.loadDevices();
+      this.toastOk('Actualización cancelada');
+    }catch(e){this.toastErr(this.deviceSaveError(e))}
   },
   async identifyDevice(id){
     let d=this.devices.find(x=>x.id===id);if(!d)return;
