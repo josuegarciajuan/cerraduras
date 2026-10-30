@@ -13,15 +13,19 @@ ZBMINIL2):
    invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
    El contador `0/3` solo suma pares de esa ventana; los eventos anteriores no cuentan.
 3. **Radar dentro**: colócate en el punto más lejano y quieto. La app mide en una
-   ventana de 20 s; durante la cuenta atrás solo puedes cancelar. Al terminar
-   muestra presencia, distancia orientativa y calidad. Si no hay reportes,
-   `Sin datos del radar` solo permite reintentar o cancelar. Si la medición es
-   suficiente y no detecta, `Ajustar y volver a medir` propone un cambio y lo
-   confirma por push; el ajuste interior no exige una medición exterior.
-4. **Radar fuera**: sal, cierra, pasa 3 veces y espera 60 s. Mide el punto
-   exterior; si detecta, `Ajustar y volver a medir`. Si se aplicó un ajuste, vuelve
-   a entrar y pulsa `Comprobar reentrada`. `Restaurar ajustes iniciales` revierte
-   el alcance/sensibilidad/fading/retardo y exige confirmación por push.
+   ventana de 30 s; durante la cuenta atrás solo puedes cancelar. El ZY-M100
+   **solo publica cuando cambia algo**: si no hay reportes nuevos, la app usa el
+   estado crudo al inicio de la ventana. Un `ABSENT` sí se publica y hace fallar
+   la medición. Al terminar muestra presencia, distancia orientativa y calidad.
+   Si la medición es suficiente y no detecta, `Ajustar y volver a medir` propone
+   un cambio y lo confirma por push; el ajuste interior no exige una medición
+   exterior.
+4. **Radar fuera**: sal y espera a que el radar deje de detectarte. Mide el punto
+   exterior. En la pasada, pulsa `Empezar medición` **antes** de pasar tres veces
+   por delante. Si detecta, `Ajustar y volver a medir`. Si se aplicó un ajuste,
+   sal, espera a que el radar te pierda y pulsa `Voy a entrar` **antes** de entrar.
+   `Restaurar ajustes iniciales` revierte el alcance/sensibilidad/fading/retardo y
+   exige confirmación por push.
 5. **Luz**: al empezar se apaga y confirmas que está apagada; después enciendes y
    confirmas, y por último apagas y confirmas. Una pregunta por orden. La telemetría
    solo cuenta si es posterior a la orden; si no llega, manda tu observación.
@@ -30,8 +34,9 @@ ZBMINIL2):
 
 La puerta y el radar son obligatorios; si no hay luz, el paso queda `NO INSTALADO`.
 
-**Indicadores de salud**: el radar (Router) reporta periódicamente; si deja de
-hacerlo aparece `SIN DATOS` (ámbar). La puerta (SNZB-04P) y la luz (ZBMINIL2) son
+**Indicadores de salud**: el radar (Router) publica cambios y puede estar en
+silencio mientras la escena no cambia; el calibrador usa la señal cruda y avisa
+solo cuando supera `presence_stale_seconds` sin reportar. La puerta (SNZB-04P) y la luz (ZBMINIL2) son
 EndDevice y solo envían al cambiar: si no hay actividad reciente se muestran como
 `RECONOCIDO` con “sin actividad hace X” (verde). No es un fallo de acceso; se
 actualizan al abrir/cerrar o conmutar.

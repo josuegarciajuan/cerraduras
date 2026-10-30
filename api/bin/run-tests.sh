@@ -6709,11 +6709,28 @@ fi
 # BLOCK 68B — F102: motor de calibración del radar (operaciones)
 # Trazabilidad: RF-174..RF-178
 # =============================================================================
-block "BLOCK 68B — F102: motor de calibración del radar"
+block "BLOCK 68B — F102/F103: motor de calibración del radar"
 
-for f in src/Domain/Sensors/RadarMeasurement.php src/Domain/Sensors/RadarCalibrationPlanner.php; do
-    if [ -f "$f" ]; then pass "F102: $f presente"; else fail "F102: $f" "falta"; fi
+for f in src/Domain/Sensors/RadarMeasurement.php src/Domain/Sensors/RadarCalibrationPlanner.php src/Domain/Sensors/RadarEvidencePolicy.php; do
+    if [ -f "$f" ]; then pass "F102/F103: $f presente"; else fail "F102/F103: $f" "falta"; fi
 done
+if grep -q "state_hold" src/Domain/Sensors/RadarMeasurement.php \
+    && grep -q "outcomeForPhase" src/Domain/Sensors/RadarMeasurement.php \
+    && grep -q "raw_presence_state" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "reentry_not_clear" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "radarOutsideV2" src/Domain/Sensors/SensorCalibrationValidator.php \
+    && grep -q "effects_before_reentry" src/Domain/Sensors/SensorCalibrationValidator.php; then
+    pass "F103: evidencia cruda, state_hold y validador v2 cableados"
+else
+    fail "F103: cableado" "faltan state_hold/raw_presence/reentry_not_clear/radarOutsideV2"
+fi
+if grep -q "raw_presence_state" public/assets/sensor-wizard-v2.js \
+    && grep -q "estado mantenido" public/assets/sensor-wizard-v2.js \
+    && grep -q "solo envía cuando cambia" public/assets/sensor-wizard-v2.js; then
+    pass "F103: UI muestra señal cruda y estado mantenido"
+else
+    fail "F103: UI" "faltan textos/estado crudo"
+fi
 if grep -q "radar/state" public/index.php \
     && grep -q "radar/operation" public/index.php \
     && grep -q "radar/state" public/assets/sensor-wizard-v2.js \
@@ -6751,18 +6768,20 @@ if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
             fi
             F102_OP=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
                 -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"start_measure\"}")
-            F102_OP_OK=$(printf '%s' "$F102_OP" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('state')=='MEASURING' and (d.get('countdown') or {}).get('kind')=='measure' else 'bad')" 2>/dev/null)
-            if [ "$F102_OP_OK" = "ok" ]; then
+            F102_OP_OK=$(printf '%s' "$F102_OP" | python3 -c "import sys,json;d=json.load(sys.stdin);print('measuring' if d.get('state')=='MEASURING' and (d.get('countdown') or {}).get('kind')=='measure' else ('stale' if d.get('error')=='presence_stale' else 'bad'))" 2>/dev/null)
+            if [ "$F102_OP_OK" = "measuring" ]; then
                 pass "F102: start_measure abre una sola ventana"
+                F102_DUP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
+                    -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"start_measure\"}")
+                if [ "$F102_DUP" = "409" ]; then
+                    pass "F102: segunda operación rechazada (409)"
+                else
+                    fail "F102: operación única" "esperado 409, got $F102_DUP"
+                fi
+            elif [ "$F102_OP_OK" = "stale" ]; then
+                pass "F103: guarda de frescura con señal cruda (409 presence_stale)"
             else
                 fail "F102: start_measure" "no abre ventana"
-            fi
-            F102_DUP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
-                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"start_measure\"}")
-            if [ "$F102_DUP" = "409" ]; then
-                pass "F102: segunda operación rechazada (409)"
-            else
-                fail "F102: operación única" "esperado 409, got $F102_DUP"
             fi
             curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
                 -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"cancel\"}" >/dev/null
@@ -6836,6 +6855,28 @@ PYFIX
         pass "F102: medido con detección → avanzar sin repetir"
     else
         fail "F102: medido con detección" "acciones inesperadas: $(printf '%s' "$F102_DT" | head -c 200)"
+    fi
+    python3 - "$F102_FIX" <<'PYFIX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["calibration_session"]
+s["last_measurement"] = {
+    "sufficient": True, "detected": True, "reports": 0, "config_version": 1,
+    "seed_used": True, "seed_state": "PRESENT", "evidence_mode": "state_hold",
+    "continuous": True, "any_present": True,
+}
+s["inside_valid"] = {
+    "sufficient": True, "detected": True, "config_version": 1,
+    "seed_used": True, "evidence_mode": "state_hold", "continuous": True,
+}
+json.dump(d, open(sys.argv[1], "w"))
+PYFIX
+    F103_HOLD=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f102-state-fixture&step_id=radar_inside")
+    F103_HOLD_OK=$(printf '%s' "$F103_HOLD" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Medición completada' and 'mantuvo el estado' in (d.get('message') or '') and a==['advance'] else 'bad')" 2>/dev/null)
+    if [ "$F103_HOLD_OK" = "ok" ]; then
+        pass "F103: estado mantenido sin reportes → completar y avanzar"
+    else
+        fail "F103: estado mantenido" "acciones inesperadas: $(printf '%s' "$F103_HOLD" | head -c 300)"
     fi
     rm -f "$F102_FIX" "run/sensores/locks/f102-state-fixture.lock"
 fi

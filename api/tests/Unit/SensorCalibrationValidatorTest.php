@@ -321,6 +321,90 @@ check('catálogo sin reglas o ids inválidos', $badRules === [], implode(',', $b
 check('catálogo sin bloques huérfanos', $missingBlocks === [], implode(',', $missingBlocks));
 check('catálogo contiene los 5 bloques', count($blockIds) === 5, implode(',', $blockIds));
 
+// ── F103: sesión v2 del radar ─────────────────────────────────────────
+echo "\nF103 · validador con sesión v2\n";
+$zeroEffects = ['visits' => 0, 'recordings' => 0, 'stays' => 0,
+    'access_events' => 0, 'anomalies' => 0, 'switch_on' => 0];
+
+function v2session(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'version' => 2,
+        'config_version' => 2,
+        'phase' => 'DONE',
+        'state' => 'DONE',
+        'result' => 'PASS',
+        'inside_valid' => ['sufficient' => true, 'detected' => true, 'config_version' => 1],
+        'outside_valid' => ['sufficient' => true, 'detected' => false, 'config_version' => 2],
+        'outside_pass' => ['sufficient' => true, 'detected' => false, 'config_version' => 2],
+        'candidates' => [],
+        'reentry' => null,
+    ], $overrides);
+}
+
+$insideV2 = ctx([], ['presence_state' => 'PRESENT'], ['maximum_range' => 6, 'radar_sensitivity' => 7]);
+$insideV2['calibration_session'] = v2session(['phase' => 'INSIDE', 'state' => 'MEASURED', 'result' => null]);
+$insideV2['settings_valid'] = true;
+same('v2 inside PASS sin reportes crudos', v('radar_inside', [], $insideV2)['status'], 'PASS');
+
+$insideMissing = $insideV2;
+$insideMissing['calibration_session']['inside_valid'] = null;
+same('v2 inside FAIL sin medición', v('radar_inside', [], $insideMissing)['reason'], 'inside_not_measured');
+
+$outsideV2 = ctx([], ['presence_state' => 'ABSENT'], ['maximum_range' => 6, 'radar_sensitivity' => 7]);
+$outsideV2['calibration_session'] = v2session();
+$outsideV2['settings_valid'] = true;
+$outsideV2['initial_effects'] = $zeroEffects;
+$outsideV2['effects'] = $zeroEffects;
+same('v2 outside PASS sin candidatos', v('radar_outside', [], $outsideV2)['status'], 'PASS');
+same('v2 outside motivo', v('radar_outside', [], $outsideV2)['reason'], 'no_presence_outside');
+
+$notDone = $outsideV2;
+$notDone['calibration_session']['phase'] = 'OUTSIDE_PASS';
+same('v2 outside FAIL si no está DONE', v('radar_outside', [], $notDone)['reason'], 'calibration_not_done');
+
+$outsideBad = $outsideV2;
+$outsideBad['calibration_session']['outside_valid']['detected'] = true;
+same('v2 outside FAIL si detecta fuera', v('radar_outside', [], $outsideBad)['reason'], 'outside_detected_calibration');
+
+$floatBad = $outsideV2;
+$floatBad['calibration_session']['outside_pass']['sufficient'] = false;
+same('v2 outside FAIL si la pasada es insuficiente', v('radar_outside', [], $floatBad)['reason'], 'measure_insufficient:outside_pass');
+
+$cvBad = $outsideV2;
+$cvBad['calibration_session']['outside_valid']['config_version'] = 1;
+same('v2 outside FAIL si la medición es de otra config', v('radar_outside', [], $cvBad)['reason'], 'measure_config_mismatch:outside_valid');
+
+$settingsBad = $outsideV2;
+$settingsBad['settings_valid'] = false;
+same('v2 outside FAIL con settings inválidos', v('radar_outside', [], $settingsBad)['reason'], 'invalid_device_settings');
+
+$withCandidate = $outsideV2;
+$withCandidate['calibration_session'] = v2session([
+    'candidates' => [['candidate_id' => 'op-1', 'status' => 'CONFIRMED', 'params' => ['maximum_range' => 5.25]]],
+    'reentry' => [
+        'detected' => true,
+        'first_present_at' => '2026-10-28T10:00:40Z',
+        'presence' => ['config_version' => 2],
+    ],
+    'effects_before_reentry' => $zeroEffects,
+]);
+$withCandidate['effects'] = array_merge($zeroEffects, ['visits' => 1, 'recordings' => 1]);
+same('v2 outside PASS con reentrada e ignora su visita', v('radar_outside', [], $withCandidate)['status'], 'PASS');
+same('v2 outside motivo reentrada', v('radar_outside', [], $withCandidate)['reason'], 'outside_and_reentry_ok');
+
+$reentryMissing = $withCandidate;
+$reentryMissing['calibration_session']['reentry']['detected'] = false;
+same('v2 outside FAIL sin reentrada', v('radar_outside', [], $reentryMissing)['reason'], 'reentry_not_verified');
+
+$reentryCv = $withCandidate;
+$reentryCv['calibration_session']['reentry']['presence']['config_version'] = 1;
+same('v2 outside FAIL reentrada de otra config', v('radar_outside', [], $reentryCv)['reason'], 'reentry_config_mismatch');
+
+$falseEffect = $withCandidate;
+$falseEffect['calibration_session']['effects_before_reentry'] = array_merge($zeroEffects, ['visits' => 1]);
+same('v2 outside FAIL por efecto falso antes de reentrada', v('radar_outside', [], $falseEffect)['reason'], 'false_effect:visits');
+
 // Catálogo universal v2 (F95)
 $rawV2 = file_get_contents(__DIR__ . '/../../public/assets/sensor-tests-v2.json');
 $v2 = json_decode((string) $rawV2, true);

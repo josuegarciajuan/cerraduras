@@ -12650,7 +12650,9 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - Cada medición tiene ventana `[start,end]`, `config_version`, reportes, ceros,
   presencia, distancia y calidad.
 - Una ventana contaminada por cambio de configuración no es suficiente.
-- Mínimo 8 reportes y 10 s; el interior y el exterior usan ventanas separadas.
+- Mínimo 8 reportes y 10 s como modo de respaldo; el interior y el exterior
+  usan ventanas separadas. **Derogado como criterio principal por F103/RF-208**
+  (evidencia `state_hold` con señal cruda fresca).
 - La pasada por el pasillo es una ventana independiente.
 
 ## RF-177: Protección del interior y reentrada
@@ -12666,3 +12668,58 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - La UI no reconstruye la tarjeta durante las esperas; actualiza nodos.
 - Cada fase muestra una sola instrucción y una sola acción primaria.
 - Los contadores de distancia son diagnóstico, no progreso.
+
+# Fase 103: Evidencia event-driven del calibrador de radar
+
+**Trazabilidad:** RF-207..RF-212 · `design.md §103` · `contracts.md §F103` · `tasks.md F103`
+
+## RF-207: Señal cruda del radar
+
+- La calibración usa el último reporte CRUDO de `presence_events` del radar
+  (`value`, `occurred_at`, `settings`), no la presencia fusionada de `iot_sessions`.
+- Un `PRESENT` descartado por fusión (`uncorroborated`/candidato) sigue siendo
+  evidencia válida para calibrar el sensor y refresca la frescura del dominio.
+- La reentrada se bloquea si el radar crudo todavía marca `PRESENT`.
+
+## RF-208: Suficiencia event-driven
+
+- Con un estado crudo fresco (`presence_stale_seconds`, por defecto 180 s) y una
+  ventana >= 10 s, la medición es suficiente (`state_hold`) aunque no haya
+  reportes nuevos: el radar solo publica cambios y un `ABSENT` sí se publicaría.
+- Sin estado fresco se conserva el modo de respaldo de 8 reportes y 10 s.
+- Una reentrada exige al menos un `PRESENT` real dentro de la ventana.
+- Un cambio de configuración durante la ventana la invalida.
+
+## RF-209: Resultado por fase
+
+- Dentro: presencia continua; cualquier `ABSENT` tras el primer `PRESENT` falla.
+- Fuera fijo/pasillo: cualquier `PRESENT` (incluido un seed `PRESENT` que no se
+  apague en la ventana) cuenta como detección exterior.
+- Reentrada: `PRESENT` real y último estado `PRESENT`.
+
+## RF-210: Validador v2
+
+- Con `calibration_session.version = 2`, `radar_inside` y `radar_outside` usan
+  `inside_valid`, `outside_valid`, `outside_pass` y `reentry` como autoridad.
+- No se vuelven a exigir 30/50 s de reportes crudos ni la frescura fusionada.
+- La fase debe estar `DONE` y `result=PASS`; exterior y pasillo deben ser de la
+  configuración actual.
+- Los efectos posteriores al clic de reentrada son esperados; solo se juzga el
+  tramo anterior.
+
+## RF-211: Flujo de reentrada y ajustes
+
+- Un ajuste en `REENTRY` vuelve a `OUTSIDE_FIXED` para re-verificar el exterior
+  con la nueva configuración.
+- Las instrucciones respetan el orden: pulsar antes de entrar/pasar y esperar
+  `ABSENT` antes de medir fuera o reentrar.
+- Una reentrada insuficiente ofrece `start_reentry`, no una medición genérica.
+
+## RF-212: UI y operación
+
+- `/radar/state` expone `presence_state`, `presence_stale_seconds` y
+  `raw_presence_state/raw_presence_at/raw_presence_age_seconds/raw_presence_stale`.
+- La UI muestra el estado crudo, explica que el radar solo envía cambios y
+  distingue "sin reportes nuevos" de "sensor sin datos".
+- Ventana de medición: 30 s (`max(30, fading_time + 5)`, máx. 60).
+- Sin migración, sin nuevas rutas y sin polling a Tuya.

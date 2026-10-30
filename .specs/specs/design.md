@@ -25075,11 +25075,56 @@ abrir la corrida. No hay procesos de fondo.
 
 ## 102.2 Ventanas y estabilización
 
-Interior: 20 s, 8 reportes, 10 s de span. Exterior y pasada: 20 s. Reentrada:
-20 s desde el clic. Estabilización: `max(8, min(60, fading_time + 5))`.
+Interior: 30 s, evidencia `state_hold` o 8 reportes/10 s como respaldo. Exterior,
+pasada y reentrada: 30 s (máx. 60 si `fading_time + 5` es mayor).
+Estabilización: `max(8, min(60, fading_time + 5))`.
+
+> La ventana de 20 s y el mínimo 8/10 quedan derogados por §103 para el radar
+event-driven; 8/10 se conserva solo como modo de respaldo sin seed fresco.
 
 ## 102.3 UI
 
 El radar se pinta desde `phase`, `state`, `next_actions` y `countdown`. Se
 reconstruye solo al cambiar la fase/acciones; el temporizador y la presencia se
 actualizan en nodos existentes.
+
+## 103. Evidencia event-driven del radar (F103)
+
+El ZY-M100-S_2 publica solo cuando cambia un atributo. En reposo puede pasar
+más de 30 s sin mensajes. La calibración no puede exigir reportes periódicos:
+
+### 103.1 Fuente de evidencia
+
+- La fuente es el último evento crudo `PRESENT/ABSENT` de `presence_events`
+  (`provider=ZIGBEE2MQTT`, `sensor=PRESENCE`).
+- `iot_sessions.presence_state` sigue siendo la presencia efectiva para el panel,
+  pero no se usa como seed de calibración: la fusión puede descartar un `PRESENT`
+  como candidato/`uncorroborated`.
+- La rama de candidatos refresca `last_presence_event_at` (RF-161) sin tocar
+  `presence_state` ni disparar efectos.
+
+### 103.2 Medición
+
+- `RadarMeasurement` recibe `seed={state,occurred_at,age_seconds,fresh}`.
+- Modos: `reports` (8/10 legado), `state_hold` (seed fresco + ventana >= 10 s) y
+  `transition` (reentrada con `PRESENT` real).
+- Calcula `continuous`, `any_present` y `outcomeForPhase()`.
+- Ventana de 30 s (`max(30, fading_time + 5)`, máx. 60).
+
+### 103.3 Sesión y validador
+
+- `start_measure` guarda el seed y la ventana; `start_reentry` guarda
+  `effects_before_reentry` antes de entrar.
+- `OUTSIDE_PASS` sin candidatos termina `DONE/PASS`; con candidatos pasa a
+  `REENTRY`.
+- `adjust` en `REENTRY` vuelve a `OUTSIDE_FIXED`.
+- El validador v2 usa la sesión como autoridad, ignora la frescura fusionada al
+  cerrar y compara los efectos del tramo exterior (antes de reentrada) con los
+  iniciales del intento.
+
+### 103.4 UI
+
+- Chip "Radar: PRESENTE/AUSENTE/SIN DATOS" con la señal cruda.
+- Aviso: "El radar solo envía cuando cambia algo...".
+- Mensajes de `presence_stale` y `reentry_not_clear`, y estado mantenido sin
+  reportes nuevos.

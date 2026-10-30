@@ -181,6 +181,16 @@ final class IotSessionService
                             // F91/RF-148.9 (PRESENT) + F93/RF-154.2 (ABSENT): un
                             // candidato no altera la ocupación efectiva ni genera
                             // visitas, grabaciones, luces o salidas.
+                            // F103/RF-207: sí demuestra que el sensor sigue
+                            // emitiendo, así que refresca la frescura (RF-161)
+                            // sin tocar presence_state ni disparar efectos.
+                            if (($radarDecision['stale'] ?? false) !== true
+                                && !SensorEventDecision::isStale($event, $session)
+                                && $session->lastPresenceEventAt !== $evtUtc
+                            ) {
+                                $session->lastPresenceEventAt = $evtUtc;
+                                $this->iotSessions->updateState($session);
+                            }
                             $this->presenceEvents->markAudit(
                                 $rawEvent->id,
                                 false,

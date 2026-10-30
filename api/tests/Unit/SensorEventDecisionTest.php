@@ -400,6 +400,19 @@ foreach ([
     else fail("audit: invalid discard_reason '{$reason}'");
 }
 
+// F103: guarda de orden usada también en la rama de candidatos radar.
+$orderedSession = sessionWithPresence('2026-04-28 10:00:05.000', 'PRESENT');
+if (SensorEventDecision::isStale(presenceEvent('2026-04-28T10:00:01Z', 'PRESENT', 'presence'), $orderedSession) === true) {
+    pass('F103: isStale() detecta un reporte anterior');
+} else {
+    fail('F103: isStale() debería detectar el reporte anterior');
+}
+if (SensorEventDecision::isStale(presenceEvent('2026-04-28T10:00:05Z', 'PRESENT', 'presence'), $orderedSession) === false) {
+    pass('F103: isStale() permite el reporte actual');
+} else {
+    fail('F103: isStale() no debería marcar el reporte actual');
+}
+
 echo "\n" . str_repeat("=", 60) . "\n";
 echo "Results: {$PASS} passed, {$FAIL} failed\n";
 exit($FAIL > 0 ? 1 : 0);

@@ -317,13 +317,30 @@
     inside_not_detected_calibration: 'La medición interior no detectó presencia.',
     outside_detected_calibration: 'La medición exterior seguía detectando presencia.',
     reentry_not_verified: 'Falta comprobar que vuelve a detectar al entrar.',
-    outside_and_reentry_ok: 'Exterior sin detección y reentrada correcta.'
+    outside_and_reentry_ok: 'Exterior sin detección y reentrada correcta.',
+    calibration_not_done: 'La calibración del radar no ha terminado.',
+    measure_insufficient: 'Falta evidencia en una medición del radar.',
+    inside_not_measured: 'Falta la medición interior.',
+    outside_valid_not_measured: 'Falta la medición del punto exterior.',
+    outside_pass_not_measured: 'Falta la pasada por el pasillo.',
+    measure_config_mismatch: 'La medición pertenece a una configuración anterior.',
+    reentry_config_mismatch: 'La reentrada pertenece a una configuración anterior.',
+    invalid_device_settings: 'La configuración del radar no es válida.',
+    false_effect: 'La prueba produjo una visita, grabación o efecto falso.'
   };
+  function reasonLabel(reason) {
+    if (!reason) return '';
+    if (REASON_LABEL[reason]) return REASON_LABEL[reason];
+    if (reason.indexOf('measure_insufficient:') === 0) return REASON_LABEL.measure_insufficient;
+    if (reason.indexOf('measure_config_mismatch:') === 0) return REASON_LABEL.measure_config_mismatch;
+    if (reason.indexOf('false_effect:') === 0) return REASON_LABEL.false_effect;
+    return reason;
+  }
   function resultBox(st, verdict) {
     if (!isFinal(st) || !verdict) return '';
     var v = verdict;
     var label = STATUS_LABEL[st] || st;
-    var reason = REASON_LABEL[v.reason] || v.reason || '';
+    var reason = reasonLabel(v.reason);
     return '<div class="result ' + esc(st) + '" role="status" tabindex="-1"><h3>' + esc(label) + '</h3>'
       + '<div>' + esc(reason) + '</div>'
       + '<details style="margin-top:8px"><summary>Detalle de la prueba</summary><pre style="white-space:pre-wrap;font-size:11px">'
@@ -436,9 +453,54 @@
     }[op] || op;
   }
 
+  function rawPresence(st) {
+    var state = String((st && (st.raw_presence_state || st.presence_state)) || 'UNKNOWN').toUpperCase();
+    var stale = !!(st && st.raw_presence_stale);
+    var age = st ? (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) : null;
+    var text = state === 'PRESENT' ? 'Radar: PRESENTE'
+      : (state === 'ABSENT' ? 'Radar: AUSENTE' : 'Radar: SIN DATOS');
+    if (stale) text += ' (sin reportes recientes)';
+    else if (age != null && state !== 'UNKNOWN') text += ' · hace ' + age + ' s';
+    var cls = stale ? 'warn' : (state === 'PRESENT' ? 'ok' : (state === 'ABSENT' ? 'dim' : 'warn'));
+    return { state: state, stale: stale, age: age, text: text, cls: cls };
+  }
+
+  function hasMeasurement(m) {
+    return !!m && (m.reports != null || m.seeded === true || !!m.evidence_mode || m.sufficient != null);
+  }
+
+  function presenceText(m) {
+    if (!hasMeasurement(m)) return 'Presencia: —';
+    var text = 'Presencia: ' + (m.detected ? 'DETECTADA' : 'sin detección');
+    if (m.evidence_mode === 'state_hold') text += ' (estado mantenido)';
+    return text;
+  }
+
+  function presencePillCls(m) {
+    if (!hasMeasurement(m)) return 'dim';
+    return m.detected ? 'ok' : 'dim';
+  }
+
+  function distanceText(st, m) {
+    var age = st && (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) != null
+      ? (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) : null;
+    var parts = [];
+    if (m && (m.evidence_mode === 'state_hold' || m.seed_used)) {
+      parts.push('Sin distancia nueva en esta ventana (el radar solo envía al cambiar)');
+    } else {
+      parts.push('Sin distancia utilizable en esta ventana');
+    }
+    if (age != null) parts.push('último reporte hace ' + age + ' s');
+    var target = st && st.current_settings ? st.current_settings.target_distance : null;
+    if (target != null && Number(target) > 0 && st.phase === 'INSIDE') {
+      parts.push('última distancia conocida ' + Number(target).toFixed(2) + ' m');
+    }
+    return parts.join(' · ') + '.';
+  }
+
   function renderRadar(stepId, step) {
     if (!activeAttemptFor(stepId)) {
-      return '<div class="divider"></div><p class="hint">La calibración se hace en ventanas de 20 segundos. Pulsa para empezar.</p>'
+      return '<div class="divider"></div><p class="hint">La calibración se hace en ventanas de 30 segundos. Pulsa para empezar.</p>'
         + '<div class="actions"><button class="primary" data-action="start-attempt" data-step="' + stepId + '">Empezar prueba</button></div>';
     }
     var st = S.radarState;
@@ -446,19 +508,20 @@
       return '<div class="divider"></div><p class="hint">Preparando la calibración…</p>';
     }
     var html = '<div class="divider"></div>';
+    var live = rawPresence(st);
     var m = (st.last_measurement && st.last_measurement.phase === st.phase) ? st.last_measurement : {};
     var dist = m.distance || {};
-    html += '<div class="row"><span class="pill ' + (m.detected ? 'ok' : (m.reports ? 'dim' : 'dim')) + '" id="radarPresence">'
-      + (m.reports ? 'Presencia: ' + (m.detected ? 'DETECTADA' : 'sin detección') : 'Presencia: —') + '</span>'
+    html += '<div class="row"><span class="pill ' + live.cls + '" id="radarLive">' + esc(live.text) + '</span>'
       + '<span class="pill dim" id="radarPhase">' + esc(st.phase || '') + '</span></div>';
+    html += '<div class="row"><span class="pill ' + presencePillCls(m) + '" id="radarPresence">' + esc(presenceText(m)) + '</span></div>';
+    html += '<div class="hint">El radar solo envía cuando cambia algo; si no hay reportes nuevos se usa el estado al inicio de la ventana.</div>';
     if (dist.samples > 0) {
       html += '<div class="hint" id="radarDistance">Distancia: '
         + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
         + ' · ' + qualityLabel(dist.quality)
         + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes</div>';
     } else {
-      var ageTxt = st.presence_age_seconds != null ? ' · último reporte hace ' + st.presence_age_seconds + ' s' : '';
-      html += '<div class="hint" id="radarDistance">Sin distancia utilizable en esta ventana' + ageTxt + '.</div>';
+      html += '<div class="hint" id="radarDistance">' + esc(distanceText(st, m)) + '</div>';
     }
     var cd = st.countdown || null;
     if (cd && cd.seconds_remaining > 0) {
@@ -957,20 +1020,30 @@
     var cd = st.countdown || null;
     var timer = $('radarTimer');
     if (timer && cd) timer.textContent = cd.seconds_remaining + ' s';
+    var live = rawPresence(st);
+    var liveEl = $('radarLive');
+    if (liveEl) {
+      liveEl.textContent = live.text;
+      liveEl.className = 'pill ' + live.cls;
+    }
     var m = st.last_measurement || {};
     var chip = $('radarPresence');
-    if (chip && m.reports) {
-      chip.textContent = 'Presencia: ' + (m.detected ? 'DETECTADA' : 'sin detección');
-      chip.className = 'pill ' + (m.detected ? 'ok' : 'dim');
+    if (chip) {
+      chip.textContent = presenceText(m);
+      chip.className = 'pill ' + presencePillCls(m);
     }
     var phase = $('radarPhase');
     if (phase && st.phase) phase.textContent = st.phase;
     var distance = $('radarDistance');
     var dist = m.distance || {};
-    if (distance && dist.samples > 0) {
-      distance.textContent = 'Distancia: ' + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
-        + ' · ' + qualityLabel(dist.quality)
-        + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes';
+    if (distance) {
+      if (dist.samples > 0) {
+        distance.textContent = 'Distancia: ' + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
+          + ' · ' + qualityLabel(dist.quality)
+          + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes';
+      } else {
+        distance.textContent = distanceText(st, m);
+      }
     }
     var warning = $('radarWarning');
     if (warning && st.message) warning.textContent = st.message;
@@ -1053,7 +1126,17 @@
       }
     }
     if (previous === 'STABILIZING' && st.state === 'IDLE' && st.phase !== 'DONE') {
-      radarOp('start_measure');
+      if (st.manual_start_required) {
+        // Tras un ajuste de pasillo/reentrada hay que volver a colocarse.
+        return;
+      }
+      if (st.raw_presence_stale) {
+        banner('El radar lleva un rato sin reportar. Muévete ligeramente y pulsa Empezar medición.', 'warn');
+      } else if (st.phase === 'REENTRY' && String(st.raw_presence_state || '').toUpperCase() === 'PRESENT') {
+        banner('Sal y espera a que el radar te pierda; luego pulsa «Voy a entrar».', 'warn');
+      } else {
+        radarOp(st.phase === 'REENTRY' ? 'start_reentry' : 'start_measure');
+      }
     }
   }
 
@@ -1080,7 +1163,9 @@
     } catch (e) {
       if (action === 'finish_measure') S.autoFinishOp = null;
       if (e.message === 'presence_stale') {
-        banner('El radar no está enviando datos. Comprueba la conexión y vuelve a intentarlo.', 'bad');
+        banner('El radar lleva un rato sin reportar. Muévete ligeramente y vuelve a intentarlo.', 'warn');
+      } else if (e.message === 'reentry_not_clear') {
+        banner('El radar aún te detecta. Sal y espera a que se apague la presencia antes de pulsar «Voy a entrar».', 'warn');
       } else {
         banner(e.message, 'bad');
       }

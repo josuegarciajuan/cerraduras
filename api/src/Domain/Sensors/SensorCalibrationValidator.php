@@ -439,6 +439,10 @@ final class SensorCalibrationValidator
      */
     private static function radarInside(array $params, array $ctx): array
     {
+        $session = (array) ($ctx['calibration_session'] ?? []);
+        if ((int) ($session['version'] ?? 0) === 2) {
+            return self::radarInsideV2($ctx, $session);
+        }
         $hold = (int) ($params['hold_seconds'] ?? 30);
         $grace = (int) ($params['grace_seconds'] ?? 20);
         $real = self::realPresence($ctx);
@@ -452,7 +456,6 @@ final class SensorCalibrationValidator
         $presents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'PRESENT'));
         $absents = array_values(array_filter($real, static fn (array $e): bool => ($e['value'] ?? '') === 'ABSENT'));
         $stale = (bool) ($ctx['live']['presence_stale'] ?? false);
-        $session = (array) ($ctx['calibration_session'] ?? []);
         $details = [
             'real_presents' => count($presents),
             'real_absents' => count($absents),
@@ -510,11 +513,14 @@ final class SensorCalibrationValidator
      */
     private static function radarOutside(array $params, array $ctx): array
     {
+        $session = (array) ($ctx['calibration_session'] ?? []);
+        if ((int) ($session['version'] ?? 0) === 2) {
+            return self::radarOutsideV2($params, $ctx, $session);
+        }
         $minElapsed = (int) ($params['min_elapsed_seconds'] ?? 50);
         $grace = (int) ($params['grace_seconds'] ?? 20);
         $startedAt = self::ms($ctx['attempt_started_at'] ?? null);
         $since = self::ms($ctx['calibration_since'] ?? null);
-        $session = (array) ($ctx['calibration_session'] ?? []);
         $real = self::realPresence($ctx);
         $reentryFirst = self::ms($session['reentry']['first_present_at'] ?? null);
         $presents = array_values(array_filter($real, static function (array $e) use ($startedAt, $grace, $since, $reentryFirst): bool {
@@ -612,6 +618,127 @@ final class SensorCalibrationValidator
             return self::result(self::UNVERIFIED, 'absence_not_confirmed', $details);
         }
         return self::result(self::PASS, 'no_presence_outside', $details);
+    }
+
+    /**
+     * F103/RF-210: con sesión v2 la medición interior es la autoridad. No se
+     * vuelven a exigir 30 s de reportes crudos ni frescura fusionada.
+     *
+     * @param array<string,mixed> $ctx
+     * @param array<string,mixed> $session
+     */
+    private static function radarInsideV2(array $ctx, array $session): array
+    {
+        $inside = (array) ($session['inside_valid'] ?? []);
+        $details = [
+            'session_version' => 2,
+            'measurement' => $inside !== [] ? $inside : ($session['inside'] ?? null),
+        ];
+        if ($inside === []) {
+            return self::result(self::FAIL, 'inside_not_measured', $details);
+        }
+        if (($inside['sufficient'] ?? false) !== true) {
+            return self::result(self::FAIL, 'measure_insufficient:inside_valid', $details);
+        }
+        if (($inside['detected'] ?? false) !== true) {
+            return self::result(self::FAIL, 'inside_not_detected_calibration', $details);
+        }
+        if (array_key_exists('settings_valid', $ctx) && $ctx['settings_valid'] !== true) {
+            return self::result(self::FAIL, 'invalid_device_settings', $details);
+        }
+        return self::result(self::PASS, 'presence_detected_inside', $details);
+    }
+
+    /**
+     * F103/RF-210: la fase fuera se valida con las tres ventanas de la sesión
+     * (interior, exterior fijo y pasillo) y, si hubo ajuste, la reentrada. Los
+     * efectos posteriores al clic de reentrada son esperados y se excluyen.
+     *
+     * @param array<string,mixed> $params
+     * @param array<string,mixed> $ctx
+     * @param array<string,mixed> $session
+     */
+    private static function radarOutsideV2(array $params, array $ctx, array $session): array
+    {
+        $inside = (array) ($session['inside_valid'] ?? []);
+        $outside = (array) ($session['outside_valid'] ?? []);
+        $pass = (array) ($session['outside_pass'] ?? []);
+        $reentry = (array) ($session['reentry'] ?? []);
+        $candidates = (array) ($session['candidates'] ?? []);
+        $cv = (int) ($session['config_version'] ?? 1);
+        $details = [
+            'session_version' => 2,
+            'phase' => $session['phase'] ?? null,
+            'result' => $session['result'] ?? null,
+            'config_version' => $cv,
+            'inside_valid' => $inside !== [] ? $inside : null,
+            'outside_valid' => $outside !== [] ? $outside : null,
+            'outside_pass' => $pass !== [] ? $pass : null,
+            'reentry' => $reentry !== [] ? $reentry : null,
+            'candidates' => count($candidates),
+            'settings_valid' => $ctx['settings_valid'] ?? null,
+            'effects_delta' => $ctx['effects_delta'] ?? [],
+        ];
+        if (($session['phase'] ?? '') !== 'DONE' || ($session['result'] ?? '') !== 'PASS') {
+            return self::result(self::FAIL, 'calibration_not_done', $details);
+        }
+        if ($inside === []) {
+            return self::result(self::FAIL, 'inside_not_measured', $details);
+        }
+        if (($inside['sufficient'] ?? false) !== true) {
+            return self::result(self::FAIL, 'measure_insufficient:inside_valid', $details);
+        }
+        if (($inside['detected'] ?? false) !== true) {
+            return self::result(self::FAIL, 'inside_not_detected_calibration', $details);
+        }
+        foreach (['outside_valid' => $outside, 'outside_pass' => $pass] as $key => $m) {
+            if ($m === []) {
+                return self::result(self::FAIL, $key . '_not_measured', $details);
+            }
+            if (($m['sufficient'] ?? false) !== true) {
+                return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
+            }
+            if ((int) ($m['config_version'] ?? 0) !== $cv) {
+                return self::result(self::FAIL, 'measure_config_mismatch:' . $key, $details);
+            }
+            if (($m['detected'] ?? false) === true) {
+                return self::result(self::FAIL, 'outside_detected_calibration', $details);
+            }
+        }
+        if ($candidates !== []) {
+            if (($reentry['detected'] ?? false) !== true) {
+                return self::result(self::FAIL, 'reentry_not_verified', $details);
+            }
+            if ((int) ($reentry['presence']['config_version'] ?? 0) !== $cv) {
+                return self::result(self::FAIL, 'reentry_config_mismatch', $details);
+            }
+        }
+        if (array_key_exists('settings_valid', $ctx) && $ctx['settings_valid'] !== true) {
+            return self::result(self::FAIL, 'invalid_device_settings', $details);
+        }
+
+        // Efectos del tramo exterior: desde el inicio del intento hasta el clic
+        // de reentrada. La visita creada al volver a entrar es esperada y no
+        // debe invalidar la ausencia exterior.
+        $initial = (array) ($ctx['initial_effects'] ?? []);
+        $beforeReentry = (array) ($session['effects_before_reentry'] ?? []);
+        $fallbackDelta = (array) ($ctx['effects_delta'] ?? []);
+        $forbid = (array) ($params['forbid_effect_keys'] ?? ['visits', 'recordings', 'stays']);
+        foreach ($forbid as $key) {
+            $delta = ($candidates !== [] && $beforeReentry !== [] && $initial !== [])
+                ? (int) ($beforeReentry[$key] ?? 0) - (int) ($initial[$key] ?? 0)
+                : (int) ($fallbackDelta[$key] ?? 0);
+            if ($delta > 0) {
+                $details['false_effect'] = $key;
+                return self::result(self::FAIL, 'false_effect:' . $key, $details);
+            }
+        }
+
+        return self::result(
+            self::PASS,
+            $candidates !== [] ? 'outside_and_reentry_ok' : 'no_presence_outside',
+            $details
+        );
     }
 
     /**

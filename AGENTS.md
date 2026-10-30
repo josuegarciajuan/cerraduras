@@ -177,6 +177,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
 | **F102 Motor de calibración por operaciones** | **BLOCK 68B + units F102** | **Completado (código); prueba física pendiente** |
+| **F103 Evidencia event-driven del calibrador de radar** | **BLOCK 68B + units F103** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
@@ -261,9 +262,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Confirmación tardía**: `publish()` no bloquea; `confirm()` reconcilia el
   último reporte. `AWAITING_CONFIRM` → `STABILIZING`; un timeout es
   `INDETERMINATE`, no fallo definitivo.
-- **Ventanas**: `RadarMeasurement` acota por tiempo, exige 8 reportes y 10 s,
-  detecta cambio de configuración y no mezcla mediciones de distinta
-  `config_version`.
+- **Ventanas**: `RadarMeasurement` acota por tiempo, detecta cambio de
+  configuración y no mezcla mediciones de distinta `config_version`. El mínimo
+  8 reportes/10 s queda como respaldo; F103 añade la evidencia `state_hold`.
 - **Protección**: el planificador no baja del límite interior conocido
   (`would_break_inside`); una reentrada fallida prioriza recuperar detección.
 - **UI**: `/radar/state` es la fuente única; `radar-view`/DOM estable, sin
@@ -272,6 +273,25 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `RadarMeasurementTest` (21) y `RadarCalibrationTest` (28). Regresión:
   **867 passed, 0 failed, 13 skipped** (incluye el flujo HTTP `radar/state`
   y la operación única). Prueba física pendiente.
+
+### F103 — Evidencia event-driven del calibrador de radar (RF-207…RF-212)
+
+- **Origen**: el ZY-M100-S_2 solo publica cambios. En reposo puede pasar >30 s
+  sin mensajes; la corrida real `14-20261030T105308Z-2fdf49` tuvo ventanas de
+  0, 1, 6, 0, 2, 2, 3 y 1 reportes, por debajo del mínimo 8/10.
+- **Seed crudo (RF-207)**: la calibración usa el último `presence_events` del
+  radar, no `iot_sessions.presence_state`, para que la fusión no oculte la señal.
+  La rama de candidatos refresca `last_presence_event_at` sin tocar el estado.
+- **Suficiencia (RF-208/209)**: `state_hold` (seed fresco + ventana >=10 s),
+  `transition` (reentrada con `PRESENT` real) y respaldo 8/10. `continuous`,
+  `any_present` y `outcomeForPhase()` separan dentro/fuera/reentrada.
+- **Validador (RF-210)**: la sesión v2 es la autoridad; se eliminan los umbrales
+  de 30/50 s y se comparan los efectos del tramo exterior antes de reentrada.
+- **Flujo (RF-211)**: `OUTSIDE_PASS` sin candidatos → `DONE/PASS`; un ajuste en
+  `REENTRY` vuelve a `OUTSIDE_FIXED`; textos en el orden correcto.
+- **UI (RF-212)**: estado crudo en vivo, ventana de 30 s y mensajes que
+  distinguen "sin reportes nuevos" de "sensor sin datos". Sin polling Tuya ni
+  migración.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 

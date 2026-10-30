@@ -15616,3 +15616,26 @@ Invariantes:
 
 `409 operation_pending` si hay otra operación; `409 measure_in_progress` si la
 ventana no ha terminado. `restore` no exige intento activo.
+
+## §F103 Evidencia event-driven del radar
+
+`GET /dashboard-api/sensores/v2/radar/state` añade de forma aditiva:
+
+- `presence_state`: presencia efectiva de la sala.
+- `presence_stale_seconds`: umbral de frescura de la sala.
+- `raw_presence_state`, `raw_presence_at`, `raw_presence_age_seconds`,
+  `raw_presence_stale`: último reporte crudo del radar (fuente de calibración).
+- `manual_start_required`: tras un ajuste de pasillo/reentrada, la UI no debe
+  auto-arrancar; el técnico vuelve a colocarse y pulsa Empezar medición.
+- `last_measurement.evidence_mode`: `reports|state_hold|transition`.
+- `last_measurement.seeded`, `seed_state`, `seed_age_seconds`, `window_seconds`,
+  `continuous`, `any_present`, `last_state`, `held_seconds`.
+
+`POST /dashboard-api/sensores/v2/radar/operation` mantiene las acciones. Cambios:
+
+- `start_measure`/`start_reentry` usan la señal cruda para la guarda de frescura.
+- `409 presence_stale` cuando el estado crudo conocido supera
+  `presence_stale_seconds`.
+- `409 reentry_not_clear` si el radar crudo sigue en `PRESENT` al iniciar reentrada.
+- `start_measure` en fase `REENTRY` se interpreta como reentrada.
+- Un ajuste en `REENTRY` reinicia la fase a `OUTSIDE_FIXED`.
