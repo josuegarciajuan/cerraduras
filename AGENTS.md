@@ -232,7 +232,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
   `AttemptEvidenceTest` (17), `RadarCalibrationTest` (22), ampliaciones de
   `SensorCalibrationValidatorTest` (81) y `SensorRunStoreTest` (23). Regresión:
-  **856 passed, 0 failed, 13 skipped** (incluye reset global,
+  **859 passed, 0 failed, 13 skipped** (incluye reset global,
   `attempt/events` y `radar/calibrate`). Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
