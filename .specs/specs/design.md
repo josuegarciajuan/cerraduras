@@ -25180,3 +25180,34 @@ El punto exterior elegido solo se usaba después, para verificar.
 ### 104.6 Sin cuota ni procesos
 Todo sale de `presence_events` por push. La única escritura al dispositivo es la
 publicación MQTT bajo demanda del ajuste. No hay pollers ni temporizadores.
+
+## 104.7 Polaridad estable y arranque cerrado de puerta (F104.3)
+
+### Polaridad
+`DoorPolarityEvidence::infer()` recorre los últimos eventos de `PROXIMITY`:
+- Ignora `bootstrap`, `resync`, entidades que no sean `contact` y eventos
+  canonizados con otra polaridad.
+- Toma el último evento con estado canónico `CLOSED` y deriva la polaridad de su
+  valor crudo (`false/0` → normal; `true/1` → invertida).
+- Si no hay evidencia de cerrada, conserva la polaridad actual.
+
+`SensorWizardController::polarity()` usa ese resultado, actualiza el dispositivo
+solo si cambia, fija `door_state=CLOSED` y `room_sensor_state` manual. No devuelve
+422 por antigüedad. `force=normal|inverted` permite la corrección manual desde la
+UI.
+
+### Arranque de ciclos
+`startAttempt('door')` llama a `confirmDoorClosedForAttempt()`:
+- Fija `iot_sessions.door_state=CLOSED`, `last_door_value=CLOSED`,
+  `last_door_event_at=now`, `last_close_at=now`.
+- Fija `room_sensor_state` manual con barrera.
+- El intento captura `initial_live.door_state=CLOSED`.
+
+Un `OPEN` con `occurred_at` anterior al inicio queda `stale` y no altera el
+intento. El primer `OPEN` real posterior sí se aplica.
+
+### UI
+- **Validar puerta** solo con `count >= target` y `waiting_for != 'close'`.
+- Con una apertura pendiente: «Cierra la puerta para validar…».
+- Si la secuencia empieza por `CLOSED`, se muestra **Invertir polaridad y
+  repetir**; la UI llama a `door/polarity` con `force` y reinicia la tarjeta.

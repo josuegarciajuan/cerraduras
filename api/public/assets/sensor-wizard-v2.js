@@ -360,6 +360,13 @@
     return step && step.active_attempt ? step.active_attempt : null;
   }
 
+  function invertCandidate(last) {
+    if (!last || !last.verdict) return false;
+    if (last.verdict.reason !== 'door_sequence_mismatch') return false;
+    var seq = (last.verdict.details && last.verdict.details.sequence) || [];
+    return seq.length > 0 && seq[0] === 'CLOSED';
+  }
+
   function renderStep(host, stepId) {
     var step = S.run.steps[stepId] || {};
     var st = step.status || 'PENDING';
@@ -375,6 +382,12 @@
     html += resultBox(st, last && last.verdict);
     if (isFinal(st)) {
       stopPolling();
+      if (stepId === 'door' && invertCandidate(last)) {
+        html += '<div class="expect" style="border-color:var(--warn);color:var(--warn)">'
+          + 'La secuencia ha empezado con la puerta CERRADA cuando se esperaba una apertura. '
+          + 'La polaridad guardada parece invertida.</div>'
+          + '<div class="actions"><button class="danger" data-action="invert-polarity">Invertir polaridad y repetir</button></div>';
+      }
       html += '<div class="actions"><button class="primary" data-action="advance">Continuar</button>'
         + '<button class="ghost" data-action="restart" data-step="' + stepId + '">Repetir paso</button></div></div>';
       host.innerHTML = html;
@@ -399,8 +412,13 @@
         + '<div class="actions"><button class="primary" data-action="polarity">Comprobar polaridad</button></div>';
       return html;
     }
+    var polText = pol.value === 'inverted' ? 'Polaridad invertida' : 'Polaridad normal';
+    if (pol.basis === 'forced') polText += ' · fijada manualmente';
+    else if (pol.basis === 'assumed_current') polText += ' · mantenida sin evento de cerrada';
+    else if (pol.changed) polText += ' · corregida';
+    else polText += ' · confirmada';
     html += '<div class="row"><span class="pill ' + (pol.value === 'inverted' ? 'warn' : 'ok') + '">'
-      + (pol.value === 'inverted' ? 'Montaje invertido · corregido' : 'Polaridad correcta') + '</span>'
+      + esc(polText) + '</span>'
       + '<span class="timestamp">' + esc(pol.checked_at || '') + '</span></div>';
     var att = activeAttemptFor('door');
     if (!att) {
@@ -428,8 +446,10 @@
     html += '</div>';
     html += '<p class="hint">Solo cuentan los eventos de esta prueba. Los anteriores están en «Eventos de la sala» y no se suman.</p>';
     html += '<div class="actions">';
-    if (count >= target) {
+    if (count >= target && waiting !== 'close') {
       html += '<button class="primary" data-action="check" data-step="door">Validar puerta</button>';
+    } else if (waiting === 'close') {
+      html += '<button class="primary" disabled>Cierra la puerta para validar…</button>';
     } else {
       html += '<button class="primary" disabled>Esperando ' + (target - count) + ' ciclo' + ((target - count) === 1 ? '' : 's') + '…</button>';
     }
@@ -829,6 +849,29 @@
       await reloadRun();
       S.attemptData = null;
       S.lightPhase = 'idle';
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function invertPolarity() {
+    var current = (S.run && S.run.door_polarity && S.run.door_polarity.value) || 'normal';
+    var force = current === 'inverted' ? 'normal' : 'inverted';
+    busy(true);
+    try {
+      var data = await api(V2 + '/door/polarity', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId(), run_id: S.run.run_id,
+          physical: 'CLOSED', force: force })
+      });
+      toast(data.message || 'Polaridad invertida. Repite los ciclos.');
+      await reloadRun();
+      await loadPreflight();
+      var step = S.run.steps && S.run.steps.door;
+      if (step) step.status = 'PENDING';
+      S.stepId = 'door';
+      S.attempt = null;
+      S.attemptData = null;
       render();
     } catch (e) { banner(e.message, 'bad'); }
     finally { busy(false); }
@@ -1359,6 +1402,7 @@
       else if (a === 'resume') openRun(b.getAttribute('data-run'));
       else if (a === 'reset-run') resetRun(b.getAttribute('data-run'));
       else if (a === 'polarity') polarity();
+      else if (a === 'invert-polarity') invertPolarity();
       else if (a === 'start-attempt') startAttempt(step);
       else if (a === 'check') checkAttempt(step);
       else if (a === 'cancel') cancelAttempt(step);

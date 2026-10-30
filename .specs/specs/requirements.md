@@ -12772,3 +12772,25 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - `restore` publica el baseline; al confirmarse, vuelve al inicio del paso
   (interior o barrido) y limpia la evidencia de la calibración fallida.
 - Las corridas v2 siguen funcionando con el motor anterior; las nuevas usan v3.
+
+## RF-219: Polaridad de puerta estable
+- `door/polarity` no infiere la polaridad del último evento sin más: usa la
+  última evidencia de puerta **cerrada** bajo la polaridad vigente.
+- Se ignoran `bootstrap`, `resync` y eventos canonizados con otra polaridad.
+- Si el último evento es una apertura, no cambia la polaridad.
+- Si no hay ningún evento de cerrada, mantiene la polaridad actual y continúa
+  (`assumed_current`); no se muestra el aviso de «abre y cierra».
+- Se mantiene la confirmación manual del operador: la puerta se asume cerrada y
+  se fija el estado de sesión en `CLOSED`.
+
+## RF-220: Arranque y validación de los ciclos de puerta
+- Al pulsar **Empezar ciclos**, el servidor confirma manualmente `CLOSED` y pone
+  una barrera: un `OPEN` atrasado anterior al inicio no puede arrancar el
+  intento en abierto.
+- El intento guarda `initial_live.door_state=CLOSED` y
+  `door_closed_confirmed_at`.
+- La UI no permite **Validar puerta** mientras `waiting_for='close'`; exige que
+  el último evento sea un cierre.
+- Si la secuencia empieza por `CLOSED` (polaridad sospechosa), se muestra
+  **Invertir polaridad y repetir**; no se invierte automáticamente a mitad de
+  prueba.

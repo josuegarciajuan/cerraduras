@@ -42,6 +42,25 @@ same('tres pares → 3 ciclos', $three['door']['count'], 3);
 check('tres pares completa', $three['door']['complete']);
 same('tres pares → completo', $three['door']['waiting_for'], 'complete');
 
+$threeOpen = AttemptEvidence::build([
+    ev('PROXIMITY', 'OPEN', 1), ev('PROXIMITY', 'CLOSED', 3),
+    ev('PROXIMITY', 'OPEN', 5), ev('PROXIMITY', 'CLOSED', 7),
+    ev('PROXIMITY', 'OPEN', 9), ev('PROXIMITY', 'CLOSED', 11),
+    ev('PROXIMITY', 'OPEN', 13),
+]);
+same('tres pares + apertura → 3 ciclos', $threeOpen['door']['count'], 3);
+same('tres pares + apertura → esperar cierre', $threeOpen['door']['waiting_for'], 'close');
+check('tres pares + apertura no permite validar aún', $threeOpen['door']['waiting_for'] === 'close');
+
+$four = AttemptEvidence::build([
+    ev('PROXIMITY', 'OPEN', 1), ev('PROXIMITY', 'CLOSED', 3),
+    ev('PROXIMITY', 'OPEN', 5), ev('PROXIMITY', 'CLOSED', 7),
+    ev('PROXIMITY', 'OPEN', 9), ev('PROXIMITY', 'CLOSED', 11),
+    ev('PROXIMITY', 'OPEN', 13), ev('PROXIMITY', 'CLOSED', 15),
+]);
+same('cuatro pares → 4 ciclos', $four['door']['count'], 4);
+same('cuatro pares cerrado → completo', $four['door']['waiting_for'], 'complete');
+
 $badClosed = AttemptEvidence::build([ev('PROXIMITY', 'CLOSED', 1), ev('PROXIMITY', 'OPEN', 3), ev('PROXIMITY', 'CLOSED', 5)]);
 same('cierre sin apertura se ignora', $badClosed['door']['count'], 1);
 

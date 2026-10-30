@@ -179,6 +179,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F102 Motor de calibración por operaciones** | **BLOCK 68B + units F102** | **Completado (código); prueba física pendiente** |
 | **F103 Evidencia event-driven del calibrador de radar** | **BLOCK 68B + units F103** | **Completado (código); prueba física pendiente** |
 | **F104 Autocalibración del radar por punto exterior y punto medio** | **BLOCK 68C + units F104** | **Completado (código); prueba física pendiente** |
+| **F104.3 Polaridad estable y arranque cerrado de puerta** | **BLOCK 68D + units F104.3** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
@@ -346,6 +347,21 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Verificación**: units `RadarMeasurementTest`, `RadarCalibrationTest`,
   `RadarWizardV3Test`, `SensorCalibrationValidatorTest`; BLOCK 68C del runner.
   Sin migración ni polling a Tuya.
+
+### F104.3 — Polaridad estable y arranque cerrado de puerta (RF-219/RF-220)
+
+- **Polaridad**: `DoorPolarityEvidence` usa la última evidencia de puerta
+  **cerrada** bajo la polaridad vigente. Ignora `bootstrap`, `resync` y eventos
+  de otra polaridad. Si el último evento es `OPEN`, no cambia la polaridad; si no
+  hay evidencia, mantiene la actual. Sin 422 por antigüedad.
+- **Arranque**: `startAttempt('door')` confirma `CLOSED` con barrera
+  (`confirmDoorClosedForAttempt`), por lo que un `OPEN` atrasado no arranca el
+  intento en abierto. El intento guarda `door_closed_confirmed_at`.
+- **UI**: `Validar puerta` solo con `waiting_for != 'close'`; con apertura
+  pendiente pide cerrar. Si la secuencia empieza por `CLOSED`, ofrece
+  **Invertir polaridad y repetir** (`force` en `door/polarity`).
+- **Verificación**: units `DoorPolarityEvidenceTest`, `AttemptEvidenceTest`,
+  BLOCK 68D y regresión completa. Sin migración ni cambios en el radar.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 

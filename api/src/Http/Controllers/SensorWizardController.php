@@ -7,6 +7,7 @@ use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepository;
 use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Presence\DoorPolarity;
+use App\Domain\Presence\DoorPolarityEvidence;
 use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\RadarBoundaryScan;
 use App\Domain\Sensors\RadarCalibrationPlanner;
@@ -266,6 +267,13 @@ final class SensorWizardController
             }
         }
         try {
+            $doorClosedConfirmedAt = null;
+            if ($stepId === 'door') {
+                // El técnico pulsa Empezar ciclos con la puerta cerrada. Se
+                // confirma manualmente el estado y se pone una barrera para
+                // que un OPEN atrasado no arranque el intento en abierto.
+                $doorClosedConfirmedAt = $this->confirmDoorClosedForAttempt((int) $run['room_id']);
+            }
             $ctx = $this->context();
             $attemptId = 'a-' . bin2hex(random_bytes(5));
             $startedAt = gmdate('Y-m-d\TH:i:s.v\Z');
@@ -276,6 +284,7 @@ final class SensorWizardController
                 'checked_at' => null,
                 'status' => 'ACTIVE',
                 'initial_live' => $ctx->live((int) $run['room_id']),
+                'door_closed_confirmed_at' => $doorClosedConfirmedAt,
                 'initial_settings' => $this->latestSettings((int) $run['room_id']),
                 'initial_effects' => $ctx->effects((int) $run['room_id']),
                 'initial_door_polarity' => $this->doorPolarity((int) $run['room_id']),
@@ -294,7 +303,8 @@ final class SensorWizardController
                 return $r;
             });
             $this->store->appendLog($runId, ['type' => 'attempt_start', 'step_id' => $stepId,
-                'attempt_id' => $attemptId, 'at' => $startedAt]);
+                'attempt_id' => $attemptId, 'at' => $startedAt,
+                'door_closed_confirmed_at' => $doorClosedConfirmedAt]);
             return Response::json(201, ['ok' => true, 'attempt' => $attempt, 'step' => $run['steps'][$stepId]]);
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
@@ -483,6 +493,9 @@ final class SensorWizardController
         $roomId = (int) ($body['room_id'] ?? 0);
         $physical = strtoupper((string) ($body['physical'] ?? 'CLOSED'));
         $restore = (bool) ($body['restore'] ?? false);
+        $force = strtolower(trim((string) ($body['force'] ?? '')));
+        $forcePolarity = in_array($force, [DoorPolarity::NORMAL, DoorPolarity::INVERTED], true)
+            ? $force : null;
         $runId = (string) ($body['run_id'] ?? '');
         if ($roomId <= 0) {
             return Response::json(400, ['error' => 'room_id required']);
@@ -514,39 +527,53 @@ final class SensorWizardController
                     $stateRepo->maxAppliedEventId($roomId, 'PROXIMITY', $provider),
                     $device->externalId
                 );
-                $this->recordPolarity($runId, DoorPolarity::NORMAL, true);
+                $this->recordPolarity($runId, DoorPolarity::NORMAL, true, true, 'restore');
                 return Response::json(200, ['ok' => true, 'polarity' => DoorPolarity::NORMAL,
                     'restored' => true, 'raw' => null, 'needs_report' => true,
+                    'changed' => true, 'basis' => 'restore',
                     'session_state' => 'UNKNOWN']);
             }
-            $stmt = $pdo->prepare(
-                "SELECT value, occurred_at, meta_json FROM presence_events
-                  WHERE room_id = :rid AND sensor = 'PROXIMITY'
-                  ORDER BY id DESC LIMIT 1"
-            );
-            $stmt->execute([':rid' => $roomId]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            if ($row === false) {
-                return Response::json(422, ['error' => 'waiting_for_report',
-                    'message' => 'Abre y cierra la puerta una vez para que el sensor envíe un evento.']);
+
+            $currentPolarity = DoorPolarity::value($device->meta);
+            if ($forcePolarity !== null) {
+                $evidence = [
+                    'polarity' => $forcePolarity,
+                    'changed' => $forcePolarity !== $currentPolarity,
+                    'basis' => 'forced',
+                    'raw' => null,
+                    'event_id' => null,
+                    'occurred_at' => null,
+                ];
+            } else {
+                $stmt = $pdo->prepare(
+                    "SELECT id, value, occurred_at, discard_reason, meta_json
+                       FROM presence_events
+                      WHERE room_id = :rid AND sensor = 'PROXIMITY'
+                      ORDER BY id DESC LIMIT 50"
+                );
+                $stmt->execute([':rid' => $roomId]);
+                $events = [];
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                    $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
+                    $events[] = [
+                        'id' => (int) $row['id'],
+                        'value' => (string) ($row['value'] ?? ''),
+                        'occurred_at' => (string) ($row['occurred_at'] ?? ''),
+                        'discard_reason' => $row['discard_reason'],
+                        'meta' => is_array($meta) ? $meta : [],
+                    ];
+                }
+                $evidence = DoorPolarityEvidence::infer($events, $currentPolarity);
             }
-            // La puerta Zigbee es edge-triggered: si no se ha movido, el último
-            // evento sigue siendo el estado real. El técnico confirma que está
-            // cerrada al empezar, así que la antigüedad no invalida la lectura
-            // de polaridad. No se pide abrir/cerrar antes de medir.
-            $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
-            $raw = is_array($meta) ? ($meta['zigbee_value'] ?? null) : null;
-            if ($raw === null && is_array($meta) && isset($meta['canonical_before_polarity'])) {
-                $rawCanonical = (string) $meta['canonical_before_polarity'];
-                $raw = $rawCanonical === 'OPEN' ? 'true' : 'false';
+
+            $polarity = (string) $evidence['polarity'];
+            $changed = (bool) $evidence['changed'];
+            $basis = (string) $evidence['basis'];
+            $raw = $evidence['raw'];
+            if ($changed || $polarity !== $currentPolarity) {
+                $newMeta = DoorPolarity::withPolarity($device->meta, $polarity);
+                $devices->updateMeta((int) $device->id, $newMeta);
             }
-            if ($raw === null) {
-                return Response::json(422, ['error' => 'raw_value_unavailable']);
-            }
-            $rawClosed = ($raw === false || $raw === 'false' || $raw === 0 || $raw === '0');
-            $polarity = $rawClosed ? DoorPolarity::NORMAL : DoorPolarity::INVERTED;
-            $newMeta = DoorPolarity::withPolarity($device->meta, $polarity);
-            $devices->updateMeta((int) $device->id, $newMeta);
             // El operador ha confirmado que la puerta está CERRADA. Corregimos
             // también el estado de sesión para que el primer ciclo posterior
             // (OPEN → CLOSED) se aplique con la nueva polaridad.
@@ -568,16 +595,26 @@ final class SensorWizardController
                 $stateRepo->maxAppliedEventId($roomId, 'PROXIMITY', $provider),
                 $device->externalId
             );
-            $this->recordPolarity($runId, $polarity, false);
+            $this->recordPolarity($runId, $polarity, false, $changed, $basis);
+            $message = match ($basis) {
+                'forced' => 'Polaridad fijada manualmente a ' . $polarity . '.',
+                'assumed_current' => 'No hay un evento de puerta cerrada; se mantiene la polaridad '
+                    . $polarity . '.',
+                default => $changed
+                    ? 'Polaridad corregida a ' . $polarity . ' solo en este dispositivo.'
+                    : 'Polaridad confirmada: ' . $polarity . '.',
+            };
             return Response::json(200, [
                 'ok' => true,
                 'polarity' => $polarity,
                 'raw' => $raw,
-                'needs_report' => false,
+                'needs_report' => $basis === DoorPolarityEvidence::BASIS_ASSUMED,
+                'changed' => $changed,
+                'basis' => $basis,
+                'event_id' => $evidence['event_id'] ?? null,
+                'occurred_at' => $evidence['occurred_at'] ?? null,
                 'session_state' => 'CLOSED',
-                'message' => $polarity === DoorPolarity::INVERTED
-                    ? 'Montaje invertido detectado y corregido solo en este dispositivo.'
-                    : 'Polaridad correcta.',
+                'message' => $message,
             ]);
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
@@ -3112,21 +3149,66 @@ final class SensorWizardController
         return null;
     }
 
-    private function recordPolarity(string $runId, string $polarity, bool $restored): void
-    {
+    private function recordPolarity(
+        string $runId,
+        string $polarity,
+        bool $restored,
+        bool $changed = false,
+        string $basis = ''
+    ): void {
         if ($runId === '' || $this->store->load($runId) === null) {
             return;
         }
-        $this->store->withLock($runId, static function (array $r) use ($polarity, $restored): array {
+        $this->store->withLock($runId, static function (array $r) use ($polarity, $restored, $changed, $basis): array {
             $r['door_polarity'] = [
                 'value' => $polarity,
                 'checked_at' => gmdate('Y-m-d\TH:i:s\Z'),
                 'restored' => $restored,
+                'changed' => $changed,
+                'basis' => $basis,
             ];
             return $r;
         });
         $this->store->appendLog($runId, ['type' => 'door_polarity', 'polarity' => $polarity,
-            'restored' => $restored]);
+            'restored' => $restored, 'changed' => $changed, 'basis' => $basis]);
+    }
+
+    /**
+     * F104.3: el inicio de los ciclos de puerta es una confirmación manual de
+     * que la puerta está cerrada. Fija el estado y una barrera para que un
+     * OPEN atrasado no arranque el intento en abierto.
+     *
+     * @return array{confirmed_at:string,provider:string,external_id:?string}
+     */
+    private function confirmDoorClosedForAttempt(int $roomId): array
+    {
+        $pdo = $this->pdo();
+        $devices = new DeviceRepository($pdo);
+        $device = $devices->findForRoomKind($roomId, Device::KIND_PROXIMITY);
+        if ($device === null) {
+            throw new \RuntimeException('door_device_missing');
+        }
+        $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+        $pdo->prepare(
+            "UPDATE iot_sessions
+                SET door_state='CLOSED', last_door_value='CLOSED',
+                    last_door_event_at=UTC_TIMESTAMP(3), last_close_at=UTC_TIMESTAMP(3)
+              WHERE room_id = :rid"
+        )->execute([':rid' => $roomId]);
+        $stateRepo = new RoomSensorStateRepository($pdo);
+        $stateRepo->setManual(
+            $roomId,
+            'PROXIMITY',
+            $provider,
+            'CLOSED',
+            $stateRepo->maxAppliedEventId($roomId, 'PROXIMITY', $provider),
+            $device->externalId
+        );
+        return [
+            'confirmed_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            'provider' => $provider,
+            'external_id' => $device->externalId,
+        ];
     }
 
     /** @param array<string,mixed> $run */

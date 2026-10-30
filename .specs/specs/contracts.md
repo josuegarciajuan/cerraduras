@@ -15662,3 +15662,20 @@ ventana no ha terminado. `restore` no exige intento activo.
   `outside_distance_missing`, `outside_already_clear`, `no_distance_separation`.
 - `start_scan`/`finish_scan` quedan solo como compatibilidad con sesiones
   antiguas; el flujo nuevo no los usa.
+
+## §F104.3 Polaridad y arranque de puerta
+
+`POST /dashboard-api/sensores/v2/door/polarity` añade:
+
+- `force`: `normal|inverted` (opcional). Fija la polaridad manualmente para el
+  botón «Invertir polaridad y repetir».
+- Respuesta aditiva: `changed`, `basis` (`closed_event|assumed_current|forced|
+  restore`), `event_id`, `occurred_at`, `needs_report`.
+- No devuelve 422 por evento antiguo; sin evidencia conserva la polaridad actual.
+
+`POST /dashboard-api/sensores/v2/attempt/start` con `step_id=door`:
+
+- Confirma `CLOSED` antes de crear el intento y pone barrera de eventos.
+- El intento incluye `door_closed_confirmed_at` y
+  `initial_live.door_state=CLOSED`.
+- La UI no valida mientras `AttemptEvidence.door.waiting_for='close'`.

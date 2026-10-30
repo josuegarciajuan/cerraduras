@@ -11141,3 +11141,23 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `RadarWizardV3Test` + `SensorCalibrationValidatorTest` v3.
 - [x] BLOCK 68C y regresión completa.
 - [ ] Prueba física en sala 14 (barrido real, verificación, reentrada, pasada).
+
+# Fase 104.3 — Tareas
+
+## TSK-F104.3-01: Polaridad estable
+- [x] `DoorPolarityEvidence` puro y tests.
+- [x] `polarity()` usa la última evidencia `CLOSED`, no el último evento.
+- [x] `force` para inversión manual y respuesta con `basis/changed`.
+
+## TSK-F104.3-02: Arranque de puerta
+- [x] `confirmDoorClosedForAttempt()` con barrera.
+- [x] `startAttempt('door')` captura `initial_live=CLOSED`.
+
+## TSK-F104.3-03: UI
+- [x] Validar solo con `waiting_for != 'close'`.
+- [x] Botón **Invertir polaridad y repetir** en secuencia invertida.
+
+## TSK-F104.3-04: Verificación
+- [x] Units `DoorPolarityEvidenceTest`, `AttemptEvidenceTest`, regresión.
+- [x] BLOCK 68D.
+- [ ] Prueba física con puerta cerrada y repetición desde estado OPEN.
