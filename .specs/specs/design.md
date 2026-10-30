@@ -25016,3 +25016,13 @@ sirve solo para la operación propia y se comprueba su SHA-256 antes de responde
 El reinicio implica una interrupción breve de la lógica del actuador. En ESP-imán la
 retención puede perderse durante el arranque; debe validarse en hardware y quedar
 documentado. No se solapa OTA con una secuencia de cerradura ni con un QR pendiente.
+
+
+## F96.4 Reentrada fallida
+
+Si el ajuste deja de detectar al reentrar, la UI no repite indefinidamente el
+botón de reentrada: muestra que el candidato no vale y ofrece **ajustar de nuevo**
+(prioriza subir sensibilidad/alcance), **volver a medir exterior** o **restaurar
+ajustes iniciales**. El planificador recibe `reentry_failed` y no sigue bajando
+el alcance. El sondeo de eventos actualiza solo los textos del temporizador y la
+presencia; no reconstruye la tarjeta en cada reporte.
