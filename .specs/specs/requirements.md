@@ -2901,6 +2901,10 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
   anterior queda auditado.
 - **RF-164.4**: `stale`/sin señal se trata como `UNVERIFIED`, nunca PASS.
 - **RF-164.5**: `SKIP` no cuenta como PASS.
+- **RF-164.6**: desde cualquier fase, el técnico puede reiniciar toda la
+  verificación. El servidor archiva la corrida como `abandoned`, cancela/audita
+  el intento activo y crea una corrida nueva desde Puerta; no borra la evidencia
+  anterior ni restaura automáticamente la configuración física.
 
 ## RF-165: Radar dentro
 

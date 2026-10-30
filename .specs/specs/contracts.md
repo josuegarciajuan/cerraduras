@@ -3694,6 +3694,9 @@ Errores: `400` parámetros, `404` corrida/paso/sala.
 ## §F95.2 Corrida e intentos
 
 - `POST .../v2/run/start` `{room_id, operator}` → `201 {run, plan}`.
+- `POST .../v2/run/reset` `{run_id, operator?}` → `201 {old_run_id, run, plan}`.
+  Archiva la corrida actual como `abandoned`, cancela/audita intentos activos y crea
+  una corrida nueva desde Puerta; conserva ambos archivos de auditoría.
 - `POST .../v2/attempt/start` `{run_id, step_id}` → `201 {attempt}`;
   `409 attempt_in_progress`; `409 polarity_not_checked` para `door`.
 - `POST .../v2/attempt/check` `{run_id, step_id, attempt_id, check_id, human?}` →

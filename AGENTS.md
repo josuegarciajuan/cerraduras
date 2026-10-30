@@ -187,6 +187,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
   puerta cerrada, corrige el estado de sesión y permite deshacer.
 - **Intentos**: `attempt/start|check|cancel` con `attempt_id`, ventana explícita,
   un solo intento activo por sala (`flock` + `409`) y `SKIP` que no cuenta como PASS.
+  `run/reset` archiva una corrida en curso, cancela el intento activo y crea otra desde Puerta.
 - **Radar**: `radar_inside`/`radar_outside` juzgan reportes reales (incluye
   `no_context`), con margen de fading y efectos falsos; ajuste con
   `ZigbeeRadarCalibrationService`.
