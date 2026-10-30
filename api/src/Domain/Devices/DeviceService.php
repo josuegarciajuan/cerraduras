@@ -198,6 +198,16 @@ final class DeviceService
             $st = $fields['subtype'] === null ? null : (string) $fields['subtype'];
             if ($current->kind === Device::KIND_RPI) {
                 $st = Device::normalizeEspVariant($st);
+                // F100: la variante efectiva de un RPI solo cambia con una
+                // operación OTA confirmada. El panel usa
+                // POST /devices/{id}/firmware-update.
+                if ($st !== Device::normalizeEspVariant($current->subtype)) {
+                    throw new UnprocessableException(
+                        'firmware_update_required',
+                        'Changing the ESP variant requires a remote firmware update',
+                        ['current' => Device::normalizeEspVariant($current->subtype), 'requested' => $st]
+                    );
+                }
             }
             $this->validateSubtype($current->kind, $st);
             $sanitized['subtype'] = $st;

@@ -86,6 +86,10 @@ use App\Http\Controllers\KeyDeskController;
 use App\Http\Controllers\DevEchoController;
 use App\Http\Controllers\EventStreamController;
 use App\Http\Controllers\DeviceController;
+use App\Http\Controllers\FirmwareOtaController;
+use App\Domain\Firmware\FirmwareOtaService;
+use App\Domain\Firmware\FirmwareOperationRepository;
+use App\Domain\Firmware\FirmwareReleaseRepository;
 use App\Http\Controllers\QrRejectionController;
 use App\Http\Controllers\DevicePackController;
 use App\Http\Controllers\HealthController;
@@ -1705,6 +1709,12 @@ $deviceController = new DeviceController($deviceService, $deviceStatusFactory())
 $qrRejectionController = new QrRejectionController($pdo);
 $commandQueueRepo = new \App\Domain\Devices\CommandQueueRepository($pdo);
 
+// F100: catálogo de firmware y operaciones OTA (panel + dispositivo).
+$firmwareReleaseRepo = new FirmwareReleaseRepository($pdo);
+$firmwareOperationRepo = new FirmwareOperationRepository($pdo);
+$firmwareOtaService = new FirmwareOtaService($pdo, $deviceRepo, $firmwareReleaseRepo, $firmwareOperationRepo);
+$firmwareOtaController = new FirmwareOtaController($firmwareOtaService, $firmwareReleaseRepo);
+
 // Device Packs (F25)
 $devicePackRepo     = new DevicePackRepository($pdo);
 $qrTokenizer        = new QrTokenizer(Config::getRequired('QR_SIGNING_SECRET'));
@@ -2189,7 +2199,7 @@ $resolveOwnerChip = static function (\App\Domain\Devices\DeviceRepository $repo,
 // Body: {"external_id":"<chipId>","sub_kinds":["RPI","SCANNER","LOCK"]}  (legacy: {"external_id","sub_kind"})
 $router->post(
     '/dashboard-api/device-heartbeat',
-    function (\App\Http\Request $request) use ($deviceRepo, $commandQueueRepo): \App\Http\Response {
+    function (\App\Http\Request $request) use ($deviceRepo, $commandQueueRepo, $firmwareOperationRepo): \App\Http\Response {
         $body = $request->jsonBody ?? [];
         $extId = (string) ($body['external_id'] ?? '');
         if ($extId === '') {
@@ -2237,6 +2247,22 @@ $router->post(
             $outputOn = is_bool($rawOutput) ? $rawOutput
                 : (is_string($rawOutput) ? filter_var($rawOutput, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null);
         }
+        // F100: OTA capability is announced by the firmware. It is
+        // informational for routing: a device that does not announce it cannot
+        // be updated remotely and the panel says so explicitly.
+        $otaCapable = null;
+        if (array_key_exists('ota_capable', $body)) {
+            $rawOta = $body['ota_capable'];
+            $otaCapable = is_bool($rawOta) ? $rawOta
+                : (is_string($rawOta) ? filter_var($rawOta, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null);
+        }
+        $otaProtocol = isset($body['ota_protocol']) && is_string($body['ota_protocol'])
+            ? substr(trim($body['ota_protocol']), 0, 16) : null;
+        $otaState = isset($body['ota_state']) && is_string($body['ota_state'])
+            ? strtoupper(substr(trim($body['ota_state']), 0, 24)) : null;
+        $otaVersion = isset($body['ota_version']) && is_string($body['ota_version'])
+            ? substr(trim($body['ota_version']), 0, 48) : null;
+
         $doorLink = null;
         if (array_key_exists('door_link', $body)) {
             $rawLink = $body['door_link'];
@@ -2257,7 +2283,8 @@ $router->post(
             $ownerPack = $rpi->packId;
 
             if ($actuatorState !== null || $actuatorReason !== null || $reportedDoorState !== null
-                || $outputOn !== null || $doorLink !== null
+                || $outputOn !== null || $doorLink !== null || $otaCapable !== null
+                || $otaProtocol !== null || $otaState !== null || $otaVersion !== null
             ) {
                 $meta = is_array($rpi->meta) ? $rpi->meta : [];
                 if ($actuatorState !== null) $meta['actuator_state'] = $actuatorState;
@@ -2265,6 +2292,10 @@ $router->post(
                 if ($reportedDoorState !== null) $meta['door_state'] = $reportedDoorState;
                 if ($outputOn !== null) $meta['output_on'] = $outputOn;
                 if ($doorLink !== null) $meta['door_link'] = $doorLink;
+                if ($otaCapable !== null) $meta['ota_capable'] = $otaCapable;
+                if ($otaProtocol !== null) $meta['ota_protocol'] = $otaProtocol;
+                if ($otaState !== null) $meta['ota_state'] = $otaState;
+                if ($otaVersion !== null) $meta['ota_version'] = $otaVersion;
                 $meta['actuator_updated_at'] = gmdate('Y-m-d\TH:i:s\Z');
                 $deviceRepo->updateMeta($rpi->id, $meta);
             }
@@ -2283,6 +2314,7 @@ $router->post(
         }
 
         $hasPending = $commandQueueRepo->hasPending($extId);
+        $firmwareUpdatePending = $firmwareOperationRepo->findNextForExternal($extId) !== null;
 
         // Opportunistic cleanup: bound the queue while the chip is active.
         // Only runs when there is a backlog, so the DELETE is infrequent.
@@ -2293,6 +2325,7 @@ $router->post(
         return \App\Http\Response::json(200, [
             'ok' => true,
             'has_pending_commands' => $hasPending,
+            'firmware_update_pending' => $firmwareUpdatePending,
             'firmware_variant' => $firmwareVariant,
             'firmware_version' => $firmwareVersion,
             'variant_mismatch' => $variantMismatch,
@@ -2301,6 +2334,9 @@ $router->post(
             'output_on' => $outputOn,
             'door_state' => $reportedDoorState,
             'door_link' => $doorLink,
+            'ota_capable' => $otaCapable,
+            'ota_protocol' => $otaProtocol,
+            'ota_state' => $otaState,
         ]);
     }
 );
@@ -3019,6 +3055,55 @@ $router->post(
     '/api/v1/devices/register',
     [$deviceController, 'register'],
     $authFactory(['rooms:write'])
+);
+
+// ── F100: firmware OTA (panel) ─────────────────────────────────────────────
+$router->get(
+    '/api/v1/firmware/releases',
+    [$firmwareOtaController, 'listReleases'],
+    $authFactory(['rooms:read'])
+);
+$router->get(
+    '/api/v1/devices/{id}/firmware-operations',
+    [$firmwareOtaController, 'listForDevice'],
+    $authFactory(['rooms:read'])
+);
+$router->post(
+    '/api/v1/devices/{id}/firmware-update',
+    [$firmwareOtaController, 'createForDevice'],
+    $authFactory(['rooms:write'])
+);
+$router->get(
+    '/api/v1/firmware-operations/{id}',
+    [$firmwareOtaController, 'show'],
+    $authFactory(['rooms:read'])
+);
+$router->post(
+    '/api/v1/firmware-operations/{id}/cancel',
+    [$firmwareOtaController, 'cancel'],
+    $authFactory(['rooms:write'])
+);
+
+// ── F100: firmware OTA (dispositivo ESP, credencial vinculada) ─────────────
+$router->get(
+    '/dashboard-api/firmware-update',
+    [$firmwareOtaController, 'deviceManifest'],
+    $authFactory(['qr:validate'])
+);
+$router->get(
+    '/dashboard-api/firmware-download',
+    [$firmwareOtaController, 'deviceBinary'],
+    $authFactory(['qr:validate'])
+);
+$router->post(
+    '/dashboard-api/firmware-progress',
+    [$firmwareOtaController, 'deviceProgress'],
+    $authFactory(['qr:validate'])
+);
+$router->post(
+    '/dashboard-api/firmware-confirm',
+    [$firmwareOtaController, 'deviceConfirm'],
+    $authFactory(['qr:validate'])
 );
 
 // Identify button ("mírame") — called by ESP32

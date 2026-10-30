@@ -46,3 +46,7 @@ Thumbs.db
 # PHP / tests
 .phpunit.result.cache
 coverage/
+
+# Firmware OTA binaries (published at runtime)
+/api/storage/firmware/*
+!/api/storage/firmware/.gitignore

@@ -15529,3 +15529,58 @@ valor no es `OPEN|CLOSED`.
 
 Se persisten en `devices.meta_json` y se devuelven en la respuesta. No cambian
 el subtipo ni la lógica eléctrica.
+
+---
+
+## F100 — Contratos de actualización remota de firmware
+
+### Panel
+
+`GET /api/v1/firmware/releases?variant=IMAN` → `{items:[{id,variant,version,sha256,size_bytes,published,...}]}`
+
+`POST /api/v1/devices/{id}/firmware-update`
+```json
+{"variant":"IMAN"}
+```
+o
+```json
+{"upgrade":true}
+```
+Respuestas: `202 {created:true, operation:{...}}`; `200 {created:false, operation:null}`
+si no cambia la variante; `422 ota_not_capable | firmware_release_not_found`;
+`409 firmware_operation_active`.
+
+`GET /api/v1/devices/{id}/firmware-operations` → `{items:[operation...]}`
+
+`GET /api/v1/firmware-operations/{id}` → operación con `status_label`.
+
+`POST /api/v1/firmware-operations/{id}/cancel` → solo `WAITING`; `409` en otro estado.
+
+### Dispositivo
+
+`GET /dashboard-api/firmware-update?external_id=<chip>`
+```json
+{"ok":true,"operation":{"id":12,"status":"PREPARING","variant":"IMAN","version":"2.6-ota","protocol":"ota-v1","sha256":"...","size_bytes":123456,"download_path":"/dashboard-api/firmware-download?operation_id=12"}}
+```
+Sin trabajo: `{"ok":true,"operation":null}`.
+
+`GET /dashboard-api/firmware-download?operation_id=<id>&external_id=<chip>`
+→ `application/octet-stream`, cabecera `X-Firmware-SHA256`.
+
+`POST /dashboard-api/firmware-progress`
+```json
+{"external_id":"...","operation_id":12,"status":"DOWNLOADING","progress_pct":40}
+```
+Estados aceptados: `PREPARING`, `DOWNLOADING`, `VERIFYING`, `REBOOTING`,
+`VALIDATING`, `FAILED`, `ROLLED_BACK`, `UNCONFIRMED`. `COMPLETED` se rechaza aquí.
+
+`POST /dashboard-api/firmware-confirm`
+```json
+{"external_id":"...","operation_id":12,"ok":true,"variant":"IMAN","version":"2.6-ota"}
+```
+Solo `ok:true` con variante y versión coincidentes consolida `devices.subtype`.
+`ok:false` confirma rollback y conserva la variante anterior.
+
+### Errores
+`firmware_operation_mismatch` (403), `firmware_invalid_transition` (409),
+`firmware_completion_requires_confirmation` (422), `firmware_binary_corrupt` (409).

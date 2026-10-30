@@ -209,10 +209,10 @@ function crm(){return{
    accessKeys:[],nfcCards:[],keyAccesses:[],keyFilters:{worker_id:'',status:'',q:''},nfcFilter:{status:'',q:''},accessFilters:{worker_id:'',key_id:'',result:'',from:'',to:''},_lastKeyToken:null,
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
   stats:{t:0,f:0,o:0,ov:0,cl:0},monTab:'rooms',cfgTab:'operation',health:null,_healthTimer:null,_factoryTimer:null,
-  deviceStatus:{},deviceStatusTick:0,
+  deviceStatus:{},deviceStatusTick:0,fwOps:{},fwReleases:[],_fwTimer:null,
   devices:[],pkQ:'',devQ:'',devKind:'ALL',pkForm:{name:'',code:''},pkSel:[],devForm:{kind:'RPI',subtype:'CERRADURA',external_id:'',label:'',pack_id:null,transport:'UNKNOWN',meta:{}},roomForm:{code:'',room_type_id:null,notes:'',pack_id:null},
 
-  async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);setInterval(()=>{this.checkAnomalyAlerts();this.computeWorkerAlerts()},15000)}catch(e){window.location.href='/panel/login'}},
+  async init(){try{let r=await fetch('/api/v1/crm/me');if(!r.ok){window.location.href='/panel/login';return}this.user=(await r.json()).user;await Promise.all([this.loadDashboard(),this.loadPacks()]);await this.loadFirmwareOps();this._fwTimer=setInterval(()=>{this.refreshFirmwareOps();this.checkAnomalyAlerts();this.computeWorkerAlerts()},5000)}catch(e){window.location.href='/panel/login'}},
   async api(url,opts={}){let r=await fetch(url,opts);if(!r.ok){let d=await r.json().catch(()=>({}));throw new Error(d.error?.message||'Error '+r.status)}return r.json()},
   async loadDashboard(){try{let d=await this.api('/api/v1/rooms');this.rooms=d.items||[];this.stats={t:this.rooms.length,f:this.rooms.filter(function(r){return r.status==='FREE'}).length,o:this.rooms.filter(function(r){return r.status==='OCCUPIED'}).length,ov:this.rooms.filter(function(r){return r.status==='OVERSTAY'}).length,cl:this.rooms.filter(function(r){return r.status==='CLEANING'}).length};this.loadAnomalySummary()}catch(e){}},
   async loadPacks(){try{let d=await this.api('/api/v1/device-packs');this.packs=d.items||[];this.deriveDevices()}catch(e){this.toastErr('Error cargando packs: '+e.message)}},
@@ -741,7 +741,8 @@ function crm(){return{
     if(d.battery_pct!==null&&d.battery_pct!==undefined)batt=this.battHtml(d.battery_pct,true);
     else if(d.kind==='PROXIMITY')batt=this.battHtml(null,true);
     let loc=d.kind==='RPI'?'<button class="icon-btn" title="Localizar (parpadeo LED)" @click="identifyDevice('+d.id+')">'+this.crosshairSvg()+'</button>':'';
-    let acts='<div class="dv-acts">'+loc+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
+    let upd=d.kind==='RPI'?'<button class="icon-btn" title="Actualizar firmware" @click="updateFirmware('+d.id+')">&#8679;</button>':'';
+    let acts='<div class="dv-acts">'+loc+upd+'<button class="icon-btn" title="Editar" @click="openDeviceForm('+d.id+')">'+this.pencilSvg()+'</button><button class="icon-btn icon-btn--danger" title="Eliminar" @click="deleteDevice('+d.id+')">'+this.trashSvg()+'</button></div>';
     let variant=(d.kind==='RPI'&&d.subtype)?'<span class="tchip" style="--tc:#c9a35b;--tcbg:rgba(201,163,91,.14)">'+this.esc(this.ESP_VARIANT_NAME[d.subtype]||d.subtype)+'</span>':'';
     let espTel='';
     if(d.kind==='RPI'){
@@ -750,9 +751,17 @@ function crm(){return{
       if(d.meta&&d.meta.actuator_state)bits.push('imán '+d.meta.actuator_state);
       if(d.meta&&d.meta.output_on!==undefined)bits.push('salida '+(d.meta.output_on?'ON':'OFF'));
       if(d.meta&&d.meta.door_state)bits.push('puerta '+d.meta.door_state);
+      if(d.meta&&!d.meta.ota_capable)bits.push('sin OTA');
       if(bits.length)espTel='<span class="spec-chip mono">'+this.esc(bits.join(' · '))+'</span>';
     }
-    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+espTel+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
+    let op=d.kind==='RPI'?this.fwOps[d.id]:null;
+    let fwStatus='';
+    if(op){
+      let col=op.finished?(op.status==='COMPLETED'?'#62c99b':op.status==='UNCONFIRMED'?'#e0b94e':'#e0556a'):'#7d9ce8';
+      let pct=(op.status==='DOWNLOADING'||op.status==='VALIDATING')?' '+op.progress_pct+'%':'';
+      fwStatus='<span class="tchip" style="--tc:'+col+';--tcbg:rgba(108,142,224,.14)" title="Cambio solicitado: '+this.esc(op.to_variant+' '+op.to_version)+'">'+this.esc(op.status_label||op.status)+pct+'</span>';
+    }
+    return'<article class="dv-card" style="--c:'+c+';--c-bg:'+bg+';--i:'+(idx%50)+'"><div class="dv-glyph">'+this.glyph(d.kind)+'</div><div class="dv-body"><div class="dv-title">'+this.esc(d.label||this.KIND_NAME[d.kind]||d.kind)+this.kindChip(d.kind)+variant+this.transportBadge(d.transport)+fwStatus+'</div><div class="dv-id mono">id '+d.id+' · ext '+this.esc(d.external_id||'—')+'</div><div class="dv-specs">'+this.provBadge(d.integration_status)+espTel+this.specChips(d.kind,d.meta)+'</div></div><div class="dv-side">'+batt+acts+'</div></article>';
   },
   deriveDevices(){
     let out=[];
@@ -866,7 +875,7 @@ function crm(){return{
       let dis=d?' disabled':'';
       return'<button type="button" class="seg-btn'+(kind===k?' act':'')+'" style="--c:'+that.KIND_COLOR[k]+';--c-bg:'+that.KIND_BG[k]+'" @click="devForm.kind=\''+k+'\'"'+dis+'>'+k+'</button>';
     }).join('');
-    let subtypeSeg=this.ESP_VARIANTS.map(v=>'<button type="button" class="seg-btn'+(this.devForm.subtype===v?' act':'')+'" @click="devForm.subtype=\''+v+'\'"'+(d?' disabled':'')+'>'+that.ESP_VARIANT_NAME[v]+'</button>').join('');
+    let subtypeSeg=this.ESP_VARIANTS.map(v=>'<button type="button" class="seg-btn'+(this.devForm.subtype===v?' act':'')+'" @click="devForm.subtype=\''+v+'\'">'+that.ESP_VARIANT_NAME[v]+'</button>').join('');
     let packOpts=(d?'<option value="">Sin pack</option>':'')+this.packs.map(p=>'<option value="'+p.id+'"'+(this.devForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>').join('');
     if(!this.packs.length&&!d){packOpts='<option value="">Primero crea un pack</option>'}
     let transportOpts=[['UNKNOWN','Sin declarar'],['ZIGBEE2MQTT','Zigbee2MQTT local'],['TUYA','Tuya cloud'],['LOCAL','ESP32 / local'],['SIMULATED','Simulado']].map(function(x){return'<option value="'+x[0]+'"'+(that.devForm.transport===x[0]?' selected':'')+'>'+x[1]+'</option>'}).join('');
@@ -894,14 +903,27 @@ function crm(){return{
     let f=this.devForm,k=f.kind;
     if(!f.external_id||!f.external_id.trim()){this.toastErr('El ID externo es obligatorio');return}
     if(!id&&!f.pack_id){this.toastErr('Selecciona un pack antes de crear el dispositivo');return}
-    let meta={};
-    Object.keys(this.KIND_META[k]||{}).forEach(key=>{let v=(f.meta||{})[key];if(v!==undefined&&v!==null&&String(v).trim()!=='')meta[key]=String(v).trim()});
+    let prev=id?this.devices.find(x=>x.id===id):null;
+    // Conserva metadatos de runtime (ota_capable, telemetría del actuador...)
+    // que el formulario no edita; solo sustituye las claves declaradas.
+    let meta=(prev&&prev.meta)?Object.assign({},prev.meta):{};
+    Object.keys(this.KIND_META[k]||{}).forEach(key=>{
+      delete meta[key];
+      let v=(f.meta||{})[key];
+      if(v!==undefined&&v!==null&&String(v).trim()!=='')meta[key]=String(v).trim();
+    });
     let transport=(f.transport||'UNKNOWN').toUpperCase();
+    let variantChanged=!!(id&&k==='RPI'&&prev&&(prev.subtype||'CERRADURA')!==(f.subtype||'CERRADURA'));
     try{
       if(id){
         let body={external_id:f.external_id.trim(),label:f.label.trim()||null,pack_id:f.pack_id?parseInt(f.pack_id):null,transport:transport,meta:meta};
-        if(k==='RPI')body.subtype=f.subtype||'CERRADURA';
+        if(k==='RPI'&&!variantChanged)body.subtype=f.subtype||'CERRADURA';
         await this.api('/api/v1/devices/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(variantChanged){
+          let r=await this.api('/api/v1/devices/'+id+'/firmware-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({variant:f.subtype})});
+          if(r.operation)this.fwOps[id]=r.operation;
+          this.toastOk('Cambio solicitado: '+this.ESP_VARIANT_NAME[f.subtype]+'. Actualización en curso.');
+        }
       }else{
         let body={kind:k,external_id:f.external_id.trim(),pack_id:parseInt(f.pack_id),transport:transport,meta:meta};
         if(k==='RPI')body.subtype=f.subtype||'CERRADURA';
@@ -910,13 +932,39 @@ function crm(){return{
       }
       this.modal.show=false;await this.loadPacks();
       if(this.p==='dv'){await this.loadDevices()}
-      this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
+      await this.loadFirmwareOps();
+      if(!variantChanged)this.toastOk(id?'Dispositivo actualizado':'Dispositivo creado');
     }catch(e){this.toastErr(e.message)}
   },
   async deleteDevice(id){
     if(!confirm('¿Eliminar este dispositivo?'))return;
     try{await this.api('/api/v1/devices/'+id,{method:'DELETE'});await this.loadPacks();this.toastOk('Dispositivo eliminado')}
     catch(e){this.toastErr(e.message)}
+  },
+  async loadFirmwareOps(){
+    try{let rel=await this.api('/api/v1/firmware/releases');this.fwReleases=rel.items||[]}catch(e){}
+    let list=(this.devices||[]).filter(d=>d.kind==='RPI');
+    for(let d of list){try{let r=await this.api('/api/v1/devices/'+d.id+'/firmware-operations');this.fwOps[d.id]=(r.items&&r.items[0])||null}catch(e){}}
+  },
+  async refreshFirmwareOps(){
+    let list=(this.devices||[]).filter(d=>d.kind==='RPI');
+    if(!list.length)return;
+    for(let d of list){
+      let op=this.fwOps[d.id];
+      if(!op||op.finished)continue;
+      try{let r=await this.api('/api/v1/firmware-operations/'+op.id);this.fwOps[d.id]=r;if(r.finished){await this.loadPacks();if(this.p==='dv')await this.loadDevices()}}catch(e){}
+    }
+  },
+  async updateFirmware(id){
+    let d=(this.devices||[]).find(x=>x.id===id);if(!d)return;
+    let rel=(this.fwReleases||[]).find(r=>r.variant===(d.subtype||'CERRADURA'));
+    let msg='¿Actualizar '+this.ESP_VARIANT_NAME[d.subtype||'CERRADURA']+' a la última versión publicada'+(rel?' ('+rel.version+')':'')+'?';
+    if(!confirm(msg))return;
+    try{
+      let r=await this.api('/api/v1/devices/'+id+'/firmware-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({upgrade:true})});
+      if(r.operation)this.fwOps[id]=r.operation;
+      this.toastOk('Actualización solicitada');
+    }catch(e){this.toastErr(e.message)}
   },
   async identifyDevice(id){
     let d=this.devices.find(x=>x.id===id);if(!d)return;

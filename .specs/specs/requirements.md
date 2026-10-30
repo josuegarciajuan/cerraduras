@@ -12537,3 +12537,52 @@ correspondencia funcional 1:1 con la numeración solicitada:
 - **RF-186.9**: tras un hueco de reconexión con estado procedente de eventos,
   el SSE reproduce los eventos aplicados perdidos en orden, para no dejar el
   imán apagado tras un OPEN/CLOSED ocurrido durante el hueco.
+
+---
+
+## F100 — Actualización remota de firmware (OTA) y cambio de variante desde el panel
+
+**Trazabilidad:** RF-190..RF-200 · `design.md §F100` · `contracts.md §F100`
+
+### Objetivo
+Actualizar por WiFi el firmware de los ESP32 (ESP-cerradura / ESP-imán) sin acceso
+físico, y permitir que el panel cambie la variante de un RPI lanzando la operación
+al guardar. La confirmación de éxito solo es válida tras reiniciar con la imagen
+esperada.
+
+### Requisitos
+
+- **RF-190 — Catálogo inmutable.** Cada binario publicado declara variante, versión,
+  placa, esquema de particiones, protocolo, SHA-256 y tamaño. Publicar una versión
+  nueva no actualiza dispositivos por sí solo.
+- **RF-191 — Operación fijada.** Al crear una operación se fija el `release_id`
+  exacto. Publicar otra versión mientras el equipo está desconectado no cambia el
+  destino de la operación existente.
+- **RF-192 — Cambio al guardar.** Si el panel guarda un RPI con una variante distinta
+  de la efectiva, el backend crea la operación OTA automáticamente. Guardar sin
+  cambiar la variante no crea operación.
+- **RF-193 — Actualización de la misma variante.** El panel ofrece una acción
+  explícita «Actualizar firmware» que selecciona la última versión publicada de la
+  variante efectiva.
+- **RF-194 — Variante efectiva vs solicitada.** `devices.subtype` es la variante
+  efectiva confirmada. La variante solicitada vive en la operación y solo se
+  consolida con la confirmación posterior al reinicio.
+- **RF-195 — Estados observables.** El panel muestra: esperando, preparando,
+  descargando/instalando, verificando, reiniciando, comprobando funcionamiento,
+  completado, fallido, revertido, sin confirmación, cancelado y caducado.
+- **RF-196 — Persistencia y seguimiento.** Cerrar el panel o recargar la página no
+  interrumpe ni pierde la operación. El estado se consulta al servidor mientras la
+  operación siga activa.
+- **RF-197 — Concurrencia e idempotencia.** Solo puede existir una operación activa
+  por dispositivo. Reintentos o mensajes duplicados no crean operaciones ni efectos
+  adicionales.
+- **RF-198 — Seguridad.** Las rutas del dispositivo exigen credencial vinculada e
+  identidad coincidente. Conocer un `external_id` no permite descargar ni confirmar
+  una operación ajena. El binario servido se re-verifica contra su SHA-256.
+- **RF-199 — Recuperación.** Si la descarga o escritura falla, el firmware anterior
+  sigue operativo. El rollback debe configurarse y probarse; una pérdida de
+  comunicación se muestra como «Sin confirmación», nunca como completada.
+- **RF-200 — Compatibilidad y no regresión.** Los equipos sin OTA se identifican como
+  tales y requieren una carga inicial por cable. WiFi/credenciales sobreviven a la
+  actualización y al rollback. Se preservan QR, secuencias eléctricas, SSE, LEDs,
+  watchdog y heartbeat. No se introduce ningún sondeo periódico a Tuya.

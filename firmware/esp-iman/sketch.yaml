@@ -1,0 +1,9 @@
+profiles:
+  esp32s3usbotg:
+    fqbn: esp32:esp32:esp32s3usbotg
+    platforms:
+      - platform: esp32:esp32 (3.3.12)
+    libraries:
+      - WiFiManager (2.0.17)
+    build_property.PartitionScheme: min_spiffs
+default_profile: esp32s3usbotg

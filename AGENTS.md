@@ -176,6 +176,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F94 Asistente de verificación física de sensores** | **BLOCK 67 + units F94** | **Completado (código); uso en campo pendiente** |
 | **F95 Flujo universal de verificación Zigbee** | **BLOCK 68 + units F95** | **Completado (código); prueba física pendiente** |
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
+| **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
 
 ### F95 — Flujo universal de verificación Zigbee (RF-162…RF-167)
 

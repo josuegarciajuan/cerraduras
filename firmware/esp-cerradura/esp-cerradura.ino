@@ -64,6 +64,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
+#include <Update.h>
 #include <WiFiManager.h>
 #include "esp_task_wdt.h"  // Fase 1: watchdog timer
 #include "esp_system.h"
@@ -109,6 +110,10 @@
 #ifndef CERRADURAS_API_CA_PEM
 #error "Define CERRADURAS_API_CA_PEM with the deployed API CA/certificate before building"
 #endif
+
+// ── F100: variante/version para OTA ───────────────────────────────────────
+#define OTA_FW_VARIANT               "CERRADURA"
+#define OTA_FW_VERSION               "2.5-ota"
 
 // ── Configuración de la API (hardcodeada, no depende de WiFi) ───────────────
 const char* API_BASE_URL = "https://cerraduras.josue.ink";
@@ -926,6 +931,270 @@ void reportQrRejected(int qrLen, int qrDots, const String &text) {
 }
 
 // ── setup ─────────────────────────────────────────────────────────────────
+
+// ── F100: cliente OTA (descarga HTTPS + confirmación tras reinicio) ─────────
+// Requiere una tabla de particiones con dos slots de aplicación (ota_0/ota_1)
+// y otadata. El binario se escribe en el slot inactivo y solo se selecciona
+// si supera la verificación de imagen. La confirmación se envía DESPUÉS de
+// reiniciar; mientras no llega, el panel muestra "Sin confirmación".
+#include <Update.h>
+#include "esp_ota_ops.h"
+
+#define OTA_PROTOCOL          "ota-v1"
+#define OTA_CHUNK_BYTES       2048
+#define OTA_PROGRESS_STEP     5
+
+static bool otaInProgress = false;
+
+static int otaJsonInt(const String &json, const char *key, int fallback) {
+  int k = json.indexOf(key);
+  if (k < 0) return fallback;
+  int c = json.indexOf(':', k + strlen(key));
+  if (c < 0) return fallback;
+  int e = c + 1;
+  while (e < (int) json.length() && (json[e] == ' ' || json[e] == '"')) e++;
+  int start = e;
+  while (e < (int) json.length() && isDigit(json[e])) e++;
+  if (e <= start) return fallback;
+  return json.substring(start, e).toInt();
+}
+
+static String otaJsonString(const String &json, const char *key, const String &fallback) {
+  int k = json.indexOf(key);
+  if (k < 0) return fallback;
+  int c = json.indexOf(':', k + strlen(key));
+  if (c < 0) return fallback;
+  int q1 = json.indexOf('"', c + 1);
+  if (q1 < 0) return fallback;
+  int q2 = json.indexOf('"', q1 + 1);
+  if (q2 < 0) return fallback;
+  return json.substring(q1 + 1, q2);
+}
+
+static void otaSavePending(int opId, const String &variant, const String &version) {
+  Preferences prefs;
+  prefs.begin("cerraduras", false);
+  prefs.putInt("ota_op", opId);
+  prefs.putString("ota_variant", variant);
+  prefs.putString("ota_version", version);
+  prefs.end();
+}
+
+static void otaClearPending() {
+  Preferences prefs;
+  prefs.begin("cerraduras", false);
+  prefs.remove("ota_op");
+  prefs.remove("ota_variant");
+  prefs.remove("ota_version");
+  prefs.end();
+}
+
+static bool otaReadPending(int &opId, String &variant, String &version) {
+  Preferences prefs;
+  prefs.begin("cerraduras", false);
+  opId = prefs.getInt("ota_op", 0);
+  variant = prefs.getString("ota_variant", "");
+  version = prefs.getString("ota_version", "");
+  prefs.end();
+  return opId > 0;
+}
+
+static void otaReport(int opId, const char *status, int pct,
+                      const char *errorCode = nullptr,
+                      const char *errorMessage = nullptr) {
+  if (!ensureWiFi()) return;
+  String body;
+  body.reserve(260);
+  body = "{\"external_id\":\"" + chipId() + "\",\"operation_id\":" + String(opId) +
+         ",\"status\":\"" + String(status) + "\",\"progress_pct\":" + String(pct);
+  if (errorCode != nullptr) {
+    body += ",\"error_code\":\"" + String(errorCode) + "\"";
+  }
+  if (errorMessage != nullptr) {
+    String msg = String(errorMessage);
+    msg.replace("\"", "'");
+    body += ",\"error_message\":\"" + msg + "\"";
+  }
+  body += "}";
+  HTTPClient &http = apiHttpSession();
+  beginApiRequest(http, String(API_BASE_URL) + "/dashboard-api/firmware-progress");
+  http.addHeader("Content-Type", "application/json");
+  addDeviceAuth(http);
+  http.setTimeout(4000);
+  int code = http.POST(body);
+  Serial.printf("[OTA] progress %s %d%% → HTTP %d\n", status, pct, code);
+  http.end();
+  esp_task_wdt_reset();
+}
+
+// Confirma el resultado en el arranque. Se ejecuta una sola vez por operación.
+static void otaConfirmBoot() {
+  int opId = 0;
+  String targetVariant, targetVersion;
+  if (!otaReadPending(opId, targetVariant, targetVersion)) {
+    return;
+  }
+  if (!ensureWiFi()) return;
+
+  bool matches = targetVariant.equalsIgnoreCase(OTA_FW_VARIANT)
+              && targetVersion == OTA_FW_VERSION;
+  String body;
+  body.reserve(300);
+  body = "{\"external_id\":\"" + chipId() + "\",\"operation_id\":" + String(opId) +
+         ",\"ok\":" + String(matches ? "true" : "false") +
+         ",\"variant\":\"" OTA_FW_VARIANT "\",\"version\":\"" OTA_FW_VERSION "\"";
+  if (!matches) {
+    body += ",\"error_code\":\"firmware_version_mismatch\"";
+  }
+  body += "}";
+
+  HTTPClient &http = apiHttpSession();
+  beginApiRequest(http, String(API_BASE_URL) + "/dashboard-api/firmware-confirm");
+  http.addHeader("Content-Type", "application/json");
+  addDeviceAuth(http);
+  http.setTimeout(5000);
+  int code = http.POST(body);
+  String resp = http.getString();
+  http.end();
+  Serial.printf("[OTA] confirm op=%d match=%d → HTTP %d %s\n",
+                opId, matches ? 1 : 0, code, resp.c_str());
+
+  if (code == 200) {
+    otaClearPending();
+  }
+  if (!matches) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    if (running != nullptr && esp_ota_get_state_partition(running, &st) == ESP_OK
+        && st == ESP_OTA_IMG_PENDING_VERIFY) {
+      Serial.println("[OTA] nueva imagen no coincide — rollback");
+      esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+  }
+}
+
+// Marca la imagen en ejecución como válida tras un arranque comprobado.
+static void otaMarkRunningValid() {
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  if (running == nullptr) return;
+  esp_ota_img_states_t st;
+  if (esp_ota_get_state_partition(running, &st) == ESP_OK
+      && st == ESP_OTA_IMG_PENDING_VERIFY) {
+    esp_ota_mark_app_valid_cancel_rollback();
+    Serial.println("[OTA] imagen en ejecución confirmada como válida");
+  }
+}
+
+// Descarga e instala la operación pendiente. Se llama desde el heartbeat,
+// cuando no hay QR pendiente ni secuencia eléctrica activa.
+static bool otaPerformUpdate() {
+  if (otaInProgress || WiFi.status() != WL_CONNECTED) return false;
+  otaInProgress = true;
+  esp_task_wdt_reset();
+
+  HTTPClient &man = apiHttpSession();
+  beginApiRequest(man, String(API_BASE_URL) + "/dashboard-api/firmware-update?external_id=" + chipId());
+  addDeviceAuth(man);
+  man.setTimeout(5000);
+  int mc = man.GET();
+  String mresp = man.getString();
+  man.end();
+  esp_task_wdt_reset();
+  if (mc != 200 || mresp.indexOf("\"operation\":null") >= 0) {
+    otaInProgress = false;
+    return false;
+  }
+
+  int opId = otaJsonInt(mresp, "\"id\"", 0);
+  String variant = otaJsonString(mresp, "\"variant\"", "");
+  String version = otaJsonString(mresp, "\"version\"", "");
+  String path = otaJsonString(mresp, "\"download_path\"", "");
+  int size = otaJsonInt(mresp, "\"size_bytes\"", 0);
+  if (opId <= 0 || path.length() == 0 || size <= 0) {
+    otaReport(opId, "FAILED", 0, "bad_manifest", "Invalid firmware manifest");
+    otaInProgress = false;
+    return false;
+  }
+  Serial.printf("[OTA] op=%d %s %s (%d bytes)\n", opId, variant.c_str(), version.c_str(), size);
+  otaReport(opId, "PREPARING", 0);
+
+  HTTPClient &dl = apiHttpSession();
+  beginApiRequest(dl, String(API_BASE_URL) + path + "&external_id=" + chipId());
+  addDeviceAuth(dl);
+  dl.setTimeout(20000);
+  int dc = dl.GET();
+  if (dc != 200) {
+    dl.end();
+    otaReport(opId, "FAILED", 0, "download_http", "Firmware download failed");
+    otaInProgress = false;
+    return false;
+  }
+
+  int contentLen = dl.getSize();
+  if (contentLen > 0 && contentLen != size) {
+    size = contentLen;
+  }
+  otaReport(opId, "DOWNLOADING", 1);
+  if (!Update.begin((size_t) size, U_FLASH)) {
+    dl.end();
+    otaReport(opId, "FAILED", 0, "ota_begin", "Not enough space or no OTA partition");
+    otaInProgress = false;
+    return false;
+  }
+
+  WiFiClient *stream = dl.getStreamPtr();
+  uint8_t buf[OTA_CHUNK_BYTES];
+  int written = 0;
+  bool ok = true;
+  // No se envían reportes HTTP durante la descarga: apiHttpSession() comparte
+  // el cliente TLS con la descarga y una petición intermedia la cortaría.
+  // El panel muestra la etapa; el porcentaje real se reserva a fases cortas.
+  while (dl.connected() && written < size) {
+    size_t avail = stream->available();
+    if (!avail) {
+      delay(10);
+      esp_task_wdt_reset();
+      continue;
+    }
+    size_t n = stream->readBytes(buf, avail > sizeof(buf) ? sizeof(buf) : avail);
+    if (!n) break;
+    if (Update.write(buf, n) != n) {
+      ok = false;
+      break;
+    }
+    written += (int) n;
+    esp_task_wdt_reset();
+  }
+  dl.end();
+
+  if (!ok || written != size || !Update.end(true)) {
+    Update.abort();
+    otaReport(opId, "FAILED", 0, "ota_write", Update.errorString());
+    otaInProgress = false;
+    return false;
+  }
+
+  otaReport(opId, "VERIFYING", 100);
+  if (!Update.isFinished()) {
+    otaReport(opId, "FAILED", 100, "ota_verify", "Image verification failed");
+    otaInProgress = false;
+    return false;
+  }
+
+  otaSavePending(opId, variant, version);
+  otaReport(opId, "REBOOTING", 100);
+  Serial.println("[OTA] imagen escrita y verificada — reiniciando");
+  delay(1200);
+  ESP.restart();
+  return true;  // no se alcanza
+}
+
+// Comprueba al arrancar si venimos de una actualización OTA.
+static void otaBootCheck() {
+  otaConfirmBoot();
+  otaMarkRunningValid();
+}
+
 void setup() {
   // Cerradura en reposo desde el PRIMER instante: GPIO15 activo-alto, LOW = off.
   // Los LEDs también se fijan de inmediato (rojo ON = cerrado).
@@ -1069,6 +1338,7 @@ void setup() {
   // ── Sincronizar reloj antes de cualquier HTTPS (crítico para TLS) ──
   if (ensureWiFi()) {
     syncSystemTime();
+    otaBootCheck();
   }
 
   // ── Health check + blink (solo en WiFi NUEVA) ──────────────────────
@@ -1269,6 +1539,16 @@ void loop() {
   if (now - lastBeat > 30000 && !relayPulsing && !hasPending) {   // F47: prioriza el QR
     lastBeat = now;
 
+    // F100: si quedó pendiente la confirmación (p. ej. WiFi aún no lista al
+    // arrancar), se reintenta en cada heartbeat hasta limpiarla.
+    {
+      int otaPendingId = 0;
+      String otaPendingVariant, otaPendingVersion;
+      if (otaReadPending(otaPendingId, otaPendingVariant, otaPendingVersion)) {
+        otaConfirmBoot();
+      }
+    }
+
     // ── Fase 1: Heap monitor ──
     unsigned long heap = ESP.getFreeHeap();
     Serial.printf("[HB] Free heap: %lu bytes\n", heap);
@@ -1299,7 +1579,9 @@ void loop() {
       // F33: send heartbeat with batch sub_kinds for all ESP32 sub-devices
       String hbBody;
       hbBody.reserve(250);  // Fase 1: pre-allocate
-      hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"]}";
+      hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"]"
+                 ",\"firmware_variant\":\"" OTA_FW_VARIANT "\",\"firmware_version\":\"" OTA_FW_VERSION "\""
+                 ",\"ota_capable\":true,\"ota_protocol\":\"" OTA_PROTOCOL "\",\"ota_state\":\"idle\"}";
       HTTPClient &hb = apiHttpSession();
       beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hb.addHeader("Content-Type", "application/json");
@@ -1312,6 +1594,11 @@ void loop() {
       esp_task_wdt_reset();  // defensa: feed entre HTTP
       yield();
       Serial.printf("[HB] Heartbeat [HTTP %d] %s\n", hbCode, hbResp.c_str());
+      if (hbCode == 200 && hbResp.indexOf("\"firmware_update_pending\":true") > 0 && !hasPending) {
+        Serial.println("[OTA] actualización solicitada por el panel");
+        otaPerformUpdate();
+        return;
+      }
       // v2.1: un 200 con HTML no confirma el latido en la API.
       if (hbCode == 200 && !isJsonResponse(hbResp)) {
         Serial.println("[HB] ⚠ heartbeat 200 NO-JSON → el latido NO llegó a la API");

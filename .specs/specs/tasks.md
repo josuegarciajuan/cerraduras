@@ -11036,3 +11036,21 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Medir tensión en bornes del imán con `output_on=true`.
 - [ ] Contrastar GPIO15, etapa de salida y alimentación.
 - [ ] Confirmar fuerza y ciclo apertura/cierre.
+
+---
+
+## F100 — Tareas de implementación OTA
+
+- [x] **TSK-F100-01** Migración aditiva `0135_firmware_ota.sql` con catálogo y operaciones.
+- [x] **TSK-F100-02** Máquina de estados pura `FirmwareOperationState`.
+- [x] **TSK-F100-03** Repositorios de releases y operaciones; servicio de orquestación.
+- [x] **TSK-F100-04** Endpoints de panel y de dispositivo con autenticación vinculada.
+- [x] **TSK-F100-05** Publicación inmutable de binarios (`bin/firmware-publish.php`).
+- [x] **TSK-F100-06** Panel: selector de variante habilitado, lanzamiento al guardar,
+      acción «Actualizar firmware» y estado de operación.
+- [x] **TSK-F100-07** Bloque OTA en ambos sketches + anuncio de capacidad en heartbeat.
+- [x] **TSK-F100-08** Unit test `FirmwareOtaTest.php` y actualización de `EspVariantTest`.
+- [ ] **TSK-F100-09** Verificar la tabla de particiones real (ota_0/ota_1/otadata) y
+      compilar ambos sketches con `arduino-cli` (requiere toolchain/hardware).
+- [ ] **TSK-F100-10** Pruebas físicas: upgrade de cada variante, conversión en ambos
+      sentidos, corte de red/alimentación y rollback.

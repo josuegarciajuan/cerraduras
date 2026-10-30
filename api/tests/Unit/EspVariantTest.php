@@ -56,9 +56,10 @@ checkEsp(str_contains($migration, "SET `subtype` = 'CERRADURA'")
     'migración: backfill CERRADURA + variante/versión de firmware');
 
 // ── ESP-cerradura conserva el sketch actual ───────────────────────────────
-checkEsp(hash_file('sha256', $root . '/docs/esp32-qr-reader/esp-cerradura.ino')
-    === hash_file('sha256', $root . '/docs/esp32-qr-reader/scanner-relay-prod-r35d.ino'),
-    'ESP-cerradura es idéntico al sketch productivo anterior');
+checkEsp(str_contains($legacy, 'startLockSequence')
+    && str_contains($cerradura, 'startLockSequence')
+    && str_contains($cerradura, 'otaPerformUpdate'),
+    'ESP-cerradura conserva la secuencia del sketch anterior y añade OTA');
 checkEsp(hash_file('sha256', $root . '/firmware/esp-cerradura/esp-cerradura.ino')
     === hash_file('sha256', $root . '/docs/esp32-qr-reader/esp-cerradura.ino'),
     'copia flash-ready de ESP-cerradura idéntica');
@@ -67,7 +68,7 @@ checkEsp(str_contains($legacy, 'startLockSequence') && str_contains($legacy, 'LO
 
 // ── ESP-imán: variante, estados y seguridad eléctrica ─────────────────────
 checkEsp(str_contains($iman, '#define IMAN_VARIANT                 "IMAN"')
-    && str_contains($iman, '#define IMAN_VERSION                 "2.4-iman-pulse10"'),
+    && str_contains($iman, '#define IMAN_VERSION                 "2.5-ota"'),
     'ESP-imán declara variante y versión');
 checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         0')
     && str_contains($iman, '#if IMAN_HOLD_CONTINUOUS')

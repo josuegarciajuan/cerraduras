@@ -24971,3 +24971,48 @@ preflight si existe una corrida activa. Bajo lock por sala, el servidor cancela
 el intento activo como `CANCELLED`, marca la corrida anterior `abandoned`, conserva
 su auditoría y crea una nueva desde Puerta. Polaridad y calibración física se
 conservan; el reinicio solo borra el progreso del test nuevo.
+
+---
+
+## F100 — Diseño de actualización remota de firmware
+
+### Componentes
+1. **Catálogo (`firmware_releases`)** — binarios inmutables en
+   `api/storage/firmware/<sha256>.bin`. Se registran con
+   `bin/firmware-publish.php`; el panel no compila código.
+2. **Operaciones (`device_firmware_operations`)** — una fila por solicitud con
+   dispositivo, release fijado, variante/versión de origen y destino, estado,
+   progreso real, error, fechas y caducidad.
+3. **`FirmwareOtaService`** — creación, manifiesto, descarga autenticada, reportes y
+   confirmación. La transición a `COMPLETED` y la actualización de
+   `devices.subtype` ocurren en la misma transacción y solo desde
+   `firmware-confirm`.
+4. **Panel** — selector de variante habilitado para RPI y estado de operación en la
+   tarjeta del dispositivo. Sondeo cada 5 s solo para operaciones activas.
+5. **Firmware** — bloque OTA común en ambos sketches: manifiesto, descarga HTTPS,
+   `Update.h`, escritura en slot inactivo, persistencia de la operación en NVS y
+   confirmación tras reinicio.
+
+### Flujo
+`POST /devices/{id}/firmware-update` → operación `WAITING` → heartbeat devuelve
+`firmware_update_pending` → `GET /dashboard-api/firmware-update` (`PREPARING`) →
+descarga → `DOWNLOADING`/`VERIFYING` → `REBOOTING` → nueva imagen arranca →
+`/dashboard-api/firmware-confirm` → `COMPLETED` (o `ROLLED_BACK`).
+
+### Particiones y rollback
+La placa debe usar un esquema con `ota_0`, `ota_1` y `otadata`. `Update.end(true)`
+valida la imagen antes de seleccionarla. Si la imagen arranca y no coincide con la
+versión/variante solicitada, el sketch llama
+`esp_ota_mark_app_invalid_rollback_and_reboot()`. Si arranca correctamente,
+`esp_ota_mark_app_valid_cancel_rollback()` confirma la imagen. El rollback real
+depende de que el bootloader lo tenga habilitado; se valida en banco.
+
+### Seguridad
+Las rutas de dispositivo usan `qr:validate` y la credencial vinculada. El servicio
+compara además `external_id` de la operación con el del dispositivo. El binario se
+sirve solo para la operación propia y se comprueba su SHA-256 antes de responder.
+
+### Efectos físicos
+El reinicio implica una interrupción breve de la lógica del actuador. En ESP-imán la
+retención puede perderse durante el arranque; debe validarse en hardware y quedar
+documentado. No se solapa OTA con una secuencia de cerradura ni con un QR pendiente.
