@@ -61,6 +61,13 @@ $plan4 = RadarCalibrationPlanner::plan($insideBad, $outsideBad,
 same('no detecta dentro → apply', $plan4['action'], 'apply');
 same('sube sensibilidad', $plan4['params']['radar_sensitivity'] ?? null, 6);
 
+$insideOnly = RadarCalibrationPlanner::plan($insideBad, [],
+    ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $caps,
+    ['inside_present' => false, 'outside_present' => false]);
+same('ajuste solo con medida interior → apply', $insideOnly['action'], 'apply');
+same('ajuste solo interior sube sensibilidad', $insideOnly['params']['radar_sensitivity'] ?? null, 8);
+same('motivo inside_not_detected', $insideOnly['reason'], 'inside_not_detected');
+
 $plan5 = RadarCalibrationPlanner::plan($insideBad, $outsideBad,
     ['maximum_range' => 0.15, 'radar_sensitivity' => 0], $caps,
     ['inside_present' => false, 'outside_present' => true]);

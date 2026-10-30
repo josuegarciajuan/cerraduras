@@ -12,10 +12,12 @@ ZBMINIL2):
 2. **Puerta**: cierra y pulsa `Comprobar polaridad`. La app corrige el montaje
    invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
    El contador `0/3` solo suma pares de esa ventana; los eventos anteriores no cuentan.
-3. **Radar dentro**: colócate en el punto más lejano y quieto 30 s. Durante la
-   cuenta atrás solo puedes cancelar. Al terminar, pulsa `Medir este punto`; la
-   app muestra presencia, distancia orientativa y calidad. Si no detecta,
-   `Ajustar y volver a medir` propone un cambio y lo confirma por push.
+3. **Radar dentro**: colócate en el punto más lejano y quieto. La app mide en una
+   ventana de 20 s; durante la cuenta atrás solo puedes cancelar. Al terminar
+   muestra presencia, distancia orientativa y calidad. Si no hay reportes,
+   `Sin datos del radar` solo permite reintentar o cancelar. Si la medición es
+   suficiente y no detecta, `Ajustar y volver a medir` propone un cambio y lo
+   confirma por push; el ajuste interior no exige una medición exterior.
 4. **Radar fuera**: sal, cierra, pasa 3 veces y espera 60 s. Mide el punto
    exterior; si detecta, `Ajustar y volver a medir`. Si se aplicó un ajuste, vuelve
    a entrar y pulsa `Comprobar reentrada`. `Restaurar ajustes iniciales` revierte

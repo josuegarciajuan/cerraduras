@@ -6777,6 +6777,69 @@ elif [ "$SERVER_UP" = true ]; then
     skip "F102 HTTP" "endpoint aún sin desplegar"
 fi
 
+# F102: acciones de la UI sin dispositivo (fixtures de estado)
+if [ "$SERVER_UP" = true ]; then
+    F102_FIX="run/sensores/f102-state-fixture.json"
+    python3 - "$F102_FIX" <<'PYFIX'
+import json, sys
+base = {
+    "run_id": "f102-state-fixture", "catalog": "sensores", "catalog_version": 2,
+    "room_id": 14, "status": "running", "operator": "runner",
+    "plan": ["radar_inside", "radar_outside"],
+    "calibration": {"initial_settings": {"maximum_range": 6, "radar_sensitivity": 7}},
+    "calibration_session": {
+        "version": 2, "config_version": 1, "phase": "INSIDE", "state": "MEASURED",
+        "current": {"maximum_range": 6, "radar_sensitivity": 7},
+        "last_measurement": {"sufficient": False, "reports": 0, "config_version": 1},
+        "inside_valid": None, "outside_valid": None, "outside_pass": None,
+        "reentry": None, "active_operation": None, "operations": [], "measurements": [],
+        "candidates": [],
+    },
+}
+json.dump(base, open(sys.argv[1], "w"))
+PYFIX
+    F102_ND=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f102-state-fixture&step_id=radar_inside")
+    F102_ND_OK=$(printf '%s' "$F102_ND" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin datos del radar' and 'start_measure' in a and 'adjust' not in a else 'bad')" 2>/dev/null)
+    if [ "$F102_ND_OK" = "ok" ]; then
+        pass "F102: sin reportes → reintentar, no ajustar"
+    else
+        fail "F102: sin reportes" "acciones inesperadas: $(printf '%s' "$F102_ND" | head -c 200)"
+    fi
+
+    python3 - "$F102_FIX" <<'PYFIX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["calibration_session"]
+s["last_measurement"] = {"sufficient": True, "detected": False, "reports": 12, "config_version": 1}
+s["inside_valid"] = {"sufficient": True, "detected": False, "config_version": 1}
+json.dump(d, open(sys.argv[1], "w"))
+PYFIX
+    F102_UD=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f102-state-fixture&step_id=radar_inside")
+    F102_UD_OK=$(printf '%s' "$F102_UD" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if 'adjust' in a and 'start_measure' not in a else 'bad')" 2>/dev/null)
+    if [ "$F102_UD_OK" = "ok" ]; then
+        pass "F102: medido sin detección → ajustar, no repetir"
+    else
+        fail "F102: medido sin detección" "acciones inesperadas: $(printf '%s' "$F102_UD" | head -c 200)"
+    fi
+
+    python3 - "$F102_FIX" <<'PYFIX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["calibration_session"]
+s["last_measurement"] = {"sufficient": True, "detected": True, "reports": 12, "config_version": 1}
+s["inside_valid"] = {"sufficient": True, "detected": True, "config_version": 1}
+json.dump(d, open(sys.argv[1], "w"))
+PYFIX
+    F102_DT=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f102-state-fixture&step_id=radar_inside")
+    F102_DT_OK=$(printf '%s' "$F102_DT" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if a==['advance'] else 'bad')" 2>/dev/null)
+    if [ "$F102_DT_OK" = "ok" ]; then
+        pass "F102: medido con detección → avanzar sin repetir"
+    else
+        fail "F102: medido con detección" "acciones inesperadas: $(printf '%s' "$F102_DT" | head -c 200)"
+    fi
+    rm -f "$F102_FIX" "run/sensores/locks/f102-state-fixture.lock"
+fi
+
 # =============================================================================
 # BLOCK 69 — F96: llaves de acceso, fichas NFC y auditoría
 # Trazabilidad: RF-168..RF-175
