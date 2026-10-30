@@ -178,8 +178,29 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F96 Calibración guiada del radar** | **BLOCK 68 + units F96** | **Completado (código); prueba física pendiente** |
 | **F102 Motor de calibración por operaciones** | **BLOCK 68B + units F102** | **Completado (código); prueba física pendiente** |
 | **F103 Evidencia event-driven del calibrador de radar** | **BLOCK 68B + units F103** | **Completado (código); prueba física pendiente** |
-| **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado (código); compilación y prueba física pendientes** |
+| **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
+
+### F100 — Actualización remota de firmware (OTA)
+
+- **Verificado en banco (2026-10-30)**: ESP `d443229fc114` (device 23, oficina)
+  pasó `IMAN 2.6-ota → CERRADURA 2.6-ota → IMAN 2.6-ota → CERRADURA 2.6-ota`
+  por OTA, con confirmación posterior al reinicio automático del ESP.
+- **No requiere reinicio manual**: el firmware reinicia tras escribir la imagen;
+  el panel pasa a `COMPLETED` cuando llega `firmware-confirm`.
+- **WiFi/NVS**: ambos sketches conservan `ssid/pass/last_ssid` y `device-cred`
+  en un build nuevo. `CERRADURA` lo borraba (caía al portal de provisioning y
+  no confirmaba); corregido y cubierto por `FirmwareOtaTest`.
+- **Descarga OTA**: `collectHeaders({Content-Type, X-Firmware-SHA256})`, no
+  reportar progreso con la misma sesión HTTP durante la descarga y vaciar el
+  buffer TLS aunque `connected()` sea `false`.
+- **Confirmación**: solo se acepta JSON de la API (nunca el HTML del gate).
+- **Rutas**: `/dashboard-api/firmware-{update,download,progress,confirm}` deben
+  ir directas a `127.0.0.1:8080` en Apache, antes del catch-all al panel-gate.
+- **Flasheo directo**: `firmware/flash-variant.sh` (backup + bootloader +
+  particiones + boot_app0 + app, sin tocar NVS).
+- **Regresión**: `FirmwareOtaTest` 57 checks, `EspVariantTest`, `PanelDeviceEditTest`;
+  compilación de ambos sketches con `arduino-cli` y tabla `ota_0/ota_1/otadata`.
 
 ### F101 — Edición fiable de dispositivos en el panel (RF-201…RF-206)
 

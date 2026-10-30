@@ -120,8 +120,25 @@ checkOta(str_contains($iman, '!isJsonResponse(mresp)')
     && str_contains($cerradura, '!isJsonResponse(mresp)'),
     'el manifiesto exige JSON y reintenta si llega el gate');
 checkOta(str_contains($iman, 'X-Firmware-SHA256') && str_contains($cerradura, 'X-Firmware-SHA256')
-    && str_contains($iman, 'application/octet-stream') && str_contains($cerradura, 'application/octet-stream'),
+    && str_contains($iman, 'octet-stream') && str_contains($cerradura, 'octet-stream'),
     'la descarga valida tipo octet-stream y SHA-256 anunciados');
+checkOta(str_contains($iman, 'collectHeaders') && str_contains($cerradura, 'collectHeaders'),
+    'ambos sketches registran los headers de descarga con collectHeaders()');
+// F100.3: un build nuevo NO debe borrar WiFi/NVS (si no, el OTA no puede
+// confirmar y el equipo cae al portal de provisioning).
+foreach (['IMAN' => $iman, 'CERRADURA' => $cerradura] as $name => $src) {
+    if (preg_match('/bool clearNvsIfNewFirmware\(\)\s*\{(.*?)\n\}/s', $src, $m) === 1) {
+        $block = $m[1];
+        checkOta(str_contains($block, 'conservando WiFi/NVS'),
+            "{$name}: el build nuevo conserva WiFi/NVS");
+        checkOta(!str_contains($block, 'prefs.remove("ssid")')
+            && !str_contains($block, 'prefs.remove("pass")')
+            && !str_contains($block, 'ESP.restart()'),
+            "{$name}: clearNvsIfNewFirmware no borra WiFi ni reinicia");
+    } else {
+        checkOta(false, "{$name}: no se pudo localizar clearNvsIfNewFirmware");
+    }
+}
 foreach (['IMAN' => $iman, 'CERRADURA' => $cerradura] as $name => $src) {
     $savePos = strpos($src, 'otaSavePending(opId, variant, version);');
     $verifyPos = strpos($src, 'otaReport(opId, "VERIFYING", 100);');

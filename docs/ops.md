@@ -270,6 +270,31 @@ Sin ellas, el panel-gate devuelve HTML 200 y el dispositivo no puede actualizar.
 El firmware valida que la respuesta sea JSON (confirm/manifiesto) y que la
 descarga sea `application/octet-stream` con el tamaño/SHA-256 anunciados.
 
+#### Operación y reinicio
+
+El OTA **reinicia el ESP automáticamente** al terminar de escribir la imagen. No
+hace falta reiniciarlo a mano: el mensaje del panel (“se aplicará al reiniciar”)
+describe ese reinicio. Tras el arranque, el nuevo sketch llama a
+`firmware-confirm`; solo entonces el panel pasa a `COMPLETED` y se actualiza
+`devices.subtype`.
+
+Un cambio de variante **no debe borrar WiFi/NVS**: ambos sketches conservan la
+red y la credencial individual (`device-cred`) en cada build. Si el sketch borra
+la NVS, el equipo cae al portal `Cerraduras-Setup-<chip>` y el OTA no puede
+confirmar.
+
+Incidencias corregidas el 2026-10-30:
+- `CERRADURA` borraba `ssid/pass/last_ssid` y reiniciaba en cada build (ahora
+  conserva WiFi/NVS igual que `IMAN`).
+- `HTTPClient` no expone headers sin `collectHeaders()`: `Content-Type` y
+  `X-Firmware-SHA256` llegaban vacíos y se rechazaba la descarga.
+- Enviar un reporte de progreso con la misma sesión HTTP durante la descarga
+  cortaba el stream (`download_invalid` / `ota_write`).
+- `WiFiClientSecure.connected()` puede pasar a `false` con bytes aún en el
+  buffer TLS; el bucle de escritura debe vaciar el buffer antes de abortar.
+- La confirmación solo limpia la operación si la respuesta es JSON de la API
+  (un HTML del panel-gate ya no se da por bueno).
+
 ### Identificación de fábrica integrada
 
 El firmware productivo anuncia en segundo plano su `chip_id` eFuse al endpoint de
