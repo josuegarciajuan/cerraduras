@@ -206,23 +206,69 @@ bajar `sensitivity` y/o reorientar el radar para que no mire a la puerta/pasillo
 
 ## Hardware
 
-### Firmware ESP32 — sketch definitivo
+### Firmware ESP32 — variantes y actualización remota (F100)
 
-El **sketch productivo (definitivo)** es:
+La base nueva R35D-B tiene dos sketches productivos, uno por modo del actuador:
+
+| Variante | Sketch | Actuador |
+|---|---|---|
+| `CERRADURA` | `firmware/esp-cerradura/esp-cerradura.ino` | Secuencia de apertura (pulso) |
+| `IMAN` | `firmware/esp-iman/esp-iman.ino` | Retención del electroimán + canal SSE de puerta |
+
+Ambos conservan WiFiManager/NVS, credenciales de fábrica, TLS/CA, QR validate,
+health, heartbeat, command-queue, identify, announce, watchdog, brownout,
+R35D-B, LEDs y prioridad del QR. El sketch de un modo no se sustituye por el
+otro a mano: el panel cambia de variante con una **operación OTA**, que flashea
+el binario del otro modo en el slot inactivo.
+
+- Compilar con `arduino-cli` 1.5.x, core `esp32` 3.3.12, perfil
+  `esp32s3usbotg` (`min_spiffs`: `ota_0` + `ota_1` + `otadata`).
+- Primer flasheo de un equipo ya instalado: **por cable** con
+  `firmware/flash-variant.sh` (ver más abajo). Después, los cambios se lanzan
+  desde `/panel`.
+- `clearNvsIfNewFirmware()` **conserva** WiFi y credenciales en cada build
+  (F97); ya no hay que re-provisionar tras un reflasheo. Para reabrir el portal
+  WiFi, mantener GPIO9 pulsado durante el arranque.
+- El reinicio del OTA interrumpe brevemente el actuador (en `IMAN`, la
+  retención se suelta unos segundos). Hacerlo con la puerta cerrada y sin
+  operación en curso.
+
+#### Flasheo directo por cable
+
+`firmware/flash-variant.sh` compila, hace backup del flash actual y escribe
+`bootloader + partitions + boot_app0 + app` **sin tocar la NVS**. El `.bin`
+resultante es el mismo que se publica para OTA.
+
+```bash
+# En el nodo de banco (arduino-cli en /tmp/cerraduras-tools, core en /home/oficina)
+ARDUINO_DIRECTORIES_DATA=/home/oficina/.arduino15 \
+ARDUINO_DIRECTORIES_USER=/home/oficina/Arduino \
+  ./firmware/flash-variant.sh --variant=IMAN --port=/dev/ttyACM0
+```
+
+Después, publicar el binario (desde el servidor, con el mismo fichero):
+
+```bash
+php api/bin/firmware-publish.php --variant=IMAN --version=2.6-ota \
+  --file=/tmp/fw-esp-iman.XXXX/esp-iman.ino.bin --commit=$(git rev-parse --short HEAD)
+```
+
+#### Rutas OTA de dispositivo (Apache)
+
+El ESP pide el manifiesto, descarga y confirma por HTTPS. Estas cuatro rutas
+deben ir **antes** del catch-all a `127.0.0.1:8099` en el vhost de
+`cerraduras.josue.ink` (como `device-heartbeat`):
 
 ```
-docs/esp32-qr-reader/scanner-relay-prod-12v-robusto-lowpower.ino
+/dashboard-api/firmware-update
+/dashboard-api/firmware-download
+/dashboard-api/firmware-progress
+/dashboard-api/firmware-confirm
 ```
 
-Es la variante LOW-POWER / ANTI-BROWNOUT (relé ACTIVE-LOW tri-state SRD-12VDC,
-heartbeat 30 s, F33 command-queue, F40 announce, watchdog, prioridad del QR de
-F47 e instrumentación `[QR] Encolado→POST`). Los demás `scanner-*.ino` del
-directorio son **legado / pruebas** y no deben flashearse en producción.
-
-> ⚠️ **Reflasheo**: `clearNvsIfNewFirmware()` borra las claves WiFi del namespace
-> `cerraduras` en cada build nuevo y reinicia. Tras flashear hay que **volver a
-> provisionar el WiFi** por el portal `Cerraduras-Setup-<chipId>`. La credencial
-> individual (`device-cred`) se conserva.
+Sin ellas, el panel-gate devuelve HTML 200 y el dispositivo no puede actualizar.
+El firmware valida que la respuesta sea JSON (confirm/manifiesto) y que la
+descarga sea `application/octet-stream` con el tamaño/SHA-256 anunciados.
 
 ### Identificación de fábrica integrada
 

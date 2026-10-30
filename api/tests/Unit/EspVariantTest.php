@@ -68,7 +68,7 @@ checkEsp(str_contains($legacy, 'startLockSequence') && str_contains($legacy, 'LO
 
 // ── ESP-imán: variante, estados y seguridad eléctrica ─────────────────────
 checkEsp(str_contains($iman, '#define IMAN_VARIANT                 "IMAN"')
-    && str_contains($iman, '#define IMAN_VERSION                 "2.5-ota"'),
+    && str_contains($iman, '#define IMAN_VERSION                 "2.6-ota"'),
     'ESP-imán declara variante y versión');
 checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         0')
     && str_contains($iman, '#if IMAN_HOLD_CONTINUOUS')
