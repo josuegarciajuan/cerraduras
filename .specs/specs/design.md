@@ -25128,3 +25128,67 @@ más de 30 s sin mensajes. La calibración no puede exigir reportes periódicos:
 - Aviso: "El radar solo envía cuando cambia algo...".
 - Mensajes de `presence_stale` y `reentry_not_clear`, y estado mantenido sin
   reportes nuevos.
+
+## 104. Autocalibración del radar por frontera (F104)
+
+### 104.1 Problema
+El flujo F102/F103 trataba el punto exterior como una verificación: si detectaba,
+el técnico pulsaba «Ajustar y volver a medir» y el planificador usaba
+`outsideMin - 0.3` o bajaba el alcance en pasos de 0,75 m. Si bajar el alcance
+rompía el interior, devolvía `reposition` sin probar la sensibilidad. Cuando el
+radar no detectaba en el punto exterior no había distancia y no se calculaba
+ningún punto medio. El resultado era un bucle de mediciones manuales.
+
+### 104.2 Barrido y punto medio
+`RadarBoundaryScan::summarize()` resume la ventana:
+- `PRESENT`/`ABSENT` ordenados por milisegundos, sin `resync`, con la misma
+  comprobación de configuración que `RadarMeasurement`.
+- `B` = máximo de las últimas 3 muestras válidas de `target_distance` antes del
+  primer `ABSENT` tras un `PRESENT`.
+- `clear_seconds` = tiempo de `ABSENT` mantenido; suficiente con 6 s o 2 reportes.
+
+`RadarCalibrationPlanner::planMidpoint()`:
+- `I` = máximo de las muestras interiores (o la última distancia conocida).
+- Requiere `B - I >= 0.45 m` y, si existe `P`, `P - I >= 0.45 m`.
+- `R = snap((I + B) / 2, 0.15)`, acotado a `[I + 0.15, B - 0.15]` y a
+  `R <= P - 0.15`.
+- Si no hay separación devuelve `stop/no_distance_separation`; no toca la
+  sensibilidad.
+- Si `R` ya es el actual y el exterior detecta, baja sensibilidad; si el
+  interior o la reentrada fallan, sube sensibilidad/alcance. Límite de intentos.
+
+### 104.3 Máquina de estados v3
+`INSIDE → OUTSIDE_SCAN → OUTSIDE_VERIFY → OUTSIDE_PASS → [REENTRY] → DONE`.
+
+- `OUTSIDE_SCAN`: `start_scan` exige `PRESENT` crudo; ventana
+  `max(60, fading+30)` (máx. 120). `radar/state` marca `SCAN_READY` al detectar
+  la transición + ausencia mantenida; la UI llama `finish_scan`.
+- `finish_scan` calcula `B`, llama al planificador y publica el candidato si
+  procede. Si no hay separación o falta evidencia, `STOPPED` con motivo.
+- `OUTSIDE_VERIFY`: ventana de 20-30 s; si no detecta, pasa a `OUTSIDE_PASS`.
+  Si detecta y hay separación, ajusta sensibilidad/alcance y repite.
+- `OUTSIDE_PASS`: se reutiliza `start_measure`/`finish_measure`; exige pasada sin
+  detección.
+- `REENTRY`: exige `PRESENT` real. Si falla, reintenta subiendo sensibilidad o
+  alcance; si se agota, `REJECTED`/`STOPPED`.
+
+### 104.4 Persistencia y versiones
+- La sesión v3 guarda `inside_ref`, `outside_scan`, `outside_valid`,
+  `outside_pass`, `reentry`, `calibration`, `candidates` y `operations`.
+- `config_version` solo sube si la configuración confirmada cambia.
+- `ZigbeeRadarCalibrationService::persistCalibration()` guarda la fotografía
+  confirmada en `devices.meta_json.calibration`.
+- Las sesiones v2 conservan el motor anterior; las nuevas usan v3.
+
+### 104.5 UI
+- El paso 3 explica: «Entra, pulsa Empezar barrido, sal caminando hasta que el
+  radar te pierda». No hay botón de ajuste manual.
+- Se muestran `I`, `B`, `R`, sensibilidad, confianza e intentos.
+- Si `no_distance_separation`, el mensaje dice que no se baja la sensibilidad a
+  ciegas y ofrece repetir el barrido o restaurar.
+- El cierre de barrido y verificación es automático al llegar a `SCAN_READY` /
+  `VERIFY_READY` o al terminar la cuenta atrás.
+
+### 104.6 Sin cuota ni procesos
+Todo sale de `presence_events` por push. La única escritura al dispositivo es la
+publicación MQTT bajo demanda del ajuste. No hay pollers ni temporizadores.

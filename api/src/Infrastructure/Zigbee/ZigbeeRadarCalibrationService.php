@@ -386,6 +386,42 @@ final class ZigbeeRadarCalibrationService
     }
 
     /**
+     * F104/RF-215: guarda en la ficha del dispositivo la calibración que el
+     * radar confirmó por push. No escribe en el dispositivo (eso ya lo hizo la
+     * orden MQTT); solo deja la fotografía para auditoría y estado del panel.
+     *
+     * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
+     * @param array<string,mixed> $settings
+     * @return array<string,mixed>
+     */
+    public function persistCalibration(array $device, array $settings, ?string $settingsAt): array
+    {
+        $stmt = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => (int) $device['id']]);
+        $raw = $stmt->fetchColumn();
+        $meta = json_decode((string) ($raw === false ? '' : $raw), true);
+        $meta = is_array($meta) ? $meta : [];
+
+        $snap = [
+            'source' => 'sensores-f104-auto',
+            'calibrated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            'settings_at' => $settingsAt,
+        ];
+        foreach (['maximum_range', 'minimum_range', 'radar_sensitivity', 'detection_delay', 'fading_time'] as $key) {
+            if (isset($settings[$key]) && is_numeric($settings[$key])) {
+                $snap[$key] = (float) $settings[$key];
+            }
+        }
+        $meta['calibration'] = $snap;
+        $this->pdo->prepare('UPDATE devices SET meta_json = :meta WHERE id = :id')
+            ->execute([
+                ':meta' => json_encode($meta, JSON_UNESCAPED_UNICODE),
+                ':id'   => (int) $device['id'],
+            ]);
+        return $snap;
+    }
+
+    /**
      * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
      * @param array<string,int|float> $commands
      * @return array<string,mixed>

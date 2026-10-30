@@ -9,27 +9,45 @@
       "action": "Cierra la puerta. Pulsa «Comprobar polaridad». Después abre y cierra tres veces: normal, despacio y rápido.",
       "expected": "Polaridad correcta y tres ciclos apertura/cierre en orden, terminando cerrada.",
       "rule": "door_full",
-      "params": { "min_pairs": 3, "max_pairs": 4, "end_state": "CLOSED" }
+      "params": {
+        "min_pairs": 3,
+        "max_pairs": 4,
+        "end_state": "CLOSED"
+      }
     },
     {
       "id": "radar_inside",
       "order": 2,
       "device": "presencia",
       "title": "Radar · dentro",
-      "action": "Entra, cierra la puerta y colócate en el punto más lejano donde debe detectarte. Pulsa «Empezar medición» y permanece quieto hasta que termine la cuenta atrás. El radar solo envía cambios; si no hay reportes nuevos se usa el estado al inicio de la ventana.",
-      "expected": "El radar mantiene la presencia detectada durante la ventana.",
+      "action": "Colócate en el punto más lejano donde SÍ debe detectarte. Pulsa «Empezar medición» y permanece quieto hasta que termine la cuenta atrás. La app guarda esta distancia como referencia interior; el radar solo envía cambios, así que si no hay reportes nuevos se usa el estado al inicio de la ventana.",
+      "expected": "El radar mantiene la presencia y devuelve una referencia de distancia utilizable.",
       "rule": "radar_inside",
-      "params": { "hold_seconds": 30, "grace_seconds": 20 }
+      "params": {
+        "hold_seconds": 30,
+        "grace_seconds": 20
+      }
     },
     {
       "id": "radar_outside",
       "order": 3,
       "device": "presencia",
       "title": "Radar · fuera",
-      "action": "Sal y espera a que el radar deje de detectarte. Mide el punto exterior y, en la pasada, pulsa «Empezar medición» antes de pasar tres veces por delante. Si hubo ajuste, vuelve a entrar cuando la app lo indique.",
-      "expected": "No detecta a nadie fuera de la sala y no crea visitas, grabaciones ni luces.",
+      "action": "Vuelve al punto interior y pulsa «Empezar barrido». Después sal caminando despacio y recto hasta que la app te pierda. La app calcula el punto medio entre la referencia interior y la frontera exterior y aplica el alcance automáticamente. Después verifica el punto exterior, la reentrada y la pasada por el pasillo.",
+      "expected": "El radar deja de detectarte fuera, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
       "rule": "radar_outside",
-      "params": { "min_elapsed_seconds": 50, "grace_seconds": 20, "forbid_effect_keys": ["visits", "recordings", "stays"] }
+      "params": {
+        "min_elapsed_seconds": 50,
+        "grace_seconds": 20,
+        "forbid_effect_keys": [
+          "visits",
+          "recordings",
+          "stays"
+        ],
+        "min_separation_m": 0.45,
+        "margin_m": 0.15,
+        "scan_hold_seconds": 6
+      }
     },
     {
       "id": "light",
@@ -39,7 +57,9 @@
       "action": "Enciende la luz y confirma que la lámpara encendió. Después apágala y confirma.",
       "expected": "La orden Zigbee llega y la lámpara responde físicamente.",
       "rule": "light_test",
-      "params": { "require_prepare_off": true }
+      "params": {
+        "require_prepare_off": true
+      }
     },
     {
       "id": "verdict",

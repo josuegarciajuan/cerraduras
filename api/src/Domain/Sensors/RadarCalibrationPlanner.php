@@ -168,6 +168,207 @@ final class RadarCalibrationPlanner
         return self::none('already_ok', self::confidence($inside, $outside), $currentMax);
     }
 
+    /**
+     * F104/RF-214: calibración automática por punto medio.
+     *
+     * `$inside` trae la referencia interior (distancia máxima donde SÍ debe
+     * detectar) y `$scan` la frontera del barrido (última distancia detectada
+     * antes de perder presencia). Si existe una separación útil, propone el
+     * punto medio con márgenes; si no existe, se detiene sin bajar la
+     * sensibilidad a ciegas.
+     *
+     * @param array{detected?:bool,sufficient?:bool,reference?:?float,distance?:array<string,mixed>,quality?:string} $inside
+     * @param array{sufficient?:bool,boundary_distance?:?float,reason?:string,distance?:array<string,mixed>} $scan
+     * @param array{detected?:bool,reference?:?float,distance?:array<string,mixed>}|null $outside
+     * @param array<string,mixed> $settings
+     * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int,min_separation?:float,margin?:float,coarse_step?:float} $caps
+     * @param array{reentry_failed?:bool,inside_present?:bool,attempts?:int,tried?:list<array<string,mixed>>} $observed
+     * @return array{action:string,params:array<string,int|float>,reason:string,confidence:string,candidate:?float,inside_reference:?float,boundary:?float,outside_point:?float}
+     */
+    public static function planMidpoint(
+        array $inside,
+        array $scan,
+        ?array $outside,
+        array $settings,
+        array $caps,
+        array $observed = []
+    ): array {
+        $currentMax = (float) ($settings['maximum_range'] ?? 0);
+        $currentSens = (int) round((float) ($settings['radar_sensitivity'] ?? 0));
+        $fineStep = max(0.01, (float) ($caps['range_step'] ?? 0.15));
+        $coarseStep = max($fineStep, (float) ($caps['coarse_step'] ?? 0.75));
+        $minSep = max($fineStep * 2, (float) ($caps['min_separation'] ?? 0.45));
+        $margin = max($fineStep, min(0.3, (float) ($caps['margin'] ?? 0.15)));
+        $tried = (array) ($observed['tried'] ?? []);
+        $insidePresent = (bool) ($observed['inside_present'] ?? ($inside['detected'] ?? false));
+
+        $I = self::ref($inside, 'inside');
+        $B = isset($scan['boundary_distance']) && is_numeric($scan['boundary_distance'])
+            ? (float) $scan['boundary_distance'] : null;
+        $outsidePresent = (bool) ($observed['outside_present'] ?? ($outside['detected'] ?? false));
+        $P = ($outsidePresent && is_array($outside)) ? self::ref($outside, 'outside') : null;
+        $confidence = self::confidenceFromQuality(
+            (string) ($inside['quality'] ?? ($inside['distance']['quality'] ?? RadarDistanceQuality::POOR)),
+            (string) ($scan['distance']['quality'] ?? RadarDistanceQuality::POOR)
+        );
+
+        if ((bool) ($observed['reentry_failed'] ?? false)) {
+            if ($currentSens < (int) $caps['sens_max']) {
+                return self::result('apply', ['radar_sensitivity' => $currentSens + 1],
+                    'reentry_failed_sensitivity', $confidence, null, $I, $B, $P);
+            }
+            if ($currentMax < (float) $caps['range_max'] - 0.001) {
+                $next = self::snap(min((float) $caps['range_max'], $currentMax + $coarseStep), $caps);
+                return self::result('apply', ['maximum_range' => $next],
+                    'reentry_failed_range', $confidence, $next, $I, $B, $P);
+            }
+            return self::result('stop', [], 'reentry_failed_limits', $confidence, null, $I, $B, $P);
+        }
+
+        if (!$insidePresent) {
+            if ($currentSens < (int) $caps['sens_max']) {
+                return self::result('apply', ['radar_sensitivity' => $currentSens + 1],
+                    'inside_not_detected_sensitivity', $confidence, null, $I, $B, $P);
+            }
+            if ($currentMax < (float) $caps['range_max'] - 0.001) {
+                $next = self::snap(min((float) $caps['range_max'], $currentMax + $coarseStep), $caps);
+                return self::result('apply', ['maximum_range' => $next],
+                    'inside_not_detected_range', $confidence, $next, $I, $B, $P);
+            }
+            return self::result('stop', [], 'inside_not_detected_limits', $confidence, null, $I, $B, $P);
+        }
+
+        if (($scan['sufficient'] ?? false) !== true) {
+            return self::result('stop', [], 'scan_insufficient:' . (string) ($scan['reason'] ?? 'unknown'),
+                $confidence, null, $I, $B, $P);
+        }
+        if ($I === null || $I <= 0) {
+            return self::result('stop', [], 'inside_reference_missing', $confidence, null, $I, $B, $P);
+        }
+        if ($B === null || $B <= 0) {
+            return self::result('stop', [], 'boundary_missing', $confidence, null, $I, $B, $P);
+        }
+        if ($B - $I < $minSep) {
+            return self::result('stop', [], 'no_distance_separation', $confidence, null, $I, $B, $P);
+        }
+        if ($P !== null && $P - $I < $minSep) {
+            return self::result('stop', [], 'no_distance_separation', $confidence, null, $I, $B, $P);
+        }
+
+        $floor = $I + $margin;
+        $ceiling = $B - $margin;
+        if ($P !== null) {
+            $ceiling = min($ceiling, $P - $margin);
+        }
+        if ($floor > $ceiling + 0.001) {
+            return self::result('stop', [], 'no_distance_separation', $confidence, null, $I, $B, $P);
+        }
+        $candidate = self::snap(max($floor, min($ceiling, ($I + $B) / 2)), $caps);
+        $candidate = max($floor, min($ceiling, $candidate));
+
+        if (abs($candidate - $currentMax) <= 0.001) {
+            if ($outsidePresent) {
+                return self::sensitivityFallback($currentSens, $caps, 'outside_still_detected',
+                    $confidence, $candidate, $I, $B, $P);
+            }
+            return self::result('none', [], 'already_calibrated', $confidence, $candidate, $I, $B, $P);
+        }
+
+        foreach ($tried as $attempt) {
+            if (!is_array($attempt)) {
+                continue;
+            }
+            $params = (array) ($attempt['params'] ?? []);
+            if (isset($params['maximum_range'])
+                && abs((float) $params['maximum_range'] - $candidate) <= 0.001) {
+                if ($outsidePresent) {
+                    return self::sensitivityFallback($currentSens, $caps, 'outside_still_detected',
+                        $confidence, $candidate, $I, $B, $P);
+                }
+                return self::result('stop', [], 'candidate_already_tried', $confidence, $candidate, $I, $B, $P);
+            }
+        }
+
+        return self::result('apply', ['maximum_range' => $candidate],
+            'midpoint', $confidence, $candidate, $I, $B, $P);
+    }
+
+    /**
+     * Referencia de distancia: interior usa el máximo (debe detectar hasta ahí)
+     * y exterior el mínimo (no debe detectar desde ahí).
+     *
+     * @param array<string,mixed> $measurement
+     */
+    public static function ref(array $measurement, string $kind): ?float
+    {
+        if (isset($measurement['reference']) && is_numeric($measurement['reference'])) {
+            return (float) $measurement['reference'];
+        }
+        $distance = is_array($measurement['distance'] ?? null) ? $measurement['distance'] : [];
+        if ($kind === 'inside') {
+            if (isset($distance['max']) && is_numeric($distance['max'])) {
+                return (float) $distance['max'];
+            }
+            return isset($distance['median']) && is_numeric($distance['median'])
+                ? (float) $distance['median'] : null;
+        }
+        if (isset($distance['min']) && is_numeric($distance['min'])) {
+            return (float) $distance['min'];
+        }
+        return isset($distance['median']) && is_numeric($distance['median'])
+            ? (float) $distance['median'] : null;
+    }
+
+    /** @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps */
+    private static function sensitivityFallback(
+        int $currentSens,
+        array $caps,
+        string $reason,
+        string $confidence,
+        ?float $candidate,
+        ?float $inside,
+        ?float $boundary,
+        ?float $outside
+    ): array {
+        if ($currentSens > (int) $caps['sens_min']) {
+            return self::result('apply', ['radar_sensitivity' => $currentSens - 1],
+                $reason . '_sensitivity', $confidence, $candidate, $inside, $boundary, $outside);
+        }
+        return self::result('stop', [], $reason . '_limits', $confidence, $candidate, $inside, $boundary, $outside);
+    }
+
+    /** @return array{action:string,params:array<string,int|float>,reason:string,confidence:string,candidate:?float,inside_reference:?float,boundary:?float,outside_point:?float} */
+    private static function result(
+        string $action,
+        array $params,
+        string $reason,
+        string $confidence,
+        ?float $candidate,
+        ?float $inside,
+        ?float $boundary,
+        ?float $outside
+    ): array {
+        return [
+            'action' => $action,
+            'params' => $params,
+            'reason' => $reason,
+            'confidence' => $confidence,
+            'candidate' => $candidate,
+            'inside_reference' => $inside,
+            'boundary' => $boundary,
+            'outside_point' => $outside,
+        ];
+    }
+
+    private static function confidenceFromQuality(string $inside, string $outside): string
+    {
+        $rank = [RadarDistanceQuality::POOR => 0, RadarDistanceQuality::FAIR => 1, RadarDistanceQuality::GOOD => 2];
+        $a = $rank[$inside] ?? 0;
+        $b = $rank[$outside] ?? 0;
+        $min = min($a, $b);
+        return $min >= 2 ? 'high' : ($min >= 1 ? 'medium' : 'low');
+    }
+
     /** @param array<string,mixed> $inside @param array<string,mixed> $outside */
     private static function confidence(array $inside, array $outside): string
     {

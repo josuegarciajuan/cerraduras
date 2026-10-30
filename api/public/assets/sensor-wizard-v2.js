@@ -320,6 +320,11 @@
     outside_and_reentry_ok: 'Exterior sin detección y reentrada correcta.',
     calibration_not_done: 'La calibración del radar no ha terminado.',
     measure_insufficient: 'Falta evidencia en una medición del radar.',
+    no_distance_separation: 'No hay separación por distancia entre dentro y fuera: revisa la colocación y repite el barrido.',
+    boundary_missing: 'El barrido no obtuvo la distancia de la frontera exterior.',
+    inside_reference_missing: 'Falta la referencia de distancia interior.',
+    scan_must_start_inside: 'Entra y colócate en el punto interior antes de empezar el barrido.',
+    candidate_already_tried: 'Ese ajuste ya se probó y no resolvió la detección exterior.',
     inside_not_measured: 'Falta la medición interior.',
     outside_valid_not_measured: 'Falta la medición del punto exterior.',
     outside_pass_not_measured: 'Falta la pasada por el pasillo.',
@@ -333,6 +338,8 @@
     if (REASON_LABEL[reason]) return REASON_LABEL[reason];
     if (reason.indexOf('measure_insufficient:') === 0) return REASON_LABEL.measure_insufficient;
     if (reason.indexOf('measure_config_mismatch:') === 0) return REASON_LABEL.measure_config_mismatch;
+    if (reason.indexOf('scan_insufficient:') === 0) return 'El barrido no reunió evidencia suficiente.';
+    if (reason.indexOf('verify_insufficient:') === 0) return 'La verificación exterior no reunió evidencia suficiente.';
     if (reason.indexOf('false_effect:') === 0) return REASON_LABEL.false_effect;
     return reason;
   }
@@ -443,6 +450,10 @@
     return {
       start_measure: 'Empezar medición',
       finish_measure: 'Terminar medición',
+      start_scan: 'Empezar barrido',
+      finish_scan: 'Cerrar barrido',
+      start_verify: 'Verificar fuera',
+      finish_verify: 'Cerrar verificación',
       advance: 'Continuar',
       adjust: 'Ajustar y volver a medir',
       check_confirmation: 'Comprobar confirmación',
@@ -523,6 +534,24 @@
     } else {
       html += '<div class="hint" id="radarDistance">' + esc(distanceText(st, m)) + '</div>';
     }
+    var scan = st.scan_preview || st.scan || null;
+    if (scan && (scan.boundary_distance != null || scan.presents != null)) {
+      html += '<div class="hint" id="radarScan">Barrido: '
+        + (scan.boundary_distance != null ? 'frontera ' + Number(scan.boundary_distance).toFixed(2) + ' m' : 'sin frontera')
+        + ' · ' + (scan.presents || 0) + ' PRESENT / ' + (scan.absents || 0) + ' ABSENT'
+        + (scan.clear_seconds != null ? ' · ausencia ' + Math.round(scan.clear_seconds) + ' s' : '')
+        + '</div>';
+    }
+    var cal = st.calibration || null;
+    if (cal && (cal.inside_reference != null || cal.boundary != null || cal.target_range != null)) {
+      html += '<div class="hint" id="radarCalibration">'
+        + (cal.inside_reference != null ? 'Interior ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
+        + ' · ' + (cal.boundary != null ? 'frontera ' + Number(cal.boundary).toFixed(2) + ' m' : 'frontera —')
+        + ' · ' + (cal.target_range != null ? 'ajuste ' + Number(cal.target_range).toFixed(2) + ' m' : 'ajuste —')
+        + (cal.sensitivity != null ? ' · sens ' + cal.sensitivity + '/9' : '')
+        + (cal.confidence ? ' · ' + cal.confidence : '')
+        + '</div>';
+    }
     var cd = st.countdown || null;
     if (cd && cd.seconds_remaining > 0) {
       html += '<div style="text-align:center;margin:18px 0">'
@@ -538,7 +567,9 @@
     }
     html += '<div class="actions" id="radarActions">';
     (st.next_actions || []).forEach(function (op) {
-      var cls = (op === 'advance' || op === 'check_confirmation' || op === 'start_measure' || op === 'start_reentry' || op === 'validate') ? 'primary' : 'ghost';
+      var cls = (op === 'advance' || op === 'check_confirmation' || op === 'start_measure'
+        || op === 'start_scan' || op === 'finish_scan' || op === 'start_verify'
+        || op === 'finish_verify' || op === 'start_reentry' || op === 'validate') ? 'primary' : 'ghost';
       if (op === 'adjust' && (st.settings_valid === false)) return;
       if (op === 'restore') cls = 'danger';
       if (op === 'cancel') cls = 'ghost';
@@ -678,7 +709,7 @@
     rows.push(['Sala', (p.room && p.room.code) || '—']);
     rows.push(['Actor', (p.room && p.room.room_type_code) || '—']);
     rows.push(['Run', (S.run && S.run.run_id) || '—']);
-    rows.push(['Versión', 'F102']);
+    rows.push(['Versión', 'F104']);
     rows.push(['Técnico', (S.run && S.run.operator) || operator() || '—']);
     ['proximity', 'presence', 'switch'].forEach(function (k) {
       var dev = d[k];
@@ -1118,10 +1149,34 @@
       updateRadarDom();
     }
     var cd = st.countdown || null;
+    var opId = st.active_operation && st.active_operation.operation_id;
+    if (st.state === 'SCAN_READY' && opId && S.autoFinishOp !== opId + ':finish_scan') {
+      S.autoFinishOp = opId + ':finish_scan';
+      radarOp('finish_scan');
+      return;
+    }
+    if (st.state === 'VERIFY_READY' && opId && S.autoFinishOp !== opId + ':finish_verify') {
+      S.autoFinishOp = opId + ':finish_verify';
+      radarOp('finish_verify');
+      return;
+    }
+    if (st.state === 'MEASURING' && cd && cd.kind === 'scan' && cd.seconds_remaining <= 0) {
+      if (opId && S.autoFinishOp !== opId + ':finish_scan') {
+        S.autoFinishOp = opId + ':finish_scan';
+        radarOp('finish_scan');
+        return;
+      }
+    }
+    if (st.state === 'MEASURING' && cd && cd.kind === 'verify' && cd.seconds_remaining <= 0) {
+      if (opId && S.autoFinishOp !== opId + ':finish_verify') {
+        S.autoFinishOp = opId + ':finish_verify';
+        radarOp('finish_verify');
+        return;
+      }
+    }
     if (st.state === 'MEASURING' && cd && cd.kind === 'measure' && cd.seconds_remaining <= 0) {
-      var opId = st.active_operation && st.active_operation.operation_id;
-      if (opId && S.autoFinishOp !== opId) {
-        S.autoFinishOp = opId;
+      if (opId && S.autoFinishOp !== opId + ':finish_measure') {
+        S.autoFinishOp = opId + ':finish_measure';
         radarOp('finish_measure');
       }
     }
@@ -1134,6 +1189,8 @@
         banner('El radar lleva un rato sin reportar. Muévete ligeramente y pulsa Empezar medición.', 'warn');
       } else if (st.phase === 'REENTRY' && String(st.raw_presence_state || '').toUpperCase() === 'PRESENT') {
         banner('Sal y espera a que el radar te pierda; luego pulsa «Voy a entrar».', 'warn');
+      } else if (st.phase === 'OUTSIDE_VERIFY' || st.phase === 'OUTSIDE_SCAN') {
+        radarOp(st.phase === 'OUTSIDE_VERIFY' ? 'start_verify' : 'start_scan');
       } else {
         radarOp(st.phase === 'REENTRY' ? 'start_reentry' : 'start_measure');
       }
@@ -1152,7 +1209,8 @@
       S.radarState = d;
       S.radarStateKey = null;
       S.lastRadarState = null;
-      if (action === 'advance' && S.stepId === 'radar_inside' && d.phase === 'OUTSIDE_FIXED') {
+      if (action === 'advance' && S.stepId === 'radar_inside'
+          && (d.phase === 'OUTSIDE_SCAN' || d.phase === 'OUTSIDE_FIXED')) {
         await reloadRun();
         S.stepId = 'radar_outside';
         S.radarState = null;
@@ -1161,11 +1219,15 @@
       }
       applyRadarState(d);
     } catch (e) {
-      if (action === 'finish_measure') S.autoFinishOp = null;
+      if (action.indexOf('finish_') === 0) S.autoFinishOp = null;
       if (e.message === 'presence_stale') {
         banner('El radar lleva un rato sin reportar. Muévete ligeramente y vuelve a intentarlo.', 'warn');
       } else if (e.message === 'reentry_not_clear') {
         banner('El radar aún te detecta. Sal y espera a que se apague la presencia antes de pulsar «Voy a entrar».', 'warn');
+      } else if (e.message === 'scan_must_start_inside') {
+        banner('Entra y colócate en el punto interior antes de empezar el barrido.', 'warn');
+      } else if (e.message === 'no_distance_separation') {
+        banner('No hay separación por distancia entre dentro y fuera. No voy a bajar la sensibilidad a ciegas: revisa la colocación y repite el barrido.', 'warn');
       } else {
         banner(e.message, 'bad');
       }

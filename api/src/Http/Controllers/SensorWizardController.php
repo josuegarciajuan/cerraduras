@@ -8,6 +8,7 @@ use App\Domain\Devices\DeviceRepository;
 use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Presence\DoorPolarity;
 use App\Domain\Sensors\AttemptEvidence;
+use App\Domain\Sensors\RadarBoundaryScan;
 use App\Domain\Sensors\RadarCalibrationPlanner;
 use App\Domain\Sensors\RadarDistanceQuality;
 use App\Domain\Sensors\RadarEvidencePolicy;
@@ -118,7 +119,7 @@ final class SensorWizardController
                 'room' => $pre['room'],
                 'operator' => (string) ($body['operator'] ?? ''),
                 'catalog' => 'sensores',
-                'catalog_version' => 2,
+                'catalog_version' => 3,
                 'mode' => 'universal',
                 'plan' => $pre['plan'],
                 'initial_settings' => $pre['settings'],
@@ -196,7 +197,7 @@ final class SensorWizardController
                     'room' => $pre['room'],
                     'operator' => (string) ($body['operator'] ?? $oldRun['operator'] ?? ''),
                     'catalog' => 'sensores',
-                    'catalog_version' => 2,
+                    'catalog_version' => 3,
                     'mode' => 'universal',
                     'plan' => $pre['plan'],
                     'initial_settings' => $pre['settings'],
@@ -1053,7 +1054,8 @@ final class SensorWizardController
             $code = in_array($e->getMessage(), [
                 'operation_pending', 'measure_in_progress', 'measure_not_ready',
                 'measure_insufficient', 'inside_not_valid', 'invalid_state', 'unknown_action',
-                'presence_stale', 'reentry_not_clear',
+                'presence_stale', 'reentry_not_clear', 'scan_must_start_inside',
+                'legacy_calibration', 'inside_not_detected', 'no_distance_separation',
             ], true) ? 409 : 500;
             return Response::json($code, ['error' => $e->getMessage()]);
         }
@@ -1063,7 +1065,7 @@ final class SensorWizardController
     private function radarStateResponse(array $run, string $stepId): Response
     {
         $session = (array) ($run['calibration_session'] ?? []);
-        if (($session['version'] ?? 0) !== 2) {
+        if (($session['version'] ?? 0) < 2) {
             return Response::json(409, ['error' => 'legacy_calibration', 'message' => 'Reinicia esta verificación para usar el calibrador nuevo.']);
         }
         $snapshot = $this->latestPresenceSnapshot((int) $run['room_id']);
@@ -1084,11 +1086,15 @@ final class SensorWizardController
             'ok' => true,
             'run_id' => (string) $run['run_id'],
             'step_id' => $stepId,
-            'session_version' => 2,
+            'session_version' => (int) ($session['version'] ?? 2),
             'phase' => (string) ($session['phase'] ?? 'INSIDE'),
             'state' => (string) ($session['state'] ?? 'IDLE'),
+            'model' => (string) ($session['model'] ?? 'legacy'),
             'config_version' => (int) ($session['config_version'] ?? 1),
             'current_settings' => $settings,
+            'scan' => $session['outside_scan'] ?? null,
+            'scan_preview' => $session['scan_preview'] ?? null,
+            'calibration' => $session['calibration'] ?? null,
             'settings_valid' => $valid,
             'settings_invalid_reason' => $valid ? null : ZigbeeRadarCalibrationService::settingsInvalidReason($settings),
             'active_operation' => $session['active_operation'] ?? null,
@@ -1126,7 +1132,7 @@ final class SensorWizardController
     {
         return $this->store->withLock($runId, function (array $r) use ($stepId): array {
             $session = (array) ($r['calibration_session'] ?? []);
-            if (($session['version'] ?? 0) !== 2) {
+            if (($session['version'] ?? 0) < 3) {
                 $session = $this->newRadarSession($r);
             }
             if ($stepId === 'radar_inside') {
@@ -1139,8 +1145,8 @@ final class SensorWizardController
                 if (($inside['sufficient'] ?? false) !== true || ($inside['detected'] ?? false) !== true) {
                     throw new \RuntimeException('inside_not_valid');
                 }
-                if (!in_array((string) ($session['phase'] ?? ''), ['OUTSIDE_FIXED', 'OUTSIDE_PASS', 'REENTRY', 'DONE'], true)) {
-                    $session['phase'] = 'OUTSIDE_FIXED';
+                if (!in_array((string) ($session['phase'] ?? ''), ['OUTSIDE_SCAN', 'OUTSIDE_VERIFY', 'OUTSIDE_PASS', 'REENTRY', 'DONE'], true)) {
+                    $session['phase'] = 'OUTSIDE_SCAN';
                     $session['state'] = 'IDLE';
                 }
             }
@@ -1156,7 +1162,8 @@ final class SensorWizardController
         $baseline = (array) ($run['calibration']['initial_settings'] ?? []);
         $current = $this->latestSettings($roomId);
         return [
-            'version' => 2,
+            'version' => 3,
+            'model' => 'boundary_scan_v1',
             'config_version' => 1,
             'phase' => 'INSIDE',
             'state' => 'IDLE',
@@ -1167,10 +1174,13 @@ final class SensorWizardController
             'measurements' => [],
             'candidates' => [],
             'inside_valid' => null,
+            'inside_ref' => null,
+            'outside_scan' => null,
             'outside_valid' => null,
             'outside_pass' => null,
             'reentry' => null,
             'last_measurement' => null,
+            'calibration' => null,
             'result' => null,
             'started_at' => gmdate('Y-m-d\TH:i:s\Z'),
         ];
@@ -1185,98 +1195,194 @@ final class SensorWizardController
     private function reconcileRadarRecord(array $run, \PDO $pdo): array
     {
         $session = (array) ($run['calibration_session'] ?? []);
-        if (($session['version'] ?? 0) !== 2) {
+        $version = (int) ($session['version'] ?? 0);
+        if ($version < 2) {
             return $run;
         }
-        $op = $session['active_operation'] ?? null;
-        if (!is_array($op)) {
-            return $run;
-        }
+        $isV3 = $version >= 3;
         $changed = false;
         $now = time();
-        $state = (string) ($op['state'] ?? '');
 
-        if ($state === 'AWAITING_CONFIRM') {
-            $cal = new ZigbeeRadarCalibrationService($pdo);
-            $conf = $cal->confirm(
-                (int) $run['room_id'],
-                (int) ($op['before_event_id'] ?? 0),
-                (array) ($op['requested'] ?? [])
-            );
-            $op['observed'] = $conf['settings'] ?? [];
-            $op['confirmed_event_id'] = $conf['event_id'] ?? null;
-            $op['confirmed_at'] = $conf['state'] === 'confirmed' ? ($conf['at'] ?? gmdate('Y-m-d\TH:i:s\Z')) : null;
-            if ($conf['state'] === 'confirmed') {
-                $session['current'] = $conf['settings'];
-                $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
-                $op['state'] = 'CONFIRMED';
-                $op['confirmed_settings'] = $conf['settings'];
-                foreach ((array) ($session['candidates'] ?? []) as $ci => $cand) {
-                    if (($cand['candidate_id'] ?? '') === ($op['operation_id'] ?? '')) {
-                        $session['candidates'][$ci]['status'] = 'CONFIRMED';
-                        $session['candidates'][$ci]['confirmed_at'] = $conf['at'] ?? gmdate('Y-m-d\TH:i:s\Z');
+        $op = $session['active_operation'] ?? null;
+        if (is_array($op)) {
+            $state = (string) ($op['state'] ?? '');
+            if ($state === 'AWAITING_CONFIRM') {
+                $cal = new ZigbeeRadarCalibrationService($pdo);
+                $conf = $cal->confirm(
+                    (int) $run['room_id'],
+                    (int) ($op['before_event_id'] ?? 0),
+                    (array) ($op['requested'] ?? [])
+                );
+                $op['observed'] = $conf['settings'] ?? [];
+                $op['confirmed_event_id'] = $conf['event_id'] ?? null;
+                $op['confirmed_at'] = $conf['state'] === 'confirmed' ? ($conf['at'] ?? gmdate('Y-m-d\TH:i:s\Z')) : null;
+                if ($conf['state'] === 'confirmed') {
+                    $previous = (array) ($session['current'] ?? []);
+                    $confirmed = (array) ($conf['settings'] ?? []);
+                    $session['current'] = $confirmed;
+                    if (!$isV3 || $this->settingsDiffer($previous, $confirmed)) {
+                        $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
                     }
-                }
-                $session['state'] = 'STABILIZING';
-                $fading = (float) (($conf['settings'] ?? [])['fading_time'] ?? 15);
-                $session['stabilize_until'] = gmdate('Y-m-d\TH:i:s\Z', $now + (int) max(8, min(60, $fading + 5)));
-                if (($op['kind'] ?? '') === 'RESTORE') {
-                    $session['current'] = (array) ($session['baseline'] ?? $conf['settings']);
-                    $session['state'] = 'IDLE';
-                    $session['stabilize_until'] = null;
                     $op['state'] = 'CONFIRMED';
-                    $session['active_operation'] = null;
-                }
-            } elseif ($conf['state'] === 'invalid') {
-                $op['state'] = 'INVALID_SETTINGS';
-                $session['state'] = 'INVALID_SETTINGS';
-            } elseif ($conf['state'] === 'mismatch') {
-                $op['state'] = 'INDETERMINATE';
-                $session['state'] = 'INDETERMINATE';
-            } else {
-                $deadline = isset($op['published_at']) ? strtotime((string) $op['published_at'] . ' UTC') + 15 : null;
-                if ($deadline !== null && $now > $deadline) {
+                    $op['confirmed_settings'] = $confirmed;
+                    foreach ((array) ($session['candidates'] ?? []) as $ci => $cand) {
+                        if (($cand['candidate_id'] ?? '') === ($op['operation_id'] ?? '')) {
+                            $session['candidates'][$ci]['status'] = 'CONFIRMED';
+                            $session['candidates'][$ci]['confirmed_at'] = $conf['at'] ?? gmdate('Y-m-d\TH:i:s\Z');
+                        }
+                    }
+                    if ($isV3) {
+                        $deviceRepo = new DeviceRepository($pdo);
+                        $presence = $deviceRepo->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+                        if ($presence !== null) {
+                            $cal->persistCalibration([
+                                'id' => (int) $presence->id,
+                                'external_id' => (string) $presence->externalId,
+                                'meta' => is_array($presence->meta) ? $presence->meta : [],
+                            ], $confirmed, $conf['at'] ?? null);
+                        }
+                        if (isset($session['calibration']) && is_array($session['calibration'])) {
+                            $session['calibration']['sensitivity'] = (int) round((float) ($confirmed['radar_sensitivity'] ?? 0));
+                            if (isset($confirmed['maximum_range']) && is_numeric($confirmed['maximum_range'])) {
+                                $session['calibration']['target_range'] = (float) $confirmed['maximum_range'];
+                            }
+                            $session['calibration']['attempts'] = count((array) ($session['candidates'] ?? []));
+                            $session['calibration']['applied'] = true;
+                            $session['calibration']['updated_at'] = $conf['at'] ?? gmdate('Y-m-d\TH:i:s\Z');
+                        }
+                    }
+                    $session['state'] = 'STABILIZING';
+                    $fading = (float) (($conf['settings'] ?? [])['fading_time'] ?? 15);
+                    $session['stabilize_until'] = gmdate('Y-m-d\TH:i:s\Z', $now + (int) max(8, min(60, $fading + 5)));
+                    if (($op['kind'] ?? '') === 'RESTORE') {
+                        $session['current'] = (array) ($session['baseline'] ?? $conf['settings']);
+                        $session['state'] = 'IDLE';
+                        $session['stabilize_until'] = null;
+                        $op['state'] = 'CONFIRMED';
+                        $session['active_operation'] = null;
+                        if ($isV3) {
+                            $restorePhase = (string) ($op['phase'] ?? 'INSIDE');
+                            $session['phase'] = $restorePhase === 'INSIDE' ? 'INSIDE' : 'OUTSIDE_SCAN';
+                            $session['result'] = null;
+                            $session['manual_start_required'] = true;
+                            foreach (['outside_scan', 'outside_valid', 'outside_pass', 'reentry',
+                                         'last_measurement', 'scan_preview', 'calibration',
+                                         'pending_phase'] as $key) {
+                                unset($session[$key]);
+                            }
+                            if ($restorePhase === 'INSIDE') {
+                                unset($session['inside_valid'], $session['inside_ref']);
+                            }
+                            $session['candidates'] = [];
+                        }
+                    } elseif ($isV3 && isset($op['next_phase'])) {
+                        $session['pending_phase'] = (string) $op['next_phase'];
+                    }
+                } elseif ($conf['state'] === 'invalid') {
+                    $op['state'] = 'INVALID_SETTINGS';
+                    $session['state'] = 'INVALID_SETTINGS';
+                } elseif ($conf['state'] === 'mismatch') {
                     $op['state'] = 'INDETERMINATE';
-                    $op['reason'] = 'no_confirmation_within_deadline';
                     $session['state'] = 'INDETERMINATE';
-                }
-            }
-            if (!in_array($op['state'], ['CONFIRMED'], true)) {
-                foreach ((array) ($session['candidates'] ?? []) as $ci => $cand) {
-                    if (($cand['candidate_id'] ?? '') === ($op['operation_id'] ?? '')) {
-                        $session['candidates'][$ci]['status'] = 'FAILED';
+                } else {
+                    $deadline = isset($op['published_at']) ? strtotime((string) $op['published_at'] . ' UTC') + 15 : null;
+                    if ($deadline !== null && $now > $deadline) {
+                        $op['state'] = 'INDETERMINATE';
+                        $op['reason'] = 'no_confirmation_within_deadline';
+                        $session['state'] = 'INDETERMINATE';
                     }
                 }
-            }
-            $changed = true;
-        }
-
-        if (($session['state'] ?? '') === 'STABILIZING') {
-            $until = (string) ($session['stabilize_until'] ?? '');
-            if ($until !== '' && $now >= (strtotime($until . ' UTC') ?: 0)) {
-                $session['state'] = 'IDLE';
-                $session['stabilize_until'] = null;
-                if (isset($session['active_operation']['operation_id'])) {
-                    $opId = (string) $session['active_operation']['operation_id'];
-                    $session['active_operation'] = null;
-                    if (isset($session['operations'][$opId])) {
-                        $session['operations'][$opId]['state'] = 'CONFIRMED';
+                if (!in_array($op['state'], ['CONFIRMED'], true)) {
+                    foreach ((array) ($session['candidates'] ?? []) as $ci => $cand) {
+                        if (($cand['candidate_id'] ?? '') === ($op['operation_id'] ?? '')) {
+                            $session['candidates'][$ci]['status'] = 'FAILED';
+                        }
                     }
                 }
                 $changed = true;
             }
+
+            if (($session['state'] ?? '') === 'STABILIZING') {
+                $until = (string) ($session['stabilize_until'] ?? '');
+                if ($until !== '' && $now >= (strtotime($until . ' UTC') ?: 0)) {
+                    $opId = (string) ($session['active_operation']['operation_id'] ?? '');
+                    $session['state'] = 'IDLE';
+                    $session['stabilize_until'] = null;
+                    if ($opId !== '') {
+                        $session['active_operation'] = null;
+                        if (isset($session['operations'][$opId])) {
+                            $session['operations'][$opId]['state'] = 'CONFIRMED';
+                        }
+                    }
+                    if ($isV3) {
+                        $nextPhase = (string) ($session['pending_phase'] ?? '');
+                        if ($nextPhase !== '') {
+                            $session['phase'] = $nextPhase;
+                        }
+                    }
+                    unset($session['pending_phase']);
+                    $changed = true;
+                }
+            }
+
+            if (isset($session['active_operation']['operation_id'])) {
+                $opId = (string) $session['active_operation']['operation_id'];
+                $session['active_operation'] = $op;
+                $session['operations'][$opId] = $op;
+            }
         }
 
-        if (isset($session['active_operation']['operation_id'])) {
-            $opId = (string) $session['active_operation']['operation_id'];
-            $session['active_operation'] = $op;
-            $session['operations'][$opId] = $op;
+        if ($isV3) {
+            $active = $session['active_operation'] ?? null;
+            if (is_array($active) && ($session['state'] ?? '') === 'MEASURING') {
+                $kind = (string) ($active['kind'] ?? '');
+                $windowEnd = (string) ($active['window_end'] ?? '');
+                $ended = $windowEnd !== '' && $now >= (strtotime($windowEnd . ' UTC') ?: 0);
+                if ($kind === 'SCAN') {
+                    $ctx = $this->context();
+                    $events = $ctx->eventsSince((int) $run['room_id'], (string) ($active['window_start'] ?? ''), 3000);
+                    $summary = RadarBoundaryScan::summarize(
+                        $events,
+                        (string) ($active['window_start'] ?? ''),
+                        gmdate('Y-m-d\TH:i:s\Z'),
+                        (int) ($active['config_version'] ?? 1),
+                        (array) ($session['current'] ?? []),
+                        (array) ($active['seed'] ?? []),
+                        ['min_clear_seconds' => 6, 'min_absent_reports' => 2]
+                    );
+                    if (($summary['sufficient'] ?? false) === true || $ended) {
+                        $session['scan_preview'] = $summary;
+                        $session['state'] = 'SCAN_READY';
+                        $changed = true;
+                    }
+                } elseif ($kind === 'VERIFY' && $ended) {
+                    $session['state'] = 'VERIFY_READY';
+                    $changed = true;
+                }
+            }
         }
+
         if ($changed) {
             $run['calibration_session'] = $session;
             $this->store->save($run);
         }
         return $run;
+    }
+
+    /** @param array<string,mixed> $a @param array<string,mixed> $b */
+    private function settingsDiffer(array $a, array $b): bool
+    {
+        foreach (['maximum_range', 'minimum_range', 'radar_sensitivity', 'fading_time', 'detection_delay'] as $key) {
+            $av = isset($a[$key]) && is_numeric($a[$key]) ? (float) $a[$key] : null;
+            $bv = isset($b[$key]) && is_numeric($b[$key]) ? (float) $b[$key] : null;
+            if ($av === null && $bv === null) {
+                continue;
+            }
+            if ($av === null || $bv === null || abs($av - $bv) > 0.001) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1286,6 +1392,9 @@ final class SensorWizardController
     private function applyRadarOperation(array $run, string $stepId, string $attemptId, string $action, \PDO $pdo): array
     {
         $session = (array) ($run['calibration_session'] ?? []);
+        if (($session['version'] ?? 0) >= 3) {
+            return $this->applyRadarOperationV3($run, $stepId, $attemptId, $action, $pdo);
+        }
         if (($session['version'] ?? 0) !== 2) {
             throw new \RuntimeException('legacy_calibration');
         }
@@ -1694,6 +1803,609 @@ final class SensorWizardController
      * @param array<string,mixed> $run
      * @return array<string,mixed>
      */
+
+    /**
+     * F104/RF-213..RF-216: máquina de autocalibración por barrido.
+     *
+     * @param array<string,mixed> $run
+     * @return array<string,mixed>
+     */
+    private function applyRadarOperationV3(array $run, string $stepId, string $attemptId, string $action, \PDO $pdo): array
+    {
+        $session = (array) ($run['calibration_session'] ?? []);
+        if (($session['version'] ?? 0) < 3) {
+            throw new \RuntimeException('legacy_calibration');
+        }
+        $phase = (string) ($session['phase'] ?? 'INSIDE');
+        $state = (string) ($session['state'] ?? 'IDLE');
+        $active = $session['active_operation'] ?? null;
+        $now = time();
+
+        if ($action === 'cancel') {
+            if (is_array($active)) {
+                $opId = (string) ($active['operation_id'] ?? '');
+                $active['state'] = 'CANCELLED';
+                $session['operations'][$opId] = $active;
+            }
+            $session['active_operation'] = null;
+            $session['state'] = 'IDLE';
+            $session['stabilize_until'] = null;
+            unset($session['scan_preview'], $session['manual_start_required']);
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        if (in_array($action, ['start_measure', 'start_scan', 'start_verify', 'start_reentry'], true)) {
+            if (is_array($active)) {
+                throw new \RuntimeException('operation_pending');
+            }
+            if ($state === 'STABILIZING') {
+                throw new \RuntimeException('measure_not_ready');
+            }
+            if ($action === 'start_measure' && $phase === 'OUTSIDE_SCAN') {
+                $action = 'start_scan';
+            }
+            if ($action === 'start_measure' && $phase === 'OUTSIDE_VERIFY') {
+                $action = 'start_verify';
+            }
+            $roomId = (int) $run['room_id'];
+            $snapshot = $this->latestPresenceSnapshot($roomId);
+            $live = $this->context()->live($roomId);
+            $staleSeconds = (int) ($live['presence_stale_seconds'] ?? 180);
+            if ($staleSeconds <= 0) {
+                $staleSeconds = 180;
+            }
+            $kind = 'MEASURE';
+            $opPhase = $phase;
+            $seed = [];
+            $window = $this->radarWindowSeconds((array) ($snapshot['settings'] ?? []), (array) ($session['current'] ?? []));
+            if ($action === 'start_reentry') {
+                if ($phase !== 'REENTRY') {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $block = RadarEvidencePolicy::reentryBlockReason($snapshot);
+                if ($block !== null) {
+                    throw new \RuntimeException($block);
+                }
+                $kind = 'REENTRY';
+                $window = 30;
+                $session['effects_before_reentry'] = $this->context()->effects($roomId);
+                $session['reentry'] = null;
+            } elseif ($action === 'start_scan') {
+                if ($phase !== 'OUTSIDE_SCAN') {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $block = RadarEvidencePolicy::startBlockReason($snapshot, $staleSeconds);
+                if ($block !== null) {
+                    throw new \RuntimeException($block);
+                }
+                $rawState = strtoupper(trim((string) ($snapshot['value'] ?? '')));
+                if ($rawState !== 'PRESENT') {
+                    throw new \RuntimeException('scan_must_start_inside');
+                }
+                $kind = 'SCAN';
+                $seed = RadarEvidencePolicy::seed($snapshot, $staleSeconds);
+                $fading = (float) (($snapshot['settings'] ?? [])['fading_time'] ?? 15.0);
+                $window = (int) max(60, min(120, ceil($fading + 30)));
+            } elseif ($action === 'start_verify') {
+                if ($phase !== 'OUTSIDE_VERIFY') {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $block = RadarEvidencePolicy::startBlockReason($snapshot, $staleSeconds);
+                if ($block !== null) {
+                    throw new \RuntimeException($block);
+                }
+                $kind = 'VERIFY';
+                $seed = RadarEvidencePolicy::seed($snapshot, $staleSeconds);
+                $fading = (float) (($snapshot['settings'] ?? [])['fading_time'] ?? 15.0);
+                $window = (int) max(20, min(30, ceil($fading + 5)));
+            } else {
+                if (!in_array($phase, ['INSIDE', 'OUTSIDE_PASS'], true)) {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $block = RadarEvidencePolicy::startBlockReason($snapshot, $staleSeconds);
+                if ($block !== null) {
+                    throw new \RuntimeException($block);
+                }
+                $seed = RadarEvidencePolicy::seed($snapshot, $staleSeconds);
+            }
+
+            $windowStart = gmdate('Y-m-d\TH:i:s\Z');
+            $opId = 'op-' . bin2hex(random_bytes(5));
+            $op = [
+                'operation_id' => $opId,
+                'kind' => $kind,
+                'phase' => $opPhase,
+                'state' => 'MEASURING',
+                'started_at' => $windowStart,
+                'window_start' => $windowStart,
+                'window_end' => gmdate('Y-m-d\TH:i:s\Z', $now + $window),
+                'window_seconds' => $window,
+                'config_version' => (int) ($session['config_version'] ?? 1),
+                'requested' => [],
+                'before_settings' => $session['current'] ?? [],
+                'seed' => $seed,
+                'raw_presence_at_start' => $snapshot['value'] ?? null,
+                'raw_presence_age_seconds' => $snapshot['settings_age_seconds'] ?? null,
+            ];
+            unset($session['manual_start_required'], $session['scan_preview']);
+            $session['phase'] = $opPhase;
+            $session['state'] = 'MEASURING';
+            $session['active_operation'] = $op;
+            $session['operations'][$opId] = $op;
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        if (in_array($action, ['finish_measure', 'finish_scan', 'finish_verify', 'finish_reentry'], true)) {
+            if (!is_array($active) || !in_array((string) ($active['state'] ?? ''), ['MEASURING', 'SCAN_READY', 'VERIFY_READY'], true)) {
+                throw new \RuntimeException('invalid_state');
+            }
+            $kind = (string) ($active['kind'] ?? 'MEASURE');
+            if ($action === 'finish_scan' && $kind !== 'SCAN') {
+                throw new \RuntimeException('invalid_state');
+            }
+            if ($action === 'finish_verify' && $kind !== 'VERIFY') {
+                throw new \RuntimeException('invalid_state');
+            }
+            if ($action === 'finish_reentry' && $kind !== 'REENTRY') {
+                throw new \RuntimeException('invalid_state');
+            }
+            $end = strtotime((string) ($active['window_end'] ?? '') . ' UTC');
+            if ($action === 'finish_measure' && $end !== false && $now < $end) {
+                throw new \RuntimeException('measure_in_progress');
+            }
+            $ctx = $this->context();
+            $events = $ctx->eventsSince((int) $run['room_id'], (string) $active['window_start'], 3000);
+            $mPhase = (string) ($active['phase'] ?? $phase);
+            $windowEnd = gmdate('Y-m-d\TH:i:s\Z');
+            $settings = (array) ($session['current'] ?? []);
+
+            if ($kind === 'SCAN') {
+                $scan = RadarBoundaryScan::summarize(
+                    $events,
+                    (string) $active['window_start'],
+                    $windowEnd,
+                    (int) ($active['config_version'] ?? 1),
+                    $settings,
+                    (array) ($active['seed'] ?? []),
+                    ['min_clear_seconds' => 6, 'min_absent_reports' => 2]
+                );
+                $active['state'] = 'MEASURED';
+                $active['result'] = $scan;
+                $session['operations'][(string) $active['operation_id']] = $active;
+                $session['active_operation'] = null;
+                $session['outside_scan'] = $scan;
+                $session['last_measurement'] = $scan;
+                unset($session['scan_preview']);
+                if (($scan['sufficient'] ?? false) !== true) {
+                    $session['state'] = 'STOPPED';
+                    $session['result'] = 'scan_insufficient:' . (string) ($scan['reason'] ?? 'unknown');
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $plan = RadarCalibrationPlanner::planMidpoint(
+                    $this->insideInputV3($session),
+                    $scan,
+                    null,
+                    $settings,
+                    $this->midpointCapsV3(),
+                    ['inside_present' => true, 'tried' => (array) ($session['candidates'] ?? [])]
+                );
+                $session['calibration'] = $this->calibrationRecordV3($session, $plan, $scan, null);
+                if ($plan['action'] === 'apply') {
+                    $session['phase'] = 'OUTSIDE_SCAN';
+                    $run = $this->publishRadarCandidateV3($run, $session, $pdo, (array) $plan['params'],
+                        (string) $plan['reason'], 'OUTSIDE_SCAN', 'OUTSIDE_VERIFY', $plan['candidate']);
+                    $this->store->save($run);
+                    return $run;
+                }
+                if ($plan['action'] === 'none') {
+                    $session['phase'] = 'OUTSIDE_VERIFY';
+                    $session['state'] = 'IDLE';
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $session['state'] = 'STOPPED';
+                $session['result'] = (string) $plan['reason'];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return $run;
+            }
+
+            $requirements = $kind === 'REENTRY'
+                ? ['min_reports' => 1, 'min_span_seconds' => 0, 'require_new_present' => true]
+                : [];
+            $seed = $kind === 'REENTRY' ? [] : (array) ($active['seed'] ?? []);
+            $measurement = RadarMeasurement::build(
+                $events,
+                (string) $active['window_start'],
+                $windowEnd,
+                (int) ($active['config_version'] ?? 1),
+                $settings,
+                $requirements,
+                $seed
+            );
+            if ($kind === 'VERIFY') {
+                $detected = (bool) ($measurement['any_present'] ?? false);
+            } elseif ($kind === 'REENTRY') {
+                $detected = ((int) ($measurement['presence_reports'] ?? 0) > 0)
+                    && (($measurement['last_value'] ?? '') === 'PRESENT');
+            } else {
+                $detected = RadarMeasurement::outcomeForPhase($measurement, $mPhase);
+            }
+            $measurement['last_state'] = $measurement['last_value'];
+            $measurement['detected'] = $detected;
+            $measurement['measurement_id'] = 'm-' . bin2hex(random_bytes(4));
+            $measurement['phase'] = $mPhase;
+            $session['measurements'][] = $measurement;
+            $session['last_measurement'] = $measurement;
+            $active['state'] = 'MEASURED';
+            $active['result'] = $measurement;
+            $session['operations'][(string) $active['operation_id']] = $active;
+            $session['active_operation'] = null;
+
+            if ($kind === 'SCAN' || $kind === 'VERIFY') {
+                // Ya tratados arriba (SCAN) o a continuación (VERIFY).
+            }
+
+            if ($kind === 'MEASURE') {
+                if ($mPhase === 'INSIDE') {
+                    if (($measurement['sufficient'] ?? false) === true) {
+                        $session['inside_valid'] = $measurement;
+                        $session['inside_ref'] = [
+                            'reference' => RadarCalibrationPlanner::ref($measurement, 'inside'),
+                            'distance' => $measurement['distance'] ?? [],
+                            'quality' => $measurement['distance']['quality'] ?? 'poor',
+                            'config_version' => $measurement['config_version'] ?? 1,
+                            'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                        ];
+                    }
+                } elseif ($mPhase === 'OUTSIDE_PASS') {
+                    if (($measurement['sufficient'] ?? false) === true) {
+                        $session['outside_pass'] = $measurement;
+                    }
+                }
+                $session['state'] = 'MEASURED';
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return $run;
+            }
+
+            if ($kind === 'VERIFY') {
+                if (($measurement['sufficient'] ?? false) !== true) {
+                    $session['state'] = 'STOPPED';
+                    $session['result'] = 'verify_insufficient:' . (string) ($measurement['reason'] ?? 'unknown');
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $session['outside_valid'] = $measurement;
+                if (!$detected) {
+                    $session['phase'] = 'OUTSIDE_PASS';
+                    $session['state'] = 'IDLE';
+                    $session['calibration'] = $this->calibrationRecordV3($session, [], $session['outside_scan'] ?? [], $measurement);
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $plan = RadarCalibrationPlanner::planMidpoint(
+                    $this->insideInputV3($session),
+                    (array) ($session['outside_scan'] ?? []),
+                    $this->outsideInputV3($measurement),
+                    $settings,
+                    $this->midpointCapsV3(),
+                    ['inside_present' => true, 'outside_present' => true,
+                        'tried' => (array) ($session['candidates'] ?? [])]
+                );
+                $session['calibration'] = $this->calibrationRecordV3($session, $plan,
+                    (array) ($session['outside_scan'] ?? []), $measurement);
+                if ($plan['action'] === 'apply') {
+                    $session['phase'] = 'OUTSIDE_VERIFY';
+                    $run = $this->publishRadarCandidateV3($run, $session, $pdo, (array) $plan['params'],
+                        (string) $plan['reason'], 'OUTSIDE_VERIFY', 'OUTSIDE_VERIFY', $plan['candidate']);
+                    $this->store->save($run);
+                    return $run;
+                }
+                $session['state'] = 'STOPPED';
+                $session['result'] = (string) $plan['reason'];
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return $run;
+            }
+
+            if ($kind === 'REENTRY') {
+                if (($measurement['sufficient'] ?? false) !== true) {
+                    $session['state'] = 'STOPPED';
+                    $session['result'] = 'reentry_insufficient:' . (string) ($measurement['reason'] ?? 'unknown');
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $session['reentry'] = [
+                    'detected' => $detected,
+                    'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'first_present_at' => $measurement['first_present_at'] ?? null,
+                    'presence' => $measurement,
+                    'effects_before_reentry' => $session['effects_before_reentry'] ?? [],
+                ];
+                if (!$detected) {
+                    $plan = RadarCalibrationPlanner::planMidpoint(
+                        $this->insideInputV3($session),
+                        (array) ($session['outside_scan'] ?? []),
+                        null,
+                        $settings,
+                        $this->midpointCapsV3(),
+                        ['inside_present' => true, 'reentry_failed' => true,
+                            'tried' => (array) ($session['candidates'] ?? [])]
+                    );
+                    $session['calibration'] = $this->calibrationRecordV3($session, $plan,
+                        (array) ($session['outside_scan'] ?? []), null);
+                    if ($plan['action'] === 'apply') {
+                        $session['phase'] = 'REENTRY';
+                        $run = $this->publishRadarCandidateV3($run, $session, $pdo, (array) $plan['params'],
+                            (string) $plan['reason'], 'REENTRY', 'REENTRY', $plan['candidate']);
+                        $this->store->save($run);
+                        return $run;
+                    }
+                    $session['state'] = 'REJECTED';
+                    $session['result'] = (string) $plan['reason'];
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
+                $session['state'] = 'MEASURED';
+                $run['calibration_session'] = $session;
+                $this->store->save($run);
+                return $run;
+            }
+
+            $session['state'] = 'MEASURED';
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        if ($action === 'advance') {
+            $cv = (int) ($session['config_version'] ?? 1);
+            if ($phase === 'INSIDE') {
+                $inside = (array) ($session['inside_valid'] ?? []);
+                if (($inside['sufficient'] ?? false) !== true
+                    || ($inside['detected'] ?? false) !== true
+                    || (int) ($inside['config_version'] ?? 0) !== $cv) {
+                    throw new \RuntimeException('inside_not_valid');
+                }
+                $run = $this->finalizeInsideAttempt($run, $stepId);
+                $session = (array) ($run['calibration_session'] ?? []);
+                $session['phase'] = 'OUTSIDE_SCAN';
+                $session['state'] = 'IDLE';
+            } elseif ($phase === 'OUTSIDE_VERIFY') {
+                $out = (array) ($session['outside_valid'] ?? []);
+                if (($out['sufficient'] ?? false) !== true
+                    || ($out['detected'] ?? false) === true
+                    || (int) ($out['config_version'] ?? 0) !== $cv) {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $session['phase'] = 'OUTSIDE_PASS';
+                $session['state'] = 'IDLE';
+            } elseif ($phase === 'OUTSIDE_PASS') {
+                $pass = (array) ($session['outside_pass'] ?? []);
+                if (($pass['sufficient'] ?? false) !== true
+                    || ($pass['detected'] ?? false) === true
+                    || (int) ($pass['config_version'] ?? 0) !== $cv) {
+                    throw new \RuntimeException('invalid_state');
+                }
+                if (!empty($session['candidates'])) {
+                    $session['phase'] = 'REENTRY';
+                    $session['state'] = 'IDLE';
+                } else {
+                    $session['phase'] = 'DONE';
+                    $session['state'] = 'DONE';
+                    $session['result'] = 'PASS';
+                }
+            } elseif ($phase === 'REENTRY') {
+                if (($session['reentry']['detected'] ?? false) !== true
+                    || (int) ($session['reentry']['presence']['config_version'] ?? 0) !== $cv) {
+                    throw new \RuntimeException('invalid_state');
+                }
+                $session['phase'] = 'DONE';
+                $session['state'] = 'DONE';
+                $session['result'] = 'PASS';
+            } else {
+                throw new \RuntimeException('invalid_state');
+            }
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        if ($action === 'restore') {
+            if (is_array($active)) {
+                throw new \RuntimeException('operation_pending');
+            }
+            $baseline = (array) ($session['baseline'] ?? []);
+            $params = [];
+            foreach (['maximum_range', 'radar_sensitivity', 'fading_time', 'detection_delay'] as $key) {
+                if (isset($baseline[$key]) && is_numeric($baseline[$key])) {
+                    $params[$key] = (float) $baseline[$key];
+                }
+            }
+            if ($params === []) {
+                throw new \RuntimeException('no_initial_settings');
+            }
+            $devices = new DeviceRepository($pdo);
+            $presence = $devices->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+            if ($presence === null) {
+                throw new \RuntimeException('presence_device_missing');
+            }
+            $cal = new ZigbeeRadarCalibrationService($pdo);
+            $pub = $cal->publish((int) $run['room_id'], [
+                'id' => (int) $presence->id,
+                'external_id' => (string) $presence->externalId,
+                'meta' => is_array($presence->meta) ? $presence->meta : [],
+            ], $params);
+            if (($pub['ok'] ?? false) !== true) {
+                throw new \RuntimeException('publish_failed:' . (string) ($pub['error'] ?? 'unknown'));
+            }
+            $opId = 'op-' . bin2hex(random_bytes(5));
+            $op = [
+                'operation_id' => $opId,
+                'kind' => 'RESTORE',
+                'phase' => $phase,
+                'state' => 'AWAITING_CONFIRM',
+                'started_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                'published_at' => $pub['published_at'],
+                'before_event_id' => $pub['before_event_id'],
+                'requested' => $params,
+                'before_settings' => $session['current'] ?? [],
+                'reason' => 'restore',
+                'next_phase' => 'INSIDE',
+            ];
+            $session['active_operation'] = $op;
+            $session['operations'][$opId] = $op;
+            $session['state'] = 'AWAITING_CONFIRM';
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        if ($action === 'check_confirmation') {
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return $run;
+        }
+
+        throw new \RuntimeException('unknown_action');
+    }
+
+    /**
+     * Publica un candidato y deja la operación pendiente de confirmación push.
+     *
+     * @param array<string,mixed> $run
+     * @param array<string,mixed> $session
+     * @param array<string,int|float> $params
+     * @return array<string,mixed>
+     */
+    private function publishRadarCandidateV3(
+        array $run,
+        array $session,
+        \PDO $pdo,
+        array $params,
+        string $reason,
+        string $phase,
+        string $nextPhase,
+        ?float $candidate
+    ): array {
+        $devices = new DeviceRepository($pdo);
+        $presence = $devices->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+        if ($presence === null) {
+            throw new \RuntimeException('presence_device_missing');
+        }
+        $cal = new ZigbeeRadarCalibrationService($pdo);
+        $pub = $cal->publish((int) $run['room_id'], [
+            'id' => (int) $presence->id,
+            'external_id' => (string) $presence->externalId,
+            'meta' => is_array($presence->meta) ? $presence->meta : [],
+        ], $params);
+        if (($pub['ok'] ?? false) !== true) {
+            throw new \RuntimeException('publish_failed:' . (string) ($pub['error'] ?? 'unknown'));
+        }
+        $opId = 'op-' . bin2hex(random_bytes(5));
+        $op = [
+            'operation_id' => $opId,
+            'kind' => 'ADJUST',
+            'phase' => $phase,
+            'state' => 'AWAITING_CONFIRM',
+            'started_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            'published_at' => $pub['published_at'],
+            'before_event_id' => $pub['before_event_id'],
+            'requested' => $params,
+            'before_settings' => $session['current'] ?? [],
+            'reason' => $reason,
+            'candidate' => $candidate,
+            'next_phase' => $nextPhase,
+        ];
+        $session['candidates'][] = [
+            'candidate_id' => $opId,
+            'params' => $params,
+            'reason' => $reason,
+            'status' => 'PENDING',
+            'published_at' => $pub['published_at'],
+            'before_settings' => $session['current'] ?? [],
+        ];
+        $session['active_operation'] = $op;
+        $session['operations'][$opId] = $op;
+        $session['state'] = 'AWAITING_CONFIRM';
+        $run['calibration_session'] = $session;
+        return $run;
+    }
+
+    /** @param array<string,mixed> $session */
+    private function insideInputV3(array $session): array
+    {
+        $inside = (array) ($session['inside_valid'] ?? []);
+        $ref = (array) ($session['inside_ref'] ?? []);
+        return [
+            'detected' => ($inside['detected'] ?? false) === true,
+            'sufficient' => ($inside['sufficient'] ?? false) === true,
+            'reference' => isset($ref['reference']) ? (float) $ref['reference'] : null,
+            'distance' => $ref['distance'] ?? ($inside['distance'] ?? []),
+            'quality' => $ref['quality'] ?? ($inside['distance']['quality'] ?? 'poor'),
+        ];
+    }
+
+    /** @param array<string,mixed> $measurement */
+    private function outsideInputV3(array $measurement): array
+    {
+        $distance = (array) ($measurement['distance'] ?? []);
+        return [
+            'detected' => true,
+            'reference' => RadarCalibrationPlanner::ref($measurement, 'outside'),
+            'distance' => $distance,
+            'quality' => $distance['quality'] ?? 'poor',
+        ];
+    }
+
+    /** @return array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int,min_separation:float,margin:float,coarse_step:float} */
+    private function midpointCapsV3(): array
+    {
+        return [
+            'range_min' => (float) ZigbeeRadarCalibrationService::PARAMETERS['maximum_range']['min'],
+            'range_max' => (float) ZigbeeRadarCalibrationService::PARAMETERS['maximum_range']['max'],
+            'range_step' => 0.15,
+            'sens_min' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['min'],
+            'sens_max' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['max'],
+            'min_separation' => 0.45,
+            'margin' => 0.15,
+            'coarse_step' => 0.75,
+        ];
+    }
+
+    /** @param array<string,mixed> $session @param array<string,mixed> $plan @param array<string,mixed> $scan @param array<string,mixed>|null $outside */
+    private function calibrationRecordV3(array $session, array $plan, array $scan, ?array $outside): array
+    {
+        $ref = (array) ($session['inside_ref'] ?? []);
+        $previous = is_array($session['calibration'] ?? null) ? $session['calibration'] : [];
+        return [
+            'inside_reference' => $plan['inside_reference'] ?? ($ref['reference'] ?? null),
+            'boundary' => $plan['boundary'] ?? ($scan['boundary_distance'] ?? null),
+            'outside_point' => $plan['outside_point'] ?? ($outside !== null
+                ? RadarCalibrationPlanner::ref($outside, 'outside') : null),
+            'target_range' => $plan['candidate']
+                ?? ($previous['target_range'] ?? (($session['current'] ?? [])['maximum_range'] ?? null)),
+            'sensitivity' => (int) round((float) (($session['current'] ?? [])['radar_sensitivity'] ?? 0)),
+            'reason' => $plan['reason'] ?? 'verified',
+            'confidence' => $plan['confidence'] ?? ($previous['confidence'] ?? 'medium'),
+            'attempts' => count((array) ($session['candidates'] ?? [])),
+            'applied' => (bool) ($previous['applied'] ?? false),
+            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+    }
+
     private function finalizeInsideAttempt(array $run, string $stepId): array
     {
         $step = (array) ($run['steps'][$stepId] ?? []);
@@ -1722,6 +2434,9 @@ final class SensorWizardController
      */
     private function radarNextActions(array $session): array
     {
+        if ((int) ($session['version'] ?? 0) >= 3) {
+            return $this->radarNextActionsV3($session);
+        }
         $phase = (string) ($session['phase'] ?? 'INSIDE');
         $state = (string) ($session['state'] ?? 'IDLE');
         $active = is_array($session['active_operation'] ?? null);
@@ -1794,6 +2509,9 @@ final class SensorWizardController
      */
     private function radarCountdown(array $session): ?array
     {
+        if ((int) ($session['version'] ?? 0) >= 3) {
+            return $this->radarCountdownV3($session);
+        }
         $op = $session['active_operation'] ?? null;
         if (!is_array($op)) {
             return null;
@@ -1821,6 +2539,9 @@ final class SensorWizardController
      */
     private function radarCopy(array $session): array
     {
+        if ((int) ($session['version'] ?? 0) >= 3) {
+            return $this->radarCopyV3($session);
+        }
         $phase = (string) ($session['phase'] ?? 'INSIDE');
         $state = (string) ($session['state'] ?? 'IDLE');
         if ($state === 'AWAITING_CONFIRM') {
@@ -1897,6 +2618,210 @@ final class SensorWizardController
             return ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'];
         }
         return ['title' => 'Radar', 'instruction' => '', 'message' => ''];
+    }
+
+
+    /**
+     * @param array<string,mixed> $session
+     * @return list<string>
+     */
+    private function radarNextActionsV3(array $session): array
+    {
+        $phase = (string) ($session['phase'] ?? 'INSIDE');
+        $state = (string) ($session['state'] ?? 'IDLE');
+        $op = $session['active_operation'] ?? null;
+        if ($phase === 'DONE') {
+            return ['validate', 'restore'];
+        }
+        if ($state === 'AWAITING_CONFIRM') {
+            return ['check_confirmation', 'restore', 'cancel'];
+        }
+        if ($state === 'STABILIZING') {
+            return ['cancel'];
+        }
+        if ($state === 'INDETERMINATE') {
+            return ['check_confirmation', 'restore', 'cancel'];
+        }
+        if ($state === 'INVALID_SETTINGS') {
+            return ['restore', 'cancel'];
+        }
+        if ($state === 'SCAN_READY') {
+            return ['finish_scan', 'cancel'];
+        }
+        if ($state === 'VERIFY_READY') {
+            return ['finish_verify', 'cancel'];
+        }
+        if ($state === 'STOPPED') {
+            return match ($phase) {
+                'OUTSIDE_SCAN' => ['start_scan', 'restore', 'cancel'],
+                'OUTSIDE_VERIFY' => ['start_verify', 'restore', 'cancel'],
+                'REENTRY' => ['start_reentry', 'restore', 'cancel'],
+                default => ['restore', 'cancel'],
+            };
+        }
+        if ($state === 'REJECTED') {
+            return ['start_reentry', 'restore', 'cancel'];
+        }
+        if ($state === 'MEASURING' && is_array($op)) {
+            $kind = (string) ($op['kind'] ?? 'MEASURE');
+            $end = isset($op['window_end']) ? (strtotime((string) $op['window_end'] . ' UTC') ?: 0) : 0;
+            if ($kind === 'SCAN') {
+                return ['cancel'];
+            }
+            if ($kind === 'VERIFY') {
+                return $end > 0 && time() >= $end ? ['finish_verify', 'cancel'] : ['cancel'];
+            }
+            if ($kind === 'REENTRY') {
+                return $end > 0 && time() >= $end ? ['finish_reentry', 'cancel'] : ['cancel'];
+            }
+            return $end > 0 && time() >= $end ? ['finish_measure', 'cancel'] : ['cancel'];
+        }
+        if ($state === 'MEASURED') {
+            $last = (array) ($session['last_measurement'] ?? []);
+            if (($last['sufficient'] ?? false) !== true) {
+                return match ($phase) {
+                    'OUTSIDE_SCAN' => ['start_scan', 'restore', 'cancel'],
+                    'OUTSIDE_VERIFY' => ['start_verify', 'restore', 'cancel'],
+                    'REENTRY' => ['start_reentry', 'restore', 'cancel'],
+                    default => ['start_measure', 'restore', 'cancel'],
+                };
+            }
+            if ($phase === 'INSIDE') {
+                return (($session['inside_valid']['detected'] ?? false) === true)
+                    ? ['advance'] : ['start_measure', 'restore', 'cancel'];
+            }
+            if ($phase === 'OUTSIDE_PASS') {
+                return (($session['outside_pass']['detected'] ?? false) === false)
+                    ? ['advance'] : ['start_measure', 'restore', 'cancel'];
+            }
+            if ($phase === 'REENTRY') {
+                return (($session['reentry']['detected'] ?? false) === true)
+                    ? ['advance', 'restore'] : ['start_reentry', 'restore', 'cancel'];
+            }
+        }
+        return match ($phase) {
+            'OUTSIDE_SCAN' => ['start_scan', 'restore', 'cancel'],
+            'OUTSIDE_VERIFY' => ['start_verify', 'restore', 'cancel'],
+            'OUTSIDE_PASS' => ['start_measure', 'restore', 'cancel'],
+            'REENTRY' => ['start_reentry', 'restore', 'cancel'],
+            default => ['start_measure', 'restore', 'cancel'],
+        };
+    }
+
+    /** @param array<string,mixed> $session */
+    private function radarCountdownV3(array $session): ?array
+    {
+        $op = $session['active_operation'] ?? null;
+        if (!is_array($op)) {
+            return null;
+        }
+        $now = time();
+        $state = (string) ($op['state'] ?? '');
+        if ($state === 'MEASURING') {
+            $end = strtotime((string) ($op['window_end'] ?? '') . ' UTC');
+            $kind = match ((string) ($op['kind'] ?? '')) {
+                'SCAN' => 'scan',
+                'VERIFY' => 'verify',
+                default => 'measure',
+            };
+            return ['kind' => $kind, 'seconds_remaining' => $end === false ? 0 : max(0, $end - $now)];
+        }
+        if ($state === 'AWAITING_CONFIRM') {
+            $deadline = strtotime((string) ($op['published_at'] ?? '') . ' UTC') + 15;
+            return ['kind' => 'confirm', 'seconds_remaining' => max(0, $deadline - $now)];
+        }
+        if (($session['state'] ?? '') === 'STABILIZING') {
+            $until = strtotime((string) ($session['stabilize_until'] ?? '') . ' UTC');
+            return ['kind' => 'stabilize', 'seconds_remaining' => $until === false ? 0 : max(0, $until - $now)];
+        }
+        return null;
+    }
+
+    /**
+     * @param array<string,mixed> $session
+     * @return array{title:string,instruction:string,message:string}
+     */
+    private function radarCopyV3(array $session): array
+    {
+        $phase = (string) ($session['phase'] ?? 'INSIDE');
+        $state = (string) ($session['state'] ?? 'IDLE');
+        if ($state === 'AWAITING_CONFIRM') {
+            return ['title' => 'Aplicando ajuste', 'instruction' => 'Espera la confirmación del radar. No hagas otra medición.', 'message' => 'El ajuste se ha enviado; falta que el dispositivo lo reporte.'];
+        }
+        if ($state === 'STABILIZING') {
+            return ['title' => 'Estabilizando el radar', 'instruction' => 'El radar está aplicando el ajuste. Mantente en la posición actual.', 'message' => 'Espera a que termine la estabilización.'];
+        }
+        if ($state === 'INDETERMINATE') {
+            return ['title' => 'Confirmación pendiente', 'instruction' => 'No sabemos si el ajuste se aplicó. Comprueba la confirmación o restaura.', 'message' => 'No se ha recibido un reporte nuevo que coincida con la orden.'];
+        }
+        if ($state === 'INVALID_SETTINGS') {
+            return ['title' => 'Configuración inválida', 'instruction' => 'Restaura los ajustes iniciales antes de continuar.', 'message' => 'El radar reporta valores que no permiten detectar correctamente.'];
+        }
+        if ($state === 'STOPPED') {
+            $reason = (string) ($session['result'] ?? '');
+            if ($reason === 'no_distance_separation') {
+                return ['title' => 'Sin separación por distancia', 'instruction' => 'El radar te detecta fuera más cerca que el punto interior. No voy a bajar la sensibilidad a ciegas: revisa la colocación y repite el barrido.', 'message' => 'No existe un alcance que detecte dentro y deje de detectar fuera.'];
+            }
+            if (str_starts_with($reason, 'scan_insufficient:')) {
+                return ['title' => 'Barrido incompleto', 'instruction' => 'No se pudo medir la frontera. Entra, colócate en el punto interior y repite el barrido caminando recto.', 'message' => $reason];
+            }
+            if (str_starts_with($reason, 'verify_insufficient:')) {
+                return ['title' => 'Verificación incompleta', 'instruction' => 'No hubo evidencia suficiente. Repite la comprobación exterior sin moverte.', 'message' => $reason];
+            }
+            return ['title' => 'Calibración detenida', 'instruction' => 'Revisa el resultado o restaura los ajustes iniciales.', 'message' => $reason];
+        }
+        if ($state === 'REJECTED') {
+            return ['title' => 'Reentrada no detectada', 'instruction' => 'El ajuste ha reducido demasiado la detección. Se ha intentado corregir; si sigue igual, restaura.', 'message' => 'No se detectó presencia al volver a entrar.'];
+        }
+        if ($state === 'SCAN_READY') {
+            return ['title' => 'Frontera detectada', 'instruction' => 'Cerrando el barrido y calculando el punto medio…', 'message' => 'El radar ha dejado de detectarte.'];
+        }
+        if ($state === 'VERIFY_READY') {
+            return ['title' => 'Comprobación terminada', 'instruction' => 'Cerrando la verificación exterior…', 'message' => 'La ventana ha terminado.'];
+        }
+        if ($state === 'MEASURING') {
+            $kind = (string) ($session['active_operation']['kind'] ?? 'MEASURE');
+            return match ($kind) {
+                'SCAN' => ['title' => 'Barrido de salida', 'instruction' => 'Camina despacio hacia fuera hasta que el radar te pierda. No cambies ningún ajuste.', 'message' => 'Midiendo la frontera real de detección.'],
+                'VERIFY' => ['title' => 'Comprobando el punto exterior', 'instruction' => 'Quédate quieto en el punto donde no quieres que te detecte.', 'message' => 'Ventana de verificación exterior.'],
+                'REENTRY' => ['title' => 'Comprobando reentrada', 'instruction' => 'Permanece dentro y quieto.', 'message' => 'Ventana de reentrada.'],
+                default => ['title' => 'Midiendo', 'instruction' => 'Permanece quieto.', 'message' => 'Ventana de medición en curso.'],
+            };
+        }
+        if ($state === 'MEASURED') {
+            $last = (array) ($session['last_measurement'] ?? []);
+            if (($last['sufficient'] ?? false) !== true) {
+                if ($phase === 'OUTSIDE_SCAN') {
+                    return ['title' => 'Barrido sin frontera', 'instruction' => 'No se detectó la transición. Entra, colócate en el punto interior y repite el barrido.', 'message' => (string) ($last['reason'] ?? '')];
+                }
+                if ($phase === 'OUTSIDE_VERIFY') {
+                    return ['title' => 'Verificación sin evidencia', 'instruction' => 'Mantente quieto en el punto exterior y repite la comprobación.', 'message' => (string) ($last['reason'] ?? '')];
+                }
+                return ['title' => 'Evidencia insuficiente', 'instruction' => 'Mantén la posición y vuelve a medir.', 'message' => 'La ventana no ha reunido evidencia suficiente.'];
+            }
+            if ($phase === 'INSIDE') {
+                if (($session['inside_valid']['detected'] ?? false) !== true) {
+                    return ['title' => 'No se detectó presencia', 'instruction' => 'Colócate en el punto más lejano y vuelve a medir. Si se repite, revisa la orientación del radar.', 'message' => 'La medición fue válida, pero el radar no te detectó.'];
+                }
+                return ['title' => 'Interior medido', 'instruction' => 'Continúa para hacer el barrido de salida.', 'message' => 'Referencia interior guardada.'];
+            }
+            if ($phase === 'OUTSIDE_PASS' && (($session['outside_pass']['detected'] ?? false) === true)) {
+                return ['title' => 'El radar detecta el pasillo', 'instruction' => 'Vuelve a medir la pasada. Si se repite, restaura o revisa la colocación.', 'message' => 'La medición fue válida, pero el radar detecta el pasillo.'];
+            }
+            if ($phase === 'REENTRY') {
+                return ['title' => 'Reentrada detectada', 'instruction' => 'Continúa para cerrar la fase del radar.', 'message' => 'El radar volvió a detectarte al entrar.'];
+            }
+            return ['title' => 'Medición completada', 'instruction' => 'Revisa el resultado y continúa.', 'message' => 'La ventana se ha cerrado.'];
+        }
+        return match ($phase) {
+            'INSIDE' => ['title' => 'Comprobar cobertura interior', 'instruction' => 'Colócate en el punto más lejano donde SÍ debe detectarte. Pulsa Empezar medición y permanece quieto hasta que termine la cuenta atrás.', 'message' => 'Primero guardamos la referencia interior.'],
+            'OUTSIDE_SCAN' => ['title' => 'Barrido de salida', 'instruction' => 'Vuelve al punto interior y pulsa Empezar barrido. Después sal caminando despacio hasta que el radar te pierda; la app calculará el punto medio y lo aplicará sola.', 'message' => 'Vamos a medir la frontera exterior real.'],
+            'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Colócate en el punto donde NO quieres que te detecte y pulsa Verificar fuera. Permanece quieto durante la ventana.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
+            'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo', 'instruction' => 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.', 'message' => 'Comprobamos el movimiento en el pasillo.'],
+            'REENTRY' => ['title' => 'Comprobar reentrada', 'instruction' => 'Sal, espera a que el radar te pierda, pulsa «Voy a entrar» y entra, cierra y quédate dentro.', 'message' => 'Comprobamos que el ajuste sigue detectando al volver.'],
+            'DONE' => ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'],
+            default => ['title' => 'Radar', 'instruction' => '', 'message' => ''],
+        };
     }
 
     public function finish(Request $request): Response
