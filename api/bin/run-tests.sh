@@ -6476,6 +6476,30 @@ fi
 F95_UI=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/sensores" 2>/dev/null || echo 000)
 F95_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" 2>/dev/null || echo 000)
 if [ "$SERVER_UP" = true ] && [ "$F95_UI" = "200" ] && [ "$F95_PING" = "200" ]; then
+    # Limpia corridas de test colgadas (solo operador runner*), sin tocar pruebas reales.
+    F95_RUNNER_IDS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/runs" | python3 -c "
+import sys,json
+try: rows=json.load(sys.stdin)
+except Exception: rows=[]
+print(' '.join(str(r.get('run_id','')) for r in rows if r.get('status')=='running' and str(r.get('operator','')).startswith('runner')))
+" 2>/dev/null)
+    for RID in $F95_RUNNER_IDS; do
+        F95_NEWID=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/reset" \
+            -H 'Content-Type: application/json' -d "{\"run_id\":\"$RID\"}" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+        [ -n "$F95_NEWID" ] && rm -f "run/sensores/${F95_NEWID}.json" "run/sensores/${F95_NEWID}.jsonl" "run/sensores/locks/${F95_NEWID}.lock"
+        rm -f "run/sensores/${RID}.json" "run/sensores/${RID}.jsonl" "run/sensores/locks/${RID}.lock"
+    done
+    F95_ACTIVE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print(''); raise SystemExit
+a=d.get('active_attempt') or {}
+if a.get('attempt_id'): print(a.get('run_id','')+':'+a.get('attempt_id',''))
+" 2>/dev/null)
+    if [ -n "$F95_ACTIVE" ]; then
+        skip "F95 HTTP" "hay una prueba activa en la sala ($F95_ACTIVE); no se interfiere"
+    else
+
     F95_ROOMS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/rooms")
     if printf '%s' "$F95_ROOMS" | grep -q '"id":14'; then
         pass "F95: rooms incluye la sala del piloto"
@@ -6598,45 +6622,6 @@ print('ok' if ok else 'bad')
         else
             fail "F95: attempt/start" "$(printf '%s' "$F95_ATT" | head -c 200)"
         fi
-        # F95 reset total: archiva la corrida y crea otra desde el paso 1.
-        F95_RUN2=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
-            -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-reset"}')
-        F95_RID2=$(printf '%s' "$F95_RUN2" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
-        if [ -n "$F95_RID2" ]; then
-            curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
-                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID2\",\"step_id\":\"radar_inside\"}" >/dev/null
-            F95_RESET_CODE=$(curl -s -o /tmp/f95_reset.json -w "%{http_code}" --max-time 5 -X POST \
-                "${API_BASE}/dashboard-api/sensores/v2/run/reset" -H 'Content-Type: application/json' \
-                -d "{\"run_id\":\"$F95_RID2\",\"operator\":\"runner-reset\"}" 2>/dev/null)
-            if [ "$F95_RESET_CODE" = "201" ]; then
-                F95_NEW_ID=$(python3 -c "import json;print(json.load(open('/tmp/f95_reset.json'))['run']['run_id'])" 2>/dev/null)
-                F95_OLD=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_RID2")
-                F95_RESET_OK=$(printf '%s' "$F95_OLD" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-step=d.get('steps',{}).get('radar_inside',{})
-print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in step and any(a.get('status')=='CANCELLED' for a in step.get('attempts',[])) else 'bad')
-" 2>/dev/null)
-                F95_NEW=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_NEW_ID")
-                F95_NEW_OK=$(printf '%s' "$F95_NEW" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('status')=='running' and d.get('plan',[None])[0]=='door' and not d.get('steps') else 'bad')" 2>/dev/null)
-                if [ "$F95_RESET_OK" = "ok" ] && [ "$F95_NEW_OK" = "ok" ]; then
-                    pass "F95: reset archiva intento y crea corrida desde Puerta"
-                else
-                    fail "F95: reset de corrida" "old=$F95_RESET_OK new=$F95_NEW_OK"
-                fi
-                rm -f "run/sensores/${F95_NEW_ID}.json" "run/sensores/${F95_NEW_ID}.jsonl" "run/sensores/locks/${F95_NEW_ID}.lock"
-            elif [ "$F95_RESET_CODE" = "404" ]; then
-                skip "F95 reset total" "endpoint aún sin desplegar"
-            else
-                fail "F95 reset total" "HTTP $F95_RESET_CODE $(python3 -c "import json;print(json.load(open('/tmp/f95_reset.json')).get('error',''))" 2>/dev/null)"
-            fi
-            rm -f /tmp/f95_reset.json
-            rm -f "run/sensores/${F95_RID2}.json" "run/sensores/${F95_RID2}.jsonl" "run/sensores/locks/${F95_RID2}.lock"
-        else
-            fail "F95 reset setup" "no se pudo crear la segunda corrida"
-        fi
-
-        rm -f "run/sensores/${F95_RID}.json" "run/sensores/${F95_RID}.jsonl" "run/sensores/locks/${F95_RID}.lock"
 
         # Reinicio global: archiva el intento activo y crea una corrida limpia en la puerta.
         F95_RUN2=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
@@ -6674,8 +6659,10 @@ print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in s and any
         else
             fail "F95 reset setup" "no se pudo crear la corrida"
         fi
+        rm -f "run/sensores/${F95_RID}.json" "run/sensores/${F95_RID}.jsonl" "run/sensores/locks/${F95_RID}.lock"
     else
         fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
+    fi
     fi
 elif [ "$SERVER_UP" = true ]; then
     skip "F95 HTTP" "API aún sin desplegar el flujo v2 (UI $F95_UI, preflight $F95_PING)"
