@@ -573,8 +573,7 @@ void wifiConnectedFeedback() {
 // No requiere cambiar ninguna variable manualmente: cada reflash limpia solo.
 bool clearNvsIfNewFirmware() {
   // Usamos MD5 + __DATE__ + __TIME__ para que cada recompilación
-  // tenga un fingerprint único. Así cada flasheo borra NVS y pide
-  // provisioning WiFi desde cero.
+  // tenga un fingerprint único. F97/F100 conserva WiFi/NVS en cada build.
   String currentMd5 = ESP.getSketchMD5();
   String fingerprint = currentMd5 + "-" + __DATE__ + "-" + __TIME__;
   Preferences prefs;
@@ -1523,9 +1522,15 @@ static bool otaPerformUpdate() {
   beginApiRequest(dl, String(API_BASE_URL) + path + "&external_id=" + chipId());
   addDeviceAuth(dl);
   dl.setTimeout(20000);
+  // HTTPClient solo expone los headers registrados con collectHeaders();
+  // sin esto header() devuelve "" (el Body sí se lee igual).
+  static const char *fwDlHeaders[] = {"Content-Type", "X-Firmware-SHA256"};
+  dl.collectHeaders(fwDlHeaders, 2);
   int dc = dl.GET();
   if (dc != 200) {
     dl.end();
+    apiTlsClient().stop();
+    delay(100);
     otaReport(opId, "FAILED", 0, "download_http", "Firmware download failed");
     otaInProgress = false;
     return false;
@@ -1536,17 +1541,23 @@ static bool otaPerformUpdate() {
   int contentLen = dl.getSize();
   String contentType = dl.header("Content-Type");
   String headerSha = dl.header("X-Firmware-SHA256");
-  bool downloadValid = contentType.indexOf("application/octet-stream") >= 0
-      && (contentLen <= 0 || contentLen == size)
-      && (sha.length() == 0 || headerSha.length() == 0
-          || headerSha.equalsIgnoreCase(sha));
-  if (!downloadValid) {
+  contentType.trim();
+  headerSha.trim();
+  bool typeOk = contentType.indexOf("octet-stream") >= 0;
+  bool lenOk = contentLen <= 0 || contentLen == size;
+  bool shaOk = sha.length() == 0 || headerSha.length() == 0
+      || headerSha.equalsIgnoreCase(sha);
+  Serial.printf("[OTA] dl type='%s' len=%d size=%d shaHdr='%s' shaMan='%s'\n",
+                contentType.c_str(), contentLen, size, headerSha.c_str(), sha.c_str());
+  if (!typeOk || !lenOk || !shaOk) {
+    Serial.printf("[OTA] download invalid: type=%d len=%d sha=%d\n", typeOk, lenOk, shaOk);
     dl.end();
+    apiTlsClient().stop();   // el cliente compartido puede quedar muerto tras el GET
+    delay(100);
     otaReport(opId, "FAILED", 0, "download_invalid", "Unexpected firmware download");
     otaInProgress = false;
     return false;
   }
-  otaReport(opId, "DOWNLOADING", 1);
   if (!Update.begin((size_t) size, U_FLASH)) {
     dl.end();
     otaReport(opId, "FAILED", 0, "ota_begin", "Not enough space or no OTA partition");
@@ -1561,15 +1572,21 @@ static bool otaPerformUpdate() {
   // No se envían reportes HTTP durante la descarga: apiHttpSession() comparte
   // el cliente TLS con la descarga y una petición intermedia la cortaría.
   // El panel muestra la etapa; el porcentaje real se reserva a fases cortas.
-  while (dl.connected() && written < size) {
+  // Leer hasta completar el tamaño anunciado. No cortar solo porque
+  // dl.connected() pase a false: el cuerpo puede quedar en el buffer TLS.
+  while (written < size) {
     size_t avail = stream->available();
     if (!avail) {
+      if (!dl.connected()) break;
       delay(10);
       esp_task_wdt_reset();
       continue;
     }
     size_t n = stream->readBytes(buf, avail > sizeof(buf) ? sizeof(buf) : avail);
-    if (!n) break;
+    if (!n) {
+      if (!dl.connected()) break;
+      continue;
+    }
     if (Update.write(buf, n) != n) {
       ok = false;
       break;
@@ -1580,6 +1597,9 @@ static bool otaPerformUpdate() {
   dl.end();
 
   if (!ok || written != size || !Update.end(true)) {
+    Serial.printf("[OTA] write fail ok=%d written=%d size=%d fin=%d err='%s'\n",
+                  ok ? 1 : 0, written, size, Update.isFinished() ? 1 : 0,
+                  Update.errorString());
     Update.abort();
     otaReport(opId, "FAILED", 0, "ota_write", Update.errorString());
     otaInProgress = false;
@@ -1703,7 +1723,7 @@ void setup() {
   startDoorEventTask();
 
   // ── WiFi: wipe NVS si firmware nuevo → NVS → connect → WiFiManager ───
-  clearNvsIfNewFirmware();    // si versión != stored → wipe NVS + restart
+  clearNvsIfNewFirmware();    // marca el build sin borrar WiFi/NVS
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
 

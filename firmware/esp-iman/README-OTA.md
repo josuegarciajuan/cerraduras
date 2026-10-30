@@ -38,8 +38,10 @@ php api/bin/firmware-publish.php --variant=IMAN --version=2.6-ota \
 ## OTA desde el panel
 
 Con el equipo ya en `2.6-ota` y `ota_capable=true`, el panel puede cambiar la
-variante a `CERRADURA` (y volver a `IMAN`) sin cable. El reinicio suelta el
-imán unos segundos; hacerlo con la puerta cerrada.
+variante a `CERRADURA` (y volver a `IMAN`) sin cable. **No hace falta reiniciar
+el ESP a mano**: el firmware se reinicia solo tras escribir la imagen y confirma
+en el arranque. El reinicio suelta el imán unos segundos; hacerlo con la puerta
+cerrada. El cambio conserva WiFi y `device-cred` en NVS.
 
 El firmware solo limpia la operación pendiente si `firmware-confirm` responde
 JSON de la API. Un HTML del panel-gate se reintenta en el siguiente heartbeat.
