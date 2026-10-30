@@ -457,7 +457,8 @@
         + ' · ' + qualityLabel(dist.quality)
         + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes</div>';
     } else {
-      html += '<div class="hint" id="radarDistance">Sin distancia utilizable en esta ventana.</div>';
+      var ageTxt = st.presence_age_seconds != null ? ' · último reporte hace ' + st.presence_age_seconds + ' s' : '';
+      html += '<div class="hint" id="radarDistance">Sin distancia utilizable en esta ventana' + ageTxt + '.</div>';
     }
     var cd = st.countdown || null;
     if (cd && cd.seconds_remaining > 0) {
@@ -478,10 +479,14 @@
       if (op === 'adjust' && (st.settings_valid === false)) return;
       if (op === 'restore') cls = 'danger';
       if (op === 'cancel') cls = 'ghost';
+      var label = radarActionLabel(op);
+      if (op === 'start_measure' && st.last_measurement && st.last_measurement.sufficient === false) {
+        label = 'Reintentar medición';
+      }
       if (op === 'validate') {
-        html += '<button class="primary" data-action="check" data-step="' + stepId + '">' + radarActionLabel(op) + '</button>';
+        html += '<button class="primary" data-action="check" data-step="' + stepId + '">' + label + '</button>';
       } else {
-        html += '<button class="' + cls + '" data-action="radar-op" data-op="' + op + '">' + radarActionLabel(op) + '</button>';
+        html += '<button class="' + cls + '" data-action="radar-op" data-op="' + op + '">' + label + '</button>';
       }
     });
     html += '</div>';
@@ -1073,7 +1078,11 @@
       applyRadarState(d);
     } catch (e) {
       if (action === 'finish_measure') S.autoFinishOp = null;
-      banner(e.message, 'bad');
+      if (e.message === 'presence_stale') {
+        banner('El radar no está enviando datos. Comprueba la conexión y vuelve a intentarlo.', 'bad');
+      } else {
+        banner(e.message, 'bad');
+      }
     } finally {
       busy(false);
     }
