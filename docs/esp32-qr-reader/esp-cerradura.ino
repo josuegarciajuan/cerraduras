@@ -113,7 +113,7 @@
 
 // ── F100: variante/version para OTA ───────────────────────────────────────
 #define OTA_FW_VARIANT               "CERRADURA"
-#define OTA_FW_VERSION               "2.5-ota"
+#define OTA_FW_VERSION               "2.6-ota"
 
 // ── Configuración de la API (hardcodeada, no depende de WiFi) ───────────────
 const char* API_BASE_URL = "https://cerraduras.josue.ink";
@@ -1059,8 +1059,13 @@ static void otaConfirmBoot() {
   Serial.printf("[OTA] confirm op=%d match=%d → HTTP %d %s\n",
                 opId, matches ? 1 : 0, code, resp.c_str());
 
-  if (code == 200) {
+  // Solo se da por confirmada si la respuesta es la API (JSON). Un 200 con
+  // HTML es el panel-gate/proxy: la operación sigue pendiente y se reintenta
+  // en el siguiente heartbeat (no se pierde la confirmación).
+  if (code == 200 && isJsonResponse(resp)) {
     otaClearPending();
+  } else if (code == 200) {
+    Serial.println("[OTA] confirm: respuesta no-JSON (gate/proxy) — se reintentará");
   }
   if (!matches) {
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -1100,7 +1105,14 @@ static bool otaPerformUpdate() {
   String mresp = man.getString();
   man.end();
   esp_task_wdt_reset();
-  if (mc != 200 || mresp.indexOf("\"operation\":null") >= 0) {
+  if (mc != 200 || !isJsonResponse(mresp)) {
+    // Un 200 con HTML es el panel-gate/proxy. No se marca FAILED: la operación
+    // sigue WAITING y se reintenta en el siguiente heartbeat.
+    if (mc == 200) Serial.println("[OTA] manifest: respuesta no-JSON (gate/proxy) — se reintentará");
+    otaInProgress = false;
+    return false;
+  }
+  if (mresp.indexOf("\"operation\":null") >= 0) {
     otaInProgress = false;
     return false;
   }
@@ -1109,6 +1121,7 @@ static bool otaPerformUpdate() {
   String variant = otaJsonString(mresp, "\"variant\"", "");
   String version = otaJsonString(mresp, "\"version\"", "");
   String path = otaJsonString(mresp, "\"download_path\"", "");
+  String sha = otaJsonString(mresp, "\"sha256\"", "");
   int size = otaJsonInt(mresp, "\"size_bytes\"", 0);
   if (opId <= 0 || path.length() == 0 || size <= 0) {
     otaReport(opId, "FAILED", 0, "bad_manifest", "Invalid firmware manifest");
@@ -1130,9 +1143,20 @@ static bool otaPerformUpdate() {
     return false;
   }
 
+  // Defensa contra el panel-gate/proxy y descargas corruptas: la respuesta
+  // debe ser el binario anunciado (octet-stream, tamaño y SHA-256).
   int contentLen = dl.getSize();
-  if (contentLen > 0 && contentLen != size) {
-    size = contentLen;
+  String contentType = dl.header("Content-Type");
+  String headerSha = dl.header("X-Firmware-SHA256");
+  bool downloadValid = contentType.indexOf("application/octet-stream") >= 0
+      && (contentLen <= 0 || contentLen == size)
+      && (sha.length() == 0 || headerSha.length() == 0
+          || headerSha.equalsIgnoreCase(sha));
+  if (!downloadValid) {
+    dl.end();
+    otaReport(opId, "FAILED", 0, "download_invalid", "Unexpected firmware download");
+    otaInProgress = false;
+    return false;
   }
   otaReport(opId, "DOWNLOADING", 1);
   if (!Update.begin((size_t) size, U_FLASH)) {
@@ -1174,14 +1198,17 @@ static bool otaPerformUpdate() {
     return false;
   }
 
-  otaReport(opId, "VERIFYING", 100);
   if (!Update.isFinished()) {
     otaReport(opId, "FAILED", 100, "ota_verify", "Image verification failed");
     otaInProgress = false;
     return false;
   }
 
+  // Guardar la operación ANTES de cualquier reporte HTTP bloqueante: si se
+  // corta la luz tras seleccionar la imagen, el nuevo arranque aún sabe qué
+  // operación debe confirmar.
   otaSavePending(opId, variant, version);
+  otaReport(opId, "VERIFYING", 100);
   otaReport(opId, "REBOOTING", 100);
   Serial.println("[OTA] imagen escrita y verificada — reiniciando");
   delay(1200);

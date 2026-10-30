@@ -110,5 +110,41 @@ checkOta(hash('sha256', $cerradura) === hash('sha256', $cerraduraCanonical),
 checkOta(hash('sha256', $iman) === hash('sha256', $imanCanonical),
     'copia canónica de ESP-imán sincronizada');
 
+// ── F100.1: endurecimiento del cliente OTA ───────────────────────────────
+checkOta(str_contains($iman, '"2.6-ota"') && str_contains($cerradura, '"2.6-ota"'),
+    'versión 2.6-ota en ambos sketches');
+checkOta(str_contains($iman, 'code == 200 && isJsonResponse(resp)')
+    && str_contains($cerradura, 'code == 200 && isJsonResponse(resp)'),
+    'la confirmación solo limpia la operación con respuesta JSON de la API');
+checkOta(str_contains($iman, '!isJsonResponse(mresp)')
+    && str_contains($cerradura, '!isJsonResponse(mresp)'),
+    'el manifiesto exige JSON y reintenta si llega el gate');
+checkOta(str_contains($iman, 'X-Firmware-SHA256') && str_contains($cerradura, 'X-Firmware-SHA256')
+    && str_contains($iman, 'application/octet-stream') && str_contains($cerradura, 'application/octet-stream'),
+    'la descarga valida tipo octet-stream y SHA-256 anunciados');
+foreach (['IMAN' => $iman, 'CERRADURA' => $cerradura] as $name => $src) {
+    $savePos = strpos($src, 'otaSavePending(opId, variant, version);');
+    $verifyPos = strpos($src, 'otaReport(opId, "VERIFYING", 100);');
+    checkOta($savePos !== false && $verifyPos !== false && $savePos < $verifyPos,
+        "{$name}: la operación se guarda antes del reporte VERIFYING");
+}
+
+// ── F100.2: flasheo directo y documentación ──────────────────────────────
+$flashScriptPath = $root . '/firmware/flash-variant.sh';
+$flashScript = is_file($flashScriptPath) ? (string) file_get_contents($flashScriptPath) : '';
+checkOta($flashScript !== '' && is_executable($flashScriptPath),
+    'script de flasheo directo presente y ejecutable');
+checkOta(str_contains($flashScript, '--variant') && str_contains($flashScript, 'read_flash')
+    && str_contains($flashScript, 'upload') && str_contains($flashScript, 'firmware-publish.php'),
+    'el script compila, hace backup, flashea y deja el comando de publicación');
+$ops = (string) file_get_contents($root . '/docs/ops.md');
+checkOta(str_contains($ops, '/dashboard-api/firmware-update')
+    && str_contains($ops, '/dashboard-api/firmware-download')
+    && str_contains($ops, '/dashboard-api/firmware-progress')
+    && str_contains($ops, '/dashboard-api/firmware-confirm'),
+    'ops.md documenta las cuatro rutas OTA de dispositivo');
+checkOta(str_contains($ops, '2.6-ota') && str_contains($ops, 'flash-variant.sh'),
+    'ops.md documenta versión y flasheo directo');
+
 echo "\nTotal: {$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
