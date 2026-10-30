@@ -25211,3 +25211,45 @@ intento. El primer `OPEN` real posterior sí se aplica.
 - Con una apertura pendiente: «Cierra la puerta para validar…».
 - Si la secuencia empieza por `CLOSED`, se muestra **Invertir polaridad y
   repetir**; la UI llama a `door/polarity` con `force` y reinicia la tarjeta.
+
+## 105. Medición fiable por punto (F105)
+
+### Problema
+El radar ZY-M100-S_2 publica todo su estado en cada mensaje, incluido
+`target_distance`. Un mensaje reciente no demuestra que la distancia se haya
+vuelto a medir. En la corrida `14-20261030T152648Z-bc9108` las ventanas
+exteriores tuvieron cero reportes y el calibrador reutilizó una semilla de
+2,48 m frente a un máximo interior de 3,36 m, produciendo un falso
+`no_distance_separation`.
+
+### Evidencia por atributo
+`RadarPointMeasurement` analiza los eventos crudos de la ventana y solo cuenta
+como lectura nueva:
+- la primera distancia positiva;
+- una distancia distinta de la positiva anterior;
+- una positiva posterior a un cero/ausencia.
+
+Un valor positivo repetido se conserva como `repeated_value`, pero no completa
+el punto. Los ceros, duplicados exactos, `resync` y cambios de configuración
+tampoco cuentan. La semilla de `RadarEvidencePolicy` ya no aporta distancias al
+cálculo del punto, aunque el estado mantenido siga usándose para presencia.
+
+### Coherencia y media
+Las lecturas nuevas se ordenan y se busca el mayor subconjunto con
+`max - min <= RADAR_POINT_TOLERANCE_M` (0,30 m). Empates: menor dispersión y
+después menor media. Las excluidas se muestran. La referencia del punto es la
+media del conjunto; no se usan máximos ni mínimos para fabricar separación.
+
+### Flujo
+- Interior: se exige punto aceptado y presencia observada.
+- Exterior: si no hay detección, se mantiene el alcance (`outside_already_clear`).
+  Si hay detección pero el punto no es suficiente/coherente, se permite repetir
+  hasta `RADAR_POINT_MAX_ATTEMPTS` (3); al agotar, `STOPPED`.
+- La UI muestra `N de 2` lecturas nuevas, valores, media, dispersión y excluidas.
+  Si faltan, pide mover los brazos 5 s sin mover los pies.
+- El planificador compara las medias. `outside_not_farther` si exterior <=
+  interior; `points_too_close` si la diferencia no supera la tolerancia.
+
+### Límites
+La tolerancia es coherencia, no precisión del radar. La verificación física del
+ajuste queda fuera de F105. Sin migración ni sondeo a Tuya.

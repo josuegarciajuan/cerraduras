@@ -194,3 +194,18 @@ el candidato antes de promoverlo.
 - **Validar puerta** solo se habilita cuando el último evento es un cierre. Si
   queda una apertura pendiente, la app pide cerrar.
 - Si la secuencia empieza por `CLOSED`, aparece **Invertir polaridad y repetir**.
+
+## 11. Medición del radar por punto (F105)
+
+- Cada punto (interior/exterior) exige al menos **2 lecturas nuevas** de
+  distancia. Un valor positivo repetido en mensajes consecutivos no cuenta:
+  Zigbee2MQTT publica todo el estado y no demuestra que la distancia se haya
+  vuelto a medir.
+- Las lecturas nuevas deben estar dentro de **0,30 m** entre sí
+  (`RADAR_POINT_TOLERANCE_M`). Se usa la media del mayor conjunto coherente.
+- Si faltan lecturas, la app pide **mover los brazos 5 s sin mover los pies**.
+  Hay hasta **3 intentos** por punto (`RADAR_POINT_MAX_ATTEMPTS`).
+- Si las medias exterior e interior se invierten o quedan demasiado próximas, no
+  se aplica ningún alcance (`outside_not_farther` / `points_too_close`).
+- La tolerancia es un criterio de coherencia, no una precisión del radar. Tras
+  aplicar el ajuste sigue siendo necesaria una comprobación física.

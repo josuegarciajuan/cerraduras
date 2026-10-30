@@ -180,6 +180,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F103 Evidencia event-driven del calibrador de radar** | **BLOCK 68B + units F103** | **Completado (código); prueba física pendiente** |
 | **F104 Autocalibración del radar por punto exterior y punto medio** | **BLOCK 68C + units F104** | **Completado (código); prueba física pendiente** |
 | **F104.3 Polaridad estable y arranque cerrado de puerta** | **BLOCK 68D + units F104.3** | **Completado (código); prueba física pendiente** |
+| **F105 Medición fiable por punto (2 lecturas nuevas + media)** | **Unit `RadarPointMeasurementTest` + BLOCK 68E** | **Completado (código); prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 

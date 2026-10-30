@@ -14,6 +14,7 @@ use App\Domain\Sensors\RadarCalibrationPlanner;
 use App\Domain\Sensors\RadarDistanceQuality;
 use App\Domain\Sensors\RadarEvidencePolicy;
 use App\Domain\Sensors\RadarMeasurement;
+use App\Domain\Sensors\RadarPointMeasurement;
 use App\Domain\Sensors\SensorCalibrationValidator;
 use App\Http\Request;
 use App\Http\Response;
@@ -1118,6 +1119,9 @@ final class SensorWizardController
         $rawState = strtoupper(trim((string) ($snapshot['value'] ?? '')));
         $rawStale = $rawAge !== null && in_array($rawState, ['PRESENT', 'ABSENT'], true)
             && $rawAge > $staleSeconds;
+        $point = $this->radarLivePoint($run, $session);
+        $copy = $this->withPointInstruction($copy, $point, $session);
+        $pointPolicy = $this->radarPointOptions();
         return Response::json(200, [
             'ok' => true,
             'run_id' => (string) $run['run_id'],
@@ -1136,6 +1140,14 @@ final class SensorWizardController
             'settings_invalid_reason' => $valid ? null : ZigbeeRadarCalibrationService::settingsInvalidReason($settings),
             'active_operation' => $session['active_operation'] ?? null,
             'last_measurement' => $session['last_measurement'] ?? null,
+            // F105/RF-221: progreso de lecturas nuevas del punto actual.
+            'point' => $point,
+            'point_tolerance' => $pointPolicy['tolerance'],
+            'point_min_samples' => $pointPolicy['min_samples'],
+            'point_max_attempts' => $pointPolicy['max_attempts'],
+            'point_attempts' => $session['point_attempts'] ?? [],
+            'inside_point' => $session['inside_point'] ?? null,
+            'outside_point' => $session['outside_point'] ?? null,
             'inside_valid' => $session['inside_valid'] ?? null,
             'outside_valid' => $session['outside_valid'] ?? null,
             'outside_pass' => $session['outside_pass'] ?? null,
@@ -1228,6 +1240,10 @@ final class SensorWizardController
             'candidates' => [],
             'inside_valid' => null,
             'inside_ref' => null,
+            // F105: puntos medidos por media de lecturas nuevas y coherentes.
+            'inside_point' => null,
+            'outside_point' => null,
+            'point_attempts' => [],
             'outside_scan' => null,
             'outside_measure' => null,
             'outside_valid' => null,
@@ -1321,9 +1337,10 @@ final class SensorWizardController
                             $session['manual_start_required'] = true;
                             foreach (['outside_scan', 'outside_measure', 'outside_valid', 'outside_pass', 'reentry',
                                          'last_measurement', 'scan_preview', 'calibration',
-                                         'pending_phase'] as $key) {
+                                         'pending_phase', 'inside_point', 'outside_point'] as $key) {
                                 unset($session[$key]);
                             }
+                            $session['point_attempts'] = [];
                             if ($restorePhase === 'INSIDE') {
                                 unset($session['inside_valid'], $session['inside_ref']);
                             }
@@ -1987,6 +2004,8 @@ final class SensorWizardController
                 'seed' => $seed,
                 'raw_presence_at_start' => $snapshot['value'] ?? null,
                 'raw_presence_age_seconds' => $snapshot['settings_age_seconds'] ?? null,
+                'point_attempt' => in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
+                    ? (int) ($session['point_attempts'][$opPhase] ?? 0) + 1 : null,
             ];
             unset($session['manual_start_required'], $session['scan_preview']);
             $session['phase'] = $opPhase;
@@ -2089,7 +2108,28 @@ final class SensorWizardController
                 $requirements,
                 $seed
             );
-            if ($kind === 'VERIFY') {
+            $point = null;
+            if ($kind === 'MEASURE' && in_array($mPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)) {
+                $point = RadarPointMeasurement::analyze(
+                    $events,
+                    (string) $active['window_start'],
+                    $windowEnd,
+                    (int) ($active['config_version'] ?? 1),
+                    $settings,
+                    $this->radarPointOptions()
+                );
+                $measurement = $this->applyPointMeasurement($measurement, $point, $mPhase);
+                $session['point_attempts'][$mPhase] =
+                    (int) ($session['point_attempts'][$mPhase] ?? 0) + 1;
+                $measurement['point_attempt'] = (int) $session['point_attempts'][$mPhase];
+            }
+            if ($kind === 'MEASURE' && $mPhase === 'INSIDE' && $point !== null) {
+                // El punto interior exige detección observada; no un estado
+                // mantenido por una semilla antigua.
+                $detected = (bool) ($point['detected'] ?? false);
+            } elseif ($kind === 'MEASURE' && $mPhase === 'OUTSIDE_MEASURE' && $point !== null) {
+                $detected = (bool) ($measurement['any_present'] ?? false);
+            } elseif ($kind === 'VERIFY') {
                 $detected = (bool) ($measurement['any_present'] ?? false);
             } elseif ($kind === 'REENTRY') {
                 $detected = ((int) ($measurement['presence_reports'] ?? 0) > 0)
@@ -2113,9 +2153,12 @@ final class SensorWizardController
             }
 
             if ($kind === 'MEASURE') {
+                $maxAttempts = (int) $this->radarPointOptions()['max_attempts'];
                 if ($mPhase === 'INSIDE') {
-                    if (($measurement['sufficient'] ?? false) === true) {
+                    if (($measurement['sufficient'] ?? false) === true
+                        && ($measurement['detected'] ?? false) === true) {
                         $session['inside_valid'] = $measurement;
+                        $session['inside_point'] = $measurement['point'] ?? null;
                         $session['inside_ref'] = [
                             'reference' => RadarCalibrationPlanner::ref($measurement, 'inside'),
                             'distance' => $measurement['distance'] ?? [],
@@ -2123,19 +2166,21 @@ final class SensorWizardController
                             'config_version' => $measurement['config_version'] ?? 1,
                             'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
                         ];
-                    }
-                } elseif ($mPhase === 'OUTSIDE_MEASURE') {
-                    if (($measurement['sufficient'] ?? false) !== true) {
-                        $session['state'] = 'STOPPED';
-                        $session['result'] = 'outside_insufficient:' . (string) ($measurement['reason'] ?? 'unknown');
+                    } else {
+                        $session['state'] = 'MEASURED';
+                        if ((int) ($session['point_attempts']['INSIDE'] ?? 0) >= $maxAttempts) {
+                            $session['state'] = 'STOPPED';
+                            $session['result'] = 'inside_point_' . (string) ($measurement['reason'] ?? 'insufficient');
+                        }
                         $run['calibration_session'] = $session;
                         $this->store->save($run);
                         return $run;
                     }
-                    $session['outside_measure'] = $measurement;
+                } elseif ($mPhase === 'OUTSIDE_MEASURE') {
                     if (($measurement['detected'] ?? false) !== true) {
                         // El radar ya no detecta en el punto elegido. No hay
                         // distancia que promediar: se mantiene el alcance actual.
+                        $session['outside_measure'] = $measurement;
                         $session['outside_valid'] = $measurement;
                         $session['phase'] = 'OUTSIDE_PASS';
                         $session['state'] = 'IDLE';
@@ -2149,6 +2194,21 @@ final class SensorWizardController
                         $this->store->save($run);
                         return $run;
                     }
+                    if (($measurement['sufficient'] ?? false) !== true) {
+                        // El radar sí detecta en el punto exterior, pero no hay
+                        // dos lecturas nuevas y coherentes. No se calcula nada;
+                        // se permite repetir hasta el límite de intentos.
+                        $session['state'] = 'MEASURED';
+                        if ((int) ($session['point_attempts']['OUTSIDE_MEASURE'] ?? 0) >= $maxAttempts) {
+                            $session['state'] = 'STOPPED';
+                            $session['result'] = 'outside_point_' . (string) ($measurement['reason'] ?? 'insufficient');
+                        }
+                        $run['calibration_session'] = $session;
+                        $this->store->save($run);
+                        return $run;
+                    }
+                    $session['outside_measure'] = $measurement;
+                    $session['outside_point'] = $measurement['point'] ?? null;
                     $plan = RadarCalibrationPlanner::planFromOutsidePoint(
                         $this->insideInputV3($session),
                         $this->outsideInputV3($measurement),
@@ -2490,7 +2550,8 @@ final class SensorWizardController
             'range_step' => 0.15,
             'sens_min' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['min'],
             'sens_max' => (int) ZigbeeRadarCalibrationService::PARAMETERS['radar_sensitivity']['max'],
-            'min_separation' => 0.45,
+            // F105: se comparan medias de lecturas coherentes, no extremos.
+            'min_separation' => max(0.03, (float) $this->radarPointOptions()['tolerance']),
             'margin' => 0.15,
             'coarse_step' => 0.75,
         ];
@@ -2509,8 +2570,10 @@ final class SensorWizardController
             ? RadarCalibrationPlanner::ref($outside, 'outside') : null);
         return [
             'inside_reference' => $plan['inside_reference'] ?? ($ref['reference'] ?? null),
+            'inside_mean' => $session['inside_point']['mean'] ?? null,
             'boundary' => $scanPoint,
             'outside_point' => $outsidePoint ?? $scanPoint,
+            'outside_mean' => $session['outside_point']['mean'] ?? null,
             'target_range' => $plan['candidate']
                 ?? ($previous['target_range'] ?? (($session['current'] ?? [])['maximum_range'] ?? null)),
             'sensitivity' => (int) round((float) (($session['current'] ?? [])['radar_sensitivity'] ?? 0)),
@@ -2766,6 +2829,7 @@ final class SensorWizardController
         }
         if ($state === 'STOPPED') {
             return match ($phase) {
+                'INSIDE' => ['start_measure', 'restore', 'cancel'],
                 'OUTSIDE_MEASURE' => ['start_measure', 'restore', 'cancel'],
                 'OUTSIDE_VERIFY' => ['start_verify', 'restore', 'cancel'],
                 'REENTRY' => ['start_reentry', 'restore', 'cancel'],
@@ -2873,7 +2937,19 @@ final class SensorWizardController
         if ($state === 'STOPPED') {
             $reason = (string) ($session['result'] ?? '');
             if ($reason === 'no_distance_separation') {
-                return ['title' => 'Sin separación por distancia', 'instruction' => 'El punto exterior está demasiado cerca del interior. No voy a bajar la sensibilidad a ciegas: revisa la colocación y repite la medición exterior.', 'message' => 'No existe un alcance que detecte dentro y deje de detectar en ese punto exterior.'];
+                return ['title' => 'Sin separación por distancia', 'instruction' => 'Las medias interior y exterior no permiten calcular un punto intermedio. Revisa los valores y repite la medición del punto que veas dudoso.', 'message' => 'No se ha aplicado ningún alcance.'];
+            }
+            if ($reason === 'outside_not_farther') {
+                return ['title' => 'Exterior más cerca que interior', 'instruction' => 'La media exterior no es mayor que la interior. Repite el punto exterior o el interior antes de continuar.', 'message' => 'No se ha aplicado ningún alcance.'];
+            }
+            if ($reason === 'points_too_close') {
+                return ['title' => 'Puntos demasiado próximos', 'instruction' => 'Las medias exterior e interior están demasiado próximas para proponer un alcance fiable. Repite la medición de ambos puntos.', 'message' => 'No se ha aplicado ningún alcance.'];
+            }
+            if (str_starts_with($reason, 'inside_point_') || str_starts_with($reason, 'outside_point_')) {
+                $why = str_contains($reason, 'incoherent_readings')
+                    ? 'Las lecturas no eran coherentes entre sí.'
+                    : 'No se obtuvieron dos lecturas nuevas de distancia.';
+                return ['title' => 'Medición del punto sin evidencia', 'instruction' => 'No se ha aplicado ningún ajuste. ' . $why . ' Repite la medición moviendo ligeramente los brazos si faltan lecturas.', 'message' => $reason];
             }
             if (str_starts_with($reason, 'outside_distance_missing')) {
                 return ['title' => 'Sin distancia exterior', 'instruction' => 'El radar te detecta pero no reporta distancia en ese punto. Muévete ligeramente y repite la medición.', 'message' => $reason];
@@ -2910,6 +2986,26 @@ final class SensorWizardController
         if ($state === 'MEASURED') {
             $last = (array) ($session['last_measurement'] ?? []);
             if (($last['sufficient'] ?? false) !== true) {
+                $pointLast = is_array($last['point'] ?? null) ? $last['point'] : null;
+                if ($pointLast !== null) {
+                    $tries = (int) ($session['point_attempts'][$phase] ?? 0);
+                    $max = (int) $this->radarPointOptions()['max_attempts'];
+                    $why = ($pointLast['reason'] ?? '') === 'incoherent_readings'
+                        ? 'Las lecturas no son coherentes entre sí (dispersión '
+                            . self::meters($pointLast['spread'] ?? null) . ', tolerancia '
+                            . self::meters($pointLast['tolerance'] ?? null) . ').'
+                        : 'Faltan lecturas nuevas de distancia.';
+                    $title = $phase === 'OUTSIDE_MEASURE' ? 'Punto exterior sin medición fiable' : 'Punto interior sin medición fiable';
+                    $instruction = 'Mantén la posición y repite la medición. Si faltan lecturas, mueve los brazos 5 segundos sin mover los pies.';
+                    if ($tries >= $max) {
+                        $instruction = 'Se han agotado los intentos. Puede ser variabilidad del radar o de la escena; revisa la colocación o restaura los ajustes.';
+                    }
+                    return [
+                        'title' => $title,
+                        'instruction' => $instruction,
+                        'message' => $why . ' Intento ' . $tries . ' de ' . $max . '.',
+                    ];
+                }
                 if ($phase === 'OUTSIDE_MEASURE') {
                     return ['title' => 'Punto exterior sin distancia', 'instruction' => 'Mantente quieto en el punto exterior y repite la medición. Si el radar sigue sin reportar distancia, muévete ligeramente.', 'message' => (string) ($last['reason'] ?? '')];
                 }
@@ -2933,8 +3029,8 @@ final class SensorWizardController
             return ['title' => 'Medición completada', 'instruction' => 'Revisa el resultado y continúa.', 'message' => 'La ventana se ha cerrado.'];
         }
         return match ($phase) {
-            'INSIDE' => ['title' => 'Comprobar cobertura interior', 'instruction' => 'Colócate en el punto más lejano donde SÍ debe detectarte. Pulsa Empezar medición y permanece quieto hasta que termine la cuenta atrás.', 'message' => 'Primero guardamos la referencia interior.'],
-            'OUTSIDE_MEASURE' => ['title' => 'Punto exterior', 'instruction' => 'Colócate donde NO quieres que te detecte (por ejemplo, justo al otro lado de la puerta). Pulsa Medir punto exterior y quédate quieto. La app medirá tu distancia ahí y calculará el punto medio con el interior.', 'message' => 'Medimos el punto donde la detección debe terminar.'],
+            'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa Medir. Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.', 'message' => 'Primero medimos el punto interior.'],
+            'OUTSIDE_MEASURE' => ['title' => 'Medir punto exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Medir. Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.', 'message' => 'Medimos el punto donde la detección debe terminar.'],
             'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Permanece en el mismo punto donde NO quieres que te detecte y pulsa Verificar fuera. La app comprobará que el nuevo alcance ya no te detecta ahí.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
             'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo',
                 'instruction' => (($session['outside_measure']['detected'] ?? true) === false
@@ -3220,6 +3316,136 @@ final class SensorWizardController
     private function latestSettings(int $roomId): array
     {
         return $this->context()->latestSettings($roomId)['settings'] ?? [];
+    }
+
+    /**
+     * F105/RF-221: política de medición por punto. La tolerancia es un
+     * criterio de coherencia entre lecturas, no una precisión del radar.
+     *
+     * @return array{min_samples:int,tolerance:float,max_attempts:int}
+     */
+    private function radarPointOptions(): array
+    {
+        $min = (int) (getenv('RADAR_POINT_MIN_SAMPLES') ?: 2);
+        $tolerance = (float) (getenv('RADAR_POINT_TOLERANCE_M') ?: 0.30);
+        $attempts = (int) (getenv('RADAR_POINT_MAX_ATTEMPTS') ?: 3);
+        return [
+            'min_samples' => max(2, min(10, $min)),
+            'tolerance' => max(0.05, min(1.0, $tolerance)),
+            'max_attempts' => max(1, min(10, $attempts)),
+        ];
+    }
+
+    /**
+     * Sustituye las estadísticas de distancia por las del punto medido: media
+     * de lecturas nuevas y coherentes, sin semilla ni máximo/mínimo.
+     *
+     * @param array<string,mixed> $measurement
+     * @param array<string,mixed> $point
+     * @return array<string,mixed>
+     */
+    private function applyPointMeasurement(array $measurement, array $point, string $phase): array
+    {
+        $spread = $point['spread'] ?? null;
+        $tolerance = (float) ($point['tolerance'] ?? 0.30);
+        $quality = RadarDistanceQuality::POOR;
+        if (($point['sufficient'] ?? false) === true) {
+            $quality = ($spread !== null && (float) $spread <= $tolerance / 2)
+                ? RadarDistanceQuality::GOOD : RadarDistanceQuality::FAIR;
+        }
+        $measurement['point'] = $point;
+        $measurement['reference'] = $point['mean'] ?? null;
+        $measurement['distance'] = [
+            'quality' => $quality,
+            'samples' => (int) ($point['fresh_readings'] ?? 0),
+            'valid' => (int) ($point['fresh_readings'] ?? 0),
+            'zeros' => 0,
+            'zero_ratio' => 0.0,
+            'min' => $point['min'] ?? null,
+            'max' => $point['max'] ?? null,
+            'median' => $point['median'] ?? null,
+            'mean' => $point['mean'] ?? null,
+            'spread' => $spread,
+            'reason' => (string) ($point['reason'] ?? ''),
+        ];
+        $measurement['valid_reports'] = (int) ($point['fresh_readings'] ?? 0);
+        $measurement['evidence_mode'] = 'point_readings';
+        $measurement['seed_used'] = false;
+        $measurement['seed_distance_used'] = false;
+        $measurement['sufficient'] = ($point['sufficient'] ?? false) === true
+            && ($phase !== 'INSIDE' || ($point['detected'] ?? false) === true);
+        $measurement['reason'] = (string) ($point['reason'] ?? 'insufficient');
+        return $measurement;
+    }
+
+    /**
+     * Progreso en vivo del punto que se está midiendo. Devuelve null fuera de
+     * una medición interior/exterior.
+     *
+     * @param array<string,mixed> $run
+     * @param array<string,mixed> $session
+     * @return array<string,mixed>|null
+     */
+    private function radarLivePoint(array $run, array $session): ?array
+    {
+        $op = $session['active_operation'] ?? null;
+        $phase = (string) ($session['phase'] ?? '');
+        if (!is_array($op) || (string) ($op['state'] ?? '') !== 'MEASURING'
+            || (string) ($op['kind'] ?? '') !== 'MEASURE'
+            || !in_array($phase, ['INSIDE', 'OUTSIDE_MEASURE'], true)) {
+            $last = (array) ($session['last_measurement'] ?? []);
+            return is_array($last['point'] ?? null) && ($last['phase'] ?? null) === $phase
+                ? $last['point'] : null;
+        }
+        $ctx = $this->context();
+        $events = $ctx->eventsSince((int) $run['room_id'], (string) ($op['window_start'] ?? ''), 3000);
+        $point = RadarPointMeasurement::analyze(
+            $events,
+            (string) ($op['window_start'] ?? ''),
+            gmdate('Y-m-d\TH:i:s\Z'),
+            (int) ($op['config_version'] ?? 1),
+            (array) ($session['current'] ?? []),
+            $this->radarPointOptions()
+        );
+        $point['attempt'] = (int) ($session['point_attempts'][$phase] ?? 0) + 1;
+        return $point;
+    }
+
+    /**
+     * @param array{title:string,instruction:string,message:string} $copy
+     * @param array<string,mixed>|null $point
+     * @param array<string,mixed> $session
+     * @return array{title:string,instruction:string,message:string}
+     */
+    private function withPointInstruction(array $copy, ?array $point, array $session): array
+    {
+        if ($point === null || (string) ($session['state'] ?? '') !== 'MEASURING') {
+            return $copy;
+        }
+        $phase = (string) ($session['phase'] ?? '');
+        $where = $phase === 'OUTSIDE_MEASURE'
+            ? 'Permanece en el punto exterior donde NO quieres que te detecte'
+            : 'Permanece en el punto interior más alejado donde SÍ quieres que te detecte';
+        $help = (string) ($point['help'] ?? RadarPointMeasurement::HELP_NONE);
+        if ($help === RadarPointMeasurement::HELP_MOVE_ARMS) {
+            $copy['instruction'] = $where . '. Si no llegan lecturas nuevas, mueve los brazos 5 segundos sin mover los pies.';
+            $copy['message'] = 'Lecturas válidas: ' . (int) ($point['fresh_readings'] ?? 0)
+                . ' de ' . (int) ($point['min_samples'] ?? 2)
+                . '. Necesitamos al menos dos distancias nuevas y coherentes.';
+        } elseif ($help === RadarPointMeasurement::HELP_POSITION) {
+            $copy['instruction'] = $where . '. El radar no está detectando en este punto.';
+            $copy['message'] = 'Comprueba la posición y que el radar tenga línea de visión.';
+        } elseif ($help === RadarPointMeasurement::HELP_REPEAT) {
+            $copy['instruction'] = $where . '. Las lecturas no son coherentes; mantén la posición y repite la medición.';
+            $copy['message'] = 'Dispersión observada: ' . self::meters($point['spread'] ?? null)
+                . ' · tolerancia ' . self::meters($point['tolerance'] ?? null) . '.';
+        }
+        return $copy;
+    }
+
+    private static function meters(mixed $value): string
+    {
+        return is_numeric($value) ? number_format((float) $value, 2, ',', '') . ' m' : '—';
     }
 
     /**

@@ -92,8 +92,8 @@ same('DONE → validar', $next->invoke($controller, sess([
 
 $noSep = $copy->invoke($controller, sess(['state' => 'STOPPED', 'result' => 'no_distance_separation']));
 same('texto sin separación', $noSep['title'], 'Sin separación por distancia');
-check('texto avisa de no bajar sensibilidad a ciegas',
-    str_contains($noSep['instruction'], 'No voy a bajar la sensibilidad a ciegas'));
+check('texto avisa de que no se aplica alcance',
+    str_contains($noSep['message'], 'No se ha aplicado ningún alcance'));
 
 $measureCopy = $copy->invoke($controller, sess(['state' => 'MEASURING',
     'active_operation' => $measureOp]));
@@ -109,6 +109,42 @@ same('countdown medición exterior', $cdMeasure['kind'], 'measure');
 $cdVerify = $countdown->invoke($controller, sess(['phase' => 'OUTSIDE_VERIFY',
     'state' => 'MEASURING', 'active_operation' => $verifyOp]));
 same('countdown verificación', $cdVerify['kind'], 'verify');
+
+
+// ── F105: media por punto y ayuda ─────────────────────────────────────
+$applyPoint = new ReflectionMethod($controller, 'applyPointMeasurement');
+$applyPoint->setAccessible(true);
+$withPoint = new ReflectionMethod($controller, 'withPointInstruction');
+$withPoint->setAccessible(true);
+$pointOk = [
+    'status' => 'accepted', 'sufficient' => true, 'reason' => 'ok', 'help' => 'none',
+    'fresh_readings' => 3, 'readings' => [], 'cluster' => [2.84, 2.87, 2.90],
+    'excluded' => [], 'mean' => 2.87, 'min' => 2.84, 'max' => 2.90,
+    'spread' => 0.06, 'median' => 2.87, 'tolerance' => 0.30, 'min_samples' => 2,
+    'detected' => true, 'reports' => 3, 'observations' => [],
+];
+$m105 = $applyPoint->invoke($controller, ['distance' => [], 'sufficient' => true], $pointOk, 'INSIDE');
+same('F105: punto aceptado es suficiente', $m105['sufficient'], true);
+same('F105: referencia es la media', $m105['reference'], 2.87);
+same('F105: no usa semilla', $m105['seed_distance_used'], false);
+same('F105: media en distance', $m105['distance']['mean'], 2.87);
+check('F105: calidad buena por dispersión baja', $m105['distance']['quality'] === 'good');
+
+$pointBad = $pointOk;
+$pointBad['status'] = 'insufficient';
+$pointBad['sufficient'] = false;
+$pointBad['reason'] = 'not_enough_fresh_readings';
+$pointBad['help'] = 'move_arms';
+$pointBad['fresh_readings'] = 1;
+$m105b = $applyPoint->invoke($controller, ['distance' => [], 'sufficient' => true], $pointBad, 'INSIDE');
+same('F105: punto insuficiente no es suficiente', $m105b['sufficient'], false);
+same('F105: motivo propagado', $m105b['reason'], 'not_enough_fresh_readings');
+
+$copy105 = $withPoint->invoke($controller,
+    ['title' => 'X', 'instruction' => 'Y', 'message' => 'Z'], $pointBad,
+    ['state' => 'MEASURING', 'phase' => 'OUTSIDE_MEASURE']);
+check('F105: la UI pide mover los brazos', str_contains($copy105['instruction'], 'mueve los brazos'));
+check('F105: progreso 1 de 2', str_contains($copy105['message'], '1 de 2'));
 
 echo "\nTotal: {$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
