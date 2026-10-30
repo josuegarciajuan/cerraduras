@@ -15601,3 +15601,18 @@ Invariantes:
 - Un fallo de OTA nunca deja aplicados cambios parciales del formulario.
 - El panel muestra el `error.code` de dominio traducido; no inventa estados.
 - Sin polling a Tuya.
+
+
+## §F102 Operaciones del radar
+
+`GET /dashboard-api/sensores/v2/radar/state?run_id=&step_id=` → fase, estado,
+`config_version`, settings, operación activa, mediciones, `next_actions`,
+`countdown`, título, instrucción y mensaje.
+
+`POST /dashboard-api/sensores/v2/radar/operation`
+`{run_id, step_id, attempt_id, action}` con acciones:
+`start_measure`, `finish_measure`, `adjust`, `check_confirmation`,
+`start_reentry`, `finish_reentry`, `restore`, `cancel`.
+
+`409 operation_pending` si hay otra operación; `409 measure_in_progress` si la
+ventana no ha terminado. `restore` no exige intento activo.
