@@ -188,6 +188,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 - **Intentos**: `attempt/start|check|cancel` con `attempt_id`, ventana explícita,
   un solo intento activo por sala (`flock` + `409`) y `SKIP` que no cuenta como PASS.
   `run/reset` archiva una corrida en curso, cancela el intento activo y crea otra desde Puerta.
+  La UI ofrece `Reiniciar toda la prueba` en cualquier paso y en el preflight.
 - **Radar**: `radar_inside`/`radar_outside` juzgan reportes reales (incluye
   `no_context`), con margen de fading y efectos falsos; ajuste con
   `ZigbeeRadarCalibrationService`.
@@ -212,8 +213,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `DoorPolarityTest` (9), `SensorVerdictTest` (10), `DeviceHealthTest` (18),
   `AttemptEvidenceTest` (17), `RadarCalibrationTest` (22), ampliaciones de
   `SensorCalibrationValidatorTest` (81) y `SensorRunStoreTest` (23). Regresión:
-  **835 passed, 0 failed, 13 skipped** (incluye `attempt/events` y `radar/calibrate`).
-  Prueba física pendiente.
+  **854 passed, 0 failed, 13 skipped** (incluye reset global,
+  `attempt/events` y `radar/calibrate`). Prueba física pendiente.
 
 ### F94 — Asistente de verificación física de sensores (RF-159…RF-160)
 

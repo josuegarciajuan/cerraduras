@@ -5204,6 +5204,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] Detección de dispositivos y plan.
 - [x] Ventana explícita, intento inmutable, 409 por sala.
 - [x] Reinicio global: archiva, cancela intento y crea corrida desde Puerta.
+  Endpoint `v2/run/reset`, botón en cabecera/preflight; regresión 854/0/13.
 
 ## TSK-F95-03: Radar y luz
 - **Trazabilidad**: RF-165/166/167.
