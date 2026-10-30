@@ -609,6 +609,8 @@ $sensorWizardV2 = new \App\Http\Controllers\SensorWizardController(
 $router->get('/dashboard-api/sensores/v2/rooms', [$sensorWizardV2, 'rooms']);
 $router->get('/dashboard-api/sensores/v2/preflight', [$sensorWizardV2, 'preflight']);
 $router->get('/dashboard-api/sensores/v2/attempt/events', [$sensorWizardV2, 'attemptEvents']);
+$router->get('/dashboard-api/sensores/v2/radar/state', [$sensorWizardV2, 'radarState']);
+$router->post('/dashboard-api/sensores/v2/radar/operation', [$sensorWizardV2, 'radarOperation']);
 $router->post('/dashboard-api/sensores/v2/run/start', [$sensorWizardV2, 'startRun']);
 $router->post('/dashboard-api/sensores/v2/run/reset', [$sensorWizardV2, 'resetRun']);
 $router->post('/dashboard-api/sensores/v2/attempt/start', [$sensorWizardV2, 'startAttempt']);
