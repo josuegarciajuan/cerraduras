@@ -270,7 +270,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
   re-render continuo; fases y acciones vienen del servidor.
 - **Verificación**: `bash bin/run-tests.sh` (BLOCK 68B) + units
   `RadarMeasurementTest` (21) y `RadarCalibrationTest` (28). Regresión:
-  **pendiente de confirmar**. Prueba física pendiente.
+  **867 passed, 0 failed, 13 skipped** (incluye el flujo HTTP `radar/state`
+  y la operación única). Prueba física pendiente.
 
 ### F93 — Calibración y veracidad de sensores (RF-154…RF-158)
 

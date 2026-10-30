@@ -11065,3 +11065,25 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] **TSK-F101-05** Conservar `error.code` en `api()` y traducir errores de dispositivo.
 - [x] **TSK-F101-06** Cancelación de operaciones `WAITING` desde la tarjeta.
 - [x] **TSK-F101-07** Unit test `PanelDeviceEditTest.php` y regresión F96–F100.
+
+
+# Fase 102 — Tareas
+
+## TSK-F102-01: Medición y planificador
+- [x] `RadarMeasurement` con ventana, configuración y suficiencia.
+- [x] Planificador con protección del interior y reentrada fallida.
+- [x] Tests unitarios.
+
+## TSK-F102-02: Operaciones y servicio
+- [x] `publish`/`confirm` separados.
+- [x] `radar/state` y `radar/operation`.
+- [x] Reconciliación de confirmación tardía y baseline restore.
+
+## TSK-F102-03: UI
+- [x] Fuente única `/radar/state`.
+- [x] Acciones desde `next_actions`.
+- [x] Refresco por nodos y versión de asset.
+
+## TSK-F102-04: Verificación
+- [x] Regresión **867/0/13** y BLOCK 68B.
+- [ ] Prueba física completa.

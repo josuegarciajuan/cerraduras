@@ -12626,3 +12626,43 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   ID externo duplicado, transporte o variante inválidos.
 - **RF-206 — Compatibilidad.** Sin cambios de contrato HTTP, sin nuevas rutas, sin
   polling a Tuya y sin afectar a la tarjeta del dispositivo ni a la regresión F96–F100.
+
+
+# Fase 102: Motor de calibración por operaciones del radar
+
+## RF-174: Operación única
+
+- Una sola operación activa por sala: `MEASURE`, `ADJUST`, `REENTRY` o `RESTORE`.
+- No se puede publicar un ajuste con otra operación pendiente (`409`).
+- No se puede medir durante `STABILIZING`.
+- Cada operación conserva ventana, configuración, solicitado, antes, confirmado y resultado.
+
+## RF-175: Publicar y confirmar por separado
+
+- `publish()` no bloquea esperando confirmación; devuelve `before_event_id` y `published_at`.
+- `confirm()` reconcilia el último reporte; estados `pending|confirmed|mismatch|invalid`.
+- Un timeout es `INDETERMINATE`, no un fallo definitivo.
+- Una confirmación tardía actualiza la misma operación y no crea otra orden.
+- Solo `CONFIRMED` incrementa `config_version` y actualiza la configuración actual.
+
+## RF-176: Mediciones por configuración
+
+- Cada medición tiene ventana `[start,end]`, `config_version`, reportes, ceros,
+  presencia, distancia y calidad.
+- Una ventana contaminada por cambio de configuración no es suficiente.
+- Mínimo 8 reportes y 10 s; el interior y el exterior usan ventanas separadas.
+- La pasada por el pasillo es una ventana independiente.
+
+## RF-177: Protección del interior y reentrada
+
+- El planificador no baja del límite interior conocido (`would_break_inside`).
+- No repite candidatos ya probados.
+- Una reentrada fallida rechaza el candidato y prioriza recuperar detección.
+- Si no hay separación, el resultado es `NO_SEPARATION`/`STOPPED`, no un verde.
+
+## RF-178: UI estable
+
+- `/v2/radar/state` es la fuente única de fase, estado, acciones y cuenta atrás.
+- La UI no reconstruye la tarjeta durante las esperas; actualiza nodos.
+- Cada fase muestra una sola instrucción y una sola acción primaria.
+- Los contadores de distancia son diagnóstico, no progreso.
