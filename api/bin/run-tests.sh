@@ -6785,6 +6785,8 @@ if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
             fi
             curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/radar/operation" \
                 -H 'Content-Type: application/json' -d "{\"run_id\":\"$F102_RID\",\"step_id\":\"radar_inside\",\"attempt_id\":\"$F102_AID\",\"action\":\"cancel\"}" >/dev/null
+        elif printf '%s' "$F102_ATT" | grep -q "attempt_in_progress"; then
+            skip "F102/F103 HTTP" "hay un intento activo en la sala 14 (otra verificación)"
         else
             fail "F102: attempt/start" "$(printf '%s' "$F102_ATT" | head -c 200)"
         fi
