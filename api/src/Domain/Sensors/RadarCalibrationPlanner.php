@@ -248,11 +248,14 @@ final class RadarCalibrationPlanner
         if ($B === null || $B <= 0) {
             return self::result('stop', [], 'boundary_missing', $confidence, null, $I, $B, $P);
         }
+        if ($P !== null && $P <= $I) {
+            return self::result('stop', [], 'outside_not_farther', $confidence, null, $I, $B, $P);
+        }
         if ($B - $I < $minSep) {
-            return self::result('stop', [], 'no_distance_separation', $confidence, null, $I, $B, $P);
+            return self::result('stop', [], 'points_too_close', $confidence, null, $I, $B, $P);
         }
         if ($P !== null && $P - $I < $minSep) {
-            return self::result('stop', [], 'no_distance_separation', $confidence, null, $I, $B, $P);
+            return self::result('stop', [], 'points_too_close', $confidence, null, $I, $B, $P);
         }
 
         $floor = $I + $margin;

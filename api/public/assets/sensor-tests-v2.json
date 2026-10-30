@@ -20,7 +20,7 @@
       "order": 2,
       "device": "presencia",
       "title": "Radar · dentro",
-      "action": "Colócate en el punto más lejano donde SÍ debe detectarte. Pulsa «Empezar medición» y permanece quieto hasta que termine la cuenta atrás. La app guarda esta distancia como referencia interior; si el radar está en silencio se usa la última distancia conocida.",
+      "action": "Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa «Medir». Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.",
       "expected": "El radar mantiene la presencia y devuelve una referencia de distancia utilizable.",
       "rule": "radar_inside",
       "params": {
@@ -33,7 +33,7 @@
       "order": 3,
       "device": "presencia",
       "title": "Radar · fuera",
-      "action": "Colócate en el punto donde NO quieres que te detecte (por ejemplo, justo al otro lado de la puerta). Pulsa «Medir punto exterior» y permanece quieto. La app mide tu distancia ahí, calcula el punto medio con la referencia interior y aplica el alcance automáticamente. Después verifica el mismo punto, la reentrada y la pasada por el pasillo.",
+      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Medir». Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies. La app calcula el alcance a partir de la media de cada punto y después lo verifica.",
       "expected": "El radar deja de detectarte en el punto exterior, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
       "rule": "radar_outside",
       "params": {

@@ -7004,6 +7004,44 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68E — F105: medición fiable por punto
+# Trazabilidad: RF-221…RF-226
+# =============================================================================
+block "BLOCK 68E — F105: medición fiable por punto"
+
+for f in src/Domain/Sensors/RadarPointMeasurement.php \
+         tests/Unit/RadarPointMeasurementTest.php; do
+    if [ -f "$f" ]; then
+        pass "F105: $f presente"
+    else
+        fail "F105: $f" "falta"
+    fi
+done
+
+if php tests/Unit/RadarPointMeasurementTest.php >/tmp/f105-unit.log 2>&1; then
+    pass "F105: lectura nueva, coherencia y media"
+else
+    fail "F105: unit de medición por punto" "$(tail -20 /tmp/f105-unit.log | head -c 600)"
+fi
+
+if grep -q "RADAR_POINT_TOLERANCE_M" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "RADAR_POINT_MAX_ATTEMPTS" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "point_attempts" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outside_not_farther" src/Domain/Sensors/RadarCalibrationPlanner.php \
+    && grep -q "points_too_close" src/Domain/Sensors/RadarCalibrationPlanner.php; then
+    pass "F105: tolerancia, intentos y motivos cableados"
+else
+    fail "F105: cableado" "faltan tolerancia/intentos/motivos"
+fi
+
+if grep -q "radarPoint" public/assets/sensor-wizard-v2.js \
+    && grep -q "mueve los brazos" src/Http/Controllers/SensorWizardController.php; then
+    pass "F105: UI muestra lecturas y pide mover brazos"
+else
+    fail "F105: UI" "faltan lecturas o ayuda de movimiento"
+fi
+
+# =============================================================================
 # BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
 # Trazabilidad: RF-219, RF-220
 # =============================================================================

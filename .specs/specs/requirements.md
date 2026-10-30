@@ -12794,3 +12794,53 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - Si la secuencia empieza por `CLOSED` (polaridad sospechosa), se muestra
   **Invertir polaridad y repetir**; no se invierte automáticamente a mitad de
   prueba.
+
+# F105 — Medición fiable por punto (RF-221…RF-226)
+
+## RF-221: Lecturas nuevas por punto
+- Cada medición interior o exterior exige al menos **2 lecturas nuevas** de
+  `target_distance`.
+- Una lectura nueva es la primera distancia positiva de la ventana, una
+  distancia distinta de la positiva anterior o una positiva posterior a un
+  cero/ausencia.
+- Un valor positivo repetido en mensajes consecutivos se conserva como
+  evidencia (`repeated_value`) pero **no cuenta** como lectura nueva.
+- Los valores `0`, los duplicados exactos, `resync` y los cambios de
+  configuración no cuentan.
+
+## RF-222: Coherencia y media
+- Las lecturas nuevas deben formar un conjunto cuya diferencia máxima no supere
+  una tolerancia inicial de **0,30 m** (`RADAR_POINT_TOLERANCE_M`).
+- Se elige el mayor conjunto coherente de forma determinista; las lecturas
+  excluidas se muestran.
+- La referencia del punto es la **media** del conjunto, no el máximo interior ni
+  el mínimo exterior.
+
+## RF-223: Intentos y ayuda
+- Si faltan lecturas, la UI sugiere mover los brazos 5 segundos sin mover los
+  pies y permite repetir hasta **3 intentos** por punto
+  (`RADAR_POINT_MAX_ATTEMPTS`).
+- Si tras los intentos no hay evidencia, se detiene sin aplicar ajustes y se
+  explican los datos observados.
+- Tras un cambio de configuración o lecturas incoherentes reiteradas se indica
+  que el resultado no es concluyente.
+
+## RF-224: Cálculo
+- Solo se calcula si la media exterior es mayor que la interior y su separación
+  supera la tolerancia del punto.
+- Si las medias se invierten o están demasiado próximas, no se aplica nada y se
+  pide repetir (`outside_not_farther`, `points_too_close`).
+- El candidato es el punto medio de las medias, ajustado a la rejilla soportada.
+
+## RF-225: UI y contrato
+- `/radar/state` expone de forma aditiva `point`, `point_tolerance`,
+  `point_min_samples`, `point_max_attempts`, `point_attempts`, `inside_point` y
+  `outside_point`.
+- La UI muestra lecturas, media, dispersión, excluidas y motivo.
+- El servidor sigue siendo la autoridad; la UI solo presenta.
+
+## RF-226: Límites
+- La tolerancia es un criterio de coherencia, no una precisión garantizada del
+  radar.
+- La verificación física del ajuste queda fuera de esta fase.
+- Sin migración, sin pollers y sin llamadas a Tuya.

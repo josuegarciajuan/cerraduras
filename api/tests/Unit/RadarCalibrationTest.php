@@ -126,13 +126,13 @@ $noSep = RadarCalibrationPlanner::planMidpoint($insideRef,
         'distance' => ['quality' => 'fair', 'min' => 2.9, 'max' => 3.2, 'median' => 3.1]],
     null, $curMid, $fineCaps);
 same('sin separación → stop', $noSep['action'], 'stop');
-same('motivo no_distance_separation', $noSep['reason'], 'no_distance_separation');
+same('motivo points_too_close', $noSep['reason'], 'points_too_close');
 
 $outsideCloser = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
     ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 2.5, 'max' => 2.7, 'median' => 2.6]],
     $curMid, $fineCaps, ['outside_present' => true]);
 same('punto exterior más cerca → stop', $outsideCloser['action'], 'stop');
-same('motivo exterior más cerca', $outsideCloser['reason'], 'no_distance_separation');
+same('motivo exterior más cerca', $outsideCloser['reason'], 'outside_not_farther');
 
 $outsideEdge = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
     ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 3.8, 'max' => 4.0, 'median' => 3.9]],
@@ -215,7 +215,27 @@ $outsideTooClose = RadarCalibrationPlanner::planFromOutsidePoint(
     ['detected' => true, 'distance' => ['quality' => 'good', 'min' => 1.0, 'max' => 1.1, 'median' => 1.05]],
     ['maximum_range' => 6.0, 'radar_sensitivity' => 7], $fineCaps);
 same('exterior más cerca que interior → stop', $outsideTooClose['action'], 'stop');
-same('motivo no_distance_separation', $outsideTooClose['reason'], 'no_distance_separation');
+same('motivo exterior no más lejos', $outsideTooClose['reason'], 'outside_not_farther');
+
+
+// F105: referencias por media (no máximos/mínimos) y separación de 0,30 m.
+$insideMean = ['detected' => true, 'sufficient' => true, 'reference' => 2.80,
+    'quality' => 'good', 'distance' => ['quality' => 'good', 'mean' => 2.80]];
+$outsideMean = ['detected' => true, 'sufficient' => true, 'reference' => 3.60,
+    'quality' => 'good', 'distance' => ['quality' => 'good', 'mean' => 3.60]];
+$caps105 = ['range_min' => 0.15, 'range_max' => 9.5, 'range_step' => 0.15,
+    'sens_min' => 0, 'sens_max' => 9, 'min_separation' => 0.30, 'margin' => 0.15];
+$meanPlan = RadarCalibrationPlanner::planFromOutsidePoint($insideMean, $outsideMean,
+    ['maximum_range' => 6, 'radar_sensitivity' => 7], $caps105);
+same('F105: medias separadas → apply', $meanPlan['action'], 'apply');
+same('F105: candidato = punto medio de medias', $meanPlan['candidate'], 3.15);
+same('F105: referencia interior es la media', $meanPlan['inside_reference'], 2.8);
+same('F105: punto exterior es la media', $meanPlan['outside_point'], 3.6);
+$closePlan = RadarCalibrationPlanner::planFromOutsidePoint($insideMean,
+    ['detected' => true, 'sufficient' => true, 'reference' => 3.00,
+     'quality' => 'good', 'distance' => ['quality' => 'good', 'mean' => 3.00]],
+    ['maximum_range' => 6, 'radar_sensitivity' => 7], $caps105);
+same('F105: medias demasiado próximas → points_too_close', $closePlan['reason'], 'points_too_close');
 
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);

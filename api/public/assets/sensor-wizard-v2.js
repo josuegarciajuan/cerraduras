@@ -469,8 +469,8 @@
 
   function radarActionLabel(op) {
     return {
-      start_measure: 'Empezar medición',
-      finish_measure: 'Terminar medición',
+      start_measure: 'Medir punto',
+      finish_measure: 'Cerrar medición',
       start_verify: 'Verificar fuera',
       finish_verify: 'Cerrar verificación',
       advance: 'Continuar',
@@ -509,6 +509,32 @@
   function presencePillCls(m) {
     if (!hasMeasurement(m)) return 'dim';
     return m.detected ? 'ok' : 'dim';
+  }
+
+  function pointText(st) {
+    var p = st && st.point;
+    if (!p) return '';
+    var status = {
+      accepted: 'Punto medido',
+      insufficient: 'Faltan lecturas nuevas',
+      unstable: 'Lecturas incoherentes',
+      config_changed: 'Configuración cambiada',
+      not_detected: 'Sin detección'
+    }[p.status] || p.status || '';
+    var readings = (p.readings || []).map(function (r) {
+      return Number(r.distance).toFixed(2);
+    });
+    var out = status + ': ' + (p.fresh_readings || 0) + ' / ' + (p.min_samples || 2) + ' lecturas nuevas';
+    if (p.attempt != null) out += ' · intento ' + p.attempt;
+    if (readings.length) out += ' · ' + readings.join(' · ') + ' m';
+    if (p.mean != null) out += ' · media ' + Number(p.mean).toFixed(2) + ' m';
+    if (p.spread != null) out += ' · dispersión ' + Number(p.spread).toFixed(2) + ' m (tol. ' + Number(p.tolerance).toFixed(2) + ' m)';
+    if (p.excluded && p.excluded.length) {
+      out += ' · fuera del conjunto: ' + p.excluded.map(function (r) {
+        return Number(r.distance).toFixed(2);
+      }).join(' · ') + ' m';
+    }
+    return out;
   }
 
   function distanceText(st, m) {
@@ -553,6 +579,7 @@
     } else {
       html += '<div class="hint" id="radarDistance">' + esc(distanceText(st, m)) + '</div>';
     }
+    html += '<div class="hint" id="radarPoint">' + esc(pointText(st)) + '</div>';
     var outsideMeasure = st.outside_measure || null;
     if (outsideMeasure) {
       var omDist = (outsideMeasure.distance && outsideMeasure.distance.median != null)
@@ -565,8 +592,8 @@
     var cal = st.calibration || null;
     if (cal && (cal.inside_reference != null || cal.boundary != null || cal.target_range != null)) {
       html += '<div class="hint" id="radarCalibration">'
-        + (cal.inside_reference != null ? 'Interior ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
-        + ' · ' + (cal.outside_point != null ? 'exterior ' + Number(cal.outside_point).toFixed(2) + ' m' : 'exterior —')
+        + (cal.inside_reference != null ? 'Interior (media) ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
+        + ' · ' + (cal.outside_point != null ? 'exterior (media) ' + Number(cal.outside_point).toFixed(2) + ' m' : 'exterior —')
         + ' · ' + (cal.target_range != null ? 'ajuste ' + Number(cal.target_range).toFixed(2) + ' m' : 'ajuste —')
         + (cal.sensitivity != null ? ' · sens ' + cal.sensitivity + '/9' : '')
         + (cal.confidence ? ' · ' + cal.confidence : '')
@@ -1119,6 +1146,8 @@
         distance.textContent = distanceText(st, m);
       }
     }
+    var pointEl = $('radarPoint');
+    if (pointEl) pointEl.textContent = pointText(st);
     var warning = $('radarWarning');
     if (warning && st.message) warning.textContent = st.message;
   }

@@ -15679,3 +15679,27 @@ ventana no ha terminado. `restore` no exige intento activo.
 - El intento incluye `door_closed_confirmed_at` y
   `initial_live.door_state=CLOSED`.
 - La UI no valida mientras `AttemptEvidence.door.waiting_for='close'`.
+
+## §F105 Medición por punto
+
+`GET /dashboard-api/sensores/v2/radar/state` añade de forma aditiva:
+
+- `point`: análisis del punto en curso o del último medido:
+  `status` (`accepted|insufficient|unstable|config_changed|not_detected`),
+  `sufficient`, `reason`, `help`, `readings[]`, `fresh_readings`,
+  `cluster[]`, `excluded[]`, `mean`, `min`, `max`, `spread`, `median`,
+  `tolerance`, `min_samples`, `attempt`, `observations[]`.
+- `point_tolerance`, `point_min_samples`, `point_max_attempts`.
+- `point_attempts`: contador por fase (`INSIDE`, `OUTSIDE_MEASURE`).
+- `inside_point`, `outside_point`: último punto aceptado con su media.
+
+`POST /dashboard-api/sensores/v2/radar/operation`:
+
+- `start_measure` guarda `point_attempt` en la operación.
+- `finish_measure` en `INSIDE`/`OUTSIDE_MEASURE` usa las lecturas nuevas y
+  coherentes; `last_measurement.point` contiene el análisis.
+- Si el punto no es suficiente y quedan intentos, el estado queda `MEASURED`
+  con `last_measurement.sufficient=false` y se ofrece `start_measure`.
+- Al agotar intentos: `STOPPED` con `inside_point_*` u `outside_point_*`.
+- Cálculo: `outside_not_farther` si la media exterior no es mayor;
+  `points_too_close` si la separación no supera la tolerancia.

@@ -11161,3 +11161,30 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Units `DoorPolarityEvidenceTest`, `AttemptEvidenceTest`, regresión.
 - [x] BLOCK 68D.
 - [ ] Prueba física con puerta cerrada y repetición desde estado OPEN.
+
+# Fase 105 — Tareas
+
+## TSK-F105-01: Dominio de medición por punto
+- [x] `RadarPointMeasurement` con lecturas nuevas, deduplicación, conjunto
+      coherente y media.
+- [x] Unit `RadarPointMeasurementTest`.
+
+## TSK-F105-02: Controlador
+- [x] Medición interior/exterior con dos lecturas nuevas y tolerancia 0,30 m.
+- [x] Intentos por punto y mensajes de ayuda.
+- [x] `point` en `/radar/state` y media como referencia del planificador.
+- [x] Restauración limpia los puntos y contadores.
+
+## TSK-F105-03: Planificador
+- [x] Medias en lugar de extremos; `outside_not_farther` y `points_too_close`.
+- [x] `min_separation` alineado con la tolerancia del punto.
+
+## TSK-F105-04: UI
+- [x] Progreso de lecturas, media, dispersión y excluidas.
+- [x] Instrucciones «mueve los brazos 5 s sin mover los pies».
+- [x] Reintento y diagnóstico tras agotar intentos.
+
+## TSK-F105-05: Verificación
+- [x] Units de dominio y planificador.
+- [ ] Regresión completa.
+- [ ] Prueba física en sala 14.
