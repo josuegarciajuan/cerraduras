@@ -6126,7 +6126,7 @@ declara el sketch, separado del subtipo configurado.
 | Estado | Salida | Transición |
 |---|---|---|
 | `UNSYNCED` | OFF | snapshot contiguo + estado conocido, o evento nuevo |
-| `HOLDING` | continuo (ensayo F97.2) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
+| `HOLDING` | 10/5 ms (ensayo F97.2b) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
 | `WAIT_OPEN` | OFF | apertura → `OPEN`; 4 s cerrada → `HOLDING`; fallo → `UNSYNCED` |
 | `OPEN` | OFF | cierre → `CLOSING`; fallo → `UNSYNCED` |
 | `CLOSING` | OFF | 300 ms cerrada → `HOLDING`; apertura → `OPEN` |
@@ -12235,7 +12235,7 @@ declara el sketch, separado del subtipo configurado.
 | Estado | Salida | Transición |
 |---|---|---|
 | `UNSYNCED` | OFF | snapshot contiguo + estado conocido, o evento nuevo |
-| `HOLDING` | continuo (ensayo F97.2) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
+| `HOLDING` | 10/5 ms (ensayo F97.2b) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
 | `WAIT_OPEN` | OFF | apertura → `OPEN`; 4 s cerrada → `HOLDING`; fallo → `UNSYNCED` |
 | `OPEN` | OFF | cierre → `CLOSING`; fallo → `UNSYNCED` |
 | `CLOSING` | OFF | 300 ms cerrada → `HOLDING`; apertura → `OPEN` |
@@ -18546,7 +18546,7 @@ declara el sketch, separado del subtipo configurado.
 | Estado | Salida | Transición |
 |---|---|---|
 | `UNSYNCED` | OFF | snapshot contiguo + estado conocido, o evento nuevo |
-| `HOLDING` | continuo (ensayo F97.2) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
+| `HOLDING` | 10/5 ms (ensayo F97.2b) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
 | `WAIT_OPEN` | OFF | apertura → `OPEN`; 4 s cerrada → `HOLDING`; fallo → `UNSYNCED` |
 | `OPEN` | OFF | cierre → `CLOSING`; fallo → `UNSYNCED` |
 | `CLOSING` | OFF | 300 ms cerrada → `HOLDING`; apertura → `OPEN` |
@@ -24655,7 +24655,7 @@ declara el sketch, separado del subtipo configurado.
 | Estado | Salida | Transición |
 |---|---|---|
 | `UNSYNCED` | OFF | snapshot contiguo + estado conocido, o evento nuevo |
-| `HOLDING` | continuo (ensayo F97.2) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
+| `HOLDING` | 10/5 ms (ensayo F97.2b) | QR → `WAIT_OPEN`; `OPEN` → `OPEN`; fallo → `UNSYNCED` |
 | `WAIT_OPEN` | OFF | apertura → `OPEN`; 4 s cerrada → `HOLDING`; fallo → `UNSYNCED` |
 | `OPEN` | OFF | cierre → `CLOSING`; fallo → `UNSYNCED` |
 | `CLOSING` | OFF | 300 ms cerrada → `HOLDING`; apertura → `OPEN` |

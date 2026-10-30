@@ -3029,7 +3029,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
+  alimentación de mantenimiento configurable (ensayo F97.2b: 10 ms ON / 5 ms OFF; continuo y 950/50 conservados para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.
@@ -6027,7 +6027,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
+  alimentación de mantenimiento configurable (ensayo F97.2b: 10 ms ON / 5 ms OFF; continuo y 950/50 conservados para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.
@@ -9181,7 +9181,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
+  alimentación de mantenimiento configurable (ensayo F97.2b: 10 ms ON / 5 ms OFF; continuo y 950/50 conservados para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.
@@ -12179,7 +12179,7 @@ Sin Tuya cloud, sin cuota y sin pollers. Un único flujo, sin modo experto.
 ## RF-177: Control seguro del imán
 
 - **RF-177.1**: en reposo y con la puerta cerrada, la salida se mantiene con
-  alimentación de mantenimiento configurable (ensayo F97.2: continua a máxima potencia; 950/50 conservado para revertir) para no
+  alimentación de mantenimiento configurable (ensayo F97.2b: 10 ms ON / 5 ms OFF; continuo y 950/50 conservados para revertir) para no
   sobrecalentar la fuente.
 - **RF-177.2**: un QR autorizado corta la corriente de inmediato y espera
   hasta 4 s la apertura física.

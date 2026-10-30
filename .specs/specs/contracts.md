@@ -3761,7 +3761,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -3778,14 +3778,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -7541,7 +7541,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -7558,14 +7558,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -11475,7 +11475,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -11492,14 +11492,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
@@ -15255,7 +15255,7 @@ Errores de llave: `key_expired`, `key_revoked`, `key_room_denied`,
 añaden, de forma aditiva:
 
 ```json
-{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+{"kind":"RPI","subtype":"IMAN","firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 - `POST /api/v1/devices/register` y `POST /api/v1/rooms/{id}/devices` aceptan
@@ -15272,14 +15272,14 @@ añaden, de forma aditiva:
 
 ```json
 {"external_id":"<chip>","sub_kinds":["RPI","SCANNER","LOCK"],
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection"}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10"}
 ```
 
 Respuesta aditiva:
 
 ```json
 {"ok":true,"has_pending_commands":false,
- "firmware_variant":"IMAN","firmware_version":"2.3-iman-projection","variant_mismatch":false}
+ "firmware_variant":"IMAN","firmware_version":"2.4-iman-pulse10","variant_mismatch":false}
 ```
 
 `variant_mismatch` compara la variante declarada con el subtipo configurado.
