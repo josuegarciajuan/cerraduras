@@ -16,8 +16,8 @@
       "order": 2,
       "device": "presencia",
       "title": "Radar · dentro",
-      "action": "Entra, cierra la puerta y colócate en el punto más lejano donde debe detectarte. Pulsa «Empezar prueba» y quédate quieto 30 segundos.",
-      "expected": "El radar detecta presencia de forma continua durante 30 segundos.",
+      "action": "Entra, cierra la puerta y colócate en el punto más lejano donde debe detectarte. Pulsa «Empezar medición» y permanece quieto hasta que termine la cuenta atrás. El radar solo envía cambios; si no hay reportes nuevos se usa el estado al inicio de la ventana.",
+      "expected": "El radar mantiene la presencia detectada durante la ventana.",
       "rule": "radar_inside",
       "params": { "hold_seconds": 30, "grace_seconds": 20 }
     },
@@ -26,7 +26,7 @@
       "order": 3,
       "device": "presencia",
       "title": "Radar · fuera",
-      "action": "Sal, cierra la puerta, pasa tres veces por delante y espera fuera 60 segundos. Pulsa «Empezar prueba» al salir.",
+      "action": "Sal y espera a que el radar deje de detectarte. Mide el punto exterior y, en la pasada, pulsa «Empezar medición» antes de pasar tres veces por delante. Si hubo ajuste, vuelve a entrar cuando la app lo indique.",
       "expected": "No detecta a nadie fuera de la sala y no crea visitas, grabaciones ni luces.",
       "rule": "radar_outside",
       "params": { "min_elapsed_seconds": 50, "grace_seconds": 20, "forbid_effect_keys": ["visits", "recordings", "stays"] }
