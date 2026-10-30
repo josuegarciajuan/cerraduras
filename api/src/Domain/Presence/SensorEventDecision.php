@@ -172,6 +172,23 @@ final class SensorEventDecision
     }
 
     /**
+     * F103/RF-207: un evento es stale si su occurred_at es anterior al último
+     * reporte de su mismo sensor. Se usa también en la rama de candidatos radar
+     * para no retroceder la frescura con un reporte atrasado.
+     *
+     * @param array<string,mixed> $event
+     */
+    public static function isStale(array $event, IotSession $session): bool
+    {
+        $sensor = (string) ($event['sensor'] ?? '');
+        $isDoor = $sensor === PresenceEvent::SENSOR_PROXIMITY;
+        $lastAt = $isDoor ? $session->lastDoorEventAt : $session->lastPresenceEventAt;
+        $evtTs = self::toEpochMs((string) ($event['occurred_at'] ?? ''));
+        $lastTs = self::toEpochMs($lastAt);
+        return $evtTs !== null && $lastTs !== null && $evtTs < $lastTs;
+    }
+
+    /**
      * Pure (F48/RF-57 v2): ¿es creíble un PRESENT de presencia dado el contexto?
      *
      * Un PRESENT (`presence` o `move`) solo es creíble si:

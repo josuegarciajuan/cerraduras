@@ -10,6 +10,7 @@ use App\Domain\Presence\DoorPolarity;
 use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\RadarCalibrationPlanner;
 use App\Domain\Sensors\RadarDistanceQuality;
+use App\Domain\Sensors\RadarEvidencePolicy;
 use App\Domain\Sensors\RadarMeasurement;
 use App\Domain\Sensors\SensorCalibrationValidator;
 use App\Http\Request;
@@ -339,6 +340,7 @@ final class SensorWizardController
                 $initialSettings
             );
             $data['initial_live'] = (array) ($active['initial_live'] ?? []);
+            $data['initial_effects'] = $initialEffects;
             $data['attempt_started_at'] = (string) $active['started_at'];
             $data['calibration_session'] = (array) ($run['calibration_session'] ?? []);
             $data['settings_valid'] = ZigbeeRadarCalibrationService::isValidSettings(
@@ -1051,7 +1053,7 @@ final class SensorWizardController
             $code = in_array($e->getMessage(), [
                 'operation_pending', 'measure_in_progress', 'measure_not_ready',
                 'measure_insufficient', 'inside_not_valid', 'invalid_state', 'unknown_action',
-                'presence_stale',
+                'presence_stale', 'reentry_not_clear',
             ], true) ? 409 : 500;
             return Response::json($code, ['error' => $e->getMessage()]);
         }
@@ -1064,10 +1066,20 @@ final class SensorWizardController
         if (($session['version'] ?? 0) !== 2) {
             return Response::json(409, ['error' => 'legacy_calibration', 'message' => 'Reinicia esta verificación para usar el calibrador nuevo.']);
         }
-        $settings = $this->latestSettings((int) $run['room_id']);
+        $snapshot = $this->latestPresenceSnapshot((int) $run['room_id']);
+        $settings = (array) ($snapshot['settings'] ?? []);
         $valid = ZigbeeRadarCalibrationService::isValidSettings($settings);
         $copy = $this->radarCopy($session);
         $live = $this->context()->live((int) $run['room_id']);
+        $staleSeconds = (int) ($live['presence_stale_seconds'] ?? 180);
+        if ($staleSeconds <= 0) {
+            $staleSeconds = 180;
+        }
+        $rawAge = isset($snapshot['settings_age_seconds']) && is_numeric($snapshot['settings_age_seconds'])
+            ? (int) $snapshot['settings_age_seconds'] : null;
+        $rawState = strtoupper(trim((string) ($snapshot['value'] ?? '')));
+        $rawStale = $rawAge !== null && in_array($rawState, ['PRESENT', 'ABSENT'], true)
+            && $rawAge > $staleSeconds;
         return Response::json(200, [
             'ok' => true,
             'run_id' => (string) $run['run_id'],
@@ -1086,6 +1098,7 @@ final class SensorWizardController
             'outside_pass' => $session['outside_pass'] ?? null,
             'reentry' => $session['reentry'] ?? null,
             'result' => $session['result'] ?? null,
+            'manual_start_required' => (bool) ($session['manual_start_required'] ?? false),
             'next_actions' => $this->radarNextActions($session),
             'countdown' => $this->radarCountdown($session),
             'title' => $copy['title'],
@@ -1094,6 +1107,13 @@ final class SensorWizardController
             'last_presence_at' => $live['last_presence_event_at'] ?? null,
             'presence_age_seconds' => $live['presence_age_seconds'] ?? null,
             'presence_stale' => $live['presence_stale'] ?? false,
+            'presence_state' => $live['presence_state'] ?? 'UNKNOWN',
+            'presence_stale_seconds' => $staleSeconds,
+            // F103: señal directa del radar (la que usa la calibración).
+            'raw_presence_state' => in_array($rawState, ['PRESENT', 'ABSENT'], true) ? $rawState : 'UNKNOWN',
+            'raw_presence_at' => $snapshot['settings_at'] ?? null,
+            'raw_presence_age_seconds' => $rawAge,
+            'raw_presence_stale' => $rawStale,
             'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ])->withHeader('Cache-Control', 'no-store');
     }
@@ -1295,25 +1315,55 @@ final class SensorWizardController
             if ($state === 'STABILIZING') {
                 throw new \RuntimeException('measure_not_ready');
             }
-            $live = $this->context()->live((int) $run['room_id']);
-            $age = $live['presence_age_seconds'] ?? null;
-            if ($age !== null && (int) $age > 30) {
-                throw new \RuntimeException('presence_stale');
+            $roomId = (int) $run['room_id'];
+            $live = $this->context()->live($roomId);
+            $staleSeconds = (int) ($live['presence_stale_seconds'] ?? 180);
+            if ($staleSeconds <= 0) {
+                $staleSeconds = 180;
             }
+            $snapshot = $this->latestPresenceSnapshot($roomId);
+            // F103: la calibración usa la señal CRUDA del radar. El estado
+            // fusionado puede descartar un PRESENT como candidato y no reflejar
+            // que el sensor sí está detectando.
+            $isReentryStart = $action === 'start_reentry'
+                || ($action === 'start_measure' && $phase === 'REENTRY');
+            $block = $isReentryStart
+                ? RadarEvidencePolicy::reentryBlockReason($snapshot)
+                : RadarEvidencePolicy::startBlockReason($snapshot, $staleSeconds);
+            if ($block !== null) {
+                throw new \RuntimeException($block);
+            }
+            $seed = $isReentryStart ? null : RadarEvidencePolicy::seed($snapshot, $staleSeconds);
+            $window = $this->radarWindowSeconds(
+                (array) ($snapshot['settings'] ?? []),
+                (array) ($session['current'] ?? [])
+            );
+            $windowStart = gmdate('Y-m-d\TH:i:s\Z');
             $opId = 'op-' . bin2hex(random_bytes(5));
-            $opPhase = $action === 'start_reentry' ? 'REENTRY' : $phase;
+            $opPhase = $isReentryStart ? 'REENTRY' : $phase;
             $op = [
                 'operation_id' => $opId,
-                'kind' => $action === 'start_reentry' ? 'REENTRY' : 'MEASURE',
+                'kind' => $isReentryStart ? 'REENTRY' : 'MEASURE',
                 'phase' => $opPhase,
                 'state' => 'MEASURING',
-                'started_at' => gmdate('Y-m-d\TH:i:s\Z'),
-                'window_start' => gmdate('Y-m-d\TH:i:s\Z'),
-                'window_end' => gmdate('Y-m-d\TH:i:s\Z', $now + 20),
+                'started_at' => $windowStart,
+                'window_start' => $windowStart,
+                'window_end' => gmdate('Y-m-d\TH:i:s\Z', $now + $window),
+                'window_seconds' => $window,
                 'config_version' => (int) ($session['config_version'] ?? 1),
                 'requested' => [],
                 'before_settings' => $session['current'] ?? [],
+                'seed' => $seed,
+                'raw_presence_at_start' => $snapshot['value'] ?? null,
+                'raw_presence_age_seconds' => $snapshot['settings_age_seconds'] ?? null,
             ];
+            if ($isReentryStart) {
+                // Snapshot ANTES de entrar: los efectos posteriores (visita de
+                // reentrada) son esperados y no deben invalidar el exterior.
+                $session['effects_before_reentry'] = $this->context()->effects($roomId);
+                $session['reentry'] = null;
+            }
+            unset($session['manual_start_required']);
             $session['phase'] = $opPhase;
             $session['state'] = 'MEASURING';
             $session['active_operation'] = $op;
@@ -1333,27 +1383,40 @@ final class SensorWizardController
             }
             $ctx = $this->context();
             $events = $ctx->eventsSince((int) $run['room_id'], (string) $active['window_start'], 3000);
+            $mPhase = (string) ($active['phase'] ?? $phase);
+            $isReentry = (($active['kind'] ?? '') === 'REENTRY') || $mPhase === 'REENTRY';
+            $requirements = $isReentry
+                ? ['min_reports' => 1, 'min_span_seconds' => 0, 'require_new_present' => true]
+                : [];
+            $seed = $isReentry ? [] : (array) ($active['seed'] ?? []);
             $measurement = RadarMeasurement::build(
                 $events,
                 (string) $active['window_start'],
                 (string) $active['window_end'],
                 (int) ($active['config_version'] ?? 1),
-                (array) ($session['current'] ?? [])
+                (array) ($session['current'] ?? []),
+                $requirements,
+                $seed
             );
+            // El resultado de la fase no es siempre "último valor": dentro exige
+            // continuidad y fuera exige ausencia de cualquier PRESENT.
+            $phaseDetected = RadarMeasurement::outcomeForPhase($measurement, $mPhase);
+            $measurement['last_state'] = $measurement['last_value'];
+            $measurement['detected'] = $phaseDetected;
             $measurement['measurement_id'] = 'm-' . bin2hex(random_bytes(4));
-            $measurement['phase'] = (string) ($active['phase'] ?? $phase);
+            $measurement['phase'] = $mPhase;
             $session['measurements'][] = $measurement;
             $session['last_measurement'] = $measurement;
-            $mPhase = (string) ($active['phase'] ?? $phase);
             $compat = [
                 'stats' => $measurement['distance'],
-                'presence' => (bool) $measurement['detected'],
+                'presence' => $phaseDetected,
                 'span_seconds' => $measurement['span_seconds'],
                 'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
                 'attempt_id' => $attemptId,
                 'measurement_id' => $measurement['measurement_id'],
                 'config_version' => $measurement['config_version'],
                 'sufficient' => $measurement['sufficient'],
+                'evidence_mode' => $measurement['evidence_mode'],
             ];
             $sufficient = (bool) ($measurement['sufficient'] ?? false);
             if ($mPhase === 'INSIDE') {
@@ -1373,12 +1436,13 @@ final class SensorWizardController
             } elseif ($mPhase === 'REENTRY') {
                 if ($sufficient) {
                     $session['reentry'] = [
-                        'detected' => (bool) $measurement['detected'],
+                        'detected' => $phaseDetected,
                         'at' => gmdate('Y-m-d\TH:i:s\Z'),
                         'first_present_at' => $measurement['first_present_at'] ?? null,
                         'presence' => $measurement,
+                        'effects_before_reentry' => $session['effects_before_reentry'] ?? [],
                     ];
-                    if (!($measurement['detected'] ?? false)) {
+                    if (!$phaseDetected) {
                         $session['state'] = 'REJECTED';
                         if (isset($session['candidates'][count($session['candidates']) - 1])) {
                             $idx = count($session['candidates']) - 1;
@@ -1426,8 +1490,16 @@ final class SensorWizardController
                     || (int) ($pass['config_version'] ?? 0) !== $cv) {
                     throw new \RuntimeException('invalid_state');
                 }
-                $session['phase'] = !empty($session['candidates']) ? 'REENTRY' : 'DONE';
-                $session['state'] = 'IDLE';
+                if (!empty($session['candidates'])) {
+                    $session['phase'] = 'REENTRY';
+                    $session['state'] = 'IDLE';
+                } else {
+                    // Sin ajustes no hace falta reentrada: el radar queda
+                    // calibrado con interior + exterior + pasillo.
+                    $session['phase'] = 'DONE';
+                    $session['state'] = 'DONE';
+                    $session['result'] = 'PASS';
+                }
             } elseif ($phase === 'REENTRY') {
                 if (($session['reentry']['detected'] ?? false) !== true
                     || (int) ($session['reentry']['presence']['config_version'] ?? 0) !== $cv) {
@@ -1451,15 +1523,19 @@ final class SensorWizardController
             $inside = (array) ($session['inside_valid'] ?? []);
             $outside = (array) ($session['outside_valid'] ?? []);
             $cv = (int) ($session['config_version'] ?? 1);
-            $insideOk = ($inside['sufficient'] ?? false) === true
-                && (int) ($inside['config_version'] ?? 0) === $cv;
+            $insideValid = ($inside['sufficient'] ?? false) === true
+                && ($inside['detected'] ?? false) === true;
+            $insideOk = $insideValid && (int) ($inside['config_version'] ?? 0) === $cv;
             $outsideOk = ($outside['sufficient'] ?? false) === true
                 && (int) ($outside['config_version'] ?? 0) === $cv;
             if ($phase === 'INSIDE') {
                 if (!$insideOk) throw new \RuntimeException('measure_insufficient');
                 $outside = [];
             } else {
-                if (!$insideOk || !$outsideOk) throw new \RuntimeException('measure_insufficient');
+                // Un ajuste exterior invalida la medición interior por versión,
+                // pero la reentrada posterior la vuelve a verificar. Solo el
+                // exterior debe pertenecer a la configuración actual.
+                if (!$insideValid || !$outsideOk) throw new \RuntimeException('measure_insufficient');
             }
             $outsidePresent = (bool) ($outside['detected'] ?? false);
             if ($phase === 'OUTSIDE_PASS' && (($session['outside_pass']['detected'] ?? false) === true)) {
@@ -1519,8 +1595,12 @@ final class SensorWizardController
                 throw new \RuntimeException('publish_failed:' . (string) ($pub['error'] ?? 'unknown'));
             }
             $opId = 'op-' . bin2hex(random_bytes(5));
-            if ($phase === 'OUTSIDE_PASS') {
+            if (in_array($phase, ['OUTSIDE_PASS', 'REENTRY'], true)) {
+                // Tras una pasada detectada o una reentrada fallida hay que
+                // volver a verificar el exterior con la nueva configuración:
+                // subir sensibilidad/alcance podría romper la separación.
                 $session['phase'] = 'OUTSIDE_FIXED';
+                $session['manual_start_required'] = true;
                 $phase = 'OUTSIDE_FIXED';
             }
             $op = [
@@ -1621,7 +1701,13 @@ final class SensorWizardController
         if (is_array($active)) {
             $active['status'] = 'PASS';
             $active['checked_at'] = gmdate('Y-m-d\TH:i:s\Z');
-            $active['verdict'] = ['status' => 'PASS', 'reason' => 'inside_calibrated', 'details' => []];
+            $active['verdict'] = [
+                'status' => 'PASS',
+                'reason' => 'inside_calibrated',
+                'details' => [
+                    'measurement' => $run['calibration_session']['inside_valid'] ?? null,
+                ],
+            ];
             $step['attempts'][] = $active;
             unset($step['active_attempt']);
             $step['status'] = 'PASS';
@@ -1667,9 +1753,11 @@ final class SensorWizardController
             $last = (array) ($session['last_measurement'] ?? []);
             if (($last['sufficient'] ?? false) !== true) {
                 // Sin evidencia no se ofrece ajustar ni avanzar: solo repetir la
-                // medición o cancelar. Si no hubo ningún reporte, el mensaje
-                // indicará que el radar no está enviando datos.
-                return ['start_measure', 'cancel'];
+                // medición, restaurar o cancelar. En reentrada se repite el clic
+                // de entrada, no una medición genérica.
+                return $phase === 'REENTRY'
+                    ? ['start_reentry', 'restore', 'cancel']
+                    : ['start_measure', 'restore', 'cancel'];
             }
             if ($phase === 'INSIDE') {
                 $m = (array) ($session['inside_valid'] ?? []);
@@ -1752,18 +1840,27 @@ final class SensorWizardController
         }
         if ($state === 'MEASURING') {
             return ['title' => $phase === 'REENTRY' ? 'Comprobando reentrada' : 'Midiendo ' . ($phase === 'INSIDE' ? 'dentro' : 'fuera'),
-                'instruction' => $phase === 'REENTRY' ? 'Permanece dentro y quieto.' : ($phase === 'INSIDE' ? 'No te muevas.' : 'Mantente fuera.'),
+                'instruction' => $phase === 'REENTRY' ? 'Permanece dentro y quieto.' : ($phase === 'INSIDE' ? 'Permanece quieto; el radar solo envía cuando cambia algo.' : 'Mantente fuera.'),
                 'message' => 'Ventana de medición en curso.'];
         }
         if ($state === 'MEASURED') {
             $last = (array) ($session['last_measurement'] ?? []);
             if (($last['sufficient'] ?? false) !== true) {
-                if ((int) ($last['reports'] ?? 0) === 0) {
-                    return ['title' => 'Sin datos del radar', 'instruction' => 'No llegó ningún reporte en la ventana. Comprueba la conexión y vuelve a medir.', 'message' => 'El radar no está enviando datos.'];
+                if ($phase === 'REENTRY') {
+                    return ['title' => 'No se detectó tu entrada', 'instruction' => 'Sal, espera a que el radar te pierda y pulsa «Voy a entrar» antes de entrar.', 'message' => 'La ventana no recibió un PRESENT real.'];
                 }
-                return ['title' => 'Evidencia insuficiente', 'instruction' => 'No hay reportes suficientes en esta ventana. Mantén la posición y vuelve a medir.', 'message' => 'La ventana no ha reunido 8 reportes y 10 segundos.'];
+                if (($last['reason'] ?? '') === 'stale_state') {
+                    return ['title' => 'Estado del radar antiguo', 'instruction' => 'Muévete ligeramente para que el radar reporte y vuelve a medir.', 'message' => 'No hay un estado reciente que sirva de referencia.'];
+                }
+                if ((int) ($last['reports'] ?? 0) === 0 && ($last['seed_used'] ?? false) !== true) {
+                    return ['title' => 'Sin datos del radar', 'instruction' => 'No llegó ningún reporte en la ventana. Muévete ligeramente y vuelve a medir.', 'message' => 'El radar no está enviando datos nuevos.'];
+                }
+                return ['title' => 'Evidencia insuficiente', 'instruction' => 'No hay evidencia suficiente en esta ventana. Mantén la posición y vuelve a medir.', 'message' => 'La ventana no ha reunido evidencia suficiente.'];
             }
             if ($phase === 'INSIDE' && (($session['inside_valid']['detected'] ?? false) !== true)) {
+                if (($last['continuous'] ?? true) === false && ($last['last_value'] ?? '') === 'PRESENT') {
+                    return ['title' => 'La presencia no fue continua', 'instruction' => 'Mantente quieto y vuelve a medir. Si se repite, ajusta sensibilidad/alcance o revisa la orientación.', 'message' => 'El radar dejó de detectarte durante la ventana.'];
+                }
                 return ['title' => 'No se detectó presencia', 'instruction' => 'Colócate en el punto más lejano y ajusta la sensibilidad o el alcance. Si no mejora, revisa la orientación del radar.', 'message' => 'La medición fue válida, pero el radar no te detectó.'];
             }
             if ($phase === 'OUTSIDE_FIXED' && (($session['outside_valid']['detected'] ?? false) === true)) {
@@ -1772,19 +1869,29 @@ final class SensorWizardController
             if ($phase === 'OUTSIDE_PASS' && (($session['outside_pass']['detected'] ?? false) === true)) {
                 return ['title' => 'El radar detecta el pasillo', 'instruction' => 'Ajusta el alcance o la sensibilidad para no detectar el paso por el pasillo.', 'message' => 'La medición fue válida, pero el radar detecta el pasillo.'];
             }
-            return ['title' => 'Medición completada', 'instruction' => 'Revisa el resultado y continúa con la siguiente acción.', 'message' => 'La ventana se ha cerrado.'];
+            if ($phase === 'REENTRY') {
+                return ['title' => 'Reentrada detectada', 'instruction' => 'Continúa para cerrar la fase del radar.', 'message' => 'El radar volvió a detectarte al entrar.'];
+            }
+            $held = ($last['evidence_mode'] ?? '') === RadarMeasurement::EVIDENCE_STATE_HOLD;
+            return [
+                'title' => 'Medición completada',
+                'instruction' => 'Revisa el resultado y continúa con la siguiente acción.',
+                'message' => $held
+                    ? 'El radar mantuvo el estado sin nuevos reportes (solo envía al cambiar).'
+                    : 'La ventana se ha cerrado.',
+            ];
         }
         if ($phase === 'INSIDE') {
-            return ['title' => 'Comprobar cobertura interior', 'instruction' => 'Colócate en el punto más lejano donde debe detectarte y pulsa Empezar medición.', 'message' => 'Primero verificamos el interior.'];
+            return ['title' => 'Comprobar cobertura interior', 'instruction' => 'Colócate en el punto más lejano donde debe detectarte. Pulsa Empezar medición y permanece quieto hasta que termine la cuenta atrás. El radar solo envía cambios; si no hay reportes nuevos, se usa el estado al inicio.', 'message' => 'Primero verificamos el interior.'];
         }
         if ($phase === 'OUTSIDE_FIXED') {
-            return ['title' => 'Comprobar punto exterior', 'instruction' => 'Sal, cierra la puerta y colócate en el punto que no debe detectarse. Pulsa Empezar medición.', 'message' => 'Comprobamos el punto exterior fijo.'];
+            return ['title' => 'Comprobar punto exterior', 'instruction' => 'Sal y cierra la puerta. Espera a que el radar deje de detectarte. Colócate en el punto que no debe detectarse y pulsa Empezar medición.', 'message' => 'Comprobamos el punto exterior fijo.'];
         }
         if ($phase === 'OUTSIDE_PASS') {
-            return ['title' => 'Pasada por el pasillo', 'instruction' => 'Pasa tres veces por delante de la puerta. Pulsa Empezar medición.', 'message' => 'Comprobamos el movimiento en el pasillo.'];
+            return ['title' => 'Pasada por el pasillo', 'instruction' => 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.', 'message' => 'Comprobamos el movimiento en el pasillo.'];
         }
         if ($phase === 'REENTRY') {
-            return ['title' => 'Comprobar reentrada', 'instruction' => 'Entra, cierra la puerta y colócate dentro. Pulsa Voy a entrar.', 'message' => 'Comprobamos que el ajuste sigue detectando al volver.'];
+            return ['title' => 'Comprobar reentrada', 'instruction' => 'Sal y espera a que el radar deje de detectarte. Pulsa «Voy a entrar» y entra, cierra y quédate dentro.', 'message' => 'Comprobamos que el ajuste sigue detectando al volver.'];
         }
         if ($phase === 'DONE') {
             return ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'];
@@ -2020,6 +2127,34 @@ final class SensorWizardController
     private function latestSettings(int $roomId): array
     {
         return $this->context()->latestSettings($roomId)['settings'] ?? [];
+    }
+
+    /**
+     * F103: último reporte CRUDO del radar (valor, instante y edad). Es la
+     * fuente de evidencia de la calibración; el estado fusionado de la sala se
+     * usa solo para el panel.
+     *
+     * @return array{settings:array<string,mixed>,settings_at:?string,settings_age_seconds:?int,value:?string}
+     */
+    private function latestPresenceSnapshot(int $roomId): array
+    {
+        return $this->context()->latestSettings($roomId);
+    }
+
+    /**
+     * Ventana de medición. El radar solo reporta cambios y el fading del
+     * dispositivo puede ser >20 s; 30 s cubre el valor actual (15,5 s) y deja
+     * margen para detectar una pérdida. Se limita a 60 s.
+     *
+     * @param array<string,mixed> $primary
+     * @param array<string,mixed> $fallback
+     */
+    private function radarWindowSeconds(array $primary, array $fallback = []): int
+    {
+        $settings = $primary !== [] ? $primary : $fallback;
+        $fading = isset($settings['fading_time']) && is_numeric($settings['fading_time'])
+            ? (float) $settings['fading_time'] : 15.0;
+        return (int) max(30, min(60, ceil($fading + 5)));
     }
 
     private function doorPolarity(int $roomId): string
