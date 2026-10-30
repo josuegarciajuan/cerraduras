@@ -5203,6 +5203,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
   active attempt), `SensorWizardController`.
 - [x] Detección de dispositivos y plan.
 - [x] Ventana explícita, intento inmutable, 409 por sala.
+- [x] Reinicio global: archiva, cancela intento y crea corrida desde Puerta.
 
 ## TSK-F95-03: Radar y luz
 - **Trazabilidad**: RF-165/166/167.

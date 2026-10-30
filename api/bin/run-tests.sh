@@ -6452,6 +6452,13 @@ if grep -q "radar/calibrate" public/index.php \
 else
     fail "F96: calibración" "faltan endpoints o planificador"
 fi
+if grep -q "sensores/v2/run/reset" public/index.php \
+    && grep -q "btnResetRun" public/sensores.html \
+    && grep -q "resetRun" public/assets/sensor-wizard-v2.js; then
+    pass "F95: reinicio global visible y cableado"
+else
+    fail "F95: reinicio global" "falta el botón o endpoint run/reset"
+fi
 if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
     pass "F95: polaridad aplicada en el ingress"
 else
@@ -6591,7 +6598,82 @@ print('ok' if ok else 'bad')
         else
             fail "F95: attempt/start" "$(printf '%s' "$F95_ATT" | head -c 200)"
         fi
+        # F95 reset total: archiva la corrida y crea otra desde el paso 1.
+        F95_RUN2=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+            -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-reset"}')
+        F95_RID2=$(printf '%s' "$F95_RUN2" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+        if [ -n "$F95_RID2" ]; then
+            curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID2\",\"step_id\":\"radar_inside\"}" >/dev/null
+            F95_RESET_CODE=$(curl -s -o /tmp/f95_reset.json -w "%{http_code}" --max-time 5 -X POST \
+                "${API_BASE}/dashboard-api/sensores/v2/run/reset" -H 'Content-Type: application/json' \
+                -d "{\"run_id\":\"$F95_RID2\",\"operator\":\"runner-reset\"}" 2>/dev/null)
+            if [ "$F95_RESET_CODE" = "201" ]; then
+                F95_NEW_ID=$(python3 -c "import json;print(json.load(open('/tmp/f95_reset.json'))['run']['run_id'])" 2>/dev/null)
+                F95_OLD=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_RID2")
+                F95_RESET_OK=$(printf '%s' "$F95_OLD" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+step=d.get('steps',{}).get('radar_inside',{})
+print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in step and any(a.get('status')=='CANCELLED' for a in step.get('attempts',[])) else 'bad')
+" 2>/dev/null)
+                F95_NEW=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_NEW_ID")
+                F95_NEW_OK=$(printf '%s' "$F95_NEW" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('status')=='running' and d.get('plan',[None])[0]=='door' and not d.get('steps') else 'bad')" 2>/dev/null)
+                if [ "$F95_RESET_OK" = "ok" ] && [ "$F95_NEW_OK" = "ok" ]; then
+                    pass "F95: reset archiva intento y crea corrida desde Puerta"
+                else
+                    fail "F95: reset de corrida" "old=$F95_RESET_OK new=$F95_NEW_OK"
+                fi
+                rm -f "run/sensores/${F95_NEW_ID}.json" "run/sensores/${F95_NEW_ID}.jsonl" "run/sensores/locks/${F95_NEW_ID}.lock"
+            elif [ "$F95_RESET_CODE" = "404" ]; then
+                skip "F95 reset total" "endpoint aún sin desplegar"
+            else
+                fail "F95 reset total" "HTTP $F95_RESET_CODE $(python3 -c "import json;print(json.load(open('/tmp/f95_reset.json')).get('error',''))" 2>/dev/null)"
+            fi
+            rm -f /tmp/f95_reset.json
+            rm -f "run/sensores/${F95_RID2}.json" "run/sensores/${F95_RID2}.jsonl" "run/sensores/locks/${F95_RID2}.lock"
+        else
+            fail "F95 reset setup" "no se pudo crear la segunda corrida"
+        fi
+
         rm -f "run/sensores/${F95_RID}.json" "run/sensores/${F95_RID}.jsonl" "run/sensores/locks/${F95_RID}.lock"
+
+        # Reinicio global: archiva el intento activo y crea una corrida limpia en la puerta.
+        F95_RUN2=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+            -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-reset"}')
+        F95_RID2=$(printf '%s' "$F95_RUN2" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
+        if [ -n "$F95_RID2" ]; then
+            curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
+                -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID2\",\"step_id\":\"radar_inside\"}" >/dev/null
+            F95_RESET_CODE=$(curl -s -o /tmp/f95_reset.json -w "%{http_code}" --max-time 5 -X POST \
+                "${API_BASE}/dashboard-api/sensores/v2/run/reset" -H 'Content-Type: application/json' \
+                -d "{\"run_id\":\"$F95_RID2\",\"operator\":\"runner-reset\"}" 2>/dev/null)
+            if [ "$F95_RESET_CODE" = "201" ]; then
+                F95_NEW_ID=$(python3 -c "import json;print(json.load(open('/tmp/f95_reset.json'))['run']['run_id'])" 2>/dev/null)
+                F95_OLD=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_RID2")
+                F95_RESET_OK=$(printf '%s' "$F95_OLD" | python3 -c "
+import sys,json
+d=json.load(sys.stdin); s=d.get('steps',{}).get('radar_inside',{})
+print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in s and any(a.get('status')=='CANCELLED' for a in s.get('attempts',[])) else 'bad')
+" 2>/dev/null)
+                F95_NEW=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/get?id=$F95_NEW_ID")
+                F95_NEW_OK=$(printf '%s' "$F95_NEW" | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok' if d.get('status')=='running' and d.get('plan',[None])[0]=='door' and not d.get('steps') else 'bad')" 2>/dev/null)
+                if [ "$F95_RESET_OK" = "ok" ] && [ "$F95_NEW_OK" = "ok" ]; then
+                    pass "F95: run/reset archiva la corrida y reinicia desde Puerta"
+                else
+                    fail "F95: run/reset" "old=$F95_RESET_OK new=$F95_NEW_OK"
+                fi
+                rm -f "run/sensores/${F95_NEW_ID}.json" "run/sensores/${F95_NEW_ID}.jsonl" "run/sensores/locks/${F95_NEW_ID}.lock"
+            elif [ "$F95_RESET_CODE" = "404" ]; then
+                skip "F95 run/reset" "endpoint aún sin desplegar"
+            else
+                fail "F95 run/reset" "HTTP $F95_RESET_CODE"
+            fi
+            rm -f /tmp/f95_reset.json
+            rm -f "run/sensores/${F95_RID2}.json" "run/sensores/${F95_RID2}.jsonl" "run/sensores/locks/${F95_RID2}.lock"
+        else
+            fail "F95 reset setup" "no se pudo crear la corrida"
+        fi
     else
         fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
     fi

@@ -137,7 +137,8 @@
     if (!id) return null;
     try {
       var run = await api(V2 + '/get?id=' + encodeURIComponent(id));
-      return run && run.room_id === roomId() ? run : null;
+      if (!run || run.room_id !== roomId() || run.status === 'abandoned') return null;
+      return run;
     } catch (e) { return null; }
   }
 
@@ -148,9 +149,11 @@
   // ── render ───────────────────────────────────────────────────────────
   function render() {
     renderRoster(); renderRail();
+    var resetBtn = $('btnResetRun');
+    if (resetBtn) resetBtn.classList.toggle('hidden', !(S.run && S.run.status === 'running'));
     var host = $('mainCard');
     if (!S.run) { renderPreflight(host); renderTech(); return; }
-    if (S.run.status === 'finished') { renderVerdict(host); renderTech(); return; }
+    if (S.run.status === 'finished' || S.run.status === 'abandoned') { renderVerdict(host); renderTech(); return; }
     if (!S.stepId) S.stepId = currentStep();
     if (!S.stepId) { renderFinishCta(host); renderTech(); return; }
     renderStep(host, S.stepId);
@@ -256,7 +259,7 @@
       var d = p.devices && p.devices[k];
       return d && d.health === 'idle';
     });
-    var active = p.active_attempt;
+    var activeRun = p.active_run;
     var html = '<div class="card">';
     html += '<div class="eyebrow">Antes de empezar</div>';
     html += '<h1>Comprobar los sensores de ' + esc(p.room.code) + '</h1>';
@@ -268,10 +271,13 @@
         + '<span class="pill dim">Sensibilidad ' + p.settings.radar_sensitivity + '/9</span></div>';
     }
     html += '<div class="actions">';
-    if (active) {
-      html += '<button class="primary" data-action="resume" data-run="' + esc(active.run_id) + '">Continuar verificación en curso</button>';
+    if (activeRun) {
+      html += '<div class="expect">Hay una verificación en curso' + (activeRun.operator ? ' de ' + esc(activeRun.operator) : '') + '.</div>';
+      html += '<button class="primary" data-action="resume" data-run="' + esc(activeRun.run_id) + '">Continuar verificación</button>';
+      html += '<button class="danger" data-action="reset-run" data-run="' + esc(activeRun.run_id) + '">Reiniciar toda la prueba desde la puerta</button>';
+    } else {
+      html += '<button class="' + (p.can_start ? 'primary' : 'ghost') + '" data-action="start-run"' + (p.can_start ? '' : ' disabled') + '>Empezar verificación</button>';
     }
-    html += '<button class="' + (p.can_start ? 'primary' : 'ghost') + '" data-action="start-run"' + (p.can_start ? '' : ' disabled') + '>Empezar verificación</button>';
     html += '</div></div>';
     host.innerHTML = html;
   }
@@ -544,10 +550,10 @@
     var icons = { PASS: '✓', FAIL: '✕', UNVERIFIED: '?', SKIP: '—', NOT_INSTALLED: '—' };
     var cls = { PASS: 'ok', FAIL: 'bad', UNVERIFIED: 'warnc', SKIP: 'warnc', NOT_INSTALLED: 'muted' };
     var stLabel = STATUS_LABEL;
-    var title = {
+    var title = S.run.status === 'abandoned' ? 'Verificación interrumpida' : ({
       CORRECT: 'Verificación correcta', WITH_RESERVES: 'Correcta con reservas',
       REVIEW: 'Revisar instalación', INCOMPLETE: 'Verificación incompleta', NOT_EVALUABLE: 'No evaluable'
-    }[v.verdict || 'INCOMPLETE'] || 'Verificación';
+    }[v.verdict || 'INCOMPLETE'] || 'Verificación');
     var html = '<div class="card">';
     html += '<div class="eyebrow">Veredicto</div><h1 class="' + (v.verdict === 'CORRECT' ? 'ok' : v.verdict === 'REVIEW' ? 'bad' : 'warnc') + '">'
       + esc(title) + '</h1>';
@@ -819,6 +825,33 @@
     finally { busy(false); }
   }
 
+  async function resetRun(targetRunId) {
+    var runId = targetRunId || (S.run && S.run.run_id) || (S.preflight && S.preflight.active_run && S.preflight.active_run.run_id);
+    if (!runId) { toast('No hay una verificación activa para reiniciar'); return; }
+    if (!confirm('Se guardará la prueba actual como interrumpida y se empezará otra desde Puerta. La polaridad y los ajustes del radar se conservan. ¿Continuar?')) return;
+    busy(true);
+    stopPolling();
+    try {
+      var data = await api(V2 + '/run/reset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId, operator: operator() })
+      });
+      S.run = data.run;
+      S.stepId = currentStep();
+      S.attempt = null;
+      S.attemptData = null;
+      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
+      S.lightPhase = 'idle';
+      S.radarKey = null;
+      saveRunLocal();
+      await loadPreflight();
+      render();
+      toast('Prueba reiniciada desde Puerta');
+    } catch (e) {
+      banner(e.message, 'bad');
+    } finally { busy(false); }
+  }
+
   async function finishRun() {
     busy(true);
     try {
@@ -1024,7 +1057,7 @@
           var label = {
             CORRECT: 'Correcta', WITH_RESERVES: 'Con reservas', REVIEW: 'Revisar',
             INCOMPLETE: 'Incompleta', NOT_EVALUABLE: 'No evaluable'
-          }[vv] || (r.status === 'finished' ? 'Finalizada' : 'En curso');
+          }[vv] || (r.status === 'abandoned' ? 'Interrumpida' : (r.status === 'finished' ? 'Finalizada' : 'En curso'));
           html += '<tr><td>' + esc(r.run_id) + '</td><td>' + esc(r.room_id) + '</td><td>' + esc(r.operator || '—')
             + '</td><td>' + esc(label) + '</td><td><button data-open="' + esc(r.run_id) + '">Abrir</button></td></tr>';
         });
@@ -1072,6 +1105,7 @@
     };
     $('operator').onchange = function () { localStorage.setItem(LS_OP, operator()); };
     $('btnRuns').onclick = showRuns;
+    $('btnResetRun').onclick = function () { resetRun(); };
     $('runsClose').onclick = function () { $('runsDialog').close(); };
     $('btnRefreshEvents').onclick = refreshEvents;
     $('mainCard').addEventListener('click', function (e) {
@@ -1082,6 +1116,7 @@
       if (a === 'retry-preflight') loadPreflight().then(render);
       else if (a === 'start-run') startRun();
       else if (a === 'resume') openRun(b.getAttribute('data-run'));
+      else if (a === 'reset-run') resetRun(b.getAttribute('data-run'));
       else if (a === 'polarity') polarity();
       else if (a === 'start-attempt') startAttempt(step);
       else if (a === 'check') checkAttempt(step);

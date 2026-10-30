@@ -24962,3 +24962,12 @@ Nunca se rearma con `invalidated` o `UNKNOWN`.
 Requiere confirmación explícita; no sustituye una lectura del sensor. Fija
 `manual_confirm` y una barrera con el último evento aplicado. No modifica
 `iot_sessions` (ciclo).
+
+
+## F95.10 Reinicio global de corrida
+
+La acción `Reiniciar toda la prueba` está disponible en cualquier paso y en el
+preflight si existe una corrida activa. Bajo lock por sala, el servidor cancela
+el intento activo como `CANCELLED`, marca la corrida anterior `abandoned`, conserva
+su auditoría y crea una nueva desde Puerta. Polaridad y calibración física se
+conservan; el reinicio solo borra el progreso del test nuevo.

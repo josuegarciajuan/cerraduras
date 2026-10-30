@@ -76,7 +76,15 @@ final class SensorWizardController
                 return Response::json(404, ['error' => 'room_not_found']);
             }
             $active = $this->store->findActiveAttemptForRoom($roomId);
+            $running = $this->store->findRunningRunForRoom($roomId);
             $data['active_attempt'] = $active;
+            $data['active_run'] = $running === null ? null : [
+                'run_id' => (string) ($running['run_id'] ?? ''),
+                'status' => (string) ($running['status'] ?? ''),
+                'updated_at' => (string) ($running['updated_at'] ?? ''),
+                'operator' => (string) ($running['operator'] ?? ''),
+                'active_attempt' => $active,
+            ];
             return Response::json(200, $data)->withHeader('Cache-Control', 'no-store');
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
@@ -123,6 +131,92 @@ final class SensorWizardController
             return Response::json(201, ['ok' => true, 'run' => $run, 'plan' => $pre['plan']]);
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Archiva la corrida en curso, cancela su intento activo y crea otra desde
+     * el principio. Conserva la anterior para auditoría.
+     */
+    public function resetRun(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $runId = (string) ($body['run_id'] ?? '');
+        $old = $this->store->load($runId);
+        if ($old === null) {
+            return Response::json(404, ['error' => 'run_not_found']);
+        }
+        $roomId = (int) ($old['room_id'] ?? 0);
+        if ($roomId <= 0 || ($old['status'] ?? '') !== 'running') {
+            return Response::json(409, ['error' => 'run_not_active']);
+        }
+        try {
+            $result = $this->store->withRoomLock($roomId, function () use ($runId, $roomId, $body): array {
+                $oldRun = $this->store->load($runId);
+                if ($oldRun === null || ($oldRun['status'] ?? '') !== 'running') {
+                    throw new \RuntimeException('run_not_active');
+                }
+                $pre = $this->context()->preflight($roomId);
+                if (empty($pre['can_start'])) {
+                    return ['ok' => false, 'old_run_id' => $runId, 'preflight' => $pre];
+                }
+                $now = gmdate('Y-m-d\TH:i:s\Z');
+                foreach ((array) ($oldRun['steps'] ?? []) as $stepId => $step) {
+                    $step = (array) $step;
+                    $active = $step['active_attempt'] ?? null;
+                    if (is_array($active)) {
+                        $active['status'] = 'CANCELLED';
+                        $active['checked_at'] = $now;
+                        $active['verdict'] = ['status' => 'SKIP', 'reason' => 'run_reset', 'details' => []];
+                        $active['check_id'] = 'reset-' . bin2hex(random_bytes(4));
+                        $step['attempts'][] = $active;
+                        unset($step['active_attempt']);
+                        $step['status'] = 'SKIP';
+                        $oldRun['steps'][$stepId] = $step;
+                    }
+                }
+                $oldRun['status'] = 'abandoned';
+                $oldRun['abandoned_at'] = $now;
+                $oldRun['abandon_reason'] = 'operator_restart';
+                $oldRun['summary'] = self::summary($oldRun);
+                $oldRun['verdict'] = [
+                    'verdict' => SensorVerdict::INCOMPLETE,
+                    'devices' => [],
+                    'reasons' => ['operator_restart'],
+                    'soak' => (string) ($oldRun['soak']['status'] ?? 'PENDING'),
+                ];
+                $this->store->save($oldRun);
+                $this->store->appendLog($runId, ['type' => 'run_abandoned', 'at' => $now,
+                    'reason' => 'operator_restart']);
+
+                $newRun = $this->store->create([
+                    'room_id' => $roomId,
+                    'room' => $pre['room'],
+                    'operator' => (string) ($body['operator'] ?? $oldRun['operator'] ?? ''),
+                    'catalog' => 'sensores',
+                    'catalog_version' => 2,
+                    'mode' => 'universal',
+                    'plan' => $pre['plan'],
+                    'initial_settings' => $pre['settings'],
+                    'initial_settings_at' => $pre['settings_at'],
+                    'devices' => [
+                        'presence' => $pre['devices']['presence'],
+                        'proximity' => $pre['devices']['proximity'],
+                        'switch' => $pre['devices']['switch'],
+                        'transport' => $pre['devices']['transport'],
+                    ],
+                ]);
+                $this->store->appendLog($newRun['run_id'], ['type' => 'run_reset_from',
+                    'old_run_id' => $runId, 'at' => $now]);
+                return ['ok' => true, 'old_run_id' => $runId, 'run' => $newRun, 'plan' => $pre['plan']];
+            });
+            if (($result['ok'] ?? false) !== true) {
+                return Response::json(409, ['error' => 'core_devices_missing', 'result' => $result]);
+            }
+            return Response::json(201, $result);
+        } catch (\Throwable $e) {
+            $code = $e->getMessage() === 'run_not_active' ? 409 : 500;
+            return Response::json($code, ['error' => $e->getMessage()]);
         }
     }
 

@@ -184,6 +184,62 @@ final class SensorRunStore
     }
 
     /**
+     * Ejecuta una operación exclusiva por sala (inicio/reinicio de corrida).
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    public function withRoomLock(int $roomId, callable $fn): mixed
+    {
+        $this->ensureDir();
+        $lockDir = $this->dir . '/locks';
+        if (!is_dir($lockDir)) {
+            @mkdir($lockDir, 0700, true);
+        }
+        $fh = @fopen($lockDir . '/room-' . $roomId . '.lock', 'c');
+        if ($fh === false) {
+            throw new RuntimeException('room_lock_unavailable');
+        }
+        try {
+            if (!flock($fh, LOCK_EX)) {
+                throw new RuntimeException('room_lock_failed');
+            }
+            return $fn();
+        } finally {
+            @flock($fh, LOCK_UN);
+            @fclose($fh);
+        }
+    }
+
+    /**
+     * Devuelve la última corrida no cerrada de una sala.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function findRunningRunForRoom(int $roomId): ?array
+    {
+        if (!is_dir($this->dir)) {
+            return null;
+        }
+        $matches = [];
+        foreach (glob($this->dir . '/*.json') ?: [] as $file) {
+            $run = json_decode((string) @file_get_contents($file), true);
+            if (!is_array($run)
+                || (int) ($run['room_id'] ?? 0) !== $roomId
+                || ($run['status'] ?? '') !== 'running'
+            ) {
+                continue;
+            }
+            $matches[] = $run;
+        }
+        usort($matches, static fn (array $a, array $b): int => strcmp(
+            (string) ($b['updated_at'] ?? ''), (string) ($a['updated_at'] ?? '')
+        ));
+        return $matches[0] ?? null;
+    }
+
+    /**
      * Busca un intento activo en cualquier corrida en curso de la sala.
      *
      * @return array{run_id:string,step_id:string,attempt_id:string}|null

@@ -6,6 +6,9 @@ Válido para los tres dispositivos de `almacenZigbee` (SNZB-04P, ZY-M100-S_2,
 ZBMINIL2):
 
 1. **Preflight**: muestra los 3 dispositivos (verde/rojo/ámbar) y el plan.
+   Si hay una corrida en curso, puedes continuarla o pulsar **Reiniciar toda la prueba**.
+   La anterior queda archivada como interrumpida y la nueva empieza en Puerta; la
+   polaridad y los ajustes físicos se conservan.
 2. **Puerta**: cierra y pulsa `Comprobar polaridad`. La app corrige el montaje
    invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
    El contador `0/3` solo suma pares de esa ventana; los eventos anteriores no cuentan.
