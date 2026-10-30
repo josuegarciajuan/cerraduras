@@ -9,9 +9,11 @@ ZBMINIL2):
    Si hay una corrida en curso, puedes continuarla o pulsar **Reiniciar toda la prueba**.
    La anterior queda archivada como interrumpida y la nueva empieza en Puerta; la
    polaridad y los ajustes físicos se conservan.
-2. **Puerta**: cierra y pulsa `Comprobar polaridad`. La app corrige el montaje
-   invertido solo en ese dispositivo. Después, 3 ciclos (normal, lento, rápido).
-   El contador `0/3` solo suma pares de esa ventana; los eventos anteriores no cuentan.
+2. **Puerta**: cierra y pulsa `Comprobar polaridad`. La app asume que la puerta
+   está cerrada y usa el último reporte del sensor aunque haya pasado tiempo (el
+   SNZB-04P solo emite al cambiar). Corrige el montaje invertido solo en ese
+   dispositivo. Después, 3 ciclos (normal, lento, rápido). El contador `0/3`
+   solo suma pares de esa ventana; los eventos anteriores no cuentan.
 3. **Radar dentro**: colócate en el punto más lejano y quieto. La app mide en una
    ventana de 30 s; durante la cuenta atrás solo puedes cancelar. El ZY-M100
    **solo publica cuando cambia algo**: si no hay reportes nuevos, la app usa el

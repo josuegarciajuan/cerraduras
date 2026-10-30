@@ -530,11 +530,10 @@ final class SensorWizardController
                 return Response::json(422, ['error' => 'waiting_for_report',
                     'message' => 'Abre y cierra la puerta una vez para que el sensor envíe un evento.']);
             }
-            $at = strtotime((string) $row['occurred_at'] . ' UTC');
-            if ($at === false || time() - $at > 90) {
-                return Response::json(422, ['error' => 'waiting_for_report',
-                    'message' => 'El último evento de la puerta es antiguo. Abre y cierra la puerta una vez.']);
-            }
+            // La puerta Zigbee es edge-triggered: si no se ha movido, el último
+            // evento sigue siendo el estado real. El técnico confirma que está
+            // cerrada al empezar, así que la antigüedad no invalida la lectura
+            // de polaridad. No se pide abrir/cerrar antes de medir.
             $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
             $raw = is_array($meta) ? ($meta['zigbee_value'] ?? null) : null;
             if ($raw === null && is_array($meta) && isset($meta['canonical_before_polarity'])) {
