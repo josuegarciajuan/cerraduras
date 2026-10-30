@@ -6466,6 +6466,13 @@ if grep -q "reentry_failed" src/Domain/Sensors/RadarCalibrationPlanner.php \
 else
     fail "F96: reentrada" "no se detecta la remediación de reentrada"
 fi
+if grep -q "isValidSettings" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    && grep -q "radar_settings_valid" src/Infrastructure/Sensors/SensorContextBuilder.php \
+    && grep -q "radar_settings_valid" public/assets/sensor-wizard-v2.js; then
+    pass "F96: guarda de configuración inválida del radar"
+else
+    fail "F96: configuración inválida" "falta la guarda o la UI de restauración"
+fi
 if grep -q "door_polarity" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
     pass "F95: polaridad aplicada en el ingress"
 else
@@ -6670,6 +6677,17 @@ print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in s and any
     else
         fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
     fi
+
+    # Limpieza final: cualquier corrida de test que haya quedado abierta.
+    F95_LEFTOVER=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/runs" | python3 -c "
+import sys,json
+try: rows=json.load(sys.stdin)
+except Exception: rows=[]
+print(' '.join(str(r.get('run_id','')) for r in rows if r.get('status')=='running' and str(r.get('operator','')).startswith('runner')))
+" 2>/dev/null)
+    for RID in $F95_LEFTOVER; do
+        rm -f "run/sensores/${RID}.json" "run/sensores/${RID}.jsonl" "run/sensores/locks/${RID}.lock"
+    done
     fi
 elif [ "$SERVER_UP" = true ]; then
     skip "F95 HTTP" "API aún sin desplegar el flujo v2 (UI $F95_UI, preflight $F95_PING)"
