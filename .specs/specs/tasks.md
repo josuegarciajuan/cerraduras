@@ -5292,7 +5292,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 - [x] Heartbeat acepta y persiste variante/versión.
 - [x] Respuesta `variant_mismatch` sin alterar el subtipo.
-- [x] El sketch ESP-imán declara `IMAN`/`2.3-iman-projection`.
+- [x] El sketch ESP-imán declara `IMAN`/`2.4-iman-pulse10`.
 
 **Verificación**: heartbeat con variante distinta devuelve true.
 
@@ -10753,7 +10753,7 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 
 - [x] Heartbeat acepta y persiste variante/versión.
 - [x] Respuesta `variant_mismatch` sin alterar el subtipo.
-- [x] El sketch ESP-imán declara `IMAN`/`2.3-iman-projection`.
+- [x] El sketch ESP-imán declara `IMAN`/`2.4-iman-pulse10`.
 
 **Verificación**: heartbeat con variante distinta devuelve true.
 

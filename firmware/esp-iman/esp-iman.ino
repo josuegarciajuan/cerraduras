@@ -4,11 +4,11 @@
  *
  * Variante F97: mismo hardware y misma base que ESP-cerradura, pero el
  * actuador es un imán. En reposo se mantiene la retención con corriente
- * pulsada. Perfil de ensayo F97.2: CONTINUO a máxima potencia (sin parpadeo).
- * Sustituye al perfil F97.1 (950/50), que seguía dando poca fuerza. Al
- * autorizar un QR se corta la
- * corriente y NO se rearma hasta que el sensor Zigbee del pack confirma el
- * cierre físico de la puerta. La puerta puede quedar abierta indefinidamente.
+ * pulsada. Perfil de ensayo F97.2b: 10 ms ON / 5 ms OFF (~66 % de servicio)
+ * para reducir calor manteniendo más corriente media que 950/50/100-100.
+ * Al autorizar un QR se corta la corriente y NO se rearma hasta que el sensor
+ * Zigbee del pack confirma el cierre físico de la puerta. La puerta puede
+ * quedar abierta indefinidamente.
  *
  * El estado de puerta llega por push desde /dashboard-api/door-events
  * (Zigbee2MQTT → API → SSE). No hay polling a Tuya ni /get al sensor.
@@ -130,14 +130,14 @@ const int   API_PORT     = 443;
 
 // ── F97: variante y parámetros del imán ────────────────────────────────────
 #define IMAN_VARIANT                 "IMAN"
-#define IMAN_VERSION                 "2.3-iman-projection"
-// F97.2 (ensayo de máxima potencia): mantener la salida encendida sin
-// parpadeo. Es la referencia para comprobar la fuerza real del imán. El
-// consumo y el calentamiento son los de alimentación continua: prueba
-// vigilada y con corte inmediato si algo se calienta.
-#define IMAN_HOLD_CONTINUOUS         1     // 1 = continuo; 0 = pulsado 950/50
-#define IMAN_HOLD_ON_MS              950   // solo si IMAN_HOLD_CONTINUOUS=0
-#define IMAN_HOLD_OFF_MS             50    // solo si IMAN_HOLD_CONTINUOUS=0
+#define IMAN_VERSION                 "2.4-iman-pulse10"
+// F97.2b (ensayo de compromiso): pulsos rápidos 10 ms ON / 5 ms OFF.
+// La corriente media es ~66 % de la continua, pero el corte es mucho más
+// corto que 100/100. ADVERTENCIA: 100 Hz no es apto para un relé mecánico;
+// solo debe probarse si la etapa de salida es transistor/MOSFET.
+#define IMAN_HOLD_CONTINUOUS         0     // 0 = pulsado 10/5; 1 = continuo
+#define IMAN_HOLD_ON_MS              10    // corriente 10 ms
+#define IMAN_HOLD_OFF_MS             5     // reposo 5 ms
 #define IMAN_OPEN_WAIT_MS            4000  // espera de apertura tras el QR
 #define IMAN_CLOSE_STABLE_MS         300   // cierre estable antes de rearmar
 #define IMAN_LINK_GRACE_MS           15000 // tolerancia de reconexión SSE

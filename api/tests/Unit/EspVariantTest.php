@@ -67,20 +67,20 @@ checkEsp(str_contains($legacy, 'startLockSequence') && str_contains($legacy, 'LO
 
 // ── ESP-imán: variante, estados y seguridad eléctrica ─────────────────────
 checkEsp(str_contains($iman, '#define IMAN_VARIANT                 "IMAN"')
-    && str_contains($iman, '#define IMAN_VERSION                 "2.3-iman-projection"'),
+    && str_contains($iman, '#define IMAN_VERSION                 "2.4-iman-pulse10"'),
     'ESP-imán declara variante y versión');
-checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         1')
+checkEsp(str_contains($iman, '#define IMAN_HOLD_CONTINUOUS         0')
     && str_contains($iman, '#if IMAN_HOLD_CONTINUOUS')
     && str_contains($iman, 'if (!imanOutputOn) imanOutput(true);'),
-    'perfil de ensayo continuo a máxima potencia');
-checkEsp(str_contains($iman, 'mantenimiento CONTINUO (ensayo F97.2 máxima potencia)'),
-    'el arranque registra el perfil continuo');
+    'perfil continuo conservado para poder revertir');
+checkEsp(str_contains($iman, 'IMAN_HOLD_ON_MS              10')
+    && str_contains($iman, 'IMAN_HOLD_OFF_MS             5'),
+    'perfil de ensayo 10 ms ON / 5 ms OFF');
+checkEsp(str_contains($iman, 'ADVERTENCIA: 100 Hz no es apto para un relé mecánico'),
+    'se documenta que 10/5 requiere etapa transistor/MOSFET');
 checkEsp(str_contains($iman, 'actuator_state') && str_contains($iman, 'output_on')
     && str_contains($iman, 'door_link'),
     'el heartbeat declara estado real del actuador y del canal');
-checkEsp(str_contains($iman, 'IMAN_HOLD_ON_MS              950')
-    && str_contains($iman, 'IMAN_HOLD_OFF_MS             50'),
-    'perfil pulsado 950/50 conservado para poder revertir');
 checkEsp(str_contains($iman, 'IMAN_OPEN_WAIT_MS            4000')
     && str_contains($iman, 'IMAN_CLOSE_STABLE_MS         300'),
     'ventana de apertura 4 s y cierre estable 300 ms');

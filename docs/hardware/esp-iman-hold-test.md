@@ -8,16 +8,26 @@
 | Perfil | Mantenimiento | Resultado |
 |---|---|---|
 | F97.1 | 950 ms ON / 50 ms OFF | Seguía dando poca fuerza |
-| **F97.2 (actual)** | **Continuo a máxima potencia** | Pendiente de medir |
+| **F97.2** | Continuo a máxima potencia | Poca fuerza / calor |
+| **F97.2b (actual)** | **10 ms ON / 5 ms OFF** | Pendiente de medir |
 
-## F97.2 — máxima potencia (actual)
+## F97.2b — pulsos rápidos 10/5 (actual)
+
+- Versión: `2.4-iman-pulse10`
+- Corriente media ≈ 66 % de la continua; el corte es de 5 ms, mucho más corto
+  que 100/100.
+- **Riesgo:** 100 Hz no es apto para un relé mecánico. Solo probar si la etapa
+  de salida es transistor/MOSFET; si se oye zumbido o chattering, detener.
+- Verificar temperatura y fuerza a 1, 3, 5, 10 y 15 minutos.
+
+## F97.2 — máxima potencia (referencia)
 
 Objetivo: comprobar la fuerza real del imán sin ningún parpadeo de
 mantenimiento. Es la referencia de máxima potencia y también la de mayor
 consumo y calentamiento.
 
 - Sketch: `firmware/esp-iman/`
-- Versión: `2.3-iman-projection`
+- Versión: `2.4-iman-pulse10`
 - `IMAN_HOLD_CONTINUOUS=1`: la salida permanece encendida.
 - `IMAN_HOLD_CONTINUOUS=0` recupera el perfil pulsado 950/50.
 - El arranque registra por serie:

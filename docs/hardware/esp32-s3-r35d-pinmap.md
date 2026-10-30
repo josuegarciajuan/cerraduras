@@ -128,7 +128,7 @@ Misma placa y mismo pinout; cambia el actuador conectado a GPIO15.
 | Variante | Sketch | Reposo | Apertura |
 |---|---|---|---|
 | ESP-cerradura | `firmware/esp-cerradura/` | GPIO15 LOW (sin corriente) | secuencia del proveedor |
-| ESP-imán | `firmware/esp-iman/` | continuo a máxima potencia (ensayo F97.2) | GPIO15 LOW hasta cierre físico |
+| ESP-imán | `firmware/esp-iman/` | 10 ms ON / 5 ms OFF (ensayo F97.2b) | GPIO15 LOW hasta cierre físico |
 
 - El sensor de puerta de ESP-imán es el `PROXIMITY` Zigbee del mismo pack.
 - ESP-imán recibe el estado por `/dashboard-api/door-events` (SSE); no hay
