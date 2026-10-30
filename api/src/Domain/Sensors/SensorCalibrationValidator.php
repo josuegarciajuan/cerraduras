@@ -440,7 +440,7 @@ final class SensorCalibrationValidator
     private static function radarInside(array $params, array $ctx): array
     {
         $session = (array) ($ctx['calibration_session'] ?? []);
-        if ((int) ($session['version'] ?? 0) === 2) {
+        if ((int) ($session['version'] ?? 0) >= 2) {
             return self::radarInsideV2($ctx, $session);
         }
         $hold = (int) ($params['hold_seconds'] ?? 30);
@@ -514,7 +514,7 @@ final class SensorCalibrationValidator
     private static function radarOutside(array $params, array $ctx): array
     {
         $session = (array) ($ctx['calibration_session'] ?? []);
-        if ((int) ($session['version'] ?? 0) === 2) {
+        if ((int) ($session['version'] ?? 0) >= 2) {
             return self::radarOutsideV2($params, $ctx, $session);
         }
         $minElapsed = (int) ($params['min_elapsed_seconds'] ?? 50);
@@ -572,7 +572,7 @@ final class SensorCalibrationValidator
                 return self::result(self::FAIL, 'outside_detected_calibration', $details);
             }
         }
-        $newSession = (int) ($session['version'] ?? 0) === 2;
+        $newSession = (int) ($session['version'] ?? 0) >= 2;
         if ($newSession && empty($session['outside_valid'])) {
             return self::result(self::FAIL, 'outside_not_measured', $details);
         }

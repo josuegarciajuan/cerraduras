@@ -6884,6 +6884,117 @@ PYFIX
 fi
 
 # =============================================================================
+# BLOCK 68C — F104: autocalibración del radar por barrido y punto medio
+# Trazabilidad: RF-213, RF-214, RF-215, RF-216
+# =============================================================================
+block "BLOCK 68C — F104: autocalibración del radar"
+
+for f in src/Domain/Sensors/RadarBoundaryScan.php src/Domain/Sensors/RadarCalibrationPlanner.php \
+         tests/Unit/RadarBoundaryScanTest.php tests/Unit/RadarWizardV3Test.php \
+         public/assets/sensor-wizard-v2.js public/assets/sensor-tests-v2.json; do
+    if [ -f "$f" ]; then
+        pass "F104: $f presente"
+    else
+        fail "F104: $f" "falta"
+    fi
+done
+
+if grep -q "planMidpoint" src/Domain/Sensors/RadarCalibrationPlanner.php \
+    && grep -q "RadarBoundaryScan" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "persistCalibration" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php; then
+    pass "F104: dominio y persistencia cableados"
+else
+    fail "F104: cableado" "faltan planMidpoint/RadarBoundaryScan/persistCalibration"
+fi
+
+if grep -q "start_scan" public/assets/sensor-wizard-v2.js \
+    && grep -q "finish_scan" public/assets/sensor-wizard-v2.js \
+    && grep -q "start_verify" public/assets/sensor-wizard-v2.js \
+    && grep -q "finish_verify" public/assets/sensor-wizard-v2.js; then
+    pass "F104: UI con barrido y verificación exterior"
+else
+    fail "F104: UI" "faltan acciones del flujo nuevo"
+fi
+
+if grep -q "OUTSIDE_SCAN" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "OUTSIDE_VERIFY" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "no_distance_separation" src/Http/Controllers/SensorWizardController.php; then
+    pass "F104: máquina de estados con frontera y parada segura"
+else
+    fail "F104: estados" "faltan OUTSIDE_SCAN/OUTSIDE_VERIFY/no_distance_separation"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F104_FIX="run/sensores/f104-state-fixture.json"
+    python3 - "$F104_FIX" <<'PYFIX'
+import json, sys
+base = {
+    "run_id": "f104-state-fixture", "catalog": "sensores", "catalog_version": 3,
+    "room_id": 14, "status": "running", "operator": "runner",
+    "plan": ["radar_inside", "radar_outside"],
+    "calibration": {"initial_settings": {"maximum_range": 6, "radar_sensitivity": 7}},
+    "calibration_session": {
+        "version": 3, "model": "boundary_scan_v1", "config_version": 1,
+        "phase": "OUTSIDE_SCAN", "state": "IDLE",
+        "current": {"maximum_range": 6, "radar_sensitivity": 7},
+        "inside_valid": {"sufficient": True, "detected": True, "config_version": 1},
+        "inside_ref": {"reference": 3.0, "quality": "good",
+                        "distance": {"max": 3.0, "quality": "good"}},
+        "outside_scan": None, "outside_valid": None, "outside_pass": None,
+        "reentry": None, "last_measurement": None, "calibration": None,
+        "candidates": [], "active_operation": None, "operations": [], "measurements": [],
+    },
+}
+json.dump(base, open(sys.argv[1], "w"))
+PYFIX
+    F104_SCAN=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
+    F104_SCAN_OK=$(printf '%s' "$F104_SCAN" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('model')=='boundary_scan_v1' and d.get('phase')=='OUTSIDE_SCAN' and 'start_scan' in a else 'bad')" 2>/dev/null)
+    if [ "$F104_SCAN_OK" = "ok" ]; then
+        pass "F104: radar/state expone barrido y start_scan"
+    else
+        fail "F104: radar/state" "$(printf '%s' "$F104_SCAN" | head -c 300)"
+    fi
+
+    python3 - "$F104_FIX" <<'PYFIX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["calibration_session"]
+s["state"] = "STOPPED"
+s["result"] = "no_distance_separation"
+json.dump(d, open(sys.argv[1], "w"))
+PYFIX
+    F104_STOP=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
+    F104_STOP_OK=$(printf '%s' "$F104_STOP" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin separación por distancia' and 'start_scan' in a and 'restore' in a else 'bad')" 2>/dev/null)
+    if [ "$F104_STOP_OK" = "ok" ]; then
+        pass "F104: sin separación → parar y ofrecer repetir/restaurar"
+    else
+        fail "F104: parada segura" "$(printf '%s' "$F104_STOP" | head -c 300)"
+    fi
+
+    python3 - "$F104_FIX" <<'PYFIX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["calibration_session"]
+s["state"] = "SCAN_READY"
+s["result"] = None
+s["active_operation"] = {"operation_id": "op-f104", "kind": "SCAN", "state": "MEASURING",
+    "window_start": "2026-10-30T12:00:00Z", "window_end": "2026-10-30T12:01:00Z",
+    "config_version": 1, "seed": {}}
+json.dump(d, open(sys.argv[1], "w"))
+PYFIX
+    F104_READY=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f104-state-fixture&step_id=radar_outside")
+    F104_READY_OK=$(printf '%s' "$F104_READY" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if 'finish_scan' in a else 'bad')" 2>/dev/null)
+    if [ "$F104_READY_OK" = "ok" ]; then
+        pass "F104: frontera detectada → finish_scan automático"
+    else
+        fail "F104: SCAN_READY" "$(printf '%s' "$F104_READY" | head -c 300)"
+    fi
+    rm -f "$F104_FIX" "run/sensores/locks/f104-state-fixture.lock"
+else
+    skip "F104 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # BLOCK 69 — F96: llaves de acceso, fichas NFC y auditoría
 # Trazabilidad: RF-168..RF-175
 # =============================================================================

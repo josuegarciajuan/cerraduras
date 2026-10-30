@@ -12723,3 +12723,53 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   distingue "sin reportes nuevos" de "sensor sin datos".
 - Ventana de medición: 30 s (`max(30, fading_time + 5)`, máx. 60).
 - Sin migración, sin nuevas rutas y sin polling a Tuya.
+
+# Fase 104 — Autocalibración del radar por frontera (RF-213..RF-218)
+
+## RF-213: Barrido de salida
+- Tras la medición interior, el paso exterior comienza con el técnico dentro y
+  el radar en `PRESENT` fresco. La app abre una ventana de barrido.
+- El técnico camina hacia fuera hasta que el radar lo pierde. La app registra la
+  última distancia válida con `PRESENT` antes del primer `ABSENT` (`B`) y exige
+  una ausencia mantenida (6 s o 2 reportes) para cerrar la ventana.
+- Un barrido sin `PRESENT`, sin transición, sin distancia o sin ausencia
+  suficiente no se usa para ajustar: se detiene y se pide repetir.
+
+## RF-214: Punto medio y márgenes
+- `I` es la referencia interior (máximo de las muestras de `target_distance`
+  de la medición interior; si no hay muestras, la última distancia conocida).
+- Si `B - I >= 0.45 m`, el candidato es `R = (I + B) / 2`, ajustado a la rejilla
+  de 0,15 m y acotado a `[I + 0.15, B - 0.15]`.
+- Si el punto exterior detectado tiene distancia `P`, también debe cumplirse
+  `P - I >= 0.45 m` y `R <= P - 0.15 m`.
+- Si no existe separación por distancia, la app **no** cambia el alcance ni baja
+  la sensibilidad a ciegas: detiene la prueba y lo notifica.
+
+## RF-215: Aplicación automática
+- El candidato se publica por MQTT (`<topic>/set`), se confirma con un reporte
+  nuevo del radar y se estabiliza. No hay botón de «Aplicar» ni de
+  «Ajustar y volver a medir» en el flujo principal.
+- La calibración confirmada se persiste en `devices.meta_json.calibration` sin
+  escribir de nuevo en el dispositivo.
+
+## RF-216: Verificación y sensibilidad
+- Tras aplicar, se verifica el punto exterior (20-30 s). Si sigue detectando y
+  hay separación válida, se baja la sensibilidad un paso y se repite, con un
+  máximo de 3 intentos.
+- La reentrada debe detectar `PRESENT`. Si falla, se sube sensibilidad o alcance
+  un paso y se reintenta; si se agota, se detiene y se ofrece restaurar.
+- La pasada de tres veces por delante de la puerta se mantiene.
+
+## RF-217: Estados, UI y trazabilidad
+- Sesión de calibración v3 (`model=boundary_scan_v1`), fases `OUTSIDE_SCAN` y
+  `OUTSIDE_VERIFY`.
+- `/radar/state` expone `scan`, `scan_preview`, `calibration` y las acciones
+  `start_scan`, `finish_scan`, `start_verify`, `finish_verify`.
+- La UI muestra `I`, `B`, `R`, sensibilidad e intentos. El cierre del barrido y
+  de la verificación se dispara al detectar la transición/ventana.
+- Sin migración de BD, sin pollers y sin llamadas a Tuya.
+
+## RF-218: Restauración y compatibilidad
+- `restore` publica el baseline; al confirmarse, vuelve al inicio del paso
+  (interior o barrido) y limpia la evidencia de la calibración fallida.
+- Las corridas v2 siguen funcionando con el motor anterior; las nuevas usan v3.

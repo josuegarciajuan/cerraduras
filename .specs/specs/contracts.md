@@ -15639,3 +15639,37 @@ ventana no ha terminado. `restore` no exige intento activo.
 - `409 reentry_not_clear` si el radar crudo sigue en `PRESENT` al iniciar reentrada.
 - `start_measure` en fase `REENTRY` se interpreta como reentrada.
 - Un ajuste en `REENTRY` reinicia la fase a `OUTSIDE_FIXED`.
+
+## §F104 Autocalibración por barrido
+
+`GET /dashboard-api/sensores/v2/radar/state` añade de forma aditiva:
+
+- `model`: `boundary_scan_v1` en sesiones nuevas.
+- `scan`: último barrido cerrado (`sufficient`, `reason`, `boundary_distance`,
+  `boundary_samples`, `distance`, `presents`, `absents`, `first_absent_at`,
+  `clear_seconds`, `config_version`).
+- `scan_preview`: resumen en vivo cuando el barrido ya es suficiente.
+- `calibration`: `inside_reference`, `boundary`, `outside_point`,
+  `target_range`, `sensitivity`, `confidence`, `attempts`, `reason`,
+  `updated_at`.
+- `next_actions` puede incluir `start_scan`, `finish_scan`, `start_verify`,
+  `finish_verify` además de las existentes.
+
+`POST /dashboard-api/sensores/v2/radar/operation` acciones nuevas:
+
+- `start_scan`: solo en `OUTSIDE_SCAN`; exige `PRESENT` crudo fresco.
+  `409 scan_must_start_inside` si no.
+- `finish_scan`: cierra el barrido y aplica automáticamente el punto medio si
+  procede.
+- `start_verify`: abre la verificación exterior (20-30 s).
+- `finish_verify`: cierra la verificación; si no detecta pasa a `OUTSIDE_PASS`.
+- `finish_reentry`: además de las acciones existentes.
+
+Errores/estados nuevos: `scan_insufficient:*`, `verify_insufficient:*`,
+`no_distance_separation`, `boundary_missing`, `inside_reference_missing`,
+`scan_must_start_inside`. En `no_distance_separation` no se publica ningún
+ajuste de sensibilidad; se detiene y se ofrece `start_scan`/`restore`.
+
+`restore` en v3 vuelve a `INSIDE` (si se estaba midiendo dentro) o a
+`OUTSIDE_SCAN` (si se estaba fuera), limpia la evidencia de la calibración
+fallida y conserva la referencia interior cuando el paso era el exterior.

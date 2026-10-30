@@ -99,5 +99,88 @@ $plan6 = RadarCalibrationPlanner::plan($insideGood, $overlap, $settings, $caps,
     ['inside_present' => true, 'outside_present' => true]);
 same('rangos solapados → comportamiento', $plan6['reason'], 'outside_detected');
 
+// ── F104: punto medio automático ──────────────────────────────────────
+echo "\nRadar midpoint planner (F104)\n";
+$fineCaps = ['range_min' => 0.15, 'range_max' => 9.5, 'range_step' => 0.15,
+    'sens_min' => 0, 'sens_max' => 9, 'min_separation' => 0.45, 'margin' => 0.15];
+$insideRef = ['detected' => true, 'sufficient' => true,
+    'distance' => ['quality' => 'good', 'min' => 2.8, 'max' => 3.0, 'median' => 2.9]];
+$scanOk = ['sufficient' => true, 'boundary_distance' => 4.2, 'reason' => 'boundary_found',
+    'distance' => ['quality' => 'good', 'min' => 3.9, 'max' => 4.2, 'median' => 4.1]];
+$curMid = ['maximum_range' => 3.9, 'radar_sensitivity' => 7];
+
+$mid = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk, null, $curMid, $fineCaps);
+same('punto medio → apply', $mid['action'], 'apply');
+same('punto medio = (I+B)/2', $mid['candidate'], 3.6);
+same('motivo midpoint', $mid['reason'], 'midpoint');
+same('referencia interior', $mid['inside_reference'], 3.0);
+same('frontera', $mid['boundary'], 4.2);
+
+$midSame = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk, null,
+    ['maximum_range' => 3.6, 'radar_sensitivity' => 7], $fineCaps);
+same('punto medio ya aplicado → none', $midSame['action'], 'none');
+same('motivo already_calibrated', $midSame['reason'], 'already_calibrated');
+
+$noSep = RadarCalibrationPlanner::planMidpoint($insideRef,
+    ['sufficient' => true, 'boundary_distance' => 3.2, 'reason' => 'boundary_found',
+        'distance' => ['quality' => 'fair', 'min' => 2.9, 'max' => 3.2, 'median' => 3.1]],
+    null, $curMid, $fineCaps);
+same('sin separación → stop', $noSep['action'], 'stop');
+same('motivo no_distance_separation', $noSep['reason'], 'no_distance_separation');
+
+$outsideCloser = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
+    ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 2.5, 'max' => 2.7, 'median' => 2.6]],
+    $curMid, $fineCaps, ['outside_present' => true]);
+same('punto exterior más cerca → stop', $outsideCloser['action'], 'stop');
+same('motivo exterior más cerca', $outsideCloser['reason'], 'no_distance_separation');
+
+$outsideEdge = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
+    ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 3.8, 'max' => 4.0, 'median' => 3.9]],
+    $curMid, $fineCaps, ['outside_present' => true]);
+same('punto exterior con separación → apply', $outsideEdge['action'], 'apply');
+check('candidato por debajo del punto exterior', $outsideEdge['candidate'] <= 3.65);
+
+$sens = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
+    ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 3.8, 'max' => 4.0, 'median' => 3.9]],
+    ['maximum_range' => 3.6, 'radar_sensitivity' => 7], $fineCaps, ['outside_present' => true]);
+same('fuera detectado con candidato actual → sensibilidad', $sens['action'], 'apply');
+same('baja sensibilidad un paso', $sens['params']['radar_sensitivity'] ?? null, 6);
+same('motivo outside_still_detected_sensitivity', $sens['reason'], 'outside_still_detected_sensitivity');
+
+$sensLimit = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk,
+    ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 3.8, 'max' => 4.0, 'median' => 3.9]],
+    ['maximum_range' => 3.6, 'radar_sensitivity' => 0], $fineCaps, ['outside_present' => true]);
+same('sensibilidad al mínimo → stop', $sensLimit['action'], 'stop');
+
+$reentry = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk, null,
+    ['maximum_range' => 3.6, 'radar_sensitivity' => 6], $fineCaps, ['reentry_failed' => true]);
+same('reentrada fallida → apply', $reentry['action'], 'apply');
+same('reentrada fallida sube sensibilidad', $reentry['params']['radar_sensitivity'] ?? null, 7);
+
+$scanBad = RadarCalibrationPlanner::planMidpoint($insideRef,
+    ['sufficient' => false, 'boundary_distance' => null, 'reason' => 'no_transition'],
+    null, $curMid, $fineCaps);
+same('barrido insuficiente → stop', $scanBad['action'], 'stop');
+same('motivo scan_insufficient', str_starts_with($scanBad['reason'], 'scan_insufficient:'), true);
+
+$tried = RadarCalibrationPlanner::planMidpoint($insideRef, $scanOk, null, $curMid, $fineCaps,
+    ['tried' => [['params' => ['maximum_range' => 3.6]]]]);
+same('candidato repetido sin detección fuera → stop', $tried['action'], 'stop');
+same('motivo candidate_already_tried', $tried['reason'], 'candidate_already_tried');
+
+$noInside = RadarCalibrationPlanner::planMidpoint(['detected' => false, 'sufficient' => true],
+    $scanOk, null, ['maximum_range' => 6.0, 'radar_sensitivity' => 5], $fineCaps,
+    ['inside_present' => false]);
+same('interior no detectado → sube sensibilidad', $noInside['action'], 'apply');
+same('motivo inside_not_detected_sensitivity', $noInside['reason'], 'inside_not_detected_sensitivity');
+
+$tight = RadarCalibrationPlanner::planMidpoint(
+    ['detected' => true, 'distance' => ['quality' => 'fair', 'min' => 2.8, 'max' => 3.0, 'median' => 2.9]],
+    ['sufficient' => true, 'boundary_distance' => 3.5, 'reason' => 'boundary_found',
+        'distance' => ['quality' => 'fair', 'min' => 3.2, 'max' => 3.5, 'median' => 3.4]],
+    null, ['maximum_range' => 3.9, 'radar_sensitivity' => 7], $fineCaps);
+same('separación mínima → punto medio', $tight['action'], 'apply');
+check('candidato dentro de márgenes', $tight['candidate'] >= 3.15 && $tight['candidate'] <= 3.35);
+
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);
