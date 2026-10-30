@@ -11087,3 +11087,29 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 ## TSK-F102-04: Verificación
 - [x] Regresión **867/0/13** y BLOCK 68B.
 - [ ] Prueba física completa.
+
+# Fase 103 — Tareas
+
+## TSK-F103-01: Especificación
+- [x] RF-207..RF-212 y contratos aditivos.
+
+## TSK-F103-02: Dominio
+- [x] `RadarEvidencePolicy` (seed y guardas sobre señal cruda).
+- [x] `RadarMeasurement` con `state_hold`, `transition` y `outcomeForPhase`.
+- [x] Frescura de candidatos en `IotSessionService` (RF-161).
+
+## TSK-F103-03: Controlador
+- [x] Seed crudo, ventana de 30 s y guarda con `presence_stale_seconds`.
+- [x] `reentry_not_clear`, snapshot de efectos y `start_measure` en reentrada.
+- [x] `OUTSIDE_PASS` sin candidatos → `DONE/PASS`.
+- [x] Ajuste de reentrada → `OUTSIDE_FIXED`.
+
+## TSK-F103-04: Validador v2
+- [x] Autoridad de la sesión F102 y efectos antes de reentrada.
+
+## TSK-F103-05: UI
+- [x] Estado crudo en vivo, textos de orden correcto y cache-bust.
+
+## TSK-F103-06: Verificación
+- [x] Units F103 + BLOCK 68B + regresión.
+- [ ] Prueba física completa en `/sensores`.
