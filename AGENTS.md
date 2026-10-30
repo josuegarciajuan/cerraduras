@@ -319,6 +319,9 @@ hasta el momento (regresión completa). Debe ejecutarse:
   `scan/scan_preview/calibration` aditivos. Cierre automático en `radar/state`.
 - **Restauración (RF-218)**: `restore` vuelve al inicio del paso y limpia la
   evidencia fallida; las sesiones v2 conservan el motor anterior.
+- **Polaridad (F104.1)**: al empezar, la puerta se asume cerrada. `door/polarity`
+  usa el último reporte del SNZB-04P aunque sea antiguo (es edge-triggered), sin
+  pedir «abre y cierra una vez».
 - **Verificación**: units `RadarBoundaryScanTest`, `RadarWizardV3Test`,
   ampliaciones de `RadarCalibrationTest` y `SensorCalibrationValidatorTest`;
   BLOCK 68C del runner. Sin migración ni polling a Tuya.

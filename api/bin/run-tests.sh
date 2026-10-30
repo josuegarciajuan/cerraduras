@@ -6924,6 +6924,12 @@ else
     fail "F104: estados" "faltan OUTSIDE_SCAN/OUTSIDE_VERIFY/no_distance_separation"
 fi
 
+if ! grep -q "El último evento de la puerta es antiguo" src/Http/Controllers/SensorWizardController.php; then
+    pass "F104: polaridad no exige un evento reciente (puerta cerrada confirmada)"
+else
+    fail "F104: polaridad" "sigue rechazando eventos antiguos"
+fi
+
 if [ "$SERVER_UP" = true ]; then
     F104_FIX="run/sensores/f104-state-fixture.json"
     python3 - "$F104_FIX" <<'PYFIX'
