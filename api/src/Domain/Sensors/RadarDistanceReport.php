@@ -82,6 +82,11 @@ final class RadarDistanceReport
             $out[$key] = round((float) $settings[$key], 3);
             $known++;
         }
-        return $known === 0 ? null : json_encode($out, JSON_THROW_ON_ERROR);
+        if ($known === 0) {
+            return null;
+        }
+        // F108: la columna es VARCHAR(64); se guarda un hash estable de 64
+        // caracteres en lugar del JSON, que se truncaría.
+        return hash('sha256', json_encode($out, JSON_THROW_ON_ERROR));
     }
 }

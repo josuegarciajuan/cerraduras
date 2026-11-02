@@ -3571,8 +3571,8 @@ final class SensorWizardController
             $windowStart,
             $windowEnd,
             [
-                'min_samples' => 2,
-                'min_span_seconds' => 5,
+                'min_samples' => 1,
+                'min_span_seconds' => 0,
                 'tolerance' => 0.30,
                 'coverage' => 0.80,
                 'device_id' => $this->radarDeviceIdForRoom($roomId),
@@ -3620,7 +3620,7 @@ final class SensorWizardController
             'spread' => $distance['spread'] ?? null,
             'median' => $distance['median'] ?? null,
             'tolerance' => $distance['tolerance'] ?? 0.30,
-            'min_samples' => $distance['min_samples'] ?? 2,
+            'min_samples' => $distance['min_samples'] ?? 1,
             'positive_span_seconds' => $distance['positive_span_seconds'] ?? null,
             'discarded_device' => $distance['discarded_device'] ?? 0,
             'discarded_config' => $distance['discarded_config'] ?? 0,
@@ -3678,8 +3678,8 @@ final class SensorWizardController
             $windowStart,
             $windowEnd,
             [
-                'min_samples' => 2,
-                'min_span_seconds' => 5,
+                'min_samples' => 1,
+                'min_span_seconds' => 0,
                 'tolerance' => 0.30,
                 'coverage' => 0.80,
                 'device_id' => $this->radarDeviceIdForRoom((int) $run['room_id']),
@@ -3724,7 +3724,7 @@ final class SensorWizardController
             $copy['instruction'] = $where . '. Permanece en el punto y no te desplaces; '
                 . 'si el radar no comunica nuevas muestras, repite la medición.';
             $copy['message'] = 'Lecturas nuevas: ' . (int) ($point['fresh_readings'] ?? 0)
-                . ' de ' . (int) ($point['min_samples'] ?? 2)
+                . ' de ' . (int) ($point['min_samples'] ?? 1)
                 . '. Necesitamos dos distancias nuevas y coherentes. ' . $diag;
         } elseif ($help === RadarPointMeasurement::HELP_POSITION) {
             $copy['instruction'] = $where . (

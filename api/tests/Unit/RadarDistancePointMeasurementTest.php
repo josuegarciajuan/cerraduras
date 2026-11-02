@@ -133,6 +133,19 @@ $query = analyze([
 same('reportes de consulta cuentan', $query['status'], 'accepted');
 same('dos reportes de consulta', $query['query_reports'], 2);
 
+$single = analyze([
+    report(0, 2.71, 'only'),
+], ['min_samples' => 1, 'min_span_seconds' => 0]);
+same('F108: una lectura fresca es suficiente', $single['status'], 'accepted');
+same('F108: una muestra positiva', $single['positive_reports'], 1);
+same('F108: media de una muestra', $single['mean'], 2.71);
+same('F108: cobertura de una muestra', $single['coverage'], 1.0);
+
+$singleZero = analyze([
+    report(0, 0.0, 'zero'),
+], ['min_samples' => 1, 'min_span_seconds' => 0]);
+same('F108: un cero no es distancia', $singleZero['status'], 'no_distance');
+
 $zeroSpan = analyze([
     report(0, 0.0, 'z'),
     report(29, 2.71, 'a'),
