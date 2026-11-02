@@ -8124,7 +8124,7 @@ else
   fail "F110: modelo solo interior" "faltan piezas"
 fi
 
-if grep -q "20–30 cm" public/assets/sensor-tests-v2.json     && grep -q "No hace falta medir distancia" public/assets/sensor-tests-v2.json; then
+if grep -q "20–30 cm" public/assets/sensor-tests-v2.json     && grep -q "NO es una calibración de distancia" public/assets/sensor-tests-v2.json; then
   pass "F110: instrucciones laterales y verificación por presencia"
 else
   fail "F110: instrucciones" "catálogo desactualizado"
