@@ -361,11 +361,13 @@ final class RadarCalibrationPlanner
         if ($insideRef === null || !is_finite($insideRef) || $insideRef <= 0) {
             return null;
         }
-        $candidate = self::snap($insideRef + max(0.0, $margin), $caps);
-        if ($candidate <= $insideRef + 0.0001) {
-            $step = max(0.01, (float) $caps['range_step']);
-            $candidate = self::snap($insideRef + $step, $caps);
-        }
+        $min = (float) $caps['range_min'];
+        $step = max(0.01, (float) $caps['range_step']);
+        $raw = $insideRef + max(0.0, $margin);
+        // F110: la rejilla del radar es de 0,15 m. Se elige el primer valor
+        // que NO quede por debajo del margen solicitado.
+        $steps = (int) ceil(($raw - $min) / $step - 0.0000001);
+        $candidate = round($min + max(0, $steps) * $step, 3);
         if ($candidate <= $insideRef + 0.0001 || $candidate > (float) $caps['range_max'] + 0.0001) {
             return null;
         }
@@ -382,7 +384,8 @@ final class RadarCalibrationPlanner
     {
         $step = max(0.01, (float) $caps['range_step']);
         $candidate = self::snap($current - $step, $caps);
-        if ($candidate <= $insideRef + max(0.0, $margin) + 0.0001) {
+        if ($candidate < (float) $caps['range_min'] - 0.0001
+            || $candidate <= $insideRef + max(0.0, $margin) + 0.0001) {
             return null;
         }
         return $candidate;

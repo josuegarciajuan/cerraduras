@@ -709,8 +709,7 @@ final class SensorCalibrationValidator
                 // evidencia suficiente; una medición normalizada también vale.
                 $absents = (int) ($m['absent_reports'] ?? 0);
                 $last = strtoupper((string) ($m['last_value'] ?? ''));
-                if (($m['sufficient'] ?? false) !== true
-                    && ($absents < 2 || $last !== 'ABSENT')) {
+                if ($absents < 2 || $last !== 'ABSENT') {
                     return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
                 }
                 continue;

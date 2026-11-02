@@ -158,6 +158,25 @@ $shortWindow = RadarMeasurement::build([], $start, '2026-10-30T09:00:05.000Z', 3
 same('ventana < 10 s con seed → insuficiente', $shortWindow['sufficient'], false);
 same('ventana < 10 s → motivo', $shortWindow['reason'], 'window_too_short');
 
+// F110: captura de la primera subfase como referencia interior
+$seedMeasurement = [
+    'seed_state' => 'PRESENT', 'seed_distance' => 3.40, 'seed_age_seconds' => 36,
+    'seed_at' => '2026-10-30T08:59:50.000Z',
+    'window' => ['started_at' => $start, 'ended_at' => $end],
+    'window_seconds' => 20,
+];
+$seedPoint = RadarMeasurement::insideSeedPoint($seedMeasurement);
+check('F110: semilla PRESENT reciente → punto', is_array($seedPoint));
+same('F110: semilla motivo', $seedPoint['reason'] ?? null, 'seed_distance_hold');
+same('F110: semilla mediana', $seedPoint['median'] ?? null, 3.40);
+same('F110: semilla detectada', $seedPoint['detected'] ?? null, true);
+$seedAbsentPoint = RadarMeasurement::insideSeedPoint(array_merge($seedMeasurement, ['seed_state' => 'ABSENT']));
+same('F110: semilla ABSENT → null', $seedAbsentPoint, null);
+$seedOldPoint = RadarMeasurement::insideSeedPoint(array_merge($seedMeasurement, ['seed_age_seconds' => 61]));
+same('F110: semilla >60 s → null', $seedOldPoint, null);
+$seedZeroPoint = RadarMeasurement::insideSeedPoint(array_merge($seedMeasurement, ['seed_distance' => 0]));
+same('F110: semilla 0 → null', $seedZeroPoint, null);
+
 $seedChanged = RadarMeasurement::build([
     ev('PRESENT', 0, 3, 5), ev('PRESENT', 2, 3, 4), ev('PRESENT', 4, 3, 4),
     ev('PRESENT', 6, 3, 4), ev('PRESENT', 8, 3, 4), ev('PRESENT', 10, 3, 4),

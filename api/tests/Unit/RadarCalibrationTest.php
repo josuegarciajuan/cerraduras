@@ -247,6 +247,11 @@ same('F110: interior fuera de rango → null', RadarCalibrationPlanner::insideOn
 same('F110: interior en el máximo no deja margen → null', RadarCalibrationPlanner::insideOnlyCandidate(9.5, $f110Caps), null);
 same('F110: bajar 3,75 con interior 3,35 → 3,60', RadarCalibrationPlanner::lowerCandidate(3.75, 3.35, $f110Caps), 3.60);
 same('F110: no bajar si rompe el margen interior → null', RadarCalibrationPlanner::lowerCandidate(3.45, 3.35, $f110Caps), null);
+$f110MinCaps = ['range_min' => 0.6, 'range_max' => 9.5, 'range_step' => 0.15,
+    'sens_min' => 0, 'sens_max' => 9];
+same('F110: 2,81 + 0,10 → 3,00 (nunca menos de 0,10)', RadarCalibrationPlanner::insideOnlyCandidate(2.81, $f110MinCaps), 3.0);
+same('F110: 2,80 + 0,10 → 3,00', RadarCalibrationPlanner::insideOnlyCandidate(2.80, $f110MinCaps), 3.0);
+same('F110: no bajar por debajo del mínimo 0,6', RadarCalibrationPlanner::lowerCandidate(0.70, 0.55, $f110MinCaps), null);
 same('F110: baseline 6,0 / 0,6 / sens 7 / delay 0,1 / fading 15,5',
     ZigbeeRadarCalibrationService::BASELINE,
     ['maximum_range' => 6.0, 'minimum_range' => 0.6, 'radar_sensitivity' => 7,

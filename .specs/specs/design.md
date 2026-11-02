@@ -25587,6 +25587,8 @@ Comprobado el 2026-11-02:
   `read-state.js`; el controlador espera `last_seen_at` fresco.
 - `switch/test` reintenta la conexión con `probeSwitch()` si el comando no
   produce un reporte nuevo; `reachable` y `fresh` son campos separados.
+- `radar_distance_reports` guarda solo DP9 positivos; retención 30 días mediante
+  `bin/radar-distance-retention.php` y timer systemd.
 - `startAttempt('light')` devuelve `switch_unreachable` si la sonda no responde.
 - `switch/test` devuelve `reachability_source=command|probe`; un OFF redundante
   no debe marcar la luz como desconectada.
@@ -25626,6 +25628,9 @@ Comprobado el 2026-11-02:
 - La sesión v5 usa `inside_valid`/`inside_ref` como referencia interior.
 - En el interior se llama a `RadarDistancePointMeasurement` con `lateral=true`:
   no exige coherencia entre pasos; usa todas las lecturas positivas y su mediana.
+- La ventana interior es de 60 s (`RADAR_INSIDE_WINDOW_SECONDS`).
+- Si no hay DP9 nuevo, `RadarMeasurement::insideSeedPoint()` usa la distancia
+  PRESENT de la primera subfase (<=60 s) y la marca `seed_distance_hold`.
 - `RadarCalibrationPlanner::insideOnlyCandidate()` calcula
   `snap(interior + 0,10)`; devuelve `null` si no queda margen.
 - Al aprobar `radar_inside` —tanto por `attempt/check` como por el botón

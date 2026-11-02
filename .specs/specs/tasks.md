@@ -11411,3 +11411,15 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `switch/test` con fallback `probeSwitch` y `reachability_source`.
 - [x] Test de validador y comprobaciones de runner.
 - [ ] Verificación física de luz (corrida preparada `14-20261102T150939Z-ac8d02`).
+
+## TSK-F110-06: Estabilidad final del radar
+- [x] Semilla de la primera subfase y ventana de 60 s.
+- [x] Referencia interior por mediana.
+- [x] `OUTSIDE_PASS` avanza sin pasada extra.
+- [x] Limpieza de evidencia al iniciar medición.
+- [x] Persistencia completa del candidato.
+- [x] Margen 0,10 con rejilla y mínimo 0,6.
+- [x] DP9 solo positivos, solo push y configuración obligatoria.
+- [x] Retención DP9 30 días.
+- [x] Timeout de UI y reinicio de radar por corrida.
+- [ ] Prueba física final.

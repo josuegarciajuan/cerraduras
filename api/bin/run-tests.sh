@@ -6820,7 +6820,7 @@ base = {
 json.dump(base, open(sys.argv[1], "w"))
 PYFIX
     F102_ND=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/radar/state?run_id=f102-state-fixture&step_id=radar_inside")
-    F102_ND_OK=$(printf '%s' "$F102_ND" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin datos del radar' and 'start_measure' in a and 'adjust' not in a else 'bad')" 2>/dev/null)
+    F102_ND_OK=$(printf '%s' "$F102_ND" | python3 -c "import sys,json;d=json.load(sys.stdin);a=d.get('next_actions') or [];print('ok' if d.get('title')=='Sin lecturas DP9 positivas' and 'start_measure' in a and 'adjust' not in a else 'bad')" 2>/dev/null)
     if [ "$F102_ND_OK" = "ok" ]; then
         pass "F102: sin reportes → reintentar, no ajustar"
     else
@@ -8142,6 +8142,26 @@ if [ -f bin/sensor-test-prepare.php ] \
   pass "F110: runbook y preparación limpia"
 else
   fail "F110: runbook" "falta script o sección §12"
+fi
+
+if grep -q "insideSeedPoint" src/Domain/Sensors/RadarMeasurement.php \
+    && grep -q "seed_distance_hold" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "RADAR_INSIDE_WINDOW_SECONDS" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "clearRadarEvidenceForPhase" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "insideOnlyCapsV3" src/Http/Controllers/SensorWizardController.php; then
+  pass "F110: semilla, ventana 60 s y limpieza de estado"
+else
+  fail "F110: estabilidad interior" "faltan piezas"
+fi
+
+if grep -q "require_push" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "distance_m.*<= 0" src/Domain/Sensors/RadarDistanceReportRepository.php \
+    && [ -f bin/radar-distance-retention.php ] \
+    && php -l bin/radar-distance-retention.php >/tmp/f110-retention-php.log 2>&1 \
+    && grep -q "Exterior correcto" src/Http/Controllers/SensorWizardController.php; then
+  pass "F110: DP9 positivo, retención y exterior sin paso extra"
+else
+  fail "F110: DP9/retención" "faltan piezas"
 fi
 
 if grep -q "presenceOnlyOutsideMeasurement" src/Http/Controllers/SensorWizardController.php \

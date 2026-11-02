@@ -314,8 +314,9 @@ alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
 ### 12.5 Secuencia de la prueba
 
 1. Puerta/polaridad.
-2. Radar interior: punto más alejado donde SÍ debe detectarse; pasos laterales
-   de 20–30 cm y volver al centro; pulsar «Medir».
+2. Radar interior: primera subfase de captura; después, pasos laterales de
+   20–30 cm durante una ventana de 60 s. Si no llega un DP9 nuevo, se usa la
+   distancia PRESENT capturada en la primera subfase (máximo 60 s).
 3. Validar/Continuar interior. Ambos aplican el alcance `mediana + 0,10 m`
    antes de pasar al exterior. La app usa la mediana y acepta la dispersión
    lateral.
@@ -327,7 +328,21 @@ alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
 6. Luz: preparación OFF, encender, apagar, validar.
 7. Ver veredicto y reanudar automatizaciones solo al terminar.
 
-### 12.6 Repetición tras cambios
+### 12.6 Retención de evidencia DP9
+
+`radar_distance_reports` guarda **solo DP9 positivos**. Los ceros se conservan
+en `presence_events`, no en esta tabla.
+
+```bash
+php bin/radar-distance-retention.php --days=30 --dry-run
+php bin/radar-distance-retention.php --days=30
+php bin/radar-distance-retention.php --days=30 --purge-zeros  # una vez
+```
+
+El timer `cerraduras-radar-distance-retention.timer` ejecuta la purga diaria.
+No toca `presence_events`, visitas, grabaciones ni calibraciones.
+
+### 12.7 Repetición tras cambios
 
 Después de cada cambio o despliegue:
 

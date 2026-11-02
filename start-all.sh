@@ -161,6 +161,13 @@ else
   echo "       (unit cerraduras-warehouse-retention.timer ausente — ejecutar 'php bin/warehouse-retention.php' a mano)"
 fi
 
+echo "[5d2/8] Retención de evidencia DP9 del radar (F110)..."
+if systemctl enable --now cerraduras-radar-distance-retention.timer 2>/dev/null; then
+  echo "       radar-distance-retention: timer diario activo"
+else
+  echo "       (unit cerraduras-radar-distance-retention.timer ausente — ejecutar 'php bin/radar-distance-retention.php --days=30')"
+fi
+
 echo "[5e/8] Detector de movimiento de cámaras (systemd — F88/RF-122)..."
 # F88: verificación física de presencia por diferencia de frames (local, sin cuota).
 if systemctl restart cerraduras-camera-motion 2>/dev/null; then

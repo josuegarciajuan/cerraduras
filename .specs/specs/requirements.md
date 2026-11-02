@@ -13081,6 +13081,9 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   la ventana.
 - La referencia interior es la mediana de las distancias DP 9 válidas; la
 dispersión producida por los pasos laterales no invalida la medición.
+- La ventana interior es de 60 s.
+- Si no llega DP9 nuevo, se puede usar la distancia PRESENT capturada en la
+  primera subfase si tiene <=60 s (`seed_distance_hold`).
 - Una única lectura fresca sigue siendo suficiente (F108).
 
 ## RF-253: Alcance y verificación exterior

@@ -213,6 +213,66 @@ final class RadarMeasurement
     }
 
     /**
+     * F110: si el radar no publicó un DP9 nuevo pero la primera captura dejó
+     * una distancia PRESENT reciente, esa distancia es una referencia interior
+     * válida. No se inventa una lectura: se etiqueta como seed_distance_hold.
+     *
+     * @param array<string,mixed> $measurement
+     * @return array<string,mixed>|null
+     */
+    public static function insideSeedPoint(array $measurement, int $maxAge = 60): ?array
+    {
+        $state = strtoupper((string) ($measurement['seed_state'] ?? ''));
+        $distance = $measurement['seed_distance'] ?? null;
+        $age = $measurement['seed_age_seconds'] ?? null;
+        if ($state !== 'PRESENT' || !is_numeric($distance) || (float) $distance <= 0
+            || !is_numeric($age) || (int) $age > max(1, $maxAge)) {
+            return null;
+        }
+        $distance = (float) $distance;
+        $window = is_array($measurement['window'] ?? null) ? $measurement['window'] : [];
+        return [
+            'status' => 'accepted',
+            'sufficient' => true,
+            'reason' => 'seed_distance_hold',
+            'help' => 'none',
+            'window' => $window,
+            'window_seconds' => $measurement['window_seconds'] ?? null,
+            'reports' => 0,
+            'has_reports' => false,
+            'last_report_at' => null,
+            'last_report_age_seconds' => null,
+            'last_distance' => $distance,
+            'last_distance_at' => $measurement['seed_at'] ?? null,
+            'repeated_values' => 0,
+            'presence_reports' => 1,
+            'detected' => true,
+            'last_value' => 'PRESENT',
+            'last_state' => 'PRESENT',
+            'observations' => [],
+            'fresh_readings' => 0,
+            'readings' => [],
+            'all_positive_readings' => [$distance],
+            'cluster' => [$distance],
+            'excluded' => [],
+            'mean' => $distance,
+            'min' => $distance,
+            'max' => $distance,
+            'spread' => 0.0,
+            'median' => $distance,
+            'tolerance' => 0.30,
+            'min_samples' => 1,
+            'positive_span_seconds' => 0,
+            'discarded_device' => 0,
+            'discarded_config' => 0,
+            'discarded_origin' => 0,
+            'frozen' => false,
+            'seed_distance_used' => true,
+            'evidence_mode' => 'seed_distance_hold',
+        ];
+    }
+
+    /**
      * Resultado específico de la fase a partir de la medición cruda.
      *
      * - dentro: presencia continua (sin ABSENT tras el primer PRESENT)

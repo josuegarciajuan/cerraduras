@@ -1,0 +1,11 @@
+[Unit]
+Description=Cerraduras — retención diaria de evidencia DP9
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=cerraduras-radar-distance-retention.service
+
+[Install]
+WantedBy=timers.target

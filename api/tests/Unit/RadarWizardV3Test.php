@@ -97,7 +97,7 @@ check('texto avisa de que no se aplica alcance',
 
 $measureCopy = $copy->invoke($controller, sess(['state' => 'MEASURING',
     'active_operation' => $measureOp]));
-same('texto medición exterior', $measureCopy['title'], 'Midiendo el punto exterior');
+same('texto medición exterior', $measureCopy['title'], 'Comprobando el exterior');
 check('texto pide quedarse donde no debe detectar', str_contains($measureCopy['instruction'], 'NO quieres que te detecte'));
 
 $verifyCopy = $copy->invoke($controller, sess(['phase' => 'OUTSIDE_VERIFY']));
