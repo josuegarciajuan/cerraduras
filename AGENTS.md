@@ -1055,7 +1055,7 @@ para Tuya cloud.
   `docs/ops-sensores.md` §12 (`bin/sensor-test-prepare.php`) y confirmar base,
   pausa y luz. No reutilizar calibraciones ni corridas anteriores.
 - **Verificación**: units `RadarCalibrationTest` + BLOCK 82. Regresión local
-  **961 passed, 0 failed, 12 skipped** contra instancia temporal; prueba física pendiente.
+  **947 passed, 0 failed, 14 skipped** contra instancia temporal; prueba física pendiente.
 
 ## Operaciones
 

@@ -11390,7 +11390,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Catálogo con pasos laterales 20–30 cm.
 - [x] BLOCK 82 y JS válido.
 - [ ] Prueba física interior/exterior/reentrada.
-- [x] Regresión completa local: 961 passed, 0 failed, 12 skipped.
+- [x] Regresión completa local: 947 passed, 0 failed, 14 skipped.
 - [ ] Despliegue y prueba física.
 
 ## TSK-F110-03: Preparación limpia y repetible
@@ -11410,4 +11410,4 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Textos de reentrada sin pedir salir ni esperar a perder presencia.
 - [x] `switch/test` con fallback `probeSwitch` y `reachability_source`.
 - [x] Test de validador y comprobaciones de runner.
-- [ ] Verificación física de luz.
+- [ ] Verificación física de luz (corrida preparada `14-20261102T150939Z-ac8d02`).
