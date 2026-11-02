@@ -12943,3 +12943,75 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   (`distance_query_at`, `distance_query_ok`, `distance_query_error`).
 - No se consulta en `finish_measure`, ni por temporizador, ni desde `configure`.
 - Un fallo de consulta no bloquea la medición; solo se informa.
+
+# F108 — Calibración fiable del radar (RF-239…RF-246)
+
+## RF-239: Ingesta MQTT sostenible
+- El procesamiento de un mensaje no recorrerá el histórico completo de ficheros
+  procesados para calcular capacidad.
+- Se conservarán persistencia durable, backpressure, recuperación tras reinicio
+  y semántica de duplicados.
+- Los topics de diagnóstico no necesarios no se persistirán en el spool.
+- La latencia se medirá por etapas: Zigbee2MQTT → MQTT → servidor → spool →
+  procesamiento → evidencia disponible.
+
+## RF-240: Consulta directa verificable
+- Una petición publicada no se considerará respuesta del dispositivo.
+- Se distinguirán: `requested`, `broker_accepted`, `command_executed`,
+  `device_response`, `distance_reported`, `timeout`, `error` y
+  `unattributed`.
+- Cada intento de consulta tendrá identificador y registro propio.
+- Si no puede demostrarse la correlación, el DP 9 se marcará como
+  `unattributed`; no se afirmará que responde a la consulta.
+- Si el firmware no responde de forma útil, el flujo no prometerá consulta en
+  tiempo real.
+
+## RF-241: Evidencia de distancia verificable
+- Solo cuenta como muestra el DP 9 presente en una trama del radar.
+- La identidad incluye dispositivo, sesión del puente y secuencias disponibles.
+- Dos reportes independientes con la misma distancia son dos muestras.
+- Una retransmisión no crea una muestra nueva.
+- Un mensaje de otro atributo con distancia cacheada no crea muestra.
+- La evidencia conserva origen, tiempos, configuración y relación con consulta
+  cuando exista.
+- La distancia no altera presencia, visitas, luces, grabaciones ni anomalías.
+
+## RF-242: Algoritmo de punto
+- La cobertura temporal se calcula sobre las muestras positivas utilizadas, no
+  sobre ceros ni eventos de otras propiedades.
+- El resultado se congela al cerrar la ventana; una respuesta posterior no
+  cambia la media.
+- Se filtran radar, ventana, configuración e identidad.
+- Suficiencia y estabilidad se evalúan por separado.
+- Los parámetros iniciales (2 muestras, 5 s, 0,30 m, 80 %) se validan con datos
+  reales antes de activarse como criterio definitivo.
+
+## RF-243: Autoridad única de calibración
+- Las corridas nuevas usan una versión de sesión coherente con la nueva
+  evidencia.
+- El resultado mostrado como autoridad es el que controla el avance.
+- Mientras exista modo sombra, el panel lo etiqueta y no permite que el
+  algoritmo antiguo apruebe en silencio un punto que el nuevo rechaza.
+- Las corridas antiguas conservan su histórico y no se reinterpretan.
+
+## RF-244: Punto exterior
+- La falta de mensajes no equivale a `ABSENT`.
+- La falta de DP 9 no equivale a ausencia de persona.
+- «Exterior sin detección» exige evidencia de ausencia suficiente y
+  comunicación verificada.
+- Estado desconocido o inconcluso no permite aplicar un alcance.
+
+## RF-245: Panel honesto
+- No se pedirá mover brazos ni dar pasos durante la medición de un punto.
+- Se mostrarán por separado presencia, distancia, consulta y comunicación.
+- Un timeout, una petición publicada y una respuesta recibida tendrán textos
+  distintos.
+- El resultado final permanecerá congelado y visible.
+
+## RF-246: Aceptación final
+- La prueba física interior/exterior/reentrada debe completarse con evidencia
+  del radar, sin medidas manuales ni movimientos para forzar cambios.
+- Solo se aplica un ajuste si hay separación válida y confirmación del
+  dispositivo.
+- Regresión completa con 0 fallos.
+- Sin sondeo continuo a Tuya ni procesos de diagnóstico abandonados.

@@ -11260,3 +11260,71 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Resultado guardado en la operación; un fallo no bloquea.
 - [x] BLOCK 68I del runner.
 - [ ] Validación física con presencia real (F109).
+
+# Fase 108 — Tareas
+
+## TSK-F108-00: Especificación y preparación
+- [x] Requisitos, diseño, contratos y tareas F108.
+- [x] Registro de versiones y procedimiento de recuperación.
+- [x] Worktree aislado.
+- [ ] Revisión final antes de tocar producción.
+
+## TSK-F108-01: Ingesta MQTT sostenible
+- [ ] `spool.stats()` sin recorrido de `processed` por mensaje.
+- [ ] Estado operativo/reconciliación y pruebas de reinicio.
+- [ ] Filtro de topics seguro.
+- [ ] Instrumentación de latencia.
+- [ ] BLOCK de regresión.
+
+## TSK-F108-02: Consulta demostrable
+- [ ] Verificar conversor y definición activos.
+- [ ] Prueba controlada de `dataQuery` y captura de respuesta.
+- [ ] Estados `requested`…`distance_reported`/`unattributed`.
+- [ ] Timeout honesto y ausencia de bucles.
+- [ ] Documento de conclusión.
+
+## TSK-F108-03: Evidencia DP 9
+- [ ] Conversor con identidad de reporte y correlación opcional.
+- [ ] Migración `0137` y repositorio de consultas.
+- [ ] Persistencia de reportes con `query_id`/origen.
+- [ ] Pruebas de duplicados, caché, ceros y reinicio.
+
+## TSK-F108-04: Algoritmo
+- [ ] Cobertura sobre muestras positivas.
+- [ ] Resultado congelado al cerrar ventana.
+- [ ] Filtro por radar/configuración.
+- [ ] Pruebas de iguales, inestable, cero y tardío.
+
+## TSK-F108-05: Autoridad de sesión
+- [ ] Nueva versión/modelo de sesión.
+- [ ] El resultado mostrado controla el avance en modo activo.
+- [ ] Corridas antiguas intactas.
+- [ ] Pruebas de transición y no mezcla.
+
+## TSK-F108-06: Exterior y presencia
+- [ ] Silencio ≠ ABSENT; sin DP 9 ≠ ausencia.
+- [ ] `outside_already_clear` solo con evidencia suficiente.
+- [ ] Presencia y distancia separadas.
+
+## TSK-F108-07: Panel
+- [ ] Sin instrucciones de movimiento.
+- [ ] Estados de consulta honestos.
+- [ ] Resultado congelado y motivo visible.
+- [ ] Pruebas de UI y textos.
+
+## TSK-F108-08: Consulta acotada en medición
+- [ ] Solo si Fase 2 la acredita.
+- [ ] Límite por operación y cancelación.
+- [ ] Sin consultas desde `/radar/state`.
+- [ ] Pruebas de timeout y retransmisión.
+
+## TSK-F108-09: Pruebas y regresión
+- [ ] Units, integración, UI y latencia.
+- [ ] `bash bin/run-tests.sh` con 0 fallos.
+- [ ] SKIP revisados.
+
+## TSK-F108-10: Despliegue y aceptación
+- [ ] Migraciones aditivas y conversor instalado.
+- [ ] Servicios sanos y sin bucles.
+- [ ] Prueba física interior/exterior/reentrada.
+- [ ] Evidencia final y cierre.
