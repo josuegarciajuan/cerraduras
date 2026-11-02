@@ -25588,3 +25588,16 @@ Comprobado el 2026-11-02:
 - `startAttempt('light')` devuelve `switch_unreachable` si la sonda no responde.
 - `switch/test` devuelve `reachable`; la UI bloquea la pregunta humana si no hay
   respuesta física.
+
+### F109 — Verificación realizada
+
+- Pausa manual por API comprobada: `paused=true` y visible en preflight.
+- Con la sala pausada, `WarehouseRecordingService::onSignal` no creó visitas
+  (142 → 142).
+- Reanudación manual comprobada.
+- Sonda de luz `/get state`: `Delivery failed for '61600'`; el dispositivo no
+  respondió.
+- `switch/test` devolvió `reachable=false` manteniendo `ok=true` solo como
+  publicación al broker.
+- La luz sigue sin responder por Zigbee pese a tener alimentación; requiere
+  diagnóstico físico/reemparejamiento antes de la prueba final.
