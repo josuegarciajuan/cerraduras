@@ -25563,3 +25563,14 @@ Comprobado el 2026-11-02:
   - ventana 2: inestable;
   - ventanas 3 y 4: una muestra positiva cada una, aceptables con la nueva
     política.
+
+### F108 — Verificación de la corrección final
+
+- Las filas nuevas guardan `config_key` SHA-256 de exactamente 64 caracteres.
+- La huella almacenada coincide con la calculada desde los ajustes vigentes.
+- Recalculadas las ventanas de `14-20261102T111456Z-ca1250` con la nueva
+  política:
+  - ventana 1: `no_reports`;
+  - ventana 2: `inconsistent_majority`;
+  - ventanas 3 y 4: `accepted` con 2,91 m y 2,97 m.
+- Regresión completa: 934 passed, 0 failed, 14 skipped.
