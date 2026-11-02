@@ -292,9 +292,12 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 Exigir:
 
-- `reachable: true`;
-- `reported_state: "OFF"`;
-- `fresh: true`.
+- `reachable: true` (conexión);
+- `reported_state: "OFF"` (estado conocido).
+
+`fresh:true` es deseable, pero **no obligatorio**: un comando redundante OFF
+sobre una luz ya apagada puede no reemitir estado. En ese caso la app pide
+confirmación humana y no debe mostrar “sin conexión”.
 
 Si `reachable` es `false`, **no** iniciar la prueba de luz: revisar
 alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
@@ -319,7 +322,8 @@ alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
 4. Comprobar el exterior solo por presencia. Esto no es una calibración de
    distancia; la app solo verifica que el alcance aplicado ya no te detecta. Si detecta, baja 0,15 m; si no
    queda margen, se detiene con `inside_only_no_separation`.
-5. Reentrada.
+5. Reentrada: ya estás fuera; pulsa «Voy a entrar» y entra. No hace falta
+   volver a salir ni esperar a que el radar te pierda.
 6. Luz: preparación OFF, encender, apagar, validar.
 7. Ver veredicto y reanudar automatizaciones solo al terminar.
 

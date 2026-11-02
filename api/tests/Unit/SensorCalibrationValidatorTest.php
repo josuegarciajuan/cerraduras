@@ -424,6 +424,40 @@ $v3NoSep = $outsideV3;
 $v3NoSep['calibration_session']['result'] = 'not_pass';
 same('v3 outside FAIL si no terminó', v('radar_outside', [], $v3NoSep)['reason'], 'calibration_not_done');
 
+// ── F110: exterior solo presencia (sesión v5) ───────────────────────
+echo "\nF110 · exterior solo presencia\n";
+$sessionV5 = v2session([
+    'version' => 5,
+    'model' => 'distance_inside_only_v1',
+    'outside_valid' => [
+        'sufficient' => false, 'detected' => false, 'reason' => 'no_positive_distance',
+        'absent_reports' => 7, 'last_value' => 'ABSENT', 'config_version' => 2,
+    ],
+    'outside_pass' => [
+        'sufficient' => true, 'detected' => false, 'reason' => 'ok',
+        'absent_reports' => 19, 'last_value' => 'ABSENT', 'config_version' => 2,
+    ],
+    'candidates' => [],
+]);
+$outsideV5 = $outsideV2;
+$outsideV5['calibration_session'] = $sessionV5;
+same('F110: exterior con ABSENT y sin DP9 → PASS', v('radar_outside', [], $outsideV5)['status'], 'PASS');
+same('F110: motivo exterior claro', v('radar_outside', [], $outsideV5)['reason'], 'no_presence_outside');
+
+$outsideV5Detected = $outsideV5;
+$outsideV5Detected['calibration_session']['outside_valid']['detected'] = true;
+same('F110: exterior detectado → FAIL', v('radar_outside', [], $outsideV5Detected)['reason'], 'outside_detected_calibration');
+
+$outsideV5Short = $outsideV5;
+$outsideV5Short['calibration_session']['outside_valid']['absent_reports'] = 1;
+$outsideV5Short['calibration_session']['outside_valid']['last_value'] = 'PRESENT';
+same('F110: ausencia insuficiente → FAIL', v('radar_outside', [], $outsideV5Short)['reason'], 'measure_insufficient:outside_valid');
+
+$outsideV5Normalized = $outsideV5;
+$outsideV5Normalized['calibration_session']['outside_valid']['sufficient'] = true;
+$outsideV5Normalized['calibration_session']['outside_valid']['reason'] = 'presence_absent';
+same('F110: medición normalizada → PASS', v('radar_outside', [], $outsideV5Normalized)['status'], 'PASS');
+
 // Catálogo universal v2 (F95)
 $rawV2 = file_get_contents(__DIR__ . '/../../public/assets/sensor-tests-v2.json');
 $v2 = json_decode((string) $rawV2, true);

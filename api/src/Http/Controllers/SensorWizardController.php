@@ -792,9 +792,26 @@ final class SensorWizardController
                 : $gateway->turnOffForDevice($device);
             $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
             $reachable = $this->waitSwitchReachable($deviceRepo, (int) $device->id, $commandTs);
+            $reachabilitySource = 'command';
+            if (!$reachable) {
+                // F109/F110: un comando redundante (p. ej. OFF ya estando OFF)
+                // puede no reemitir estado. La sonda /get es la autoridad de
+                // conexión; fresh queda separado de reachable.
+                $probe = $this->probeSwitch($roomId);
+                if (($probe['reachable'] ?? false) === true) {
+                    $reachable = true;
+                    $reachabilitySource = 'probe';
+                    $wait = [
+                        'state' => (string) ($probe['state'] ?? $wait['state']),
+                        'state_at' => $probe['state_at'] ?? $wait['state_at'],
+                        'fresh' => false,
+                    ];
+                }
+            }
             return Response::json(200, [
                 'ok' => (bool) ($result['ok'] ?? false),
                 'reachable' => $reachable,
+                'reachability_source' => $reachabilitySource,
                 'action' => $action,
                 'error' => $result['error'] ?? null,
                 'command_at' => $commandAt,
@@ -2291,9 +2308,12 @@ final class SensorWizardController
                                 $this->store->save($run);
                                 return $run;
                             }
+                            // F110: el exterior no se mide por distancia. La
+                            // ausencia explícita es la evidencia suficiente.
+                            $presenceOnly = $this->presenceOnlyOutsideMeasurement($measurement);
                             $session['outside_measure'] = $measurement;
-                            $session['outside_valid'] = $measurement;
-                            $session['outside_pass'] = $measurement;
+                            $session['outside_valid'] = $presenceOnly;
+                            $session['outside_pass'] = $presenceOnly;
                             $session['phase'] = 'OUTSIDE_PASS';
                             $session['state'] = 'IDLE';
                             $session['calibration'] = [
@@ -2751,6 +2771,23 @@ final class SensorWizardController
         ];
     }
 
+    /**
+     * F110: normaliza una ausencia exterior explícita como medición suficiente.
+     * No sustituye la medición cruda que se muestra en el panel.
+     *
+     * @param array<string,mixed> $measurement
+     * @return array<string,mixed>
+     */
+    private function presenceOnlyOutsideMeasurement(array $measurement): array
+    {
+        $measurement['sufficient'] = true;
+        $measurement['detected'] = false;
+        $measurement['reason'] = 'presence_absent';
+        $measurement['evidence_mode'] = 'presence';
+        $measurement['presence_only'] = true;
+        return $measurement;
+    }
+
     /** F110: referencia interior por mediana de las lecturas DP 9. */
     private function insideOnlyReference(array $session): ?float
     {
@@ -2981,7 +3018,7 @@ final class SensorWizardController
             $last = (array) ($session['last_measurement'] ?? []);
             if (($last['sufficient'] ?? false) !== true) {
                 if ($phase === 'REENTRY') {
-                    return ['title' => 'No se detectó tu entrada', 'instruction' => 'Sal, espera a que el radar te pierda y pulsa «Voy a entrar» antes de entrar.', 'message' => 'La ventana no recibió un PRESENT real.'];
+                    return ['title' => 'No se detectó tu entrada', 'instruction' => 'Ya estás fuera: pulsa «Voy a entrar» y entra; permanece dentro hasta que termine la ventana.', 'message' => 'La ventana no recibió un PRESENT real.'];
                 }
                 if (($last['reason'] ?? '') === 'stale_state') {
                     return ['title' => 'Estado del radar antiguo', 'instruction' => 'Muévete ligeramente para que el radar reporte y vuelve a medir.', 'message' => 'No hay un estado reciente que sirva de referencia.'];
@@ -3025,7 +3062,7 @@ final class SensorWizardController
             return ['title' => 'Pasada por el pasillo', 'instruction' => 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.', 'message' => 'Comprobamos el movimiento en el pasillo.'];
         }
         if ($phase === 'REENTRY') {
-            return ['title' => 'Comprobar reentrada', 'instruction' => 'Sal y espera a que el radar deje de detectarte. Pulsa «Voy a entrar» y entra, cierra y quédate dentro.', 'message' => 'Comprobamos que el ajuste sigue detectando al volver.'];
+            return ['title' => 'Comprobar reentrada', 'instruction' => 'Ya estás fuera. Pulsa «Voy a entrar» y entra; permanece dentro hasta que termine la ventana.', 'message' => 'Comprobamos que el alcance aplicado te vuelve a detectar al entrar.'];
         }
         if ($phase === 'DONE') {
             return ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'];
@@ -3341,7 +3378,7 @@ final class SensorWizardController
                     ? 'El radar ya no te detectaba en el punto exterior; se mantiene el alcance actual. Pasa tres veces por delante de la puerta durante la ventana.'
                     : 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.'),
                 'message' => 'Comprobamos el movimiento en el pasillo.'],
-            'REENTRY' => ['title' => 'Comprobar reentrada', 'instruction' => 'Sal, espera a que el radar te pierda, pulsa «Voy a entrar» y entra, cierra y quédate dentro.', 'message' => 'Comprobamos que el ajuste sigue detectando al volver.'],
+            'REENTRY' => ['title' => 'Comprobar reentrada', 'instruction' => 'Ya estás fuera. Pulsa «Voy a entrar» y entra; permanece dentro hasta que termine la ventana.', 'message' => 'Comprobamos que el alcance aplicado te vuelve a detectar al entrar.'],
             'DONE' => ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'],
             default => ['title' => 'Radar', 'instruction' => '', 'message' => ''],
         };
@@ -4167,7 +4204,14 @@ final class SensorWizardController
             return ['reachable' => false, 'error' => (string) ($probe['error'] ?? 'publish_failed')];
         }
         $reachable = $this->waitSwitchReachable($repo, (int) $device->id, $since);
-        return ['reachable' => $reachable, 'error' => $reachable ? null : 'no_response'];
+        $freshDevice = $repo->findById((int) $device->id);
+        $meta = is_array($freshDevice?->meta) ? $freshDevice->meta : [];
+        return [
+            'reachable' => $reachable,
+            'error' => $reachable ? null : 'no_response',
+            'state' => isset($meta['switch_state']) ? (string) $meta['switch_state'] : null,
+            'state_at' => isset($meta['switch_state_at']) ? (string) $meta['switch_state_at'] : null,
+        ];
     }
 
     private function waitSwitchReachable(DeviceRepository $repo, int $deviceId, float $since): bool

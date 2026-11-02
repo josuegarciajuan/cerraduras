@@ -13086,7 +13086,9 @@ dispersión producida por los pasos laterales no invalida la medición.
 ## RF-253: Alcance y verificación exterior
 - El alcance candidato es `referencia_interior + 0.10 m`, ajustado a la rejilla
   de 0.15 m; nunca inferior a la referencia interior.
-- No se mide distancia en el exterior: se verifica solo por presencia.
+- No se mide distancia en el exterior: se verifica solo por presencia. La
+  ausencia explícita (>=2 ABSENT y último ABSENT) es evidencia suficiente y no
+  exige DP9 exterior.
 - Si el radar sigue detectando presencia en el punto exterior, se baja el
   alcance un paso de 0.15 m manteniendo el margen interior.
 - Si ya no queda margen sin romper la detección interior, se detiene con
@@ -13098,5 +13100,7 @@ dispersión producida por los pasos laterales no invalida la medición.
 - El panel explica los pasos laterales y que el exterior se verifica por
   presencia.
 - Se muestran por separado presencia, DP 9 y comunicación.
+- `switch/test` distingue `reachable` (conexión) de `fresh` (telemetría nueva):
+  un comando redundante no convierte una luz conectada en “sin conexión”.
 - La corrida termina con la reentrada detectada y sin efectos falsos.
 - Sin polling a Tuya ni consultas periódicas.
