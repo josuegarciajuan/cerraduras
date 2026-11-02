@@ -183,7 +183,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F105 Medición fiable por punto (2 lecturas nuevas + media)** | **Unit `RadarPointMeasurementTest` + BLOCK 68E** | **Completado (código); prueba física pendiente** |
 | **F106 Diagnóstico de captura del radar (silencio vs lecturas)** | **BLOCK 68F + units F106** | **Completado (código); prueba física pendiente** |
 | **F107 Evidencia de distancia del radar (DP 9 + consulta bajo demanda)** | **BLOCK 68G/68H/68I + units F107** | **Fases 1–3 completadas; activación y prueba física pendientes (F109)** |
-| **F108 Calibración fiable del radar (ingesta, consulta, algoritmo, panel)** | **BLOCK 72/74/75/76/77/78 + units F108** | **Fases 0–7 completadas; despliegue/aceptación pendientes** |
+| **F108 Calibración fiable del radar (ingesta, consulta, algoritmo, panel)** | **BLOCK 72/74/75/76/77/78/79 + units F108** | **Fases 0–8 completadas; despliegue/aceptación pendientes** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
