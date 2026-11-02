@@ -7930,6 +7930,34 @@ else
 fi
 
 # =============================================================================
+# BLOCK 77 — F108: exterior sin confundir silencio con ausencia
+# Trazabilidad: RF-244 · design.md §108 Fase 6
+# =============================================================================
+block "BLOCK 77 — F108: exterior sin confundir silencio con ausencia"
+
+if php tests/Unit/RadarWizardV3Test.php >/tmp/f108-wizard6.log 2>&1; then
+    pass "F108: evidencia exterior y motivos"
+else
+    fail "F108: unit exterior" "$(tail -20 /tmp/f108-wizard6.log | head -c 600)"
+fi
+
+if grep -q "outsideEvidenceState" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outside_point_no_reports" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outside_point_absence_unconfirmed" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "no_absence_evidence" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outsideEvidenceState" tests/Unit/RadarWizardV3Test.php; then
+    pass "F108: exterior cableado y probado"
+else
+    fail "F108: cableado exterior" "faltan estados o pruebas"
+fi
+
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f108-outside-js.log 2>&1; then
+    pass "F108: UI exterior válida"
+else
+    fail "F108: UI exterior" "$(tail -5 /tmp/f108-outside-js.log)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

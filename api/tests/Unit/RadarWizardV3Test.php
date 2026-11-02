@@ -146,6 +146,22 @@ $copy105 = $withPoint->invoke($controller,
 check('F105: la UI pide mover los brazos', str_contains($copy105['instruction'], 'mueve los brazos'));
 check('F105: progreso 1 de 2', str_contains($copy105['message'], '1 de 2'));
 
+// ── F108: evidencia exterior sin confundir silencio con ausencia ───────
+$outside = new ReflectionMethod($controller, 'outsideEvidenceState');
+$outside->setAccessible(true);
+$silence = $outside->invoke($controller, ['reports'=>0,'presence_reports'=>0,'absent_reports'=>0,'last_value'=>null,'detected'=>false], null);
+same('F108: silencio exterior no es claro', $silence['clear'], false);
+same('F108: motivo sin reportes', $silence['reason'], 'no_reports');
+$oneAbsent = $outside->invoke($controller, ['reports'=>1,'presence_reports'=>0,'absent_reports'=>1,'last_value'=>'ABSENT','detected'=>false], null);
+same('F108: una ausencia no basta', $oneAbsent['clear'], false);
+same('F108: ausencia sin confirmar', $oneAbsent['reason'], 'absence_unconfirmed');
+$clear = $outside->invoke($controller, ['reports'=>2,'presence_reports'=>0,'absent_reports'=>2,'last_value'=>'ABSENT','detected'=>false], null);
+same('F108: dos ABSENT confirman exterior', $clear['clear'], true);
+$present = $outside->invoke($controller, ['reports'=>1,'presence_reports'=>1,'absent_reports'=>0,'last_value'=>'PRESENT','detected'=>true], null);
+same('F108: presencia exterior detectada', $present['detected'], true);
+$distanceOnly = $outside->invoke($controller, ['reports'=>0,'presence_reports'=>0,'absent_reports'=>0,'last_value'=>null,'detected'=>false], ['positive_reports'=>1]);
+same('F108: distancia positiva cuenta como detección', $distanceOnly['detected'], true);
+
 // ── F108: autoridad por evidencia DP 9 ───────────────────────────────
 $asPoint = new ReflectionMethod($controller, 'distancePointAsPoint');
 $asPoint->setAccessible(true);

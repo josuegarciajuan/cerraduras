@@ -15851,3 +15851,11 @@ datos de otras salas.
   distancia y suficiencia; `detected` sigue viniendo de presencia.
 - Las sesiones v3 anteriores no cambian de significado.
 - La activación real queda para la fase de despliegue/prueba física.
+
+### F108 Fase 6 — exterior
+
+- `outside_already_clear` solo puede emitirse con evidencia explícita de
+  ausencia (>=2 ABSENT y último ABSENT), sin distancia positiva.
+- Motivos nuevos: `outside_point_no_reports`,
+  `outside_point_absence_unconfirmed`, `verify_insufficient:no_absence_evidence`.
+- El silencio no cambia el estado de presencia ni permite aplicar un alcance.

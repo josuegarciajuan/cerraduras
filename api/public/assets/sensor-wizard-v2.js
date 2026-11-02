@@ -326,6 +326,8 @@
     candidate_already_tried: 'Ese ajuste ya se probó y no resolvió la detección exterior.',
     outside_distance_missing: 'El radar te detecta en el punto exterior pero no reporta distancia.',
     outside_already_clear: 'El radar ya no te detecta en ese punto; se mantiene el alcance actual.',
+    outside_point_no_reports: 'El radar no envió datos en el exterior; no se puede declarar correcto.',
+    outside_point_absence_unconfirmed: 'La ausencia exterior no está confirmada con reportes explícitos.',
     inside_not_measured: 'Falta la medición interior.',
     outside_valid_not_measured: 'Falta la medición del punto exterior.',
     outside_pass_not_measured: 'Falta la pasada por el pasillo.',
