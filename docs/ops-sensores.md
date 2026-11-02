@@ -195,6 +195,14 @@ el candidato antes de promoverlo.
   queda una apertura pendiente, la app pide cerrar.
 - Si la secuencia empieza por `CLOSED`, aparece **Invertir polaridad y repetir**.
 
+> **F110 (vigente, sesión v5 `distance_inside_only_v1`)**: el **interior** sigue
+> siendo el único punto donde se mide distancia, pero se captura con pasos
+> laterales de 20–30 cm y se usa la **mediana** de todas las lecturas positivas.
+> La dispersión lateral **no** invalida la medición. El **exterior** ya no se
+> mide: se verifica solo por presencia. Las reglas de esta sección (dos lecturas,
+> coherencia 0,30 m) quedan para sesiones antiguas y para la distancia exterior
+> histórica.
+
 ## 11. Medición del radar por punto (F105)
 
 - Cada punto (interior/exterior) exige al menos **2 lecturas nuevas** de
@@ -209,3 +217,116 @@ el candidato antes de promoverlo.
   se aplica ningún alcance (`outside_not_farther` / `points_too_close`).
 - La tolerancia es un criterio de coherencia, no una precisión del radar. Tras
   aplicar el ajuste sigue siendo necesaria una comprobación física.
+
+
+## 12. Preparación limpia de una prueba (F110)
+
+Ejecutar este runbook **después de cualquier cambio/despliegue** y antes de una
+prueba física. Deja la sala sin calibraciones guardadas, sin corridas a medias y
+con la pausa desactivada.
+
+### 12.1 Limpieza y backup
+
+```bash
+cd /root/cerraduras/api
+php bin/sensor-test-prepare.php --room=14
+```
+
+El script:
+
+1. copia a `/tmp/f110-prep-<fecha>/` los JSON de las corridas de la sala y el
+   `meta_json` del radar;
+2. marca como `abandoned` cualquier corrida que siga en `running`;
+3. cancela los intentos activos;
+4. borra `calibration` y `calibration_previous` del radar;
+5. desactiva la pausa manual.
+
+No aplica la base del radar, no arranca la corrida y no toca la luz. Para ver
+qué haría sin escribir:
+
+```bash
+php bin/sensor-test-prepare.php --room=14 --dry-run
+```
+
+Verificar que no queda ninguna corrida `running`:
+
+```bash
+curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/runs?room_id=14&limit=10'
+```
+
+### 12.2 Crear la corrida y aplicar la base
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"room_id":14,"operator":"prueba F110"}' \
+  http://127.0.0.1:8080/dashboard-api/sensores/v2/run/start
+```
+
+Debe devolver `201`, un `run_id` nuevo y:
+
+- `calibration.initial_settings.maximum_range = 6.0`;
+- `minimum_range = 0.6`;
+- `radar_sensitivity = 7`;
+- `detection_delay = 0.1`;
+- `fading_time = 15.5`.
+
+Si devuelve `409 radar_baseline_failed`, esperar un reporte nuevo del radar y
+repetir. No continuar con una base sin confirmar.
+
+Comprobar el preflight:
+
+```bash
+curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/preflight?room_id=14'
+```
+
+Debe mostrar `can_start: true`, `automation_pause.paused: false` y
+`maximum_range: 6`.
+
+### 12.3 Luz apagada y alcanzable
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"room_id":14,"action":"OFF"}' \
+  http://127.0.0.1:8080/dashboard-api/sensores/v2/switch/test
+```
+
+Exigir:
+
+- `reachable: true`;
+- `reported_state: "OFF"`;
+- `fresh: true`.
+
+Si `reachable` es `false`, **no** iniciar la prueba de luz: revisar
+alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
+
+### 12.4 Estado final esperado
+
+- Una sola corrida nueva en `running`.
+- Sin intentos activos.
+- `devices.meta_json.calibration` y `calibration_previous` ausentes.
+- Radar en base 6,0 m confirmada por push.
+- Pausa manual desactivada.
+- Luz apagada, fresca y alcanzable.
+
+### 12.5 Secuencia de la prueba
+
+1. Puerta/polaridad.
+2. Radar interior: punto más alejado donde SÍ debe detectarse; pasos laterales
+   de 20–30 cm y volver al centro; pulsar «Medir».
+3. Validar interior. La app usa la mediana y acepta la dispersión lateral.
+4. Verificar el exterior solo por presencia. Si detecta, baja 0,15 m; si no
+   queda margen, se detiene con `inside_only_no_separation`.
+5. Reentrada.
+6. Luz: preparación OFF, encender, apagar, validar.
+7. Ver veredicto y reanudar automatizaciones solo al terminar.
+
+### 12.6 Repetición tras cambios
+
+Después de cada cambio o despliegue:
+
+1. ejecutar la regresión (`cd api && bash bin/run-tests.sh`);
+2. ejecutar este runbook;
+3. crear la corrida y comprobar la luz;
+4. hacer la prueba física.
+
+Así no se reutilizan calibraciones, corridas ni intentos de pruebas anteriores.

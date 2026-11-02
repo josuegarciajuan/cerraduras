@@ -11392,3 +11392,10 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Prueba física interior/exterior/reentrada.
 - [x] Regresión completa local: 961 passed, 0 failed, 12 skipped.
 - [ ] Despliegue y prueba física.
+
+## TSK-F110-03: Preparación limpia y repetible
+- [x] Script `api/bin/sensor-test-prepare.php` con backup, abandono de corridas,
+  limpieza de calibraciones y reanudación de pausa.
+- [x] Runbook en `docs/ops-sensores.md` §12.
+- [x] Referencia obligatoria en `AGENTS.md`.
+- [ ] Ejecutar el runbook y dejar la corrida nueva lista para la prueba física.

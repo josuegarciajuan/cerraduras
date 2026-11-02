@@ -25648,4 +25648,6 @@ Comprobado el 2026-11-02:
 - Units `RadarCalibrationTest` (candidato, bajada y base).
 - BLOCK 82 comprueba base, llamadas de reinicio, modelo, textos y JS.
 - Regresión local: 961 passed, 0 failed, 12 skipped.
+- Antes de cada prueba física se ejecuta `docs/ops-sensores.md` §12:
+  `bin/sensor-test-prepare.php`, base confirmada, pausa off y luz OFF.
 - Prueba física pendiente.

@@ -8136,6 +8136,14 @@ else
   fail "F110: JavaScript" "$(tail -5 /tmp/f110-js.log)"
 fi
 
+if [ -f bin/sensor-test-prepare.php ] \
+    && php -l bin/sensor-test-prepare.php >/tmp/f110-prepare-php.log 2>&1 \
+    && grep -q "## 12. Preparación limpia de una prueba" ../docs/ops-sensores.md; then
+  pass "F110: runbook y preparación limpia"
+else
+  fail "F110: runbook" "falta script o sección §12"
+fi
+
 # =============================================================================
 # RESUMEN
 # =============================================================================
