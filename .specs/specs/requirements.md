@@ -13027,3 +13027,13 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - La calibración no dependerá de consultas directas.
 - Cualquier `origin=query` basado solo en proximidad temporal se tratará como
   no atribuido.
+
+## RF-248: Suficiencia con una lectura fresca (F108)
+- La identidad del reporte DP 9 demuestra que la distancia no es un valor
+  cacheado.
+- Una única muestra positiva del radar correcto, dentro de la ventana y con la
+  configuración vigente, es suficiente para aceptar el punto.
+- Si hay varias muestras, se mantiene la coherencia, la tolerancia y la mayoría.
+- Un cero no es una muestra de distancia.
+- La huella de configuración se guarda como SHA-256 de 64 caracteres.
+- El algoritmo F105 anterior conserva su mínimo de dos muestras.

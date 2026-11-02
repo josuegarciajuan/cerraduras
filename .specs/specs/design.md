@@ -25547,3 +25547,19 @@ Comprobado el 2026-11-02:
 - `newRadarSession` en modo active devuelve versión 4 /
   `distance_evidence_v1` (verificado por reflexión);
 - regresión **932 passed, 0 failed, 14 skipped**.
+
+### F108 — Ajuste final de suficiencia
+
+- `configKey()` devuelve SHA-256 (64 caracteres), evitando el truncamiento de
+  `VARCHAR(64)`.
+- La autoridad DP 9 usa `min_samples=1` y `min_span_seconds=0`.
+- Una única muestra positiva fresca se acepta si el radar, la ventana y la
+  configuración coinciden.
+- Con varias muestras se mantienen `coherentCluster`, tolerancia 0,30 m y
+  cobertura 80 %.
+- F105 conserva `min_samples=2`.
+- Recalculadas las ventanas de la corrida `14-20261102T111456Z-ca1250`:
+  - ventana 1: sin reportes;
+  - ventana 2: inestable;
+  - ventanas 3 y 4: una muestra positiva cada una, aceptables con la nueva
+    política.

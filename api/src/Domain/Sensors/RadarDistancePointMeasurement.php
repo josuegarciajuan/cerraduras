@@ -38,8 +38,8 @@ final class RadarDistancePointMeasurement
     ): array {
         $startMs = self::ms($windowStart);
         $endMs = self::ms($windowEnd);
-        $minSamples = max(2, (int) ($options['min_samples'] ?? 2));
-        $minSpan = max(0, (int) ($options['min_span_seconds'] ?? 5));
+        $minSamples = max(1, (int) ($options['min_samples'] ?? 1));
+        $minSpan = max(0, (int) ($options['min_span_seconds'] ?? 0));
         $tolerance = max(0.01, (float) ($options['tolerance'] ?? 0.30));
         $coverage = max(0.5, min(1.0, (float) ($options['coverage'] ?? 0.8)));
         $deviceId = isset($options['device_id']) && is_numeric($options['device_id'])
@@ -121,7 +121,12 @@ final class RadarDistancePointMeasurement
         if (count($inside) > 1) {
             $reportSpan = max(0.0, ($inside[count($inside) - 1]['ts'] - $inside[0]['ts']) / 1000);
         }
-        $cluster = RadarPointMeasurement::coherentCluster($positive, $tolerance);
+        // F108: una única lectura DP 9 fresca es evidencia suficiente; su
+        // identidad ya demuestra que no es un valor cacheado. Con varias, se
+        // mantiene la coherencia y la mayoría.
+        $cluster = count($positive) === 1
+            ? [$positive[0]]
+            : RadarPointMeasurement::coherentCluster($positive, $tolerance);
         $coverageActual = $positive !== [] ? count($cluster) / count($positive) : 0.0;
 
         $status = self::STATUS_ACCEPTED;

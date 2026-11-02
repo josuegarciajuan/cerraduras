@@ -15867,3 +15867,11 @@ datos de otras salas.
 - No se muestran instrucciones de movimiento durante la medición.
 - La consulta directa se muestra como no disponible; no se usa `ok` de PUBACK
   como confirmación.
+
+### F108 — Suficiencia
+
+- En `distance_point`, `min_samples` puede ser 1 y `positive_span_seconds` 0.
+- Una muestra fresca aceptada se presenta con su recuento real; no se inventan
+  dos lecturas.
+- `config_key` es un SHA-256 hexadecimal de 64 caracteres.
+- El algoritmo F105 tradicional no cambia.

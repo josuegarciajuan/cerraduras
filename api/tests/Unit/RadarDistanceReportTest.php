@@ -55,6 +55,8 @@ $key2 = RadarDistanceReport::configKey(['maximum_range'=>3.9,'minimum_range'=>0.
 $key3 = RadarDistanceReport::configKey(['maximum_range'=>4.2,'minimum_range'=>0.6,'radar_sensitivity'=>7,'fading_time'=>15.5,'detection_delay'=>0.1]);
 check('F108: configKey ignora iluminancia', $key1 === $key2);
 check('F108: configKey cambia con el rango', $key1 !== $key3);
+check('F108: configKey cabe en VARCHAR(64)', strlen($key1) === 64);
+check('F108: configKey es SHA-256 hexadecimal', preg_match('/^[a-f0-9]{64}$/', $key1) === 1);
 
 $repeat = RadarDistanceReport::fromMarker('v1|sess1|7|2.710|push', $at);
 check('F107: misma marca = misma identidad', $repeat['marker'] === $ok['marker']);

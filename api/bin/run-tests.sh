@@ -8018,6 +8018,27 @@ else
 fi
 
 # =============================================================================
+# BLOCK 80 — F108: una lectura fresca y huella SHA-256
+# Trazabilidad: RF-248 · design.md §108 ajuste final
+# =============================================================================
+block "BLOCK 80 — F108: una lectura fresca y huella SHA-256"
+
+if php tests/Unit/RadarDistancePointMeasurementTest.php >/tmp/f108-single.log 2>&1 \
+    && php tests/Unit/RadarDistanceReportTest.php >/tmp/f108-hash.log 2>&1; then
+    pass "F108: una muestra fresca y huella de 64 caracteres"
+else
+    fail "F108: suficiencia/huella" "$(tail -20 /tmp/f108-single.log /tmp/f108-hash.log | head -c 600)"
+fi
+
+if grep -q "count(\$positive) === 1" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "min_samples' => 1" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "hash('sha256'" src/Domain/Sensors/RadarDistanceReport.php; then
+    pass "F108: política y hash cableados"
+else
+    fail "F108: cableado sufiencia/hash" "faltan política o hash"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

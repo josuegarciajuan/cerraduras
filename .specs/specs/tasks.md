@@ -11342,6 +11342,13 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `bash bin/run-tests.sh` con 0 fallos (932/0/14).
 - [x] SKIP revisados.
 
+## TSK-F108-11: Suficiencia de una lectura fresca
+- [x] `min_samples=1` y `min_span_seconds=0` para evidencia DP 9.
+- [x] Una muestra positiva fresca aceptada; varias exigen coherencia.
+- [x] `configKey` SHA-256 de 64 caracteres.
+- [x] Tests de una muestra, cero y longitud de huella.
+- [ ] Desplegar y verificar con datos reales.
+
 ## TSK-F108-10: Despliegue y aceptación
 - [x] Migraciones `0136`/`0137` aplicadas.
 - [x] Conversor instalado con hash idéntico al repositorio.
