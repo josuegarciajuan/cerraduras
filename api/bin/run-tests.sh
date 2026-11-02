@@ -7786,6 +7786,44 @@ else
 fi
 
 # =============================================================================
+# BLOCK 72 — F108: ingesta MQTT sostenible
+# Trazabilidad: RF-239 · design.md §108 Fase 1
+# =============================================================================
+block "BLOCK 72 — F108: ingesta MQTT sostenible"
+
+if node tests/Unit/zigbee-ingress.test.js >/tmp/f108-ingress.log 2>&1; then
+    pass "F108: persistencia, backpressure, filtros y stats pendientes"
+else
+    fail "F108: unit zigbee-ingress" "$(tail -20 /tmp/f108-ingress.log | head -c 600)"
+fi
+
+if grep -q "pendingStats" bin/zigbee-ingress/spool.js \
+    && grep -q "pendingStats" bin/zigbee-ingress/ingress.js \
+    && grep -q "minFreeBytes" bin/zigbee-ingress/ingress.js \
+    && grep -q "topicFilter" bin/zigbee-ingress/ingress.js \
+    && grep -q "ZIGBEE_INGRESS_DENY_TOPICS" .env.example \
+    && grep -q "ZIGBEE_SPOOL_MIN_FREE_BYTES" .env.example; then
+    pass "F108: camino crítico sin recorrer processed y filtros cableados"
+else
+    fail "F108: cableado de ingesta" "faltan pendingStats, minFreeBytes, topicFilter o variables"
+fi
+
+if node -e '
+const fs=require("fs"),os=require("os"),path=require("path");
+const s=require("./bin/zigbee-ingress/spool.js");
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),"f108-bench-"));
+s.ensureLayout(dir);
+for(let i=0;i<1000;i++) fs.writeFileSync(path.join(dir,"processed",`p-${i}.json`),"{}");
+const t=process.hrtime.bigint(); const p=s.pendingStats(dir); const ms=Number(process.hrtime.bigint()-t)/1e6;
+fs.rmSync(dir,{recursive:true,force:true});
+if(ms>100 || p.total_files!==0) { console.error("pending_ms="+ms); process.exit(1); }
+' >/tmp/f108-bench.log 2>&1; then
+    pass "F108: pendingStats ignora 1000 procesados en menos de 100 ms"
+else
+    fail "F108: benchmark pendingStats" "$(cat /tmp/f108-bench.log | head -c 300)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

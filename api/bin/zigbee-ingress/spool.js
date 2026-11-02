@@ -78,8 +78,9 @@ function atomicWrite(file, data) {
 function persist(dir, record, seq) {
   ensureLayout(dir);
   const name = recordName(record.received_at, seq, record.payload_sha256);
-  atomicWrite(path.join(dir, 'incoming', name), serialize(record));
-  return name;
+  const serialized = serialize(record);
+  atomicWrite(path.join(dir, 'incoming', name), serialized);
+  return { file: name, bytes: Buffer.byteLength(serialized, 'utf8') };
 }
 
 function listFiles(dir, sub) {
@@ -90,13 +91,8 @@ function listFiles(dir, sub) {
     .sort();
 }
 
-/**
- * Pending/capacity stats. Counts incoming + processing (work not done) and
- * quarantine separately. `totalFiles`/`totalBytes` include every subdir so
- * quarantine cannot fill the disk unnoticed.
- */
-function stats(dir, now = new Date()) {
-  const result = {
+function emptyStats() {
+  return {
     pending_files: 0,
     pending_bytes: 0,
     processing_files: 0,
@@ -105,6 +101,46 @@ function stats(dir, now = new Date()) {
     total_bytes: 0,
     oldest_pending_age_seconds: null,
   };
+}
+
+/**
+ * F108/RF-239: estadísticas del trabajo pendiente. Solo recorre incoming,
+ * processing y quarantine; nunca el histórico de processed. Es la ruta que se
+ * usa en el camino crítico de cada mensaje.
+ */
+function pendingStats(dir, now = new Date()) {
+  const result = emptyStats();
+  if (!fs.existsSync(dir)) return result;
+
+  for (const sub of ['incoming', 'processing', 'quarantine']) {
+    for (const name of listFiles(dir, sub)) {
+      const file = path.join(dir, sub, name);
+      let st;
+      try { st = fs.statSync(file); } catch (_) { continue; }
+      if (sub === 'quarantine') {
+        result.quarantine_files++;
+        continue;
+      }
+      result.pending_files++;
+      result.pending_bytes += st.size;
+      if (sub === 'processing') result.processing_files++;
+      if (sub === 'incoming') {
+        const age = Math.max(0, Math.floor((now.getTime() - st.mtimeMs) / 1000));
+        if (result.oldest_pending_age_seconds === null || age > result.oldest_pending_age_seconds) {
+          result.oldest_pending_age_seconds = age;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Estadísticas completas. Recorre también processed; se usa para reconciliar
+ * al arrancar o al reconectar, nunca por cada mensaje.
+ */
+function stats(dir, now = new Date()) {
+  const result = emptyStats();
   if (!fs.existsSync(dir)) return result;
 
   for (const sub of SUBDIRS) {
@@ -133,12 +169,30 @@ function stats(dir, now = new Date()) {
   return result;
 }
 
+/** Espacio libre del sistema de ficheros que contiene dir. */
+function diskFreeBytes(dir) {
+  try {
+    if (typeof fs.statfsSync !== 'function') return null;
+    const st = fs.statfsSync(dir);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch (_) {
+    return null;
+  }
+}
+
 function canAccept(current, limits) {
   if (limits.maxFiles > 0 && current.pending_files >= limits.maxFiles) return false;
-  if (limits.maxBytes > 0 && current.total_bytes >= limits.maxBytes) return false;
+  // F108/RF-239: maxBytes limita la cola pendiente, no el histórico ya
+  // procesado. Así un spool histórico grande no bloquea la recepción.
+  if (limits.maxBytes > 0 && current.pending_bytes >= limits.maxBytes) return false;
   if (limits.maxAgeSeconds > 0
       && current.oldest_pending_age_seconds !== null
       && current.oldest_pending_age_seconds >= limits.maxAgeSeconds) {
+    return false;
+  }
+  if (limits.minFreeBytes > 0
+      && current.disk_free_bytes !== null
+      && current.disk_free_bytes < limits.minFreeBytes) {
     return false;
   }
   return true;
@@ -150,7 +204,10 @@ module.exports = {
   sha256,
   recordName,
   atomicWrite,
+  serialize,
   persist,
+  pendingStats,
   stats,
+  diskFreeBytes,
   canAccept,
 };
