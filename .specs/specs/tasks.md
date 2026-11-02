@@ -11398,4 +11398,4 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
   limpieza de calibraciones y reanudación de pausa.
 - [x] Runbook en `docs/ops-sensores.md` §12.
 - [x] Referencia obligatoria en `AGENTS.md`.
-- [ ] Ejecutar el runbook y dejar la corrida nueva lista para la prueba física.
+- [x] Runbook ejecutado: corrida `14-20261102T142312Z-bc03b9`, base 6,0 m, pausa off, luz OFF alcanzable.
