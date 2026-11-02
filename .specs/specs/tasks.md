@@ -11338,12 +11338,15 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] BLOCK 79 de verificación de ausencia de consultas.
 
 ## TSK-F108-09: Pruebas y regresión
-- [ ] Units, integración, UI y latencia.
-- [ ] `bash bin/run-tests.sh` con 0 fallos.
-- [ ] SKIP revisados.
+- [x] Units, integración, UI y latencia.
+- [x] `bash bin/run-tests.sh` con 0 fallos (932/0/14).
+- [x] SKIP revisados.
 
 ## TSK-F108-10: Despliegue y aceptación
-- [ ] Migraciones aditivas y conversor instalado.
-- [ ] Servicios sanos y sin bucles.
-- [ ] Prueba física interior/exterior/reentrada.
+- [x] Migraciones `0136`/`0137` aplicadas.
+- [x] Conversor instalado con hash idéntico al repositorio.
+- [x] Servicios sanos, sin bucles ni consultas.
+- [x] Modo `active` activado; corrida antigua intacta.
+- [x] Backup verificado para rollback.
+- [ ] Prueba física interior/exterior/reentrada (Fase 10).
 - [ ] Evidencia final y cierre.
