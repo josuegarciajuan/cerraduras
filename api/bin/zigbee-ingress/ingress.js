@@ -22,6 +22,8 @@ function nowIso(date = new Date()) {
  * @param {number} [options.maxFiles]
  * @param {number} [options.maxBytes]
  * @param {number} [options.maxAgeSeconds]
+ * @param {number} [options.minFreeBytes]
+ * @param {(topic: string) => boolean} [options.topicFilter]
  * @param {() => Date} [options.clock]
  * @param {(line: string) => void} [options.log]
  * @param {(stats: object) => void} [options.onStatus]
@@ -35,36 +37,50 @@ function createIngress(options) {
     maxFiles: Number.isFinite(options.maxFiles) ? options.maxFiles : 10000,
     maxBytes: Number.isFinite(options.maxBytes) ? options.maxBytes : 268435456,
     maxAgeSeconds: Number.isFinite(options.maxAgeSeconds) ? options.maxAgeSeconds : 86400,
+    minFreeBytes: Number.isFinite(options.minFreeBytes) ? options.minFreeBytes : 0,
   };
   const clock = typeof options.clock === 'function' ? options.clock : () => new Date();
   const log = typeof options.log === 'function' ? options.log : () => {};
   const onStatus = typeof options.onStatus === 'function' ? options.onStatus : () => {};
+  const topicFilter = typeof options.topicFilter === 'function' ? options.topicFilter : () => true;
 
   let seq = 0;
+  // F108/RF-239: el total histórico solo se reconcilia al arrancar/reconectar.
+  // El camino crítico usa pendingStats().
+  let totals = spool.stats(spoolDir, clock());
   const counters = {
     received: 0,
     persisted: 0,
     acked: 0,
     rejected: 0,
+    filtered: 0,
     backpressure: 0,
     write_errors: 0,
     last_received_at: null,
     last_persisted_at: null,
     last_ack_at: null,
+    last_persist_latency_ms: null,
     last_error: null,
   };
 
+  function reconcile() {
+    totals = spool.stats(spoolDir, clock());
+    return totals;
+  }
+
   function snapshot() {
-    const current = spool.stats(spoolDir, clock());
+    const current = spool.pendingStats(spoolDir, clock());
     return {
       ...counters,
+      stats_mode: 'pending',
       pending_files: current.pending_files,
       pending_bytes: current.pending_bytes,
       processing_files: current.processing_files,
       quarantine_files: current.quarantine_files,
-      total_files: current.total_files,
-      total_bytes: current.total_bytes,
+      total_files: totals.total_files,
+      total_bytes: totals.total_bytes,
       oldest_pending_age_seconds: current.oldest_pending_age_seconds,
+      disk_free_bytes: spool.diskFreeBytes(spoolDir),
       updated_at: nowIso(clock()),
     };
   }
@@ -109,11 +125,24 @@ function createIngress(options) {
       return { stored: false, reason: counters.last_error };
     }
 
-    const current = spool.stats(spoolDir, receivedAt);
-    if (!spool.canAccept(current, limits)) {
+    if (!topicFilter(topic)) {
+      counters.filtered++;
+      // Filtrado deliberado: ACK para no bloquear la cola del broker.
+      ackOnce(null);
+      counters.acked++;
+      emit();
+      return { stored: false, reason: 'filtered' };
+    }
+
+    const current = spool.pendingStats(spoolDir, receivedAt);
+    const capacity = {
+      ...current,
+      disk_free_bytes: spool.diskFreeBytes(spoolDir),
+    };
+    if (!spool.canAccept(capacity, limits)) {
       counters.backpressure++;
       counters.last_error = 'backpressure';
-      log(`[zigbee-ingress] backpressure pending=${current.pending_files} bytes=${current.total_bytes}`);
+      log(`[zigbee-ingress] backpressure pending=${current.pending_files} bytes=${current.pending_bytes}`);
       // Do not ACK: the broker keeps the QoS 1 message for redelivery.
       emit();
       return { stored: false, reason: 'backpressure' };
@@ -133,9 +162,13 @@ function createIngress(options) {
     };
 
     try {
-      const file = spool.persist(spoolDir, record, seq++);
+      const persisted = spool.persist(spoolDir, record, seq++);
+      const file = persisted.file;
+      totals.total_files++;
+      totals.total_bytes += persisted.bytes;
       counters.persisted++;
       counters.last_persisted_at = record.received_at;
+      counters.last_persist_latency_ms = Math.max(0, clock().getTime() - receivedAt.getTime());
       // Persistence is complete: now it is safe to ACK the broker.
       try {
         ackOnce(null);
@@ -157,7 +190,7 @@ function createIngress(options) {
     }
   }
 
-  return { handle, stats: snapshot, limits, spoolDir };
+  return { handle, stats: snapshot, reconcile, limits, spoolDir };
 }
 
 module.exports = { createIngress, MAX_PAYLOAD_BYTES };

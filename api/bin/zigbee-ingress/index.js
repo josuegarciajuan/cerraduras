@@ -88,6 +88,15 @@ function main() {
   const maxFiles = envInt('ZIGBEE_SPOOL_MAX_FILES', 10000);
   const maxBytes = envInt('ZIGBEE_SPOOL_MAX_BYTES', 268435456);
   const maxAgeSeconds = envInt('ZIGBEE_SPOOL_MAX_AGE_SECONDS', 86400);
+  const minFreeBytes = envInt('ZIGBEE_SPOOL_MIN_FREE_BYTES', 67108864);
+  const deniedTopics = (process.env.ZIGBEE_INGRESS_DENY_TOPICS || 'bridge/logging,bridge/health')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value !== '');
+  const topicFilter = (topic) => !deniedTopics.some((suffix) => {
+    const full = `${prefix}/${suffix}`;
+    return topic === full || topic.startsWith(`${full}/`);
+  });
 
   let password;
   try {
@@ -107,6 +116,8 @@ function main() {
     maxFiles,
     maxBytes,
     maxAgeSeconds,
+    minFreeBytes,
+    topicFilter,
     log,
     onStatus(stats) {
       const payload = {
@@ -175,6 +186,8 @@ function main() {
       } else {
         log(`subscribed to ${prefix}/#`);
       }
+      // F108/RF-239: reconciliación completa solo al (re)conectar.
+      try { ingress.reconcile(); } catch (err) { log(`reconcile failed: ${err.message}`); }
       ingress.stats();
     });
   });

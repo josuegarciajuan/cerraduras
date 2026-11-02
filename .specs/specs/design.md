@@ -25414,3 +25414,14 @@ sin prometer tiempo real.
 
 Las corridas F105/F107 conservan su histórico. Las nuevas usan versión/modelo
 nuevos y no mezclan referencias calculadas con reglas distintas.
+
+### F108 Fase 1 — resultados de ingesta
+
+- `pendingStats()` recorre solo `incoming`, `processing` y `quarantine`.
+- `stats()` completo se usa para reconciliar al arrancar/reconectar.
+- `ZIGBEE_SPOOL_MAX_BYTES` limita bytes pendientes, no el histórico.
+- `ZIGBEE_SPOOL_MIN_FREE_BYTES` evita llenar el disco.
+- `ZIGBEE_INGRESS_DENY_TOPICS` filtra diagnóstico no consumido.
+- La latencia de persistencia se expone en el estado.
+- Medición local: `pendingStats` 0,14–1,09 ms frente a `stats` completo
+  ~836 ms con ~95.000 ficheros. El histórico solo se recorre en reconciliación.

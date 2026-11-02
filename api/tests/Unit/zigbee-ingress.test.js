@@ -160,7 +160,75 @@ console.log('\n\u2500\u2500 zigbee-ingress (F91/TSK-91.05) \u2500\u2500');
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// 7. Entrypoint safety invariants
+// 7. F108: pendingStats no recorre processed
+{
+  const dir = tmpDir();
+  spool.ensureLayout(dir);
+  for (let i = 0; i < 5; i++) {
+    fs.writeFileSync(path.join(dir, 'processed', `old-${i}.json`), '{}');
+  }
+  spool.persist(dir, {
+    schema: 1, topic: 'zigbee2mqtt/new', payload: '{}', payload_sha256: 'c'.repeat(64),
+    qos: 1, dup: false, received_at: new Date().toISOString(), attempts: 0, bootstrap: false,
+  }, 0);
+  const pending = spool.pendingStats(dir);
+  const full = spool.stats(dir);
+  check('F108: pendingStats solo cuenta pendientes', pending.pending_files === 1);
+  check('F108: pendingStats ignora processed', pending.total_files === 0);
+  check('F108: stats completo conserva el histórico', full.total_files === 6 && full.pending_files === 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// 8. F108: maxBytes limita la cola pendiente, no el histórico
+{
+  const current = {
+    pending_files: 1, pending_bytes: 10, processing_files: 0, quarantine_files: 0,
+    total_files: 99999, total_bytes: 999999999, oldest_pending_age_seconds: 1,
+    disk_free_bytes: 1000000000,
+  };
+  check('F108: histórico grande no dispara backpressure',
+    spool.canAccept(current, { maxFiles: 100, maxBytes: 1000, maxAgeSeconds: 60, minFreeBytes: 0 }) === true);
+  check('F108: cola pendiente sí dispara backpressure',
+    spool.canAccept({ ...current, pending_bytes: 2000 }, { maxFiles: 100, maxBytes: 1000, maxAgeSeconds: 60, minFreeBytes: 0 }) === false);
+  check('F108: poco disco dispara backpressure',
+    spool.canAccept({ ...current, disk_free_bytes: 10 }, { maxFiles: 100, maxBytes: 1000, maxAgeSeconds: 60, minFreeBytes: 100 }) === false);
+}
+
+// 9. F108: filtro de topics seguros
+{
+  const dir = tmpDir();
+  const ingress = createIngress({
+    spoolDir: dir,
+    topicFilter: (topic) => !topic.endsWith('/bridge/logging'),
+  });
+  let ack = false;
+  const res = ingress.handle('zigbee2mqtt/bridge/logging', Buffer.from('{}'), { qos: 1 }, () => { ack = true; });
+  check('F108: topic filtrado se ACKea', ack === true && res.stored === false && res.reason === 'filtered');
+  check('F108: topic filtrado no ocupa spool', listIncoming(dir).length === 0);
+  check('F108: filtrado contabilizado', ingress.stats().filtered === 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// 10. F108: reconciliación y métricas
+{
+  const dir = tmpDir();
+  const ingress = createIngress({ spoolDir: dir });
+  ingress.handle('zigbee2mqtt/almacen-zb-puerta', Buffer.from('{}'), { qos: 1 }, () => {});
+  const before = ingress.stats();
+  check('F108: latencia de persistencia medida', before.last_persist_latency_ms !== null);
+  check('F108: modo de estadísticas pendientes', before.stats_mode === 'pending');
+  spool.persist(dir, {
+    schema: 1, topic: 'zigbee2mqtt/external', payload: '{}', payload_sha256: 'd'.repeat(64),
+    qos: 1, dup: false, received_at: new Date().toISOString(), attempts: 0, bootstrap: false,
+  }, 1);
+  ingress.reconcile();
+  const after = ingress.stats();
+  check('F108: reconcile actualiza totales', after.total_files >= 2);
+  check('F108: pendingStats no cuenta processed', after.pending_files === 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// 11. Entrypoint safety invariants
 {
   const index = fs.readFileSync(path.join(__dirname, '..', '..', 'bin', 'zigbee-ingress', 'index.js'), 'utf8');
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'bin', 'zigbee-ingress', 'package.json'), 'utf8'));
