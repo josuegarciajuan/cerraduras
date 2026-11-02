@@ -108,9 +108,14 @@ final class RadarPointMeasurement
         $seen = [];
         $previousPositive = null;
         $lastValue = null;
+        $lastReportAt = null;
+        $lastPositiveAt = null;
+        $lastDistance = null;
+        $repeatedValues = 0;
         $presents = 0;
         foreach ($reports as $r) {
             $lastValue = (string) $r['value'];
+            $lastReportAt = self::isoFromMs($r['ts']);
             if ($lastValue === 'PRESENT') {
                 $presents++;
             } else {
@@ -121,6 +126,10 @@ final class RadarPointMeasurement
             $distance = $r['distance'];
             if ($distance === null) {
                 continue;
+            }
+            if ($distance > 0.0) {
+                $lastDistance = $distance;
+                $lastPositiveAt = self::isoFromMs($r['ts']);
             }
             // Deduplicación exacta: mismo instante y mismo valor no son dos
             // reportes independientes.
@@ -143,6 +152,8 @@ final class RadarPointMeasurement
                 $isFresh ? 'new' : 'repeated_value');
             if ($isFresh) {
                 $fresh[] = ['at' => self::isoFromMs($r['ts']), 'distance' => $distance];
+            } else {
+                $repeatedValues++;
             }
             $previousPositive = $distance;
         }
@@ -162,9 +173,15 @@ final class RadarPointMeasurement
             $status = self::STATUS_CONFIG_CHANGED;
             $reason = 'config_changed';
             $help = self::HELP_REPEAT;
-        } elseif (!$detected && $presents === 0 && $reports === []) {
+        } elseif (!$detected && $reports === []) {
+            // F106: sin ningún mensaje del radar en la ventana no es lo mismo
+            // que recibir mensajes que no contienen distancia.
             $status = self::STATUS_NOT_DETECTED;
-            $reason = 'no_detection';
+            $reason = 'no_reports';
+            $help = self::HELP_POSITION;
+        } elseif (!$detected && $presents === 0) {
+            $status = self::STATUS_NOT_DETECTED;
+            $reason = 'not_present';
             $help = self::HELP_POSITION;
         } elseif (count($fresh) < $minSamples) {
             $status = self::STATUS_INSUFFICIENT;
@@ -185,6 +202,10 @@ final class RadarPointMeasurement
             }
         }
 
+        $lastReportAge = $lastReportAt !== null && $endMs !== null
+            ? max(0, (int) round(($endMs - (int) ($reports[count($reports) - 1]['ts'])) / 1000))
+            : null;
+
         return [
             'status' => $status,
             'sufficient' => $accepted,
@@ -192,7 +213,16 @@ final class RadarPointMeasurement
             'help' => $help,
             'config_version' => $configVersion,
             'window' => ['started_at' => $windowStart, 'ended_at' => $windowEnd],
+            'window_seconds' => $startMs !== null && $endMs !== null
+                ? max(0, (int) round(($endMs - $startMs) / 1000)) : null,
             'reports' => count($reports),
+            'has_reports' => $reports !== [],
+            'first_report_at' => $reports !== [] ? self::isoFromMs($reports[0]['ts']) : null,
+            'last_report_at' => $lastReportAt,
+            'last_report_age_seconds' => $lastReportAge,
+            'last_distance' => $lastDistance,
+            'last_distance_at' => $lastPositiveAt,
+            'repeated_values' => $repeatedValues,
             'presence_reports' => $presents,
             'detected' => $detected,
             'last_value' => $lastValue,

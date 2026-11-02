@@ -25253,3 +25253,33 @@ media del conjunto; no se usan máximos ni mínimos para fabricar separación.
 ### Límites
 La tolerancia es coherencia, no precisión del radar. La verificación física del
 ajuste queda fuera de F105. Sin migración ni sondeo a Tuya.
+
+## 106. Diagnóstico de captura del radar (F106)
+
+### Problema
+En la corrida `14-20261102T081653Z-b1ce42` las cuatro ventanas interiores
+terminaron con `reports=0` y `reason=no_detection`. Los eventos crudos
+confirman que entre 08:17:49 y 08:20:33 no llegó **ningún** mensaje Zigbee de
+ningún dispositivo; el siguiente reporte del radar (3,49 m) apareció justo
+después del último intento. El mensaje del panel decía «no se obtuvieron dos
+lecturas nuevas», lo que ocultaba que el sensor no había enviado nada.
+
+### Decisión
+`RadarPointMeasurement` añade diagnóstico aditivo por ventana:
+`window_seconds`, `has_reports`, `first_report_at`, `last_report_at`,
+`last_report_age_seconds`, `last_distance`, `last_distance_at` y
+`repeated_values`. Los motivos `no_reports` y `not_present` separan la
+ausencia de mensajes de la ausencia de presencia. La evidencia y el cálculo no
+cambian: siguen exigiendo dos distancias nuevas y coherentes.
+
+### UI
+`pointText` muestra mensajes recibidos, edad del último, última distancia y
+valores repetidos. Si no hubo mensajes, el panel lo avisa y explica que este
+radar solo publica cambios: hay que mover el cuerpo o dar un paso corto, no
+solo los brazos. El texto de `STOPPED` usa el último `point` para elegir entre
+«El radar no envió datos», «El radar no detecta presencia» y «Medición sin
+evidencia».
+
+### Límites
+Sin distancias manuales, sin `/get` no soportado, sin pollers y sin cambios en
+la base de datos. El diagnóstico no relaja RF-221 ni RF-222.

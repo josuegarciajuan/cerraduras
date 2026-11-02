@@ -12844,3 +12844,28 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   radar.
 - La verificación física del ajuste queda fuera de esta fase.
 - Sin migración, sin pollers y sin llamadas a Tuya.
+
+# F106 — Diagnóstico de captura del radar (RF-227…RF-229)
+
+## RF-227: Distinguir silencio de datos insuficientes
+- Durante una medición por punto, el sistema debe informar cuántos mensajes del
+  radar llegaron en la ventana, la hora del último y la última distancia
+  observada.
+- La ausencia de mensajes (`no_reports`) se presenta como **el radar no envió
+  datos**, distinta de recibir mensajes sin presencia (`not_present`) o de
+  recibir presencia sin distancias nuevas (`not_enough_fresh_readings`).
+- Nunca se presenta un valor cacheado o repetido como si fuera una medición
+  nueva.
+
+## RF-228: Instrucciones basadas en el comportamiento real
+- El radar solo publica cuando cambia lo que detecta; mover solo los brazos
+  puede no cambiar `target_distance`.
+- La ayuda pide mover brazos y cuerpo, o dar un paso corto y volver al punto,
+  manteniendo la medición exclusivamente con distancias del sensor.
+- El panel muestra un aviso visible cuando la ventana termina con cero
+  mensajes.
+
+## RF-229: Límites
+- No se introducen distancias manuales, medidas físicas ni valores estimados.
+- Sin migración, sin pollers, sin `/get` no soportado y sin llamadas a Tuya.
+- El diagnóstico es aditivo en `/dashboard-api/sensores/v2/radar/state`.

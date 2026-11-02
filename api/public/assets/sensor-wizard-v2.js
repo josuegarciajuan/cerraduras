@@ -514,19 +514,28 @@
   function pointText(st) {
     var p = st && st.point;
     if (!p) return '';
+    var reports = Number(p.reports || 0);
     var status = {
       accepted: 'Punto medido',
       insufficient: 'Faltan lecturas nuevas',
       unstable: 'Lecturas incoherentes',
       config_changed: 'Configuración cambiada',
-      not_detected: 'Sin detección'
+      not_detected: reports === 0 ? 'El radar no envió datos' : 'Sin detección'
     }[p.status] || p.status || '';
     var readings = (p.readings || []).map(function (r) {
       return Number(r.distance).toFixed(2);
     });
     var out = status + ': ' + (p.fresh_readings || 0) + ' / ' + (p.min_samples || 2) + ' lecturas nuevas';
     if (p.attempt != null) out += ' · intento ' + p.attempt;
+    out += ' · ' + reports + (p.window_seconds != null ? ' mensajes en ' + p.window_seconds + ' s' : ' mensajes');
+    if (reports > 0 && p.last_report_age_seconds != null) {
+      out += ' · último hace ' + p.last_report_age_seconds + ' s';
+    }
     if (readings.length) out += ' · ' + readings.join(' · ') + ' m';
+    if (p.last_distance != null && !readings.length) {
+      out += ' · última distancia ' + Number(p.last_distance).toFixed(2) + ' m';
+    }
+    if (p.repeated_values) out += ' · ' + p.repeated_values + ' valores repetidos';
     if (p.mean != null) out += ' · media ' + Number(p.mean).toFixed(2) + ' m';
     if (p.spread != null) out += ' · dispersión ' + Number(p.spread).toFixed(2) + ' m (tol. ' + Number(p.tolerance).toFixed(2) + ' m)';
     if (p.excluded && p.excluded.length) {
@@ -570,7 +579,14 @@
     html += '<div class="row"><span class="pill ' + live.cls + '" id="radarLive">' + esc(live.text) + '</span>'
       + '<span class="pill dim" id="radarPhase">' + esc(st.phase || '') + '</span></div>';
     html += '<div class="row"><span class="pill ' + presencePillCls(m) + '" id="radarPresence">' + esc(presenceText(m)) + '</span></div>';
-    html += '<div class="hint">El radar solo envía cuando cambia algo; si no hay reportes nuevos se usa el estado al inicio de la ventana.</div>';
+    var pointDiag = st.point || {};
+    if (pointDiag.reports === 0) {
+      html += '<div class="hint" style="color:var(--warn)">No ha llegado ningún mensaje del radar en esta ventana. '
+        + 'Este sensor solo publica cuando cambia lo que detecta: da un paso o mueve el cuerpo entero '
+        + '(mover solo los brazos puede no cambiar la distancia).</div>';
+    } else {
+      html += '<div class="hint">El radar solo envía cuando cambia algo; si no hay reportes nuevos se usa el estado al inicio de la ventana.</div>';
+    }
     if (dist.samples > 0) {
       html += '<div class="hint" id="radarDistance">Distancia: '
         + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
