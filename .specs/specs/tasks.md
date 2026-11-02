@@ -11239,3 +11239,11 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] BLOCK 68G del runner.
 - [ ] Regresión completa.
 - [ ] Consumo desde el calibrador (F108).
+
+## TSK-F107-06: Algoritmo de punto
+- [x] `RadarDistancePointMeasurement` puro.
+- [x] Deduplicación por marca, ceros separados y cobertura temporal.
+- [x] Media/mediana/dispersión y mayoría coherente.
+- [x] Unit `RadarDistancePointMeasurementTest` (26 checks).
+- [x] BLOCK 68H del runner.
+- [ ] Integración en el flujo de calibración (F108).

@@ -25323,3 +25323,17 @@ Migración `0136_radar_distance_reports.sql`:
 ### Límites
 La consulta on-demand queda disponible pero el flujo de calibración todavía no
 la usa; se integrará en F108. Sin cambios en `/radar/state` ni en la UI.
+
+### Algoritmo por reportes DP 9
+`RadarDistancePointMeasurement` es puro:
+
+- filtra por ventana temporal;
+- deduplica por `marker`;
+- separa ceros de distancias positivas;
+- exige 2 muestras y 5 s de cobertura;
+- reutiliza `RadarPointMeasurement::coherentCluster` con tolerancia 0,30 m;
+- exige que el conjunto coherente cubra el 80 % de las positivas;
+- calcula media, mediana, dispersión y excluidas.
+
+No lee presencia, semillas ni base de datos. Los ceros se cuentan como
+`zero_reports` pero no invalidan una serie positiva.

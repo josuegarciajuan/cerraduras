@@ -7109,6 +7109,33 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68H — F107: algoritmo por reportes DP 9
+# Trazabilidad: RF-235, RF-236
+# =============================================================================
+block "BLOCK 68H — F107: algoritmo por reportes DP 9"
+
+if [ -f src/Domain/Sensors/RadarDistancePointMeasurement.php ] \
+    && [ -f tests/Unit/RadarDistancePointMeasurementTest.php ]; then
+    pass "F107: dominio y test del algoritmo presentes"
+else
+    fail "F107: algoritmo" "faltan dominio o test"
+fi
+
+if php tests/Unit/RadarDistancePointMeasurementTest.php >/tmp/f107-point.log 2>&1; then
+    pass "F107: distancias iguales, cobertura y cohesión"
+else
+    fail "F107: unit RadarDistancePointMeasurement" "$(tail -20 /tmp/f107-point.log | head -c 600)"
+fi
+
+if grep -q "positive_reports" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "inconsistent_majority" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "short_window" src/Domain/Sensors/RadarDistancePointMeasurement.php; then
+    pass "F107: estados y mayoría cableados"
+else
+    fail "F107: cableado del algoritmo" "faltan estados o mayoría"
+fi
+
+# =============================================================================
 # BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
 # Trazabilidad: RF-219, RF-220
 # =============================================================================
