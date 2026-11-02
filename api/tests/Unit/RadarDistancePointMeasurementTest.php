@@ -172,6 +172,22 @@ $configFiltered = analyze([
 same('F108: filtra por configuración', $configFiltered['status'], 'accepted');
 same('F108: descarta otra configuración', $configFiltered['discarded_config'], 1);
 
+// F110: pasos laterales en el punto interior; la distancia cambia a propósito.
+$lateral = analyze([
+    report(0, 3.50, 'lat-a'),
+    report(2, 2.75, 'lat-b'),
+], ['min_samples' => 1, 'min_span_seconds' => 0, 'lateral' => true]);
+same('F110: lateral acepta lecturas dispersas', $lateral['status'], 'accepted');
+same('F110: motivo lateral', $lateral['reason'], 'lateral_median');
+same('F110: mediana lateral', $lateral['median'], 3.125);
+same('F110: no excluye pasos laterales', $lateral['excluded'], []);
+
+$notLateral = analyze([
+    report(0, 3.50, 'lat-c'),
+    report(2, 2.75, 'lat-d'),
+], ['min_samples' => 1, 'min_span_seconds' => 0]);
+same('F110: sin lateral sigue exigiendo coherencia', $notLateral['status'], 'unstable');
+
 $empty = analyze([]);
 same('sin reportes', $empty['status'], 'no_reports');
 same('motivo sin reportes', $empty['reason'], 'no_reports');

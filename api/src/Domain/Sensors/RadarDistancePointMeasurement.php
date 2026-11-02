@@ -27,7 +27,7 @@ final class RadarDistancePointMeasurement
 
     /**
      * @param list<array<string,mixed>> $reports filas de radar_distance_reports
-     * @param array{min_samples?:int,min_span_seconds?:int,tolerance?:float,coverage?:float,device_id?:?int,config_key?:?string} $options
+     * @param array{min_samples?:int,min_span_seconds?:int,tolerance?:float,coverage?:float,device_id?:?int,config_key?:?string,lateral?:bool} $options
      * @return array<string,mixed>
      */
     public static function analyze(
@@ -46,6 +46,10 @@ final class RadarDistancePointMeasurement
             ? (int) $options['device_id'] : null;
         $configKey = isset($options['config_key']) && is_string($options['config_key'])
             && $options['config_key'] !== '' ? $options['config_key'] : null;
+        // F110: en el punto interior el operador se mueve lateralmente
+        // 20–30 cm. La distancia cambia a propósito; no se exige coherencia
+        // entre pasos, solo lecturas positivas y la mediana.
+        $lateral = ($options['lateral'] ?? false) === true;
 
         $seen = [];
         $inside = [];
@@ -124,10 +128,14 @@ final class RadarDistancePointMeasurement
         // F108: una única lectura DP 9 fresca es evidencia suficiente; su
         // identidad ya demuestra que no es un valor cacheado. Con varias, se
         // mantiene la coherencia y la mayoría.
-        $cluster = count($positive) === 1
-            ? [$positive[0]]
-            : RadarPointMeasurement::coherentCluster($positive, $tolerance);
-        $coverageActual = $positive !== [] ? count($cluster) / count($positive) : 0.0;
+        $cluster = $lateral
+            ? $positive
+            : (count($positive) === 1
+                ? [$positive[0]]
+                : RadarPointMeasurement::coherentCluster($positive, $tolerance));
+        $coverageActual = $lateral
+            ? ($positive !== [] ? 1.0 : 0.0)
+            : ($positive !== [] ? count($cluster) / count($positive) : 0.0);
 
         $status = self::STATUS_ACCEPTED;
         $reason = 'ok';
@@ -152,14 +160,19 @@ final class RadarDistancePointMeasurement
         }
 
         $accepted = $status === self::STATUS_ACCEPTED;
+        if ($accepted && $lateral) {
+            $reason = 'lateral_median';
+        }
         $mean = $cluster !== [] ? round(array_sum($cluster) / count($cluster), 3) : null;
         $min = $cluster !== [] ? min($cluster) : null;
         $max = $cluster !== [] ? max($cluster) : null;
         $spread = $min !== null && $max !== null ? round($max - $min, 3) : null;
         $excluded = [];
-        foreach ($positive as $value) {
-            if (!in_array($value, $cluster, true)) {
-                $excluded[] = $value;
+        if (!$lateral) {
+            foreach ($positive as $value) {
+                if (!in_array($value, $cluster, true)) {
+                    $excluded[] = $value;
+                }
             }
         }
 

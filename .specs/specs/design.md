@@ -25620,6 +25620,8 @@ Comprobado el 2026-11-02:
 ### Modelo `distance_inside_only_v1`
 
 - La sesión v5 usa `inside_valid`/`inside_ref` como referencia interior.
+- En el interior se llama a `RadarDistancePointMeasurement` con `lateral=true`:
+  no exige coherencia entre pasos; usa todas las lecturas positivas y su mediana.
 - `RadarCalibrationPlanner::insideOnlyCandidate()` calcula
   `snap(interior + 0,10)`; devuelve `null` si no queda margen.
 - Al aprobar `radar_inside`, el controlador aplica el candidato con

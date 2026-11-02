@@ -2205,7 +2205,9 @@ final class SensorWizardController
                         (int) $run['room_id'],
                         (string) $active['window_start'],
                         $windowEnd,
-                        $settings
+                        $settings,
+                        (string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                            && $mPhase === 'INSIDE'
                     );
                     $point = $this->distancePointAsPoint(
                         $distancePoint,
@@ -3818,7 +3820,8 @@ final class SensorWizardController
         int $roomId,
         string $windowStart,
         string $windowEnd,
-        array $settings
+        array $settings,
+        bool $lateral = false
     ): array {
         $repo = new RadarDistanceReportRepository($this->pdo());
         $reports = $repo->recentForRoom($roomId, $windowStart, 300);
@@ -3833,6 +3836,7 @@ final class SensorWizardController
                 'coverage' => 0.80,
                 'device_id' => $this->radarDeviceIdForRoom($roomId),
                 'config_key' => RadarDistanceReport::configKey($settings),
+                'lateral' => $lateral,
             ]
         );
     }

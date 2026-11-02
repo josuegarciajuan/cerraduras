@@ -15903,6 +15903,8 @@ Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "
   alcance tras detectar presencia fuera.
 - `radar_outside` se valida con `outside_valid`/`outside_pass` de presencia; no
   exige `outside_point` ni distancia exterior.
+- La evidencia interior admite `reason=lateral_median`; no usa el rechazo
+  `incoherent_readings` del modo estático.
 - Motivos nuevos: `inside_only_no_range`, `inside_only_no_separation`,
   `inside_only_apply_failed`.
 - `devices.meta_json.calibration_previous` conserva la calibración anterior.
