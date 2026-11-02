@@ -20,15 +20,15 @@ final class RadarDistanceReportRepository
     /**
      * Inserta un reporte. Devuelve false si ya existía (retransmisión).
      *
-     * @param array{marker:string,session_id:string,report_counter:int,distance_m:float,origin:string,received_at:string} $report
+     * @param array{marker:string,session_id:string,report_counter:int,distance_m:float,origin:string,config_key?:?string,received_at:string} $report
      */
     public function record(int $deviceId, string $externalId, int $roomId, array $report): bool
     {
         $stmt = $this->pdo->prepare(
             'INSERT IGNORE INTO radar_distance_reports
-                (device_id, external_id, room_id, marker, session_id, report_counter, distance_m, origin, received_at)
+                (device_id, external_id, room_id, marker, session_id, report_counter, distance_m, origin, config_key, received_at)
              VALUES
-                (:device_id, :external_id, :room_id, :marker, :session_id, :report_counter, :distance_m, :origin, :received_at)'
+                (:device_id, :external_id, :room_id, :marker, :session_id, :report_counter, :distance_m, :origin, :config_key, :received_at)'
         );
         $stmt->execute([
             ':device_id' => $deviceId,
@@ -39,6 +39,7 @@ final class RadarDistanceReportRepository
             ':report_counter' => $report['report_counter'],
             ':distance_m' => $report['distance_m'],
             ':origin' => $report['origin'],
+            ':config_key' => $report['config_key'] ?? null,
             ':received_at' => $report['received_at'],
         ]);
         return $stmt->rowCount() > 0;
@@ -46,13 +47,13 @@ final class RadarDistanceReportRepository
 
     /**
      * @return list<array{id:int,device_id:int,room_id:int,marker:string,session_id:string,
-     *                    report_counter:int,distance_m:float,origin:string,received_at:string}>
+     *                    report_counter:int,distance_m:float,origin:string,config_key:?string,received_at:string}>
      */
     public function recentForRoom(int $roomId, string $sinceUtc, int $limit = 200): array
     {
         $limit = max(1, min(1000, $limit));
         $stmt = $this->pdo->prepare(
-            'SELECT id, device_id, room_id, marker, session_id, report_counter, distance_m, origin, received_at
+            'SELECT id, device_id, room_id, marker, session_id, report_counter, distance_m, origin, config_key, received_at
                FROM radar_distance_reports
               WHERE room_id = :room_id AND received_at >= :since
               ORDER BY received_at ASC, id ASC
@@ -73,6 +74,7 @@ final class RadarDistanceReportRepository
                 'report_counter' => (int) $row['report_counter'],
                 'distance_m' => (float) $row['distance_m'],
                 'origin' => (string) $row['origin'],
+                'config_key' => $row['config_key'] !== null ? (string) $row['config_key'] : null,
                 'received_at' => (string) $row['received_at'],
             ];
         }

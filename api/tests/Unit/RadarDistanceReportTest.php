@@ -50,6 +50,12 @@ same('F107: valor negativo', RadarDistanceReport::fromMarker('v1|s|1|-1|push', $
 same('F107: origen inválido', RadarDistanceReport::fromMarker('v1|s|1|1.0|other', $at), null);
 same('F107: sin instante', RadarDistanceReport::fromMarker('v1|s|1|1.0|push', ''), null);
 
+$key1 = RadarDistanceReport::configKey(['maximum_range'=>3.9,'minimum_range'=>0.6,'radar_sensitivity'=>7,'fading_time'=>15.5,'detection_delay'=>0.1,'illuminance'=>50]);
+$key2 = RadarDistanceReport::configKey(['maximum_range'=>3.9,'minimum_range'=>0.6,'radar_sensitivity'=>7,'fading_time'=>15.5,'detection_delay'=>0.1,'illuminance'=>90]);
+$key3 = RadarDistanceReport::configKey(['maximum_range'=>4.2,'minimum_range'=>0.6,'radar_sensitivity'=>7,'fading_time'=>15.5,'detection_delay'=>0.1]);
+check('F108: configKey ignora iluminancia', $key1 === $key2);
+check('F108: configKey cambia con el rango', $key1 !== $key3);
+
 $repeat = RadarDistanceReport::fromMarker('v1|sess1|7|2.710|push', $at);
 check('F107: misma marca = misma identidad', $repeat['marker'] === $ok['marker']);
 check('F107: distancia igual no cambia la identidad', $repeat['distance_m'] === $ok['distance_m']);

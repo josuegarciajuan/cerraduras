@@ -25,12 +25,14 @@ function check(string $m, bool $c): void { $c ? pass($m) : fail($m); }
 
 const T0 = 1700000000;
 
-function report(int $sec, float $distance, string $marker, string $origin = 'push'): array
+function report(int $sec, float $distance, string $marker, string $origin = 'push', ?int $deviceId = null, ?string $configKey = null): array
 {
     return [
         'marker' => $marker,
         'distance_m' => $distance,
         'origin' => $origin,
+        'device_id' => $deviceId,
+        'config_key' => $configKey,
         'received_at' => gmdate('Y-m-d\TH:i:s\Z', T0 + $sec),
     ];
 }
@@ -130,6 +132,32 @@ $query = analyze([
 ]);
 same('reportes de consulta cuentan', $query['status'], 'accepted');
 same('dos reportes de consulta', $query['query_reports'], 2);
+
+$zeroSpan = analyze([
+    report(0, 0.0, 'z'),
+    report(29, 2.71, 'a'),
+    report(30, 2.71, 'b'),
+]);
+same('F108: cero inicial no alarga la cobertura positiva', $zeroSpan['status'], 'short_window');
+same('F108: span positivo real', $zeroSpan['positive_span_seconds'], 1.0);
+same('F108: span de reportes separado', $zeroSpan['report_span_seconds'], 30.0);
+
+$deviceFiltered = analyze([
+    report(0, 2.71, 'a', 'push', 438),
+    report(5, 2.71, 'b', 'push', 438),
+    report(10, 9.99, 'c', 'push', 999),
+], ['device_id' => 438]);
+same('F108: filtra por radar', $deviceFiltered['status'], 'accepted');
+same('F108: descarta otro radar', $deviceFiltered['discarded_device'], 1);
+
+$configKey = '{"maximum_range":3.9,"minimum_range":0.6,"radar_sensitivity":7,"fading_time":15.5,"detection_delay":0.1}';
+$configFiltered = analyze([
+    report(0, 2.71, 'a', 'push', 438, $configKey),
+    report(5, 2.71, 'b', 'push', 438, $configKey),
+    report(10, 9.99, 'c', 'push', 438, 'other'),
+], ['device_id' => 438, 'config_key' => $configKey]);
+same('F108: filtra por configuración', $configFiltered['status'], 'accepted');
+same('F108: descarta otra configuración', $configFiltered['discarded_config'], 1);
 
 $empty = analyze([]);
 same('sin reportes', $empty['status'], 'no_reports');

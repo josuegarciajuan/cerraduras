@@ -215,6 +215,9 @@ final class ZigbeeMqttMessageMapper
                     $occurredAt
                 );
                 if ($distanceReport !== null) {
+                    // F108/RF-242: huella de la configuración vigente en la
+                    // trama, para no mezclar muestras de ajustes distintos.
+                    $distanceReport['config_key'] = RadarDistanceReport::configKey($settings);
                     $meta['distance_report'] = $distanceReport;
                 }
             }

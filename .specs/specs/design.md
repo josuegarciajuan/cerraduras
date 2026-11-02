@@ -25455,3 +25455,15 @@ marcará como `unattributed` en la siguiente fase.
   editando y arrancando, para que no se republicara.
 - Verificado en payload real: `f107_distance_report` con `push` y sin
   `distance_query`.
+
+### F108 Fase 4 — algoritmo y ventana congelada
+
+- `RadarDistancePointMeasurement` filtra por `device_id` y `config_key`.
+- `positive_span_seconds` se calcula solo con muestras positivas; un cero
+  inicial no alarga la cobertura.
+- `report_span_seconds` queda como diagnóstico separado.
+- `discarded_device` y `discarded_config` explican muestras excluidas.
+- `SensorWizardController::radarDistanceEvidence()` usa el `window_end` real y
+  marca `frozen=true` cuando ya ha cerrado; no recalcula con `now`.
+- Migración `0137` añade `config_key` a `radar_distance_reports`.
+- El mapper guarda la huella de configuración junto a cada reporte.
