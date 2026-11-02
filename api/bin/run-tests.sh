@@ -7062,7 +7062,7 @@ fi
 if grep -q "no_reports" src/Domain/Sensors/RadarPointMeasurement.php \
     && grep -q "last_report_age_seconds" src/Domain/Sensors/RadarPointMeasurement.php \
     && grep -q "El radar no envió datos" src/Http/Controllers/SensorWizardController.php \
-    && grep -q "Mensajes del radar: 0" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "Mensajes del radar en la ventana: 0" src/Http/Controllers/SensorWizardController.php \
     && grep -q "No ha llegado ningún mensaje del radar" public/assets/sensor-wizard-v2.js; then
     pass "F106: diagnóstico cableado en dominio, controlador y UI"
 else
