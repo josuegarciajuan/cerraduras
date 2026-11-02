@@ -7860,7 +7860,7 @@ fi
 
 if ! grep -q "distance_query" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js \
     && ! grep -q "queryPending" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js \
-    && grep -q "origin.*push" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
+    && grep -q "f107_distance_report.*push" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
     pass "F108: conversor solo emite evidencia push DP 9"
 else
     fail "F108: conversor" "queda consulta o atribución temporal"
