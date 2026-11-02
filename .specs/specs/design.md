@@ -25523,3 +25523,27 @@ funcional. Por tanto:
 - no se crean temporizadores ni workers de consulta.
 
 Esta fase se cierra por evidencia, no por ausencia de implementación.
+
+### F108 Fase 9 — verificación desplegada
+
+Comprobado el 2026-11-02:
+
+- servicios `cerraduras-api`, `cerraduras-zigbee-ingress`,
+  `cerraduras-zigbee-spool` y `cerraduras-zigbee-tunnel` activos;
+- API `200`;
+- ingest `connected`, `stats_mode=pending`, `pending=2`, `last_persist_ms=5`;
+- spool `errors=0`, `incoming=0`;
+- conversor instalado con hash idéntico al repositorio
+  (`122b3ce3…`);
+- Zigbee2MQTT `healthy`, `log_level=info`, sin `dataQuery` ni bucles;
+- backup `zigbee-backup-20261102T100743Z.tar.gz` con checksum **OK**;
+- `radar_distance_reports`: 2.573 filas, 954 con `config_key`, 0 con
+  `origin='query'`, 3 `unattributed`;
+- latencia `received_at → created_at` de 0,027–0,499 s;
+- payload real sin `distance_query` y con `f107_distance_report|push`;
+- modo de producción activado a `RADAR_DISTANCE_EVIDENCE_MODE=active` y
+  `RADAR_DISTANCE_QUERY_ENABLED=false`;
+- corrida antigua sigue en versión 3 / `legacy`;
+- `newRadarSession` en modo active devuelve versión 4 /
+  `distance_evidence_v1` (verificado por reflexión);
+- regresión **932 passed, 0 failed, 14 skipped**.
