@@ -7874,6 +7874,34 @@ else
 fi
 
 # =============================================================================
+# BLOCK 75 — F108: algoritmo, ventana congelada y filtros
+# Trazabilidad: RF-242 · design.md §108 Fase 4
+# =============================================================================
+block "BLOCK 75 — F108: algoritmo, ventana congelada y filtros"
+
+if php tests/Unit/RadarDistancePointMeasurementTest.php >/tmp/f108-point4.log 2>&1 \
+    && php tests/Unit/RadarDistanceReportTest.php >/tmp/f108-report4.log 2>&1; then
+    pass "F108: span positivo, filtros y configKey"
+else
+    fail "F108: units del algoritmo" "$(tail -20 /tmp/f108-point4.log /tmp/f108-report4.log | head -c 600)"
+fi
+
+for f in "migrations/0137_radar_distance_config.sql" "src/Domain/Sensors/RadarDistanceReport.php"; do
+    if [ -f "$f" ]; then pass "F108: existe $f"; else fail "F108: falta $f"; fi
+done
+
+if grep -q "positive_span_seconds" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "discarded_device" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "discarded_config" src/Domain/Sensors/RadarDistancePointMeasurement.php \
+    && grep -q "config_key" src/Infrastructure/Gateways/Sensor/ZigbeeMqttMessageMapper.php \
+    && grep -q "frozen" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "windowEnd" src/Http/Controllers/SensorWizardController.php; then
+    pass "F108: filtros, span positivo y congelación cableados"
+else
+    fail "F108: cableado del algoritmo" "faltan span, filtros o frozen"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

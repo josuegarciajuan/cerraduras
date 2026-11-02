@@ -15829,3 +15829,17 @@ Reglas de compatibilidad:
   desactivadas por configuración.
 - `origin=query` solo podrá usarse con correlación real. En caso contrario,
   `unattributed`.
+
+### F108 Fase 4 — algoritmo congelado
+
+Aditivo en `distance_point`:
+
+- `positive_span_seconds`: cobertura de las muestras positivas.
+- `report_span_seconds`: cobertura de todos los reportes (diagnóstico).
+- `positive_first_at`, `positive_last_at`.
+- `discarded_device`, `discarded_config`.
+- `frozen`: `true` si la ventana ya cerró.
+- `authority`: `off|shadow|active`.
+
+`device_id` y `config_key` se usan como filtros internos; no se exponen como
+datos de otras salas.

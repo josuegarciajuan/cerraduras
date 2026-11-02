@@ -136,13 +136,16 @@ same('F90: JSON array is not accepted as a device object', $notObject['discard_r
 // F107: la marca del conversor externo solo se adjunta al evento PRESENCE.
 $distance = $mapper->mapMessage(
     'zigbee2mqtt/door-contact',
-    '{"occupancy":true,"target_distance":2.71,"f107_distance_report":"v1|sess|9|2.710|push"}',
+    '{"occupancy":true,"target_distance":2.71,"maximum_range":3.9,"minimum_range":0.6,'
+    . '"radar_sensitivity":7,"fading_time":15.5,"detection_delay":0.1,'
+    . '"f107_distance_report":"v1|sess|9|2.710|push"}',
     $at
 );
 $distanceReport = $distance['events'][0]['meta']['distance_report'] ?? null;
 same('F107: marca adjunta al evento de presencia', $distanceReport['marker'] ?? null, 'v1|sess|9|2.710|push');
 same('F107: distancia parseada', $distanceReport['distance_m'] ?? null, 2.71);
 same('F107: origen parseado', $distanceReport['origin'] ?? null, 'push');
+check('F108: huella de configuración presente', isset($distanceReport['config_key']) && is_string($distanceReport['config_key']));
 
 $legacyQuery = $mapper->mapMessage(
     'zigbee2mqtt/door-contact',

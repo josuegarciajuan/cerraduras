@@ -12,6 +12,7 @@ use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\RadarBoundaryScan;
 use App\Domain\Sensors\RadarCalibrationPlanner;
 use App\Domain\Sensors\RadarDistancePointMeasurement;
+use App\Domain\Sensors\RadarDistanceReport;
 use App\Domain\Sensors\RadarDistanceQuality;
 use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarEvidencePolicy;
@@ -3470,29 +3471,53 @@ final class SensorWizardController
         }
 
         $windowStart = null;
+        $windowEnd = null;
         if (($active['kind'] ?? '') === 'MEASURE' && isset($active['window_start'])) {
             $windowStart = (string) $active['window_start'];
+            $windowEnd = isset($active['window_end']) ? (string) $active['window_end'] : null;
         } elseif (isset($session['last_measurement']['window']['started_at'])) {
             $windowStart = (string) $session['last_measurement']['window']['started_at'];
+            $windowEnd = isset($session['last_measurement']['window']['ended_at'])
+                ? (string) $session['last_measurement']['window']['ended_at'] : null;
         }
         if ($windowStart === null || $windowStart === '') {
             return ['mode' => $mode, 'point' => null, 'query' => $query];
         }
+        if ($windowEnd === null || $windowEnd === '') {
+            $windowEnd = gmdate('Y-m-d\TH:i:s\Z');
+        }
+        $frozen = (strtotime($windowEnd . ' UTC') ?: 0) <= time();
 
         $repo = new RadarDistanceReportRepository($this->pdo());
         $reports = $repo->recentForRoom((int) $run['room_id'], $windowStart, 300);
         $point = RadarDistancePointMeasurement::analyze(
             $reports,
             $windowStart,
-            gmdate('Y-m-d\TH:i:s\Z'),
+            $windowEnd,
             [
                 'min_samples' => 2,
                 'min_span_seconds' => 5,
                 'tolerance' => 0.30,
                 'coverage' => 0.80,
+                'device_id' => $this->radarDeviceIdForRoom((int) $run['room_id']),
+                'config_key' => RadarDistanceReport::configKey((array) ($session['current'] ?? [])),
             ]
         );
+        $point['frozen'] = $frozen;
+        $point['authority'] = $mode;
         return ['mode' => $mode, 'point' => $point, 'query' => $query];
+    }
+
+    private function radarDeviceIdForRoom(int $roomId): ?int
+    {
+        $stmt = $this->pdo()->prepare(
+            "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+              WHERE r.id = :rid AND d.kind = 'PRESENCE' AND d.transport = 'ZIGBEE2MQTT'
+              LIMIT 1"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $id = $stmt->fetchColumn();
+        return $id === false ? null : (int) $id;
     }
 
     /**

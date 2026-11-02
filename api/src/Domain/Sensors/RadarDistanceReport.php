@@ -59,4 +59,29 @@ final class RadarDistanceReport
             'received_at' => $receivedAt,
         ];
     }
+
+    /**
+     * F108/RF-242: huella estable de la configuración que afecta a la
+     * distancia. No incluye iluminancia ni target_distance.
+     *
+     * @param array<string,mixed> $settings
+     */
+    public static function configKey(array $settings): ?string
+    {
+        $keys = [
+            'maximum_range', 'minimum_range', 'radar_sensitivity',
+            'fading_time', 'detection_delay',
+        ];
+        $out = [];
+        $known = 0;
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $settings) || !is_numeric($settings[$key])) {
+                $out[$key] = null;
+                continue;
+            }
+            $out[$key] = round((float) $settings[$key], 3);
+            $known++;
+        }
+        return $known === 0 ? null : json_encode($out, JSON_THROW_ON_ERROR);
+    }
 }

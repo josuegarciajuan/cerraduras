@@ -11297,10 +11297,12 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Migración `0137` no necesaria: no hay consulta correlacionada.
 
 ## TSK-F108-04: Algoritmo
-- [ ] Cobertura sobre muestras positivas.
-- [ ] Resultado congelado al cerrar ventana.
-- [ ] Filtro por radar/configuración.
-- [ ] Pruebas de iguales, inestable, cero y tardío.
+- [x] Cobertura sobre muestras positivas (`positive_span_seconds`).
+- [x] Resultado congelado con `window_end` real y `frozen`.
+- [x] Filtro por radar (`device_id`) y configuración (`config_key`).
+- [x] Migración aditiva `0137` y persistencia de `config_key`.
+- [x] Pruebas de iguales, inestable, cero inicial y filtros.
+- [ ] Verificación tras desplegar y reiniciar el spool.
 
 ## TSK-F108-05: Autoridad de sesión
 - [ ] Nueva versión/modelo de sesión.
