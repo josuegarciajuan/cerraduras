@@ -11384,7 +11384,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `insideOnlyCandidate()` con margen 0,10 y rejilla 0,15.
 - [x] Mediana lateral: no rechaza la dispersión de los pasos de 20–30 cm.
 - [x] `lowerCandidate()` con protección del margen interior.
-- [x] Aplicación del candidato al aprobar el interior.
+- [x] Aplicación del candidato al aprobar el interior, también desde «Continuar».
 - [x] Exterior solo por presencia y reducción paso a paso.
 - [x] Motivos y textos del panel.
 - [x] Catálogo con pasos laterales 20–30 cm.

@@ -2565,6 +2565,15 @@ final class SensorWizardController
                 }
                 $run = $this->finalizeInsideAttempt($run, $stepId);
                 $session = (array) ($run['calibration_session'] ?? []);
+                if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+                    // F110: el botón «Continuar» también debe aplicar el
+                    // candidato interior + margen antes de comprobar fuera.
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    $runId = (string) ($run['run_id'] ?? '');
+                    $this->applyInsideOnlyCandidate($runId);
+                    return $this->store->load($runId) ?? $run;
+                }
                 $session['phase'] = 'OUTSIDE_MEASURE';
                 $session['state'] = 'IDLE';
             } elseif ($phase === 'OUTSIDE_VERIFY') {
@@ -3325,7 +3334,7 @@ final class SensorWizardController
         }
         return match ($phase) {
             'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte. Da pasos laterales cortos de 20–30 cm y vuelve al centro para que el radar te vea desde varios ángulos; luego pulsa Medir.', 'message' => 'Primero medimos el punto interior con pasos laterales.'],
-            'OUTSIDE_MEASURE' => ['title' => 'Verificar el exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Verificar. No hace falta medir distancia: comprobamos que el radar deja de detectarte por presencia.', 'message' => 'Verificamos el exterior solo por presencia.'],
+            'OUTSIDE_MEASURE' => ['title' => 'Comprobar que no te detecta fuera', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Verificar. Esto no es una calibración de distancia: solo comprobamos la presencia con el alcance ya aplicado.', 'message' => 'Verificación exterior por presencia, sin medir distancia.'],
             'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Permanece en el mismo punto donde NO quieres que te detecte y pulsa Verificar fuera. La app comprobará que el nuevo alcance ya no te detecta ahí.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
             'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo',
                 'instruction' => (($session['outside_measure']['detected'] ?? true) === false
