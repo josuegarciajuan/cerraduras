@@ -106,6 +106,15 @@ $badDevice = new Device(440, 532, Device::KIND_SWITCH, 'bad', null, null, ['topi
 $bad = (new ZigbeeSwitchGateway($repo, $publisher))->turnOnForDevice($badDevice);
 check('*-oficina topic rejected', ($bad['ok'] ?? true) === false && ($bad['error'] ?? null) === 'invalid_topic');
 
+$reads = [];
+$reader = function (string $topic) use (&$reads): array {
+    $reads[] = $topic;
+    return ['ok' => true, 'error' => null];
+};
+$probe = (new ZigbeeSwitchGateway($repo, null, $reader))->probeForDevice($device);
+check('F109: probe publica lectura /get', ($probe['ok'] ?? false) === true);
+same('F109: topic de sonda', $reads[0] ?? null, 'zigbee2mqtt/almacen-zb-luz/get');
+
 $noDevice = (new ZigbeeSwitchGateway($repo, $publisher))->turnOn(99);
 check('missing switch returns error', ($noDevice['ok'] ?? true) === false && ($noDevice['error'] ?? null) === 'switch_not_found');
 

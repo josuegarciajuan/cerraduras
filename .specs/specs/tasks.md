@@ -11353,7 +11353,8 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Sonda `/get state` con `read-state.js`.
 - [x] `startAttempt('light')` bloquea con `switch_unreachable`.
 - [x] `switch/test` devuelve `reachable` y la UI no pregunta si no hay respuesta.
-- [ ] Diagnóstico activo y reemparejamiento físico de la luz.
+- [x] Sonda `/get state`: sin respuesta (`Delivery failed for 61600`).
+- [ ] Reemparejamiento físico y prueba de la luz.
 
 ## TSK-F108-11: Suficiencia de una lectura fresca
 - [x] `min_samples=1` y `min_span_seconds=0` para evidencia DP 9.
