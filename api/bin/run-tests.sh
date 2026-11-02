@@ -7070,6 +7070,45 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68G — F107: evidencia de distancia del radar
+# Trazabilidad: RF-230…RF-234
+# =============================================================================
+block "BLOCK 68G — F107: evidencia de distancia del radar"
+
+for f in src/Domain/Sensors/RadarDistanceReport.php \
+         src/Domain/Sensors/RadarDistanceReportRepository.php \
+         migrations/0136_radar_distance_reports.sql \
+         tests/Unit/RadarDistanceReportTest.php \
+         ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; do
+    if [ -f "$f" ]; then
+        pass "F107: $f presente"
+    else
+        fail "F107: $f" "falta"
+    fi
+done
+
+if php tests/Unit/RadarDistanceReportTest.php >/tmp/f107-report.log 2>&1; then
+    pass "F107: identidad y validación de la marca DP 9"
+else
+    fail "F107: unit RadarDistanceReport" "$(tail -20 /tmp/f107-report.log | head -c 600)"
+fi
+
+if php tests/Unit/ZigbeeMqttMessageMapperTest.php >/tmp/f107-mapper.log 2>&1; then
+    pass "F107: el mapper adjunta la evidencia a PRESENCE"
+else
+    fail "F107: unit del mapper" "$(tail -20 /tmp/f107-mapper.log | head -c 600)"
+fi
+
+if grep -q "distance_report" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php \
+    && grep -q "radar_distance_reports" src/Domain/Sensors/RadarDistanceReportRepository.php \
+    && grep -q "distance_query" bin/zigbee-ingress/publish-json.js \
+    && ! grep -q "configure: async.*dataQuery" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
+    pass "F107: ingesta, persistencia y consulta segura cableadas"
+else
+    fail "F107: cableado" "falta evidencia, persistencia, consulta o hay configure con dataQuery"
+fi
+
+# =============================================================================
 # BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
 # Trazabilidad: RF-219, RF-220
 # =============================================================================

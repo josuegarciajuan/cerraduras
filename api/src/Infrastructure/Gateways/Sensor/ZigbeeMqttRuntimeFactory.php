@@ -21,6 +21,7 @@ use App\Domain\Presence\PresenceEventRepository;
 use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomTypeRepository;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Stays\StayRepository;
 use App\Domain\Stays\StayStateMachine;
 use App\Domain\Warehouse\WarehouseRecordingService;
@@ -90,6 +91,11 @@ final class ZigbeeMqttRuntimeFactory
             new RoomSensorStateRepository($pdo)
         );
 
-        return new ZigbeeMqttEventProcessor($devices, $iotService);
+        return new ZigbeeMqttEventProcessor(
+            $devices,
+            $iotService,
+            null,
+            new RadarDistanceReportRepository($pdo)
+        );
     }
 }

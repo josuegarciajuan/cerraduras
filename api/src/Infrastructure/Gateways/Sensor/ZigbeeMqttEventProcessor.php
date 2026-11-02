@@ -8,6 +8,7 @@ use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Presence\DoorPolarity;
 use App\Domain\Presence\PresenceEvent;
 use App\Domain\Presence\IotSessionService;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use InvalidArgumentException;
 
 /** Resolves configured Zigbee identities and delegates state changes to the domain writer. */
@@ -16,7 +17,8 @@ final class ZigbeeMqttEventProcessor
     public function __construct(
         private DeviceRepositoryInterface $devices,
         private IotSessionService $iotSessions,
-        private ?ZigbeeSwitchStateService $switchStates = null
+        private ?ZigbeeSwitchStateService $switchStates = null,
+        private ?RadarDistanceReportRepository $distanceReports = null
     ) {
         $this->switchStates ??= new ZigbeeSwitchStateService($devices);
     }
@@ -120,6 +122,15 @@ final class ZigbeeMqttEventProcessor
         $roomId = $this->devices->resolveRoomId($device->id);
         if ($roomId === null || $roomId <= 0) {
             return ['status' => 'discarded', 'reason' => 'room_not_found'];
+        }
+
+        // F107/RF-231: evidencia de distancia separada del ciclo de presencia.
+        // Es un hecho del radar, no una transición de estancia: no toca
+        // iot_sessions, visitas, luces ni anomalías.
+        if ($this->distanceReports !== null
+            && is_array($meta['distance_report'] ?? null)
+            && !$isBootstrap) {
+            $this->distanceReports->record($device->id, $externalId, $roomId, $meta['distance_report']);
         }
 
         if ($isBootstrap && $sensor === 'PROXIMITY') {

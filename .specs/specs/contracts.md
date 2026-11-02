@@ -15726,3 +15726,27 @@ Motivos nuevos de `point.reason`:
 `STOPPED` mantiene `inside_point_*` y `outside_point_*`; el mensaje distingue
 silencio del sensor, ausencia de presencia y falta de lecturas nuevas. No hay
 rutas nuevas ni cambios de forma incompatibles.
+
+## §F107 Evidencia de distancia del radar
+
+Aditivo en el topic `zigbee2mqtt/<radar>`:
+
+- `f107_distance_report`: string opaco
+  `v1|<session>|<counter>|<value>|<origin>`.
+  - `session`: identidad del proceso que generó las marcas.
+  - `counter`: entero creciente por reporte.
+  - `value`: metros con tres decimales.
+  - `origin`: `push|query`.
+- Solo aparece cuando la trama contiene el DP 9. Si no cambia respecto al
+  mensaje anterior, no es una lectura nueva.
+- El formato no sustituye `target_distance`; lo complementa.
+
+Aditivo en `zigbee2mqtt/<radar>/set`:
+
+- `{"distance_query":"request"}` solicita **una** lectura DP 9. Es una orden de
+  diagnóstico/calibración, nunca un poller.
+
+Persistencia interna:
+
+- `radar_distance_reports` (`0136`), única por `(device_id, marker)`.
+- No hay rutas HTTP nuevas ni cambios incompatibles en `/radar/state`.

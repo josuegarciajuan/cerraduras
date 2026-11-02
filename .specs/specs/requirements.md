@@ -12869,3 +12869,41 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - No se introducen distancias manuales, medidas físicas ni valores estimados.
 - Sin migración, sin pollers, sin `/get` no soportado y sin llamadas a Tuya.
 - El diagnóstico es aditivo en `/dashboard-api/sensores/v2/radar/state`.
+
+# F107 — Evidencia de distancia del radar (RF-230…RF-234)
+
+## RF-230: Evidencia por atributo
+- El conversor externo del ZY-M100-S_2 publica una marca solo cuando la trama
+  Zigbee contiene el DP 9 (`target_distance`).
+- La marca es la identidad del reporte: cambia con cada trama y se mantiene
+  igual si Zigbee2MQTT republica el estado cacheado por otro atributo.
+- Dos reportes con la misma distancia son dos muestras si sus marcas difieren.
+- Una retransmisión de la misma trama no crea una muestra nueva.
+
+## RF-231: Persistencia separada
+- Los reportes DP 9 se guardan en `radar_distance_reports`, separados de
+  `presence_events`.
+- Recibir distancia no crea visitas, no cambia presencia, no enciende luces y
+  no genera anomalías.
+- La clave única es `(device_id, marker)`; duplicados se ignoran.
+
+## RF-232: Consulta bajo demanda
+- El conversor expone `distance_query` para solicitar una lectura DP 9.
+- `dataQuery` nunca se envía desde `configure`, `onEvent` de `lastSeen` ni un
+  temporizador periódico.
+- Cada consulta es explícita y acotada; el sistema no sondea en bucle.
+- La consulta es local (Zigbee/MQTT); no consume cuota de Tuya.
+
+## RF-233: Integración y validación
+- El mapper adjunta la evidencia a `meta.distance_report` solo en eventos
+  PRESENCE y con marca válida.
+- Marcas malformadas, valores negativos, orígenes desconocidos o instantes
+  vacíos se descartan.
+- Un mensaje sin marca sigue siendo diagnóstico, no evidencia nueva.
+- No se modifica el contrato público de `/radar/state` en esta fase; el consumo
+  se integra en F108.
+
+## RF-234: Límites
+- Sin distancias manuales, sin pollers y sin llamadas a Tuya.
+- Migración aditiva; rollback = retirar conversor y dejar de escribir la tabla.
+- El firmware debe confirmarse con presencia real en la fase de validación.
