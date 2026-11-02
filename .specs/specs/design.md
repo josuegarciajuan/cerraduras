@@ -25283,3 +25283,43 @@ evidencia».
 ### Límites
 Sin distancias manuales, sin `/get` no soportado, sin pollers y sin cambios en
 la base de datos. El diagnóstico no relaja RF-221 ni RF-222.
+
+## 107. Evidencia de distancia del radar (F107)
+
+### Descubrimiento
+El DP 9 se decodifica como `target_distance / 100`. Zigbee2MQTT publica el
+estado combinado cuando cambia cualquier atributo y puede incluir una distancia
+cacheada. Por eso el valor repetido no demuestra una lectura nueva.
+
+La prueba con `dataQuery` confirmó que el firmware responde con
+`commandDataReport` que contiene el DP 9, incluso sin cambio de valor. El envío
+desde `configure` provocó un bucle porque Zigbee2MQTT reconfigura en cada
+`lastSeen`; el conversor definitivo no usa `configure` para consultar.
+
+### Conversor externo
+`docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js`:
+
+- definición equivalente a la estándar del `ZY-M100-S_2`;
+- `fromZigbee` adicional que, solo si la trama contiene DP 9, publica
+  `f107_distance_report = v1|<session>|<counter>|<value>|<origin>`;
+- deduplicación por `seq` + `zclTransactionSequenceNumber` durante 10 s;
+- `toZigbee` con la orden `distance_query` que envía **un** `dataQuery`;
+- no define `configure` ni temporizadores.
+
+### Ingesta
+`ZigbeeMqttMessageMapper` parsea la marca con `RadarDistanceReport` y la expone
+como `meta.distance_report` en el evento PRESENCE. Después,
+`ZigbeeMqttEventProcessor` la persiste en `radar_distance_reports` antes de
+cualquier otra decisión de presencia. Es un hecho de telemetría: no toca
+`iot_sessions`, visitas, luces ni anomalías.
+
+### Persistencia
+Migración `0136_radar_distance_reports.sql`:
+
+- `device_id`, `external_id`, `room_id`;
+- `marker` único por dispositivo;
+- `session_id`, `report_counter`, `distance_m`, `origin`, `received_at`.
+
+### Límites
+La consulta on-demand queda disponible pero el flujo de calibración todavía no
+la usa; se integrará en F108. Sin cambios en `/radar/state` ni en la UI.

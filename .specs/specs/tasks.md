@@ -11211,3 +11211,31 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] BLOCK 68F del runner.
 - [ ] Regresión completa.
 - [ ] Repetir la prueba física en la sala 14.
+
+# Fase 107 — Tareas
+
+## TSK-F107-01: Conversor externo seguro
+- [x] Definición equivalente del ZY-M100-S_2.
+- [x] Marca DP 9 con deduplicación por transacción.
+- [x] Orden `distance_query` bajo demanda, sin `configure`.
+- [x] Backup, instalación y verificación de no-loop en el nodo oficina.
+
+## TSK-F107-02: Evidencia en la ingesta
+- [x] `RadarDistanceReport` valida y parsea la marca.
+- [x] El mapper adjunta `meta.distance_report` solo a PRESENCE.
+- [x] Tests de marcas válidas e inválidas.
+
+## TSK-F107-03: Persistencia separada
+- [x] Migración `0136_radar_distance_reports.sql`.
+- [x] Repositorio de inserción idempotente y consulta por sala.
+- [x] El procesador persiste antes de las decisiones de presencia.
+
+## TSK-F107-04: Consulta bajo demanda
+- [x] `distance_query` en la allowlist de publicación.
+- [x] Prueba real: una consulta devuelve DP 9 y no deja bucle.
+
+## TSK-F107-05: Verificación
+- [x] Units `RadarDistanceReportTest` y ampliación del mapper.
+- [x] BLOCK 68G del runner.
+- [ ] Regresión completa.
+- [ ] Consumo desde el calibrador (F108).

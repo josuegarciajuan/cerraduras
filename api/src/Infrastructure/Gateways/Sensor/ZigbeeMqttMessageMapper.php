@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Gateways\Sensor;
 
 use App\Domain\Presence\PresenceEvent;
+use App\Domain\Sensors\RadarDistanceReport;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -205,6 +206,16 @@ final class ZigbeeMqttMessageMapper
                 $settings = self::radarSettings($decoded);
                 if ($settings !== []) {
                     $meta['settings'] = $settings;
+                }
+                // F107/RF-230: el conversor externo marca las tramas que
+                // contienen el DP 9. Sin esta marca no se puede distinguir una
+                // distancia nueva de un valor cacheado en el estado combinado.
+                $distanceReport = RadarDistanceReport::fromMarker(
+                    $decoded->f107_distance_report ?? null,
+                    $occurredAt
+                );
+                if ($distanceReport !== null) {
+                    $meta['distance_report'] = $distanceReport;
                 }
             }
 
