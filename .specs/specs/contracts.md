@@ -15889,3 +15889,20 @@ Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "
 - `preflight.automation_pause` expone el estado.
 - `switch/test` añade `reachable`.
 - `startAttempt` de luz puede devolver `409 switch_unreachable`.
+
+
+## §F110 Base y calibración solo interior
+
+- `run.calibration.initial_settings` pasa a ser la base confirmada:
+  `maximum_range=6.0`, `minimum_range=0.6`, `radar_sensitivity=7`,
+  `detection_delay=0.1`, `fading_time=15.5`.
+- `startRun`/`resetRun` pueden devolver `409 radar_baseline_failed` si la base
+  no se confirma por push.
+- La sesión nueva es `version=5`, `model=distance_inside_only_v1`.
+- `radar/state` mantiene la forma; añade `outside_message` cuando se reduce el
+  alcance tras detectar presencia fuera.
+- `radar_outside` se valida con `outside_valid`/`outside_pass` de presencia; no
+  exige `outside_point` ni distancia exterior.
+- Motivos nuevos: `inside_only_no_range`, `inside_only_no_separation`,
+  `inside_only_apply_failed`.
+- `devices.meta_json.calibration_previous` conserva la calibración anterior.

@@ -184,7 +184,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F106 Diagnóstico de captura del radar (silencio vs lecturas)** | **BLOCK 68F + units F106** | **Completado (código); prueba física pendiente** |
 | **F107 Evidencia de distancia del radar (DP 9 + consulta bajo demanda)** | **BLOCK 68G/68H/68I + units F107** | **Fases 1–3 completadas; activación y prueba física pendientes (F109)** |
 | **F108 Calibración fiable del radar (ingesta, consulta, algoritmo, panel)** | **BLOCK 72/74/75/76/77/78/79/80 + units F108** | **Fases 0–9 + corrección final completadas; prueba física pendiente (Fase 10)** |
-| **F109 Pausa manual de automatizaciones y luz alcanzable** | **BLOCK 81 + units F109** | **Pausa verificada; luz sin respuesta Zigbee; reemparejamiento pendiente** |
+| **F109 Pausa manual de automatizaciones y luz alcanzable** | **BLOCK 81 + units F109** | **Pausa verificada; luz recuperada tras ciclo de alimentación (`reachable:true`)** |
+| **F110 Base sin calibrar y calibración solo interior** | **BLOCK 82 + units F110** | **Implementado (código); regresión 961/0/12; prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 
@@ -1028,6 +1029,24 @@ para Tuya cloud.
 - **Tests**: BLOCK 33 del runner + `tests/Unit/choreography.test.js` y
   `tests/Unit/presence-poller-gate.test.js` (invocados con `node` desde el bloque, ya que
   no se autodescubren).
+
+### F110 — Base sin calibrar y calibración solo interior (RF-251…RF-254)
+
+- **Base por corrida**: `ZigbeeRadarCalibrationService::BASELINE` fija
+  `maximum_range=6.0`, `minimum_range=0.6`, `radar_sensitivity=7`,
+  `detection_delay=0.1`, `fading_time=15.5`. `startRun`/`resetRun` la aplican y
+  esperan confirmación por push; si no confirma, `409 radar_baseline_failed`.
+  La calibración anterior se archiva en `devices.meta_json.calibration_previous`.
+- **Modelo**: sesión v5 `distance_inside_only_v1`. El interior se mide con pasos
+  laterales de 20–30 cm. El alcance es `mediana interior + 0.10 m` ajustado a
+  0.15 m, nunca menor que el interior.
+- **Exterior**: no se mide distancia; se verifica solo por presencia. Si el radar
+  sigue detectando fuera, se baja 0.15 m manteniendo el margen interior; si no
+  queda margen, `inside_only_no_separation`.
+- **UI**: catálogo y copia del servidor explican pasos laterales y verificación
+  por presencia; el botón exterior dice «Verificar exterior».
+- **Verificación**: units `RadarCalibrationTest` + BLOCK 82. Regresión local
+  **961 passed, 0 failed, 12 skipped** contra instancia temporal; prueba física pendiente.
 
 ## Operaciones
 

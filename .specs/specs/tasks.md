@@ -11354,7 +11354,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `startAttempt('light')` bloquea con `switch_unreachable`.
 - [x] `switch/test` devuelve `reachable` y la UI no pregunta si no hay respuesta.
 - [x] Sonda `/get state`: sin respuesta (`Delivery failed for 61600`).
-- [ ] Reemparejamiento físico y prueba de la luz.
+- [x] Luz recuperada tras ciclo de alimentación; `switch/test` devuelve `reachable:true` y `OFF`.
 
 ## TSK-F108-11: Suficiencia de una lectura fresca
 - [x] `min_samples=1` y `min_span_seconds=0` para evidencia DP 9.
@@ -11371,3 +11371,23 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Backup verificado para rollback.
 - [ ] Prueba física interior/exterior/reentrada (Fase 10).
 - [ ] Evidencia final y cierre.
+
+
+## TSK-F110-01: Base sin calibrar
+- [x] Constante `BASELINE` y `resetToBaseline()`.
+- [x] `startRun`/`resetRun` restauran y archivan la calibración anterior.
+- [x] Error `radar_baseline_failed` si no hay confirmación.
+- [x] Unit de la base.
+
+## TSK-F110-02: Modelo solo interior
+- [x] Sesión v5 `distance_inside_only_v1`.
+- [x] `insideOnlyCandidate()` con margen 0,10 y rejilla 0,15.
+- [x] `lowerCandidate()` con protección del margen interior.
+- [x] Aplicación del candidato al aprobar el interior.
+- [x] Exterior solo por presencia y reducción paso a paso.
+- [x] Motivos y textos del panel.
+- [x] Catálogo con pasos laterales 20–30 cm.
+- [x] BLOCK 82 y JS válido.
+- [ ] Prueba física interior/exterior/reentrada.
+- [x] Regresión completa local: 961 passed, 0 failed, 12 skipped.
+- [ ] Despliegue y prueba física.

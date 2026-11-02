@@ -121,6 +121,13 @@ final class SensorWizardController
                     'message' => 'Falta la puerta o el radar de presencia.',
                 ]);
             }
+            $baseline = $this->resetRadarToBaseline($roomId);
+            if (($baseline['ok'] ?? false) !== true) {
+                return Response::json(409, [
+                    'error' => 'radar_baseline_failed',
+                    'message' => 'No se pudo restaurar el radar a la base sin calibrar: ' . (string) ($baseline['error'] ?? 'unknown'),
+                ]);
+            }
             $run = $this->store->create([
                 'room_id' => $roomId,
                 'room' => $pre['room'],
@@ -129,8 +136,8 @@ final class SensorWizardController
                 'catalog_version' => 3,
                 'mode' => 'universal',
                 'plan' => $pre['plan'],
-                'initial_settings' => $pre['settings'],
-                'initial_settings_at' => $pre['settings_at'],
+                'initial_settings' => (array) $baseline['settings'],
+                'initial_settings_at' => gmdate('Y-m-d\TH:i:s\Z'),
                 'devices' => [
                     'presence' => $pre['devices']['presence'],
                     'proximity' => $pre['devices']['proximity'],
@@ -170,6 +177,11 @@ final class SensorWizardController
                 if (empty($pre['can_start'])) {
                     return ['ok' => false, 'old_run_id' => $runId, 'preflight' => $pre];
                 }
+                $baseline = $this->resetRadarToBaseline($roomId);
+                if (($baseline['ok'] ?? false) !== true) {
+                    return ['ok' => false, 'old_run_id' => $runId, 'error' => 'radar_baseline_failed',
+                        'message' => (string) ($baseline['error'] ?? 'unknown')];
+                }
                 $now = gmdate('Y-m-d\TH:i:s\Z');
                 foreach ((array) ($oldRun['steps'] ?? []) as $stepId => $step) {
                     $step = (array) $step;
@@ -207,8 +219,8 @@ final class SensorWizardController
                     'catalog_version' => 3,
                     'mode' => 'universal',
                     'plan' => $pre['plan'],
-                    'initial_settings' => $pre['settings'],
-                    'initial_settings_at' => $pre['settings_at'],
+                    'initial_settings' => (array) $baseline['settings'],
+                    'initial_settings_at' => $now,
                     'devices' => [
                         'presence' => $pre['devices']['presence'],
                         'proximity' => $pre['devices']['proximity'],
@@ -221,7 +233,9 @@ final class SensorWizardController
                 return ['ok' => true, 'old_run_id' => $runId, 'run' => $newRun, 'plan' => $pre['plan']];
             });
             if (($result['ok'] ?? false) !== true) {
-                return Response::json(409, ['error' => 'core_devices_missing', 'result' => $result]);
+                $error = ($result['error'] ?? '') === 'radar_baseline_failed'
+                    ? 'radar_baseline_failed' : 'core_devices_missing';
+                return Response::json(409, ['error' => $error, 'result' => $result]);
             }
             return Response::json(201, $result);
         } catch (\Throwable $e) {
@@ -426,6 +440,11 @@ final class SensorWizardController
                 'settings' => $record['evidence']['settings'],
                 'events' => array_slice((array) $data['events'], 0, 2000),
             ]);
+            if ($verdict['status'] === 'PASS' && $stepId === 'radar_inside'
+                && (string) ($run['calibration_session']['model'] ?? '') === 'distance_inside_only_v1') {
+                $this->applyInsideOnlyCandidate($runId);
+                $run = $this->store->load($runId) ?? $run;
+            }
             return Response::json(200, [
                 'ok' => true,
                 'status' => $verdict['status'],
@@ -1203,7 +1222,7 @@ final class SensorWizardController
             'outside_point' => $session['outside_point'] ?? null,
             // F107: evidencia DP 9 en modo sombra; no decide todavía.
             'distance_mode' => $distanceEvidence['mode'],
-            'distance_authority' => (string) ($session['model'] ?? '') === 'distance_evidence_v1'
+            'distance_authority' => in_array((string) ($session['model'] ?? ''), ['distance_evidence_v1','distance_inside_only_v1'], true)
                 ? 'distance_evidence' : 'legacy',
             'distance_point' => $distanceEvidence['point'],
             'distance_query' => $distanceEvidence['query'],
@@ -1287,8 +1306,8 @@ final class SensorWizardController
         $current = $this->latestSettings($roomId);
         $distanceAuthority = $this->radarDistanceAuthorityActive();
         return [
-            'version' => $distanceAuthority ? 4 : 3,
-            'model' => $distanceAuthority ? 'distance_evidence_v1' : 'outside_point_v1',
+            'version' => $distanceAuthority ? 5 : 3,
+            'model' => $distanceAuthority ? 'distance_inside_only_v1' : 'outside_point_v1',
             'config_version' => 1,
             'phase' => 'INSIDE',
             'state' => 'IDLE',
@@ -2067,7 +2086,7 @@ final class SensorWizardController
                 'point_attempt' => in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
                     ? (int) ($session['point_attempts'][$opPhase] ?? 0) + 1 : null,
             ];
-            unset($session['manual_start_required'], $session['scan_preview']);
+            unset($session['manual_start_required'], $session['scan_preview'], $session['outside_message']);
             $session['phase'] = $opPhase;
             $session['state'] = 'MEASURING';
             $session['active_operation'] = $op;
@@ -2178,7 +2197,7 @@ final class SensorWizardController
                     $settings,
                     $this->radarPointOptions()
                 );
-                if ((string) ($session['model'] ?? '') === 'distance_evidence_v1') {
+                if (in_array((string) ($session['model'] ?? ''), ['distance_evidence_v1','distance_inside_only_v1'], true)) {
                     // F108/RF-243: en sesiones nuevas la distancia y su
                     // suficiencia las manda DP 9. La presencia sigue siendo
                     // una señal independiente del radar.
@@ -2256,6 +2275,93 @@ final class SensorWizardController
                     $outsidePoint = is_array($measurement['point'] ?? null)
                         ? (array) $measurement['point'] : null;
                     $outsideEvidence = $this->outsideEvidenceState($measurement, $outsidePoint);
+                    if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+                        if (!$outsideEvidence['detected']) {
+                            if (!$outsideEvidence['clear']) {
+                                $session['state'] = 'MEASURED';
+                                $reason = $outsideEvidence['reason'] === 'no_reports'
+                                    ? 'outside_point_no_reports' : 'outside_point_absence_unconfirmed';
+                                if ((int) ($session['point_attempts']['OUTSIDE_MEASURE'] ?? 0) >= $maxAttempts) {
+                                    $session['state'] = 'STOPPED';
+                                    $session['result'] = $reason;
+                                }
+                                $run['calibration_session'] = $session;
+                                $this->store->save($run);
+                                return $run;
+                            }
+                            $session['outside_measure'] = $measurement;
+                            $session['outside_valid'] = $measurement;
+                            $session['outside_pass'] = $measurement;
+                            $session['phase'] = 'OUTSIDE_PASS';
+                            $session['state'] = 'IDLE';
+                            $session['calibration'] = [
+                                'inside_reference' => $this->insideOnlyReference($session),
+                                'reason' => 'inside_only_outside_clear',
+                                'confidence' => 'medium', 'applied' => true,
+                                'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                            ];
+                            $run['calibration_session'] = $session;
+                            $this->store->save($run);
+                            return $run;
+                        }
+                        $reference = $this->insideOnlyReference($session);
+                        $currentMax = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
+                            ? (float) $settings['maximum_range'] : null;
+                        $lower = ($reference !== null && $currentMax !== null)
+                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->midpointCapsV3(), 0.10)
+                            : null;
+                        if ($lower === null) {
+                            $session['state'] = 'STOPPED';
+                            $session['result'] = 'inside_only_no_separation';
+                            $run['calibration_session'] = $session;
+                            $this->store->save($run);
+                            return $run;
+                        }
+                        $device = (new DeviceRepository($this->pdo()))->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+                        if ($device === null) {
+                            $session['state'] = 'STOPPED';
+                            $session['result'] = 'presence_device_missing';
+                            $run['calibration_session'] = $session;
+                            $this->store->save($run);
+                            return $run;
+                        }
+                        $result = (new ZigbeeRadarCalibrationService($this->pdo()))->apply((int) $run['room_id'], [
+                            'id' => (int) $device->id,
+                            'external_id' => (string) $device->externalId,
+                            'meta' => is_array($device->meta) ? $device->meta : [],
+                        ], ['maximum_range' => $lower], true);
+                        if (($result['applied'] ?? false) !== true) {
+                            $session['state'] = 'STOPPED';
+                            $session['result'] = 'inside_only_apply_failed';
+                            $run['calibration_session'] = $session;
+                            $this->store->save($run);
+                            return $run;
+                        }
+                        $session['current'] = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+                        $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
+                        $session['state'] = 'MEASURED';
+                        $session['outside_message'] = 'El radar todavía te detectó fuera; alcance reducido a '
+                            . number_format($lower, 2, ',', '') . ' m. Vuelve a verificar el exterior.';
+                        $session['candidates'][] = [
+                            'candidate_id' => 'inside-only-lower-' . bin2hex(random_bytes(4)),
+                            'params' => ['maximum_range' => $lower],
+                            'reason' => 'outside_detected_reduced',
+                            'status' => 'APPLIED',
+                            'published_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                        ];
+                        $session['calibration'] = [
+                            'inside_reference' => $reference,
+                            'target_range' => $lower,
+                            'reason' => 'outside_detected_reduced',
+                            'confidence' => 'medium', 'applied' => true,
+                            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                        ];
+                        $run['calibration_session'] = $session;
+                        $this->store->save($run);
+                        $this->store->appendLog($runId, ['type' => 'inside_only_lower',
+                            'at' => gmdate('Y-m-d\TH:i:s\Z'), 'maximum_range' => $lower]);
+                        return $run;
+                    }
                     if (!$outsideEvidence['detected']) {
                         if (!$outsideEvidence['clear']) {
                             // F108/RF-244: el silencio o la ausencia sin
@@ -2632,6 +2738,18 @@ final class SensorWizardController
             'distance' => $ref['distance'] ?? ($inside['distance'] ?? []),
             'quality' => $ref['quality'] ?? ($inside['distance']['quality'] ?? 'poor'),
         ];
+    }
+
+    /** F110: referencia interior por mediana de las lecturas DP 9. */
+    private function insideOnlyReference(array $session): ?float
+    {
+        $inside = $this->insideInputV3($session);
+        $distance = (array) ($inside['distance'] ?? []);
+        if (isset($distance['median']) && is_numeric($distance['median'])) {
+            return (float) $distance['median'];
+        }
+        return isset($inside['reference']) && is_numeric($inside['reference'])
+            ? (float) $inside['reference'] : null;
     }
 
     /** @param array<string,mixed> $measurement */
@@ -3041,6 +3159,23 @@ final class SensorWizardController
         }
         if ($state === 'STOPPED') {
             $reason = (string) ($session['result'] ?? '');
+            if ($reason === 'inside_only_no_separation') {
+                return ['title' => 'Sin separación suficiente',
+                    'instruction' => 'No se puede bajar más el alcance sin dejar de detectarte dentro. '
+                        . 'Acércate al radar o elige un punto exterior más cercano y repite la verificación.',
+                    'message' => 'El alcance mínimo que mantiene la detección interior ya no deja margen para el exterior.'];
+            }
+            if ($reason === 'inside_only_apply_failed') {
+                return ['title' => 'No se pudo aplicar el alcance',
+                    'instruction' => 'El radar no confirmó el ajuste. Comprueba la conexión y vuelve a intentarlo.',
+                    'message' => 'La orden de alcance no se confirmó.'];
+            }
+            if ($reason === 'inside_only_no_range') {
+                return ['title' => 'Referencia interior fuera de rango',
+                    'instruction' => 'La distancia interior no permite fijar un alcance con el margen de 0,10 m. '
+                        . 'Repite la medición del punto interior.',
+                    'message' => 'No se ha aplicado ningún alcance.'];
+            }
             if ($reason === 'no_distance_separation') {
                 return ['title' => 'Sin separación por distancia', 'instruction' => 'Las medias interior y exterior no permiten calcular un punto intermedio. Revisa los valores y repite la medición del punto que veas dudoso.', 'message' => 'No se ha aplicado ningún alcance.'];
             }
@@ -3137,6 +3272,11 @@ final class SensorWizardController
             };
         }
         if ($state === 'MEASURED') {
+            if (!empty($session['outside_message'])) {
+                return ['title' => 'Alcance reducido',
+                    'instruction' => (string) $session['outside_message'],
+                    'message' => 'El radar aún te detectaba en el punto exterior.'];
+            }
             $last = (array) ($session['last_measurement'] ?? []);
             if (($last['sufficient'] ?? false) !== true) {
                 $pointLast = is_array($last['point'] ?? null) ? $last['point'] : null;
@@ -3182,8 +3322,8 @@ final class SensorWizardController
             return ['title' => 'Medición completada', 'instruction' => 'Revisa el resultado y continúa.', 'message' => 'La ventana se ha cerrado.'];
         }
         return match ($phase) {
-            'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa Medir. Permanece en el punto; el sistema esperará la evidencia del radar.', 'message' => 'Primero medimos el punto interior.'],
-            'OUTSIDE_MEASURE' => ['title' => 'Medir punto exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Medir. Permanece en el punto; el sistema esperará la evidencia del radar.', 'message' => 'Medimos el punto donde la detección debe terminar.'],
+            'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte. Da pasos laterales cortos de 20–30 cm y vuelve al centro para que el radar te vea desde varios ángulos; luego pulsa Medir.', 'message' => 'Primero medimos el punto interior con pasos laterales.'],
+            'OUTSIDE_MEASURE' => ['title' => 'Verificar el exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Verificar. No hace falta medir distancia: comprobamos que el radar deja de detectarte por presencia.', 'message' => 'Verificamos el exterior solo por presencia.'],
             'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Permanece en el mismo punto donde NO quieres que te detecte y pulsa Verificar fuera. La app comprobará que el nuevo alcance ya no te detecta ahí.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
             'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo',
                 'instruction' => (($session['outside_measure']['detected'] ?? true) === false
@@ -3596,6 +3736,73 @@ final class SensorWizardController
         return ['detected' => false, 'clear' => true, 'reason' => 'clear', 'reports' => $reports, 'absents' => $absents, 'last' => $last];
     }
 
+    /**
+     * F110: tras validar el punto interior, fija maximum_range = interior + 0,10
+     * y deja la sesión lista para verificar el exterior por presencia.
+     */
+    private function applyInsideOnlyCandidate(string $runId): void
+    {
+        $run = $this->store->load($runId);
+        if ($run === null) {
+            return;
+        }
+        $session = (array) ($run['calibration_session'] ?? []);
+        $inside = $this->insideInputV3($session);
+        $reference = $this->insideOnlyReference($session);
+        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->midpointCapsV3(), 0.10);
+        if ($candidate === null) {
+            $session['state'] = 'STOPPED';
+            $session['result'] = 'inside_only_no_range';
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return;
+        }
+        $device = (new DeviceRepository($this->pdo()))->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
+        if ($device === null) {
+            $session['state'] = 'STOPPED';
+            $session['result'] = 'presence_device_missing';
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return;
+        }
+        $cal = new ZigbeeRadarCalibrationService($this->pdo());
+        $result = $cal->apply((int) $run['room_id'], [
+            'id' => (int) $device->id,
+            'external_id' => (string) $device->externalId,
+            'meta' => is_array($device->meta) ? $device->meta : [],
+        ], ['maximum_range' => $candidate], true);
+        if (($result['applied'] ?? false) !== true) {
+            $session['state'] = 'STOPPED';
+            $session['result'] = 'inside_only_apply_failed';
+            $run['calibration_session'] = $session;
+            $this->store->save($run);
+            return;
+        }
+        $session['current'] = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+        $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
+        $session['phase'] = 'OUTSIDE_MEASURE';
+        $session['state'] = 'IDLE';
+        $session['candidates'][] = [
+            'candidate_id' => 'inside-only-' . bin2hex(random_bytes(4)),
+            'params' => ['maximum_range' => $candidate],
+            'reason' => 'inside_plus_margin',
+            'status' => 'APPLIED',
+            'published_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+        $session['calibration'] = [
+            'inside_reference' => $reference,
+            'target_range' => $candidate,
+            'reason' => 'inside_plus_margin',
+            'confidence' => (string) ($inside['quality'] ?? 'medium'),
+            'applied' => true,
+            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+        $run['calibration_session'] = $session;
+        $this->store->save($run);
+        $this->store->appendLog($runId, ['type' => 'inside_only_candidate',
+            'at' => gmdate('Y-m-d\TH:i:s\Z'), 'reference' => $reference, 'maximum_range' => $candidate]);
+    }
+
     private function radarDistanceAuthorityActive(): bool
     {
         return strtolower(trim((string) (getenv('RADAR_DISTANCE_EVIDENCE_MODE') ?: 'off'))) === 'active';
@@ -3738,6 +3945,37 @@ final class SensorWizardController
         $point['frozen'] = $frozen;
         $point['authority'] = $mode;
         return ['mode' => $mode, 'point' => $point, 'query' => $query];
+    }
+
+    /**
+     * F110: devuelve la configuración base sin calibrar y archiva la anterior.
+     *
+     * @return array{ok:bool,settings:array<string,mixed>,error:?string}
+     */
+    private function resetRadarToBaseline(int $roomId): array
+    {
+        $repo = new DeviceRepository($this->pdo());
+        $device = $repo->findForRoomKind($roomId, Device::KIND_PRESENCE);
+        if ($device === null) {
+            return ['ok' => false, 'settings' => [], 'error' => 'presence_device_missing'];
+        }
+        $cal = new ZigbeeRadarCalibrationService($this->pdo());
+        $result = $cal->resetToBaseline($roomId, [
+            'id' => (int) $device->id,
+            'external_id' => (string) $device->externalId,
+            'meta' => is_array($device->meta) ? $device->meta : [],
+        ]);
+        if (($result['applied'] ?? false) !== true) {
+            return ['ok' => false, 'settings' => [], 'error' => (string) ($result['error'] ?? 'baseline_not_confirmed')];
+        }
+        $meta = is_array($device->meta) ? $device->meta : [];
+        if (isset($meta['calibration']) && is_array($meta['calibration'])) {
+            $meta['calibration_previous'] = $meta['calibration'];
+            unset($meta['calibration']);
+            $repo->update((int) $device->id, ['meta_json' => json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+        }
+        $settings = (array) ($result['status']['settings'] ?? ZigbeeRadarCalibrationService::BASELINE);
+        return ['ok' => true, 'settings' => $settings, 'error' => null];
     }
 
     private function radarDeviceIdForRoom(int $roomId): ?int

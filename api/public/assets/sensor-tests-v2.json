@@ -20,12 +20,16 @@
       "order": 2,
       "device": "presencia",
       "title": "Radar · dentro",
-      "action": "Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa «Medir». Permanece en el punto; el sistema reunirá la evidencia del radar.",
-      "expected": "El radar mantiene la presencia y devuelve una referencia de distancia utilizable.",
+      "action": "Ponte en el punto más alejado del interior donde SÍ quieres que te detecte. Da pasos laterales cortos de 20–30 cm y vuelve al centro para que el radar te vea desde varios ángulos; luego pulsa «Medir».",
+      "expected": "El radar mantiene la presencia durante los pasos laterales y devuelve una referencia de distancia utilizable.",
       "rule": "radar_inside",
       "params": {
         "hold_seconds": 30,
-        "grace_seconds": 20
+        "grace_seconds": 20,
+        "lateral_step_cm": [
+          20,
+          30
+        ]
       }
     },
     {
@@ -33,19 +37,18 @@
       "order": 3,
       "device": "presencia",
       "title": "Radar · fuera",
-      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Medir». Permanece en el punto; el sistema reunirá la evidencia del radar. La app calcula el alcance a partir de las medias y después lo verifica.",
-      "expected": "El radar deja de detectarte en el punto exterior, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
+      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Verificar». No hace falta medir distancia: comprobamos solo que el radar deja de detectarte por presencia.",
+      "expected": "El radar deja de detectar presencia en el punto exterior, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
       "rule": "radar_outside",
       "params": {
-        "min_elapsed_seconds": 50,
-        "grace_seconds": 20,
+        "min_elapsed_seconds": 30,
         "forbid_effect_keys": [
           "visits",
           "recordings",
           "stays"
         ],
-        "min_separation_m": 0.45,
-        "margin_m": 0.15
+        "min_separation_m": 0.1,
+        "margin_m": 0.1
       }
     },
     {

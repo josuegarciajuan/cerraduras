@@ -7915,10 +7915,11 @@ else
 fi
 
 if grep -q "distance_evidence_v1" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_inside_only_v1" src/Http/Controllers/SensorWizardController.php \
     && grep -q "radarDistancePointForWindow" src/Http/Controllers/SensorWizardController.php \
     && grep -q "distancePointAsPoint" src/Http/Controllers/SensorWizardController.php \
     && grep -q "distance_authority" src/Http/Controllers/SensorWizardController.php \
-    && grep -q "version' => \$distanceAuthority ? 4 : 3" src/Http/Controllers/SensorWizardController.php; then
+    && grep -q "version' => \$distanceAuthority ? 5 : 3" src/Http/Controllers/SensorWizardController.php; then
     pass "F108: sesión nueva y autoridad DP 9 cableadas"
 else
     fail "F108: autoridad de sesión" "faltan modelo, adaptador o versión"
@@ -8097,6 +8098,42 @@ if node --check public/assets/sensor-wizard-v2.js >/tmp/f109-js.log 2>&1; then
   pass "F109: JavaScript válido"
 else
   fail "F109: JavaScript" "$(tail -5 /tmp/f109-js.log)"
+fi
+
+# =============================================================================
+# BLOCK 82 — F110: base sin calibrar y calibración solo interior
+# Trazabilidad: RF-250…RF-253 · design.md §F110
+# =============================================================================
+block "BLOCK 82 — F110: base sin calibrar y calibración solo interior"
+
+if grep -q "'maximum_range'     => 6.0" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php     && grep -q "'fading_time'       => 15.5" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php; then
+  pass "F110: base 6,0 m / 0,6 m / sens 7 / delay 0,1 / fading 15,5"
+else
+  fail "F110: base sin calibrar" "faltan valores"
+fi
+
+if grep -q "resetRadarToBaseline" src/Http/Controllers/SensorWizardController.php     && [ "$(grep -c 'resetRadarToBaseline($roomId)' src/Http/Controllers/SensorWizardController.php)" -ge 2 ]; then
+  pass "F110: startRun y resetRun restauran la base"
+else
+  fail "F110: reinicio de base" "no se aplica en startRun/resetRun"
+fi
+
+if grep -q "distance_inside_only_v1" src/Http/Controllers/SensorWizardController.php     && grep -q "insideOnlyCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php     && grep -q "lowerCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php; then
+  pass "F110: modelo solo interior + margen 0,10"
+else
+  fail "F110: modelo solo interior" "faltan piezas"
+fi
+
+if grep -q "20–30 cm" public/assets/sensor-tests-v2.json     && grep -q "No hace falta medir distancia" public/assets/sensor-tests-v2.json; then
+  pass "F110: instrucciones laterales y verificación por presencia"
+else
+  fail "F110: instrucciones" "catálogo desactualizado"
+fi
+
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f110-js.log 2>&1; then
+  pass "F110: JavaScript válido"
+else
+  fail "F110: JavaScript" "$(tail -5 /tmp/f110-js.log)"
 fi
 
 # =============================================================================

@@ -693,10 +693,12 @@
     html += '<div class="hint" id="radarComm">' + esc(communicationText(st)) + '</div>';
     var outsideMeasure = st.outside_measure || null;
     if (outsideMeasure) {
+      var insideOnly = st.model === 'distance_inside_only_v1';
       var omDist = (outsideMeasure.distance && outsideMeasure.distance.median != null)
         ? Number(outsideMeasure.distance.median).toFixed(2) + ' m' : 'sin distancia';
-      html += '<div class="hint" id="radarOutsideMeasure">Punto exterior: ' + omDist
-        + ' · ' + (outsideMeasure.detected ? 'detectado' : 'sin detección')
+      html += '<div class="hint" id="radarOutsideMeasure">Punto exterior: '
+        + (insideOnly ? (outsideMeasure.detected ? 'detectado' : 'sin detección')
+            : omDist + ' · ' + (outsideMeasure.detected ? 'detectado' : 'sin detección'))
         + (outsideMeasure.reports != null ? ' · ' + outsideMeasure.reports + ' reportes' : '')
         + '</div>';
     }
@@ -704,7 +706,8 @@
     if (cal && (cal.inside_reference != null || cal.boundary != null || cal.target_range != null)) {
       html += '<div class="hint" id="radarCalibration">'
         + (cal.inside_reference != null ? 'Interior (media) ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
-        + ' · ' + (cal.outside_point != null ? 'exterior (media) ' + Number(cal.outside_point).toFixed(2) + ' m' : 'exterior —')
+        + ' · ' + (st.model === 'distance_inside_only_v1' ? 'exterior verificado por presencia'
+            : (cal.outside_point != null ? 'exterior (media) ' + Number(cal.outside_point).toFixed(2) + ' m' : 'exterior —'))
         + ' · ' + (cal.target_range != null ? 'ajuste ' + Number(cal.target_range).toFixed(2) + ' m' : 'ajuste —')
         + (cal.sensitivity != null ? ' · sens ' + cal.sensitivity + '/9' : '')
         + (cal.confidence ? ' · ' + cal.confidence : '')
@@ -732,6 +735,9 @@
       if (op === 'restore') cls = 'danger';
       if (op === 'cancel') cls = 'ghost';
       var label = radarActionLabel(op);
+      if (op === 'start_measure' && st.model === 'distance_inside_only_v1') {
+        label = st.phase === 'OUTSIDE_MEASURE' ? 'Verificar exterior' : 'Medir interior';
+      }
       if (op === 'start_measure' && st.last_measurement && st.last_measurement.sufficient === false) {
         label = 'Reintentar medición';
       }

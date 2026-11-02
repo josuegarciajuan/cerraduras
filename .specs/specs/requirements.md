@@ -13061,3 +13061,41 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - La prueba no se inicia si no llega telemetría fresca: `switch_unreachable`.
 - El PUBACK del broker no es confirmación del dispositivo.
 - El panel muestra un error claro y no ofrece reintentos ciegos.
+
+
+# F110 — Base sin calibrar y calibración solo interior (RF-251…RF-254)
+
+## RF-251: Base de cada corrida
+- Al iniciar o reiniciar una corrida de sensores se restaura el radar a una base
+  sin calibrar: `maximum_range=6.0`, `minimum_range=0.6`,
+  `radar_sensitivity=7`, `detection_delay=0.1`, `fading_time=15.5`.
+- La calibración de una corrida anterior no condiciona la nueva.
+- La base se confirma por push antes de continuar; si no se confirma, la
+  corrida no arranca y se informa del error.
+- La calibración anterior queda archivada como histórico, no como punto de
+  partida.
+
+## RF-252: Captura interior con movimiento lateral
+- El punto interior se mide en el punto más alejado donde SÍ debe detectarse.
+- El operador da pasos laterales cortos de 20–30 cm y vuelve al centro durante
+  la ventana.
+- La referencia interior es la mediana de las distancias DP 9 válidas.
+- Una única lectura fresca sigue siendo suficiente (F108).
+
+## RF-253: Alcance y verificación exterior
+- El alcance candidato es `referencia_interior + 0.10 m`, ajustado a la rejilla
+  de 0.15 m; nunca inferior a la referencia interior.
+- No se mide distancia en el exterior: se verifica solo por presencia.
+- Si el radar sigue detectando presencia en el punto exterior, se baja el
+  alcance un paso de 0.15 m manteniendo el margen interior.
+- Si ya no queda margen sin romper la detección interior, se detiene con
+  `inside_only_no_separation` y no se baja la sensibilidad a ciegas.
+- La reentrada sigue siendo obligatoria para confirmar que el interior se
+  detecta con el alcance aplicado.
+
+## RF-254: Panel y cierre
+- El panel explica los pasos laterales y que el exterior se verifica por
+  presencia.
+- Se muestran por separado presencia, DP 9 y comunicación.
+- La corrida termina con la reentrada detectada y sin efectos falsos.
+- Sin polling a Tuya ni consultas periódicas.
