@@ -1046,6 +1046,9 @@ para Tuya cloud.
   queda margen, `inside_only_no_separation`.
 - **UI**: catálogo y copia del servidor explican pasos laterales y verificación
   por presencia; el botón exterior dice «Verificar exterior».
+- **Preparación obligatoria**: antes de cada prueba física ejecutar
+  `docs/ops-sensores.md` §12 (`bin/sensor-test-prepare.php`) y confirmar base,
+  pausa y luz. No reutilizar calibraciones ni corridas anteriores.
 - **Verificación**: units `RadarCalibrationTest` + BLOCK 82. Regresión local
   **961 passed, 0 failed, 12 skipped** contra instancia temporal; prueba física pendiente.
 
