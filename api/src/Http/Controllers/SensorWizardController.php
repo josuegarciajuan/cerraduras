@@ -3025,8 +3025,7 @@ final class SensorWizardController
                     return [
                         'title' => 'El radar no envió datos',
                         'instruction' => 'No se ha aplicado ningún ajuste. Durante la ventana no llegó ningún mensaje del radar. '
-                            . 'Este sensor solo publica cuando cambia lo que detecta: da un paso o mueve el cuerpo entero '
-                            . '(mover solo los brazos puede no cambiar la distancia) y repite la medición.',
+                            . 'Permanece en el punto y repite la medición cuando el radar vuelva a reportar.',
                         'message' => 'Mensajes del radar en la ventana: 0.',
                     ];
                 }
@@ -3044,13 +3043,12 @@ final class SensorWizardController
                 return [
                     'title' => 'Medición del punto sin evidencia',
                     'instruction' => 'No se ha aplicado ningún ajuste. ' . $why
-                        . ' Repite la medición moviendo los brazos y el cuerpo; si el radar detecta pero repite la misma distancia, '
-                        . 'da un paso corto y vuelve al punto.',
+                        . ' Permanece en el punto y repite la medición; no es necesario cambiar de postura.',
                     'message' => $this->radarPointDiagnostics($point),
                 ];
             }
             if (str_starts_with($reason, 'outside_distance_missing')) {
-                return ['title' => 'Sin distancia exterior', 'instruction' => 'El radar te detecta pero no reporta distancia en ese punto. Muévete ligeramente y repite la medición.', 'message' => $reason];
+                return ['title' => 'Sin distancia exterior', 'instruction' => 'El radar te detecta pero no reporta distancia en ese punto. Permanece en el punto y repite la medición.', 'message' => $reason];
             }
             if (str_starts_with($reason, 'outside_insufficient:')) {
                 return ['title' => 'Punto exterior sin evidencia', 'instruction' => 'No hubo evidencia suficiente. Mantente quieto en el punto exterior y repite la medición.', 'message' => $reason];
@@ -3102,7 +3100,7 @@ final class SensorWizardController
                             . self::meters($pointLast['tolerance'] ?? null) . ').'
                         : 'Faltan lecturas nuevas de distancia.';
                     $title = $phase === 'OUTSIDE_MEASURE' ? 'Punto exterior sin medición fiable' : 'Punto interior sin medición fiable';
-                    $instruction = 'Mantén la posición y repite la medición. Si faltan lecturas, mueve los brazos 5 segundos sin mover los pies.';
+                    $instruction = 'Mantén la posición y repite la medición. No es necesario desplazarse.';
                     if ($tries >= $max) {
                         $instruction = 'Se han agotado los intentos. Puede ser variabilidad del radar o de la escena; revisa la colocación o restaura los ajustes.';
                     }
@@ -3113,7 +3111,7 @@ final class SensorWizardController
                     ];
                 }
                 if ($phase === 'OUTSIDE_MEASURE') {
-                    return ['title' => 'Punto exterior sin distancia', 'instruction' => 'Mantente quieto en el punto exterior y repite la medición. Si el radar sigue sin reportar distancia, muévete ligeramente.', 'message' => (string) ($last['reason'] ?? '')];
+                    return ['title' => 'Punto exterior sin distancia', 'instruction' => 'Mantente quieto en el punto exterior y repite la medición. Si el radar sigue sin reportar distancia, revisa la colocación.', 'message' => (string) ($last['reason'] ?? '')];
                 }
                 if ($phase === 'OUTSIDE_VERIFY') {
                     return ['title' => 'Verificación sin evidencia', 'instruction' => 'Mantente quieto en el punto exterior y repite la comprobación.', 'message' => (string) ($last['reason'] ?? '')];
@@ -3135,8 +3133,8 @@ final class SensorWizardController
             return ['title' => 'Medición completada', 'instruction' => 'Revisa el resultado y continúa.', 'message' => 'La ventana se ha cerrado.'];
         }
         return match ($phase) {
-            'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa Medir. Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.', 'message' => 'Primero medimos el punto interior.'],
-            'OUTSIDE_MEASURE' => ['title' => 'Medir punto exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Medir. Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.', 'message' => 'Medimos el punto donde la detección debe terminar.'],
+            'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa Medir. Permanece en el punto; el sistema esperará la evidencia del radar.', 'message' => 'Primero medimos el punto interior.'],
+            'OUTSIDE_MEASURE' => ['title' => 'Medir punto exterior', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Medir. Permanece en el punto; el sistema esperará la evidencia del radar.', 'message' => 'Medimos el punto donde la detección debe terminar.'],
             'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Permanece en el mismo punto donde NO quieres que te detecte y pulsa Verificar fuera. La app comprobará que el nuevo alcance ya no te detecta ahí.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
             'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo',
                 'instruction' => (($session['outside_measure']['detected'] ?? true) === false
@@ -3723,8 +3721,8 @@ final class SensorWizardController
         $help = (string) ($point['help'] ?? RadarPointMeasurement::HELP_NONE);
         $diag = $this->radarPointDiagnostics($point);
         if ($help === RadarPointMeasurement::HELP_MOVE_ARMS) {
-            $copy['instruction'] = $where . '. Si no llegan lecturas nuevas, mueve los brazos y el cuerpo durante 5 segundos; '
-                . 'si el radar repite la misma distancia, da un paso corto y vuelve al punto.';
+            $copy['instruction'] = $where . '. Permanece en el punto y no te desplaces; '
+                . 'si el radar no comunica nuevas muestras, repite la medición.';
             $copy['message'] = 'Lecturas nuevas: ' . (int) ($point['fresh_readings'] ?? 0)
                 . ' de ' . (int) ($point['min_samples'] ?? 2)
                 . '. Necesitamos dos distancias nuevas y coherentes. ' . $diag;

@@ -11322,10 +11322,13 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Units y BLOCK 77.
 
 ## TSK-F108-07: Panel
-- [ ] Sin instrucciones de movimiento.
-- [ ] Estados de consulta honestos.
-- [ ] Resultado congelado y motivo visible.
-- [ ] Pruebas de UI y textos.
+- [x] Sin instrucciones de movimiento en controlador, UI y catálogo.
+- [x] Presencia, autoridad, distancia, comunicación y consulta separadas.
+- [x] Consulta directa mostrada como no disponible.
+- [x] Resultado congelado y descartes visibles.
+- [x] Distancia antigua etiquetada como «por eventos».
+- [x] Pruebas de sintaxis y textos.
+- [x] BLOCK 78.
 
 ## TSK-F108-08: Consulta acotada en medición
 - [x] No aplica: Fase 2 no acreditó consulta directa.

@@ -143,7 +143,8 @@ same('F105: motivo propagado', $m105b['reason'], 'not_enough_fresh_readings');
 $copy105 = $withPoint->invoke($controller,
     ['title' => 'X', 'instruction' => 'Y', 'message' => 'Z'], $pointBad,
     ['state' => 'MEASURING', 'phase' => 'OUTSIDE_MEASURE']);
-check('F105: la UI pide mover los brazos', str_contains($copy105['instruction'], 'mueve los brazos'));
+check('F108: la UI pide permanecer en el punto', str_contains($copy105['instruction'], 'Permanece en el punto'));
+check('F108: la UI no pide moverse', !str_contains($copy105['instruction'], 'mueve los brazos'));
 check('F105: progreso 1 de 2', str_contains($copy105['message'], '1 de 2'));
 
 // ── F108: evidencia exterior sin confundir silencio con ausencia ───────

@@ -15859,3 +15859,11 @@ datos de otras salas.
 - Motivos nuevos: `outside_point_no_reports`,
   `outside_point_absence_unconfirmed`, `verify_insufficient:no_absence_evidence`.
 - El silencio no cambia el estado de presencia ni permite aplicar un alcance.
+
+### F108 Fase 7 — panel
+
+- `distance_point.frozen` y `positive_span_seconds` se muestran al usuario.
+- `distance_authority` distingue autoridad DP 9 de modo sombra.
+- No se muestran instrucciones de movimiento durante la medición.
+- La consulta directa se muestra como no disponible; no se usa `ok` de PUBACK
+  como confirmación.

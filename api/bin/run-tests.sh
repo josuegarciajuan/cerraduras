@@ -7958,6 +7958,36 @@ else
 fi
 
 # =============================================================================
+# BLOCK 78 — F108: panel honesto sin instrucciones de movimiento
+# Trazabilidad: RF-245 · design.md §108 Fase 7
+# =============================================================================
+block "BLOCK 78 — F108: panel honesto sin instrucciones de movimiento"
+
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f108-panel.log 2>&1 \
+    && php -r 'json_decode(file_get_contents("public/assets/sensor-tests-v2.json"), true, 512, JSON_THROW_ON_ERROR);' >/dev/null 2>&1; then
+    pass "F108: UI y catálogo válidos"
+else
+    fail "F108: sintaxis del panel" "$(tail -5 /tmp/f108-panel.log)"
+fi
+
+if ! grep -Rqs "mueve los brazos\|mover los brazos\|da un paso\|mueve el cuerpo\|sin mover los pies" \
+    src/Http/Controllers/SensorWizardController.php public/assets/sensor-wizard-v2.js public/assets/sensor-tests-v2.json; then
+    pass "F108: sin instrucciones de movimiento"
+else
+    fail "F108: instrucciones de movimiento" "quedan textos antiguos"
+fi
+
+if grep -q "radarAuthority" public/assets/sensor-wizard-v2.js \
+    && grep -q "radarQuery" public/assets/sensor-wizard-v2.js \
+    && grep -q "radarComm" public/assets/sensor-wizard-v2.js \
+    && grep -q "distance_authority" public/assets/sensor-wizard-v2.js \
+    && grep -q "No disponible en este firmware" public/assets/sensor-wizard-v2.js; then
+    pass "F108: bloques de autoridad, consulta y comunicación"
+else
+    fail "F108: bloques del panel" "faltan autoridad/consulta/comunicación"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

@@ -20,7 +20,7 @@
       "order": 2,
       "device": "presencia",
       "title": "Radar · dentro",
-      "action": "Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa «Medir». Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies.",
+      "action": "Ponte en el punto más alejado del interior donde SÍ quieres que te detecte y pulsa «Medir». Permanece en el punto; el sistema reunirá la evidencia del radar.",
       "expected": "El radar mantiene la presencia y devuelve una referencia de distancia utilizable.",
       "rule": "radar_inside",
       "params": {
@@ -33,7 +33,7 @@
       "order": 3,
       "device": "presencia",
       "title": "Radar · fuera",
-      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Medir». Necesitamos al menos dos distancias nuevas y coherentes; si tardan, mueve los brazos 5 segundos sin mover los pies. La app calcula el alcance a partir de la media de cada punto y después lo verifica.",
+      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Medir». Permanece en el punto; el sistema reunirá la evidencia del radar. La app calcula el alcance a partir de las medias y después lo verifica.",
       "expected": "El radar deja de detectarte en el punto exterior, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
       "rule": "radar_outside",
       "params": {
