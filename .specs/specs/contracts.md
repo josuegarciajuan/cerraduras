@@ -15782,3 +15782,36 @@ En `shadow` el resultado es **provisional**: no cambia `point`, `sufficient`,
 Al iniciar una medición se puede publicar una sola orden
 `{"distance_query":"request"}`. `distance_query` refleja el resultado de la
 publicación, no la confirmación física del dispositivo.
+
+## §F108 Calibración fiable del radar
+
+Aditivo en `GET /dashboard-api/sensores/v2/radar/state`:
+
+- `distance_authority`: `legacy|shadow|distance_evidence`.
+- `distance_point.window`: límites reales congelados.
+- `distance_point.frozen`: `true` cuando la ventana se cerró.
+- `distance_point.positive_span_seconds`: cobertura de las muestras positivas.
+- `distance_query`: objeto con:
+  - `request_id`, `status`, `error`;
+  - `requested_at`, `broker_at`, `executed_at`, `response_at`;
+  - `response_dp9`, `correlated`.
+- `distance_query.status`: `requested|broker_accepted|command_executed|
+  device_response|distance_reported|timeout|error|unattributed`.
+
+Aditivo en MQTT:
+
+- `f107_distance_report` puede incluir `query_id` cuando exista correlación.
+- `distance_query` acepta un identificador de solicitud o `request`.
+- Una petición publicada solo pasa a `broker_accepted`; no a respuesta.
+
+Persistencia interna:
+
+- `radar_distance_queries` (`0137`).
+- `radar_distance_reports.query_id` (`0137`), nullable.
+- Sin rutas HTTP nuevas obligatorias; los campos se exponen en el estado.
+
+Reglas de compatibilidad:
+
+- En `legacy`/`shadow`, el resultado no cambia las decisiones antiguas.
+- En `distance_evidence`, el servidor decide con la nueva evidencia.
+- Nunca se presenta `unattributed` como respuesta confirmada.

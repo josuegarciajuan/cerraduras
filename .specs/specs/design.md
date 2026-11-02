@@ -25355,3 +25355,62 @@ temporizador o `finish_measure`.
 
 La UI muestra la línea «Distancia del radar (provisional)» con estado, reportes,
 cobertura, media/dispersión y resultado de la consulta.
+
+## 108. Calibración fiable del radar (F108)
+
+### Arquitectura de corrección
+
+1. **Ingesta MQTT**
+   - `spool.stats()` deja de recorrer `processed` en cada mensaje.
+   - Estado operativo mantenido o reconciliado fuera del camino crítico.
+   - Filtro de topics antes de persistir; se conservan estados y evidencia.
+   - Instrumentación de latencia por etapas.
+
+2. **Consulta directa**
+   - Cada intento tiene `request_id`, `requested_at`, `broker_at`,
+     `executed_at`, `response_at`, `status` y `error`.
+   - Se persiste en `radar_distance_queries` (migración aditiva).
+   - La correlación con DP 9 solo se afirma si el protocolo aporta evidencia.
+     En caso contrario, la muestra queda como `unattributed`.
+   - El conversor no usa `configure` ni temporizadores para consultar.
+
+3. **Evidencia DP 9**
+   - `RadarDistanceReport` incorpora `query_id` y `origin`
+     (`push|query|unattributed`).
+   - `radar_distance_reports` conserva identidad, tiempos y configuración.
+   - La evidencia no se usa como transición de presencia.
+
+4. **Medición**
+   - Nueva versión de sesión/modelo para evidencia verificada.
+   - `RadarDistancePointMeasurement` calcula cobertura sobre muestras positivas.
+   - El resultado se congela con `window_end` real.
+   - La autoridad se decide en servidor; la UI solo presenta.
+
+5. **Panel**
+   - Bloques separados: presencia, distancia, consulta, comunicación.
+   - Sin instrucciones de desplazamiento.
+   - Resultado provisional y autoridad claramente diferenciados.
+
+### Estados de consulta
+
+`requested` → `broker_accepted` → (`command_executed`) → `device_response`
+→ `distance_reported`, o `timeout`/`error`. `unattributed` se usa cuando llega
+un DP 9 sin correlación demostrable.
+
+### Criterios de activación
+
+Solo se activa la consulta en el flujo si la Fase 2 demuestra respuesta útil.
+Si no, la UI muestra la limitación y la calibración usa la evidencia disponible
+sin prometer tiempo real.
+
+### Persistencia
+
+- `radar_distance_queries`: intentos de consulta y sus etapas.
+- `radar_distance_reports`: muestras DP 9.
+- Relación opcional `report.query_id`.
+- Migraciones aditivas; sin borrar datos históricos.
+
+### Compatibilidad
+
+Las corridas F105/F107 conservan su histórico. Las nuevas usan versión/modelo
+nuevos y no mezclan referencias calculadas con reglas distintas.
