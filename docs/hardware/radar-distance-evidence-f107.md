@@ -99,3 +99,23 @@ El camino viable es:
 Queda pendiente comprobar con presencia real que una consulta devuelve una
 distancia positiva actual. Esa comprobación se hará durante la calibración en
 modo sombra, no con un protocolo físico dedicado.
+
+## Fase 1 — instalación segura
+
+- Conversor en `data/external_converters/zy-m100-distance-evidence.js`.
+- Loaded sin errores y sin `configure` con `dataQuery`.
+- Marcas reales observadas con distancia `0` en sala vacía y valores
+  `0.62–3.43 m` con presencia/movimiento.
+- Consulta única probada: no deja bucle.
+- `radar_distance_reports` recibe las marcas; la clave única evita duplicados.
+
+## Fase 3 — modo sombra
+
+- `RADAR_DISTANCE_EVIDENCE_MODE=shadow` y
+  `RADAR_DISTANCE_QUERY_ENABLED=true` en pruebas.
+- `/radar/state` expone `distance_mode`, `distance_point` y `distance_query`.
+- El asistente muestra «Distancia del radar (provisional)».
+- El resultado no altera la calibración existente.
+
+Pendiente: validación con una persona en el punto interior/exterior y decisión
+de activar el modo `active`.
