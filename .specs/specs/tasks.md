@@ -11305,10 +11305,13 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Verificado: nuevas filas con `config_key`, `frozen=true` en ventana cerrada y regresión 920/0.
 
 ## TSK-F108-05: Autoridad de sesión
-- [ ] Nueva versión/modelo de sesión.
-- [ ] El resultado mostrado controla el avance en modo activo.
-- [ ] Corridas antiguas intactas.
-- [ ] Pruebas de transición y no mezcla.
+- [x] Nueva versión 4 / modelo `distance_evidence_v1` en modo active.
+- [x] El MEASURE usa DP 9 para distancia/suficiencia; presencia separada.
+- [x] `distancePointAsPoint` adapta al contrato interno.
+- [x] `/radar/state` expone `distance_authority`.
+- [x] Corridas v3 conservan su comportamiento.
+- [x] Unit de adaptación y BLOCK 76.
+- [ ] Verificación con sesión v4 real en Fase 10.
 
 ## TSK-F108-06: Exterior y presencia
 - [ ] Silencio ≠ ABSENT; sin DP 9 ≠ ausencia.
