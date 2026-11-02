@@ -11270,11 +11270,13 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Revisión final antes de tocar producción.
 
 ## TSK-F108-01: Ingesta MQTT sostenible
-- [ ] `spool.stats()` sin recorrido de `processed` por mensaje.
-- [ ] Estado operativo/reconciliación y pruebas de reinicio.
-- [ ] Filtro de topics seguro.
-- [ ] Instrumentación de latencia.
-- [ ] BLOCK de regresión.
+- [x] `spool.pendingStats()` sin recorrer `processed` por mensaje.
+- [x] Reconciliación completa solo al arrancar/reconectar.
+- [x] Filtro `bridge/logging` y `bridge/health`, configurable.
+- [x] `ZIGBEE_SPOOL_MIN_FREE_BYTES` y `maxBytes` sobre cola pendiente.
+- [x] Latencia de persistencia expuesta.
+- [x] Unit 41 checks y BLOCK 72.
+- [x] Desplegado y verificado: pending 0,14–1,09 ms vs full ~836 ms.
 
 ## TSK-F108-02: Consulta demostrable
 - [ ] Verificar conversor y definición activos.
