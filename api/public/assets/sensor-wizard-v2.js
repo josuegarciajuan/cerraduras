@@ -1386,7 +1386,7 @@
       if (st.raw_presence_stale) {
         banner('El radar lleva un rato sin reportar. Muévete ligeramente y pulsa Empezar medición.', 'warn');
       } else if (st.phase === 'REENTRY' && String(st.raw_presence_state || '').toUpperCase() === 'PRESENT') {
-        banner('Sal y espera a que el radar te pierda; luego pulsa «Voy a entrar».', 'warn');
+        banner('El radar aún te detecta. Comprueba que estás en el punto exterior ya verificado; si sigues dentro del alcance, aléjate hasta que deje de detectarte.', 'warn');
       } else if (st.phase === 'OUTSIDE_VERIFY' || st.phase === 'OUTSIDE_MEASURE') {
         radarOp(st.phase === 'OUTSIDE_VERIFY' ? 'start_verify' : 'start_measure');
       } else {
@@ -1421,7 +1421,7 @@
       if (e.message === 'presence_stale') {
         banner('El radar lleva un rato sin reportar. Muévete ligeramente y vuelve a intentarlo.', 'warn');
       } else if (e.message === 'reentry_not_clear') {
-        banner('El radar aún te detecta. Sal y espera a que se apague la presencia antes de pulsar «Voy a entrar».', 'warn');
+        banner('El radar aún te detecta. Comprueba que estás en el punto exterior ya verificado; si sigues dentro del alcance, aléjate hasta que deje de detectarte.', 'warn');
       } else if (e.message === 'no_distance_separation') {
         banner('No hay separación por distancia entre el punto interior y el exterior. No voy a bajar la sensibilidad a ciegas: revisa la colocación y repite la medición exterior.', 'warn');
       } else {

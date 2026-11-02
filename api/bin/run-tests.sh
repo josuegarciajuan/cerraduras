@@ -8144,6 +8144,17 @@ else
   fail "F110: runbook" "falta script o sección §12"
 fi
 
+if grep -q "presenceOnlyOutsideMeasurement" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "presence_absent" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_inside_only_v1" src/Domain/Sensors/SensorCalibrationValidator.php \
+    && grep -q "reachability_source" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "Ya estás fuera" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -q "Sal y espera" public/assets/sensor-wizard-v2.js; then
+  pass "F110: exterior presencia-only, reentrada y sonda de luz"
+else
+  fail "F110: correcciones finales" "falta evidencia, texto o sonda"
+fi
+
 # =============================================================================
 # RESUMEN
 # =============================================================================

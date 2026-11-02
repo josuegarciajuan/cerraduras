@@ -666,6 +666,7 @@ final class SensorCalibrationValidator
         $reentry = (array) ($session['reentry'] ?? []);
         $candidates = (array) ($session['candidates'] ?? []);
         $cv = (int) ($session['config_version'] ?? 1);
+        $insideOnly = (string) ($session['model'] ?? '') === 'distance_inside_only_v1';
         $details = [
             'session_version' => 2,
             'phase' => $session['phase'] ?? null,
@@ -678,6 +679,7 @@ final class SensorCalibrationValidator
             'candidates' => count($candidates),
             'settings_valid' => $ctx['settings_valid'] ?? null,
             'effects_delta' => $ctx['effects_delta'] ?? [],
+            'model' => $session['model'] ?? null,
         ];
         if (($session['phase'] ?? '') !== 'DONE' || ($session['result'] ?? '') !== 'PASS') {
             return self::result(self::FAIL, 'calibration_not_done', $details);
@@ -695,14 +697,26 @@ final class SensorCalibrationValidator
             if ($m === []) {
                 return self::result(self::FAIL, $key . '_not_measured', $details);
             }
-            if (($m['sufficient'] ?? false) !== true) {
-                return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
-            }
             if ((int) ($m['config_version'] ?? 0) !== $cv) {
                 return self::result(self::FAIL, 'measure_config_mismatch:' . $key, $details);
             }
             if (($m['detected'] ?? false) === true) {
                 return self::result(self::FAIL, 'outside_detected_calibration', $details);
+            }
+            if ($insideOnly) {
+                // F110: en el modelo solo interior no hay DP9 exterior.
+                // La ausencia explícita (>=2 ABSENT y último ABSENT) es la
+                // evidencia suficiente; una medición normalizada también vale.
+                $absents = (int) ($m['absent_reports'] ?? 0);
+                $last = strtoupper((string) ($m['last_value'] ?? ''));
+                if (($m['sufficient'] ?? false) !== true
+                    && ($absents < 2 || $last !== 'ABSENT')) {
+                    return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
+                }
+                continue;
+            }
+            if (($m['sufficient'] ?? false) !== true) {
+                return self::result(self::FAIL, 'measure_insufficient:' . $key, $details);
             }
         }
         if ($candidates !== []) {

@@ -25585,7 +25585,11 @@ Comprobado el 2026-11-02:
   consultan la pausa; los comandos manuales de luz no pasan por `SwitchService`.
 - `ZigbeeSwitchGateway::probeForDevice()` publica `/get state` mediante
   `read-state.js`; el controlador espera `last_seen_at` fresco.
+- `switch/test` reintenta la conexión con `probeSwitch()` si el comando no
+  produce un reporte nuevo; `reachable` y `fresh` son campos separados.
 - `startAttempt('light')` devuelve `switch_unreachable` si la sonda no responde.
+- `switch/test` devuelve `reachability_source=command|probe`; un OFF redundante
+  no debe marcar la luz como desconectada.
 - `switch/test` devuelve `reachable`; la UI bloquea la pregunta humana si no hay
   respuesta física.
 
@@ -25629,6 +25633,9 @@ Comprobado el 2026-11-02:
   `ZigbeeRadarCalibrationService::apply(..., persist=true)` y pasa a
   `OUTSIDE_MEASURE`.
 - `OUTSIDE_MEASURE` no exige DP 9: usa `outsideEvidenceState()`.
+  - La ausencia explícita se normaliza como `sufficient=true`,
+    `reason=presence_absent`, `detected=false`; la medición cruda sigue en
+    `outside_measure` para el panel.
   - Presencia ausente y confirmada → `outside_valid`/`outside_pass`, fase
     `OUTSIDE_PASS`.
   - Presencia detectada → `lowerCandidate()` baja 0,15 m; si no hay margen,

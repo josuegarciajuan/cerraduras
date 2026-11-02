@@ -11399,3 +11399,15 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Runbook en `docs/ops-sensores.md` §12.
 - [x] Referencia obligatoria en `AGENTS.md`.
 - [x] Runbook ejecutado: corrida `14-20261102T142312Z-bc03b9`, base 6,0 m, pausa off, luz OFF alcanzable.
+
+## TSK-F110-04: Evidencia exterior solo presencia
+- [x] Normalizar `outside_valid`/`outside_pass` con `presence_absent`.
+- [x] Validador `radarOutsideV2` para `distance_inside_only_v1`.
+- [x] Test de ausencia suficiente, detección y ausencia insuficiente.
+- [ ] Verificación física.
+
+## TSK-F110-05: Reentrada y luz
+- [x] Textos de reentrada sin pedir salir ni esperar a perder presencia.
+- [x] `switch/test` con fallback `probeSwitch` y `reachability_source`.
+- [x] Test de validador y comprobaciones de runner.
+- [ ] Verificación física de luz.

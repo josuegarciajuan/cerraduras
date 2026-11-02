@@ -15905,6 +15905,12 @@ Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "
   exige `outside_point` ni distancia exterior.
 - La evidencia interior admite `reason=lateral_median`; no usa el rechazo
   `incoherent_readings` del modo estático.
+- En `distance_inside_only_v1`, `outside_valid`/`outside_pass` pueden ser de
+  presencia: `sufficient=true`, `reason=presence_absent`, `detected=false`,
+  `absent_reports>=2`, último `ABSENT`, misma `config_version`.
+- `switch/test` añade `reachability_source=command|probe`; `reachable` indica
+  conexión y `fresh` indica reporte nuevo. Un comando redundante no es
+  `switch_unreachable`.
 - Motivos nuevos: `inside_only_no_range`, `inside_only_no_separation`,
   `inside_only_apply_failed`.
 - `devices.meta_json.calibration_previous` conserva la calibración anterior.

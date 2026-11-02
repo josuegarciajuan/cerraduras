@@ -1043,11 +1043,14 @@ para Tuya cloud.
   laterales de 20–30 cm; la dispersión lateral no invalida la medida (se usa la
   mediana de todas las lecturas positivas). El alcance es `mediana interior +
   0.10 m` ajustado a 0.15 m, nunca menor que el interior.
-- **Exterior**: no se mide distancia; se verifica solo por presencia. Si el radar
-  sigue detectando fuera, se baja 0.15 m manteniendo el margen interior; si no
-  queda margen, `inside_only_no_separation`.
+- **Exterior**: no se mide distancia; se verifica solo por presencia. La
+  ausencia explícita (>=2 ABSENT, último ABSENT) se normaliza como suficiente
+  (`presence_absent`). Si el radar sigue detectando fuera, se baja 0.15 m
+  manteniendo el margen interior; si no queda margen,
+  `inside_only_no_separation`.
 - **UI**: catálogo y copia del servidor explican pasos laterales y verificación
-  por presencia; el botón exterior dice «Verificar exterior».
+  por presencia; el botón exterior dice «Verificar exterior». En reentrada dice
+  «Ya estás fuera…» y no pide salir. La luz distingue `reachable` de `fresh`.
 - **Preparación obligatoria**: antes de cada prueba física ejecutar
   `docs/ops-sensores.md` §12 (`bin/sensor-test-prepare.php`) y confirmar base,
   pausa y luz. No reutilizar calibraciones ni corridas anteriores.
