@@ -25481,3 +25481,15 @@ marcará como `unattributed` en la siguiente fase.
 - `/radar/state` expone `distance_authority` (`legacy|distance_evidence`).
 - Las corridas v3 existentes no se reinterpretan.
 - La producción permanece en `shadow` hasta la fase de despliegue/validación.
+
+### F108 Fase 6 — exterior y presencia
+
+- `outsideEvidenceState()` separa tres casos:
+  - detección: PRESENT, último PRESENT o distancia positiva;
+  - claro: al menos 2 ABSENT explícitos y último ABSENT, sin distancia positiva;
+  - no concluyente: sin reportes o ausencia insuficiente.
+- `OUTSIDE_MEASURE` ya no usa `outside_already_clear` por silencio.
+- `VERIFY` exige evidencia de ausencia; un silencio termina en
+  `verify_insufficient:no_absence_evidence`.
+- Los motivos se muestran en el asistente.
+- La presencia sigue siendo independiente de la distancia.

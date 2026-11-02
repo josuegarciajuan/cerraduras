@@ -11314,9 +11314,12 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Verificación con sesión v4 real en Fase 10.
 
 ## TSK-F108-06: Exterior y presencia
-- [ ] Silencio ≠ ABSENT; sin DP 9 ≠ ausencia.
-- [ ] `outside_already_clear` solo con evidencia suficiente.
-- [ ] Presencia y distancia separadas.
+- [x] `outsideEvidenceState`: detección, claro o inconcluso.
+- [x] Silencio y ausencia insuficiente no declaran el exterior correcto.
+- [x] `outside_already_clear` exige 2 ABSENT explícitos y último ABSENT.
+- [x] `VERIFY` exige evidencia de ausencia.
+- [x] Presencia y distancia se mantienen separadas.
+- [x] Units y BLOCK 77.
 
 ## TSK-F108-07: Panel
 - [ ] Sin instrucciones de movimiento.

@@ -2204,9 +2204,27 @@ final class SensorWizardController
                         return $run;
                     }
                 } elseif ($mPhase === 'OUTSIDE_MEASURE') {
-                    if (($measurement['detected'] ?? false) !== true) {
-                        // El radar ya no detecta en el punto elegido. No hay
-                        // distancia que promediar: se mantiene el alcance actual.
+                    $outsidePoint = is_array($measurement['point'] ?? null)
+                        ? (array) $measurement['point'] : null;
+                    $outsideEvidence = $this->outsideEvidenceState($measurement, $outsidePoint);
+                    if (!$outsideEvidence['detected']) {
+                        if (!$outsideEvidence['clear']) {
+                            // F108/RF-244: el silencio o la ausencia sin
+                            // confirmar no permiten declarar el exterior claro.
+                            $session['state'] = 'MEASURED';
+                            $reason = $outsideEvidence['reason'] === 'no_reports'
+                                ? 'outside_point_no_reports'
+                                : 'outside_point_absence_unconfirmed';
+                            if ((int) ($session['point_attempts']['OUTSIDE_MEASURE'] ?? 0) >= $maxAttempts) {
+                                $session['state'] = 'STOPPED';
+                                $session['result'] = $reason;
+                            }
+                            $run['calibration_session'] = $session;
+                            $this->store->save($run);
+                            return $run;
+                        }
+                        // Ausencia explícita confirmada: no hay distancia que
+                        // promediar y se mantiene el alcance actual.
                         $session['outside_measure'] = $measurement;
                         $session['outside_valid'] = $measurement;
                         $session['phase'] = 'OUTSIDE_PASS';
@@ -2282,8 +2300,19 @@ final class SensorWizardController
                     $this->store->save($run);
                     return $run;
                 }
+                $verifyPoint = is_array($measurement['point'] ?? null)
+                    ? (array) $measurement['point'] : null;
+                $verifyEvidence = $this->outsideEvidenceState($measurement, $verifyPoint);
+                if (!$verifyEvidence['detected'] && !$verifyEvidence['clear']) {
+                    // F108/RF-244: una ventana silenciosa no confirma ausencia.
+                    $session['state'] = 'STOPPED';
+                    $session['result'] = 'verify_insufficient:no_absence_evidence';
+                    $run['calibration_session'] = $session;
+                    $this->store->save($run);
+                    return $run;
+                }
                 $session['outside_valid'] = $measurement;
-                if (!$detected) {
+                if (!$verifyEvidence['detected']) {
                     $session['phase'] = 'OUTSIDE_PASS';
                     $session['state'] = 'IDLE';
                     $session['calibration'] = $this->calibrationRecordV3($session, [],
@@ -2972,6 +3001,22 @@ final class SensorWizardController
             if ($reason === 'points_too_close') {
                 return ['title' => 'Puntos demasiado próximos', 'instruction' => 'Las medias exterior e interior están demasiado próximas para proponer un alcance fiable. Repite la medición de ambos puntos.', 'message' => 'No se ha aplicado ningún alcance.'];
             }
+            if ($reason === 'outside_point_no_reports') {
+                return [
+                    'title' => 'El radar no envió datos en el exterior',
+                    'instruction' => 'No se ha aplicado ningún ajuste y no se puede declarar el exterior correcto. '
+                        . 'Permanece en el punto y repite la medición cuando el radar vuelva a reportar.',
+                    'message' => 'Sin mensajes de presencia ni distancia en la ventana exterior.',
+                ];
+            }
+            if ($reason === 'outside_point_absence_unconfirmed') {
+                return [
+                    'title' => 'Ausencia exterior sin confirmar',
+                    'instruction' => 'No se ha aplicado ningún ajuste. No hay suficientes mensajes de ausencia para declarar '
+                        . 'que el radar no te detecta en ese punto. Permanece en el punto y repite la medición.',
+                    'message' => 'Se requieren al menos dos reportes ABSENT explícitos y que el último sea ABSENT.',
+                ];
+            }
             if (str_starts_with($reason, 'inside_point_') || str_starts_with($reason, 'outside_point_')) {
                 $point = is_array($session['last_measurement']['point'] ?? null)
                     ? (array) $session['last_measurement']['point'] : [];
@@ -3009,6 +3054,14 @@ final class SensorWizardController
             }
             if (str_starts_with($reason, 'outside_insufficient:')) {
                 return ['title' => 'Punto exterior sin evidencia', 'instruction' => 'No hubo evidencia suficiente. Mantente quieto en el punto exterior y repite la medición.', 'message' => $reason];
+            }
+            if ($reason === 'verify_insufficient:no_absence_evidence') {
+                return [
+                    'title' => 'Verificación exterior sin evidencia de ausencia',
+                    'instruction' => 'No se ha validado el exterior. La ventana no confirmó ausencia con reportes explícitos. '
+                        . 'Repite la comprobación permaneciendo en el punto.',
+                    'message' => 'El silencio del sensor no se interpreta como ausencia.',
+                ];
             }
             if (str_starts_with($reason, 'verify_insufficient:')) {
                 return ['title' => 'Verificación incompleta', 'instruction' => 'No hubo evidencia suficiente. Repite la comprobación exterior sin moverte.', 'message' => $reason];
@@ -3462,6 +3515,38 @@ final class SensorWizardController
         );
         $point['attempt'] = (int) ($session['point_attempts'][$phase] ?? 0) + 1;
         return $point;
+    }
+
+    /**
+     * F108/RF-244: interpreta la evidencia exterior sin confundir silencio con
+     * ausencia. Solo `clear` con al menos dos ABSENT explícitos y último estado
+     * ABSENT; si no hay mensajes o no hay ausencia confirmada, no se aplica.
+     *
+     * @param array<string,mixed> $measurement
+     * @param array<string,mixed>|null $point
+     * @return array{detected:bool,clear:bool,reason:string,reports:int,absents:int,last:string}
+     */
+    private function outsideEvidenceState(array $measurement, ?array $point): array
+    {
+        $reports = (int) ($measurement['reports'] ?? 0);
+        $presents = (int) ($measurement['presence_reports'] ?? 0);
+        $absents = (int) ($measurement['absent_reports'] ?? 0);
+        $last = (string) ($measurement['last_value'] ?? '');
+        $distancePositive = (int) ($point['positive_reports'] ?? $point['fresh_readings'] ?? 0) > 0;
+        $detected = (bool) ($measurement['detected'] ?? false)
+            || $presents > 0
+            || $last === 'PRESENT'
+            || $distancePositive;
+        if ($detected) {
+            return ['detected' => true, 'clear' => false, 'reason' => 'detected', 'reports' => $reports, 'absents' => $absents, 'last' => $last];
+        }
+        if ($reports === 0) {
+            return ['detected' => false, 'clear' => false, 'reason' => 'no_reports', 'reports' => $reports, 'absents' => $absents, 'last' => $last];
+        }
+        if ($absents < 2 || $last !== 'ABSENT') {
+            return ['detected' => false, 'clear' => false, 'reason' => 'absence_unconfirmed', 'reports' => $reports, 'absents' => $absents, 'last' => $last];
+        }
+        return ['detected' => false, 'clear' => true, 'reason' => 'clear', 'reports' => $reports, 'absents' => $absents, 'last' => $last];
     }
 
     private function radarDistanceAuthorityActive(): bool
