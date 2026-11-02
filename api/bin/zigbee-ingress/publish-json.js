@@ -24,7 +24,6 @@ const ALLOWED_KEYS = new Set([
   'maximum_range',
   'detection_delay',
   'fading_time',
-  'distance_query',
 ]);
 
 (function loadEnv() {
@@ -79,10 +78,6 @@ if (keys.length === 0 || keys.some((k) => !ALLOWED_KEYS.has(k))) {
   fail('invalid_parameter');
 }
 for (const key of keys) {
-  if (key === 'distance_query') {
-    if (parsed[key] !== 'request') fail('invalid_distance_query');
-    continue;
-  }
   if (typeof parsed[key] !== 'number' || !Number.isFinite(parsed[key])) {
     fail('invalid_parameter_value');
   }

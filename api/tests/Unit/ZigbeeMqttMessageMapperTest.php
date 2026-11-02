@@ -144,6 +144,13 @@ same('F107: marca adjunta al evento de presencia', $distanceReport['marker'] ?? 
 same('F107: distancia parseada', $distanceReport['distance_m'] ?? null, 2.71);
 same('F107: origen parseado', $distanceReport['origin'] ?? null, 'push');
 
+$legacyQuery = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"target_distance":2.71,"f107_distance_report":"v1|sess|10|2.710|query"}',
+    $at
+);
+same('F108: marca query antigua no se atribuye', $legacyQuery['events'][0]['meta']['distance_report']['origin'] ?? null, 'unattributed');
+
 $noMarker = $mapper->mapMessage('zigbee2mqtt/door-contact', '{"occupancy":true,"target_distance":2.71}', $at);
 same('F107: sin marca no hay evidencia', $noMarker['events'][0]['meta']['distance_report'] ?? null, null);
 same('F107: el estado combinado sigue siendo diagnóstico', $noMarker['events'][0]['meta']['settings']['target_distance'] ?? null, 2.71);

@@ -92,20 +92,6 @@ final class ZigbeeRadarCalibrationService
         $this->publisher = $publisher ?? [$this, 'runPublisher'];
     }
 
-    public const DISTANCE_QUERY_PAYLOAD = '{"distance_query":"request"}';
-
-    /**
-     * F107/RF-232: solicita UNA lectura DP 9 bajo demanda. No se llama desde
-     * temporizadores ni desde configure; solo al iniciar una medición.
-     *
-     * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
-     * @return array{ok:bool,error:?string}
-     */
-    public function requestDistance(array $device): array
-    {
-        return ($this->publisher)($this->setTopic($device), self::DISTANCE_QUERY_PAYLOAD);
-    }
-
     /**
      * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
      * @return array<string,mixed>

@@ -7101,11 +7101,11 @@ fi
 
 if grep -q "distance_report" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php \
     && grep -q "radar_distance_reports" src/Domain/Sensors/RadarDistanceReportRepository.php \
-    && grep -q "distance_query" bin/zigbee-ingress/publish-json.js \
-    && ! grep -q "configure: async.*dataQuery" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
-    pass "F107: ingesta, persistencia y consulta segura cableadas"
+    && ! grep -q "distance_query" bin/zigbee-ingress/publish-json.js \
+    && ! grep -q "distance_query" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
+    pass "F107/F108: evidencia persistida y consulta directa retirada"
 else
-    fail "F107: cableado" "falta evidencia, persistencia, consulta o hay configure con dataQuery"
+    fail "F107/F108: cableado" "falta evidencia/persistencia o queda una consulta directa"
 fi
 
 # =============================================================================
@@ -7144,10 +7144,11 @@ block "BLOCK 68I — F107: integración sombra en el asistente"
 if grep -q "radarDistanceEvidence" src/Http/Controllers/SensorWizardController.php \
     && grep -q "distance_mode" src/Http/Controllers/SensorWizardController.php \
     && grep -q "distance_point" src/Http/Controllers/SensorWizardController.php \
-    && grep -q "distance_query" src/Http/Controllers/SensorWizardController.php; then
-    pass "F107: estado sombra y consulta cableados en el controlador"
+    && grep -q "distance_query" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -q "requestRadarDistanceQuery" src/Http/Controllers/SensorWizardController.php; then
+    pass "F107/F108: estado sombra presente sin envío de consultas"
 else
-    fail "F107: integración del controlador" "faltan campos de evidencia o consulta"
+    fail "F107/F108: integración del controlador" "faltan campos o queda envío de consultas"
 fi
 
 if grep -q "distanceEvidenceText" public/assets/sensor-wizard-v2.js \
@@ -7842,6 +7843,34 @@ if grep -q "^RADAR_DISTANCE_QUERY_ENABLED=false$" .env.example \
     pass "F108: consulta desactivada por defecto"
 else
     fail "F108: configuración de consulta" "debe quedar desactivada"
+fi
+
+# =============================================================================
+# BLOCK 74 — F108: evidencia DP 9 sin consulta falsa
+# Trazabilidad: RF-241, RF-247 · design.md §108 Fase 3
+# =============================================================================
+block "BLOCK 74 — F108: evidencia DP 9 sin consulta falsa"
+
+if php tests/Unit/RadarDistanceReportTest.php >/tmp/f108-report.log 2>&1 \
+    && php tests/Unit/ZigbeeMqttMessageMapperTest.php >/tmp/f108-mapper.log 2>&1; then
+    pass "F108: marca válida, query antigua no atribuida y mapper"
+else
+    fail "F108: units de evidencia" "$(tail -20 /tmp/f108-report.log /tmp/f108-mapper.log | head -c 600)"
+fi
+
+if ! grep -q "distance_query" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js \
+    && ! grep -q "queryPending" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js \
+    && grep -q "origin.*push" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js; then
+    pass "F108: conversor solo emite evidencia push DP 9"
+else
+    fail "F108: conversor" "queda consulta o atribución temporal"
+fi
+
+if ! grep -q "distance_query" bin/zigbee-ingress/publish-json.js \
+    && ! grep -q "requestRadarDistanceQuery" src/Http/Controllers/SensorWizardController.php; then
+    pass "F108: no se envían órdenes de consulta directa"
+else
+    fail "F108: consulta directa retirada" "queda un publicador o llamada"
 fi
 
 # =============================================================================

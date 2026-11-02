@@ -39,8 +39,13 @@ final class RadarDistanceReport
             return null;
         }
         $origin = strtolower($origin);
-        if (!in_array($origin, ['push', 'query'], true)) {
+        if (!in_array($origin, ['push', 'query', 'unattributed'], true)) {
             return null;
+        }
+        // F108: la consulta directa no está soportada. Una marca antigua
+        // `query` no se presenta como respuesta; queda sin atribuir.
+        if ($origin === 'query') {
+            $origin = 'unattributed';
         }
         if ($receivedAt === '') {
             return null;

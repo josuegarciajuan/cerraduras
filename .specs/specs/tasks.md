@@ -11287,10 +11287,14 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Conclusión: no usar consulta directa; solo push DP 9.
 
 ## TSK-F108-03: Evidencia DP 9
-- [ ] Conversor con identidad de reporte y correlación opcional.
-- [ ] Migración `0137` y repositorio de consultas.
-- [ ] Persistencia de reportes con `query_id`/origen.
-- [ ] Pruebas de duplicados, caché, ceros y reinicio.
+- [x] Conversor solo push, sin consulta ni atribución temporal.
+- [x] Parser convierte `query` antiguo a `unattributed`.
+- [x] Filas históricas `query` corregidas a `unattributed`.
+- [x] `distance_query` retirado de publicador, controlador y servicio.
+- [x] `state.json` limpio para no republicar la clave obsoleta.
+- [x] Verificado payload real con `push` y sin `distance_query`.
+- [x] Pruebas de marca válida, query antigua y mapper.
+- [ ] Migración `0137` no necesaria: no hay consulta correlacionada.
 
 ## TSK-F108-04: Algoritmo
 - [ ] Cobertura sobre muestras positivas.

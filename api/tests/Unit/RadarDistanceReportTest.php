@@ -33,9 +33,12 @@ same('F107: distancia', $ok['distance_m'], 2.71);
 same('F107: origen push', $ok['origin'], 'push');
 same('F107: instante de recepción', $ok['received_at'], $at);
 
-$query = RadarDistanceReport::fromMarker('v1|sess1|8|0.000|query', $at);
-same('F107: origen query', $query['origin'], 'query');
-same('F107: cero es evidencia', $query['distance_m'], 0.0);
+$legacyQuery = RadarDistanceReport::fromMarker('v1|sess1|8|0.000|query', $at);
+same('F108: query antiguo queda sin atribuir', $legacyQuery['origin'], 'unattributed');
+same('F108: cero es evidencia', $legacyQuery['distance_m'], 0.0);
+
+$unattributed = RadarDistanceReport::fromMarker('v1|sess1|9|2.710|unattributed', $at);
+same('F108: origen unattributed aceptado', $unattributed['origin'], 'unattributed');
 
 same('F107: sin marca', RadarDistanceReport::fromMarker(null, $at), null);
 same('F107: marca vacía', RadarDistanceReport::fromMarker('', $at), null);

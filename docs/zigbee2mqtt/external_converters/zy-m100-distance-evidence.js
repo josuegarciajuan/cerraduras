@@ -1,16 +1,16 @@
 'use strict';
 
 /**
- * F107 — evidencia de distancia del ZY-M100-S_2.
+ * F108 — evidencia de distancia del ZY-M100-S_2.
  *
  * Publica un marcador `f107_distance_report` SOLO cuando la trama Zigbee
  * contiene el DP 9 (target_distance). El marcador cambia con cada reporte,
  * aunque la distancia sea igual, y se mantiene idéntico si Zigbee2MQTT
  * republica el estado cacheado por otro atributo.
  *
- * También expone `distance_query` para pedir una lectura bajo demanda. NO se
- * envía `dataQuery` desde `configure`: Zigbee2MQTT reconfigura en cada cambio
- * de lastSeen y eso provocaría un bucle de consultas.
+ * No existe consulta directa funcional: la prueba F108 demostró
+ * ZIGBEE_DELIVERY_FAILED para dataQuery. Por eso este conversor no expone
+ * `distance_query` ni envía comandos al dispositivo.
  */
 
 const exposes = require('zigbee-herdsman-converters/lib/exposes');
@@ -22,8 +22,6 @@ const ea = exposes.access;
 const SESSION = Date.now().toString(36);
 const seen = new Map();
 let counter = 0;
-let queryPending = false;
-let queryPendingUntil = 0;
 
 function isDuplicate(seq, txn) {
   const key = `${seq ?? ''}|${txn ?? ''}`;
@@ -60,26 +58,13 @@ const fzDistanceReport = {
   convert: (model, msg) => {
     const dp = (msg.data.dpValues || []).find((d) => d.dp === 9);
     if (!dp) return {};
-    const pending = queryPending && Date.now() <= queryPendingUntil;
-    if (!pending && isDuplicate(msg.data.seq, msg.meta && msg.meta.zclTransactionSequenceNumber)) return {};
+    if (isDuplicate(msg.data.seq, msg.meta && msg.meta.zclTransactionSequenceNumber)) return {};
     const value = decodeDistance(dp);
     if (value === null || !Number.isFinite(value) || value < 0) return {};
     counter += 1;
-    const origin = queryPending && Date.now() <= queryPendingUntil ? 'query' : 'push';
-    queryPending = false;
     return {
-      f107_distance_report: `v1|${SESSION}|${counter}|${value.toFixed(3)}|${origin}`,
+      f107_distance_report: `v1|${SESSION}|${counter}|${value.toFixed(3)}|push`,
     };
-  },
-};
-
-const tzDistanceQuery = {
-  key: ['distance_query'],
-  convertSet: async (entity) => {
-    queryPending = true;
-    queryPendingUntil = Date.now() + 5000;
-    await entity.command('manuSpecificTuya', 'dataQuery', {});
-    return {};
   },
 };
 
@@ -93,10 +78,9 @@ const definition = {
   ]),
   model: 'ZY-M100-S_2',
   vendor: 'Tuya',
-  description: 'Mini human breathe sensor (F107 distance evidence)',
+  description: 'Mini human breathe sensor (F108 distance evidence)',
   extend: [tuya.modernExtend.tuyaBase({ dp: true })],
   fromZigbee: [fzDistanceReport],
-  toZigbee: [tzDistanceQuery],
   exposes: [
     e.illuminance(),
     e.presence(),
@@ -106,8 +90,7 @@ const definition = {
     e.numeric('maximum_range', ea.STATE_SET).withValueMin(0).withValueMax(9.5).withValueStep(0.15).withDescription('Maximum range').withUnit('m'),
     e.numeric('detection_delay', ea.STATE_SET).withValueMin(0).withValueMax(10).withValueStep(0.1).withDescription('Detection delay').withUnit('s'),
     e.numeric('fading_time', ea.STATE_SET).withValueMin(0.5).withValueMax(1500).withValueStep(1).withDescription('Fading time').withUnit('s'),
-    e.text('f107_distance_report', ea.STATE).withDescription('F107: identity of the last DP 9 report'),
-    e.enum('distance_query', ea.SET, ['request']).withDescription('F107: request one on-demand DP 9 report'),
+    e.text('f107_distance_report', ea.STATE).withDescription('F108: identity of the last DP 9 report'),
   ],
   meta: {
     tuyaDatapoints: [
