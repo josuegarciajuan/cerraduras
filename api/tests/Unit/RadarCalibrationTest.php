@@ -5,6 +5,7 @@ require __DIR__ . '/../../src/Support/Autoload.php';
 
 use App\Domain\Sensors\RadarCalibrationPlanner;
 use App\Domain\Sensors\RadarDistanceQuality;
+use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 
 $P = 0; $F = 0;
 function ok(string $m): void { global $P; $P++; echo "  ✅ {$m}\n"; }
@@ -236,6 +237,20 @@ $closePlan = RadarCalibrationPlanner::planFromOutsidePoint($insideMean,
      'quality' => 'good', 'distance' => ['quality' => 'good', 'mean' => 3.00]],
     ['maximum_range' => 6, 'radar_sensitivity' => 7], $caps105);
 same('F105: medias demasiado próximas → points_too_close', $closePlan['reason'], 'points_too_close');
+
+// F110: base sin calibrar y calibración solo interior.
+$f110Caps = ['range_min' => 0.15, 'range_max' => 9.5, 'range_step' => 0.15,
+    'sens_min' => 0, 'sens_max' => 9];
+same('F110: candidato interior 2,74 + 0,10 → 2,85', RadarCalibrationPlanner::insideOnlyCandidate(2.74, $f110Caps), 2.85);
+same('F110: candidato interior 3,35 + 0,10 → 3,45', RadarCalibrationPlanner::insideOnlyCandidate(3.35, $f110Caps), 3.45);
+same('F110: interior fuera de rango → null', RadarCalibrationPlanner::insideOnlyCandidate(null, $f110Caps), null);
+same('F110: interior en el máximo no deja margen → null', RadarCalibrationPlanner::insideOnlyCandidate(9.5, $f110Caps), null);
+same('F110: bajar 3,75 con interior 3,35 → 3,60', RadarCalibrationPlanner::lowerCandidate(3.75, 3.35, $f110Caps), 3.60);
+same('F110: no bajar si rompe el margen interior → null', RadarCalibrationPlanner::lowerCandidate(3.45, 3.35, $f110Caps), null);
+same('F110: baseline 6,0 / 0,6 / sens 7 / delay 0,1 / fading 15,5',
+    ZigbeeRadarCalibrationService::BASELINE,
+    ['maximum_range' => 6.0, 'minimum_range' => 0.6, 'radar_sensitivity' => 7,
+     'detection_delay' => 0.1, 'fading_time' => 15.5]);
 
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);

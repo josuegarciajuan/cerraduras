@@ -350,6 +350,44 @@ final class RadarCalibrationPlanner
      *
      * @param array<string,mixed> $measurement
      */
+    /**
+     * F110: candidato de alcance para calibración solo interior.
+     * Devuelve null si la referencia no es válida o no cabe en el rango.
+     *
+     * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
+     */
+    public static function insideOnlyCandidate(?float $insideRef, array $caps, float $margin = 0.10): ?float
+    {
+        if ($insideRef === null || !is_finite($insideRef) || $insideRef <= 0) {
+            return null;
+        }
+        $candidate = self::snap($insideRef + max(0.0, $margin), $caps);
+        if ($candidate <= $insideRef + 0.0001) {
+            $step = max(0.01, (float) $caps['range_step']);
+            $candidate = self::snap($insideRef + $step, $caps);
+        }
+        if ($candidate <= $insideRef + 0.0001 || $candidate > (float) $caps['range_max'] + 0.0001) {
+            return null;
+        }
+        return $candidate;
+    }
+
+    /**
+     * F110: siguiente alcance hacia abajo para dejar de detectar fuera,
+     * manteniendo un margen sobre la referencia interior.
+     *
+     * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
+     */
+    public static function lowerCandidate(float $current, float $insideRef, array $caps, float $margin = 0.10): ?float
+    {
+        $step = max(0.01, (float) $caps['range_step']);
+        $candidate = self::snap($current - $step, $caps);
+        if ($candidate <= $insideRef + max(0.0, $margin) + 0.0001) {
+            return null;
+        }
+        return $candidate;
+    }
+
     public static function ref(array $measurement, string $kind): ?float
     {
         if (isset($measurement['reference']) && is_numeric($measurement['reference'])) {

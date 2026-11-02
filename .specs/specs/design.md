@@ -25599,5 +25599,51 @@ Comprobado el 2026-11-02:
   respondió.
 - `switch/test` devolvió `reachable=false` manteniendo `ok=true` solo como
   publicación al broker.
-- La luz sigue sin responder por Zigbee pese a tener alimentación; requiere
-  diagnóstico físico/reemparejamiento antes de la prueba final.
+- La luz se recuperó tras un ciclo de alimentación (no hizo falta reemparejar):
+  `device_announce`, telemetría `OFF`/`ON` y `switch/test OFF` con
+  `reachable:true` y `reported_state:OFF` a las 12:28:39Z.
+
+
+## F110 — Base sin calibrar y calibración solo interior
+
+### Base por corrida
+
+- `ZigbeeRadarCalibrationService::BASELINE` fija 6,0 / 0,6 / 7 / 0,1 / 15,5.
+- `resetToBaseline()` publica la base con `persist=false`; no la guarda como
+  calibración.
+- `SensorWizardController::resetRadarToBaseline()` archiva
+  `devices.meta_json.calibration` en `calibration_previous` y usa los ajustes
+  confirmados para `run.calibration.initial_settings`.
+- `startRun` y `resetRun` restauran la base antes de crear la corrida. Si no se
+  confirma por push, responden `409 radar_baseline_failed`.
+
+### Modelo `distance_inside_only_v1`
+
+- La sesión v5 usa `inside_valid`/`inside_ref` como referencia interior.
+- `RadarCalibrationPlanner::insideOnlyCandidate()` calcula
+  `snap(interior + 0,10)`; devuelve `null` si no queda margen.
+- Al aprobar `radar_inside`, el controlador aplica el candidato con
+  `ZigbeeRadarCalibrationService::apply(..., persist=true)` y pasa a
+  `OUTSIDE_MEASURE`.
+- `OUTSIDE_MEASURE` no exige DP 9: usa `outsideEvidenceState()`.
+  - Presencia ausente y confirmada → `outside_valid`/`outside_pass`, fase
+    `OUTSIDE_PASS`.
+  - Presencia detectada → `lowerCandidate()` baja 0,15 m; si no hay margen,
+    `inside_only_no_separation`.
+  - Silencio o ausencia sin confirmar → no se declara exterior correcto.
+- La reentrada se mantiene y exige presencia real.
+
+### Panel
+
+- Catálogo y copia del servidor indican pasos laterales de 20–30 cm y
+  verificación exterior por presencia.
+- El botón de medida exterior se etiqueta «Verificar exterior» en el modelo
+  nuevo.
+- El panel no muestra una media exterior inexistente.
+
+### Verificación
+
+- Units `RadarCalibrationTest` (candidato, bajada y base).
+- BLOCK 82 comprueba base, llamadas de reinicio, modelo, textos y JS.
+- Regresión local: 961 passed, 0 failed, 12 skipped.
+- Prueba física pendiente.

@@ -24,6 +24,18 @@ use RuntimeException;
  */
 final class ZigbeeRadarCalibrationService
 {
+    /**
+     * F110: base sin calibrar de cada corrida. El 3,15 m anterior era una
+     * calibración, no un límite del hardware.
+     */
+    public const BASELINE = [
+        'maximum_range'     => 6.0,
+        'minimum_range'     => 0.6,
+        'radar_sensitivity' => 7,
+        'detection_delay'   => 0.1,
+        'fading_time'       => 15.5,
+    ];
+
     public const PARAMETERS = [
         'radar_sensitivity' => ['min' => 0.0, 'max' => 9.0,  'step' => 1.0,  'unit' => null],
         'minimum_range'     => ['min' => 0.0, 'max' => 9.5,  'step' => 0.15, 'unit' => 'm'],
@@ -231,7 +243,18 @@ final class ZigbeeRadarCalibrationService
      * @param array<string,mixed> $input
      * @return array<string,mixed>
      */
-    public function apply(int $roomId, array $device, array $input, bool $persist): array
+    /**
+     * F110: restaura la base sin calibrar. No persiste una calibración.
+     *
+     * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
+     * @return array<string,mixed>
+     */
+    public function resetToBaseline(int $roomId, array $device): array
+    {
+        return $this->apply($roomId, $device, self::BASELINE, false, 45);
+    }
+
+    public function apply(int $roomId, array $device, array $input, bool $persist, int $waitAttempts = 12): array
     {
         $commands = self::normalizeCommands($input);
         if ($commands === []) {
@@ -258,7 +281,7 @@ final class ZigbeeRadarCalibrationService
         // Se acepta solo un evento NUEVO (id > beforeId) que refleje lo pedido.
         $applied = false;
         $latest = null;
-        for ($attempt = 0; $attempt < 12; $attempt++) {
+        for ($attempt = 0; $attempt < max(1, $waitAttempts); $attempt++) {
             if ($attempt > 0) {
                 usleep(700_000);
             }
