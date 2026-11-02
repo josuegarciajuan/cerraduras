@@ -11390,7 +11390,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Catálogo con pasos laterales 20–30 cm.
 - [x] BLOCK 82 y JS válido.
 - [ ] Prueba física interior/exterior/reentrada.
-- [x] Regresión completa local: 947 passed, 0 failed, 14 skipped.
+- [x] Regresión completa local: 950 passed, 0 failed, 14 skipped.
 - [ ] Despliegue y prueba física.
 
 ## TSK-F110-03: Preparación limpia y repetible
