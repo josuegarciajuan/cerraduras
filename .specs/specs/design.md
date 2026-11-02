@@ -25440,3 +25440,18 @@ Decisión: no usar `dataQuery` en la calibración. El flujo mostrará la
 limitación y usará exclusivamente reportes push DP 9 con identidad
 independiente. La heurística `origin=query` de cinco segundos se eliminará o
 marcará como `unattributed` en la siguiente fase.
+
+### F108 Fase 3 — evidencia DP 9
+
+- El conversor ya no expone `distance_query` ni mantiene `queryPending`.
+- Cada marca es `v1|<session>|<counter>|<distance>|push`.
+- `RadarDistanceReport` acepta `unattributed` y convierte marcas antiguas
+  `query` en `unattributed`; nunca las presenta como respuesta.
+- Se corrigieron las 3 filas históricas con `origin='query'` a
+  `unattributed`.
+- Se retiró `distance_query` de `publish-json.js`, del controlador y del
+  servicio de calibración.
+- Se limpió la clave obsoleta de `state.json` deteniendo Zigbee2MQTT,
+  editando y arrancando, para que no se republicara.
+- Verificado en payload real: `f107_distance_report` con `push` y sin
+  `distance_query`.

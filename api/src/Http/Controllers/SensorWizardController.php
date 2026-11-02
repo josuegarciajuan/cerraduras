@@ -2014,14 +2014,6 @@ final class SensorWizardController
                 'point_attempt' => in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
                     ? (int) ($session['point_attempts'][$opPhase] ?? 0) + 1 : null,
             ];
-            if ($kind === 'MEASURE'
-                && in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
-                && !$this->isRadarDistanceModeOff()) {
-                $query = $this->requestRadarDistanceQuery($roomId);
-                $op['distance_query_at'] = gmdate('Y-m-d\TH:i:s\Z');
-                $op['distance_query_ok'] = $query['ok'];
-                $op['distance_query_error'] = $query['error'];
-            }
             unset($session['manual_start_required'], $session['scan_preview']);
             $session['phase'] = $opPhase;
             $session['state'] = 'MEASURING';
@@ -3468,7 +3460,7 @@ final class SensorWizardController
         }
         $active = is_array($session['active_operation'] ?? null) ? $session['active_operation'] : [];
         $query = [
-            'enabled' => $this->radarDistanceQueryEnabled(),
+            'enabled' => false,
             'at' => $active['distance_query_at'] ?? null,
             'ok' => $active['distance_query_ok'] ?? null,
             'error' => $active['distance_query_error'] ?? null,
@@ -3501,46 +3493,6 @@ final class SensorWizardController
             ]
         );
         return ['mode' => $mode, 'point' => $point, 'query' => $query];
-    }
-
-    private function radarDistanceQueryEnabled(): bool
-    {
-        $raw = strtolower(trim((string) (getenv('RADAR_DISTANCE_QUERY_ENABLED') ?: 'false')));
-        return in_array($raw, ['1', 'true', 'yes', 'on'], true);
-    }
-
-    private function isRadarDistanceModeOff(): bool
-    {
-        $mode = strtolower(trim((string) (getenv('RADAR_DISTANCE_EVIDENCE_MODE') ?: 'off')));
-        return $mode === 'off' || !in_array($mode, ['off', 'shadow', 'active'], true);
-    }
-
-    /**
-     * @return array{ok:bool,error:?string}
-     */
-    private function requestRadarDistanceQuery(int $roomId): array
-    {
-        if (!$this->radarDistanceQueryEnabled()) {
-            return ['ok' => false, 'error' => 'query_disabled'];
-        }
-        $stmt = $this->pdo()->prepare(
-            "SELECT d.id, d.external_id, d.meta_json
-               FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
-              WHERE r.id = :rid AND d.kind = 'PRESENCE' AND d.transport = 'ZIGBEE2MQTT'
-              LIMIT 1"
-        );
-        $stmt->execute([':rid' => $roomId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
-            return ['ok' => false, 'error' => 'radar_not_found'];
-        }
-        $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
-        $device = [
-            'id' => (int) $row['id'],
-            'external_id' => (string) $row['external_id'],
-            'meta' => is_array($meta) ? $meta : [],
-        ];
-        return (new ZigbeeRadarCalibrationService($this->pdo()))->requestDistance($device);
     }
 
     /**
