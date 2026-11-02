@@ -11302,7 +11302,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Filtro por radar (`device_id`) y configuración (`config_key`).
 - [x] Migración aditiva `0137` y persistencia de `config_key`.
 - [x] Pruebas de iguales, inestable, cero inicial y filtros.
-- [ ] Verificación tras desplegar y reiniciar el spool.
+- [x] Verificado: nuevas filas con `config_key`, `frozen=true` en ventana cerrada y regresión 920/0.
 
 ## TSK-F108-05: Autoridad de sesión
 - [ ] Nueva versión/modelo de sesión.
