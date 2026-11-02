@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepository;
+use App\Domain\Presence\RoomAutomationPauseRepository;
 use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Presence\DoorPolarity;
 use App\Domain\Presence\DoorPolarityEvidence;
@@ -86,6 +87,7 @@ final class SensorWizardController
             $active = $this->store->findActiveAttemptForRoom($roomId);
             $running = $this->store->findRunningRunForRoom($roomId);
             $data['active_attempt'] = $active;
+            $data['automation_pause'] = (new RoomAutomationPauseRepository($this->pdo()))->status($roomId);
             $data['active_run'] = $running === null ? null : [
                 'run_id' => (string) ($running['run_id'] ?? ''),
                 'status' => (string) ($running['status'] ?? ''),
@@ -256,6 +258,15 @@ final class SensorWizardController
                 'active' => $active,
                 'message' => 'Hay otra prueba en curso en esta sala.',
             ]);
+        }
+        if ($stepId === 'light') {
+            $probe = $this->probeSwitch((int) $run['room_id']);
+            if (($probe['reachable'] ?? false) !== true) {
+                return Response::json(409, [
+                    'error' => 'switch_unreachable',
+                    'message' => 'La luz no responde. Comprueba alimentación y red Zigbee.',
+                ]);
+            }
         }
         if (in_array($stepId, ['radar_inside', 'radar_outside'], true)) {
             try {
@@ -704,6 +715,41 @@ final class SensorWizardController
         }
     }
 
+    public function automationPause(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        $runId = (string) ($body['run_id'] ?? '');
+        $action = strtolower((string) ($body['action'] ?? ''));
+        if ($roomId <= 0 || !in_array($action, ['pause', 'resume'], true)) {
+            return Response::json(400, ['error' => 'room_id and action pause/resume required']);
+        }
+        if ($runId !== '') {
+            $run = $this->store->load($runId);
+            if ($run === null || (int) ($run['room_id'] ?? 0) !== $roomId) {
+                return Response::json(404, ['error' => 'run_not_found']);
+            }
+        }
+        try {
+            $repo = new RoomAutomationPauseRepository($this->pdo());
+            if ($action === 'pause') {
+                $repo->pause($roomId, $runId !== '' ? $runId : null);
+            } else {
+                $repo->resume($roomId);
+            }
+            if ($runId !== '') {
+                $this->store->appendLog($runId, [
+                    'type' => $action === 'pause' ? 'automation_pause' : 'automation_resume',
+                    'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'room_id' => $roomId,
+                ]);
+            }
+            return Response::json(200, ['ok' => true, 'automation_pause' => $repo->status($roomId)]);
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
     public function switchTest(Request $request): Response
     {
         $body = $request->jsonBody ?? [];
@@ -720,13 +766,16 @@ final class SensorWizardController
                 return Response::json(404, ['error' => 'switch_not_found']);
             }
             $gateway = new ZigbeeSwitchGateway($deviceRepo);
+            $commandTs = microtime(true);
             $commandAt = gmdate('Y-m-d\TH:i:s.v\Z');
             $result = $action === 'ON'
                 ? $gateway->turnOnForDevice($device)
                 : $gateway->turnOffForDevice($device);
             $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
+            $reachable = $this->waitSwitchReachable($deviceRepo, (int) $device->id, $commandTs);
             return Response::json(200, [
                 'ok' => (bool) ($result['ok'] ?? false),
+                'reachable' => $reachable,
                 'action' => $action,
                 'error' => $result['error'] ?? null,
                 'command_at' => $commandAt,
@@ -3852,6 +3901,43 @@ final class SensorWizardController
      *
      * @return array{state:string,state_at:?string,fresh:bool}
      */
+    /** @return array{reachable:bool,error:?string} */
+    private function probeSwitch(int $roomId): array
+    {
+        $repo = new DeviceRepository($this->pdo());
+        $device = $repo->findForRoomKind($roomId, Device::KIND_SWITCH);
+        if ($device === null) {
+            return ['reachable' => false, 'error' => 'switch_not_found'];
+        }
+        $since = microtime(true);
+        $gateway = new ZigbeeSwitchGateway($repo);
+        $probe = $gateway->probeForDevice($device);
+        if (($probe['ok'] ?? false) !== true) {
+            return ['reachable' => false, 'error' => (string) ($probe['error'] ?? 'publish_failed')];
+        }
+        $reachable = $this->waitSwitchReachable($repo, (int) $device->id, $since);
+        return ['reachable' => $reachable, 'error' => $reachable ? null : 'no_response'];
+    }
+
+    private function waitSwitchReachable(DeviceRepository $repo, int $deviceId, float $since): bool
+    {
+        for ($i = 0; $i < 12; $i++) {
+            if ($i > 0) {
+                usleep(500_000);
+            }
+            $stmt = $this->pdo()->prepare('SELECT last_seen_at FROM devices WHERE id = :id LIMIT 1');
+            $stmt->execute([':id' => $deviceId]);
+            $at = $stmt->fetchColumn();
+            if ($at !== false && $at !== null) {
+                $ts = $this->parseTs((string) $at);
+                if ($ts !== null && $ts >= $since - 1.0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private function waitSwitchState(DeviceRepository $repo, int $deviceId, string $expected): array
     {
         $commandTs = microtime(true);

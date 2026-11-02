@@ -15875,3 +15875,17 @@ datos de otras salas.
   dos lecturas.
 - `config_key` es un SHA-256 hexadecimal de 64 caracteres.
 - El algoritmo F105 tradicional no cambia.
+
+## §F109 Pausa manual y sonda de luz
+
+`POST /dashboard-api/sensores/v2/automation/pause`:
+
+```json
+{ "room_id": 14, "run_id": "14-...", "action": "pause|resume" }
+```
+
+Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "paused_at": ..., "resumed_at": ... } }`.
+
+- `preflight.automation_pause` expone el estado.
+- `switch/test` añade `reachable`.
+- `startAttempt` de luz puede devolver `409 switch_unreachable`.

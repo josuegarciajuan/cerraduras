@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Devices;
 
+use App\Domain\Presence\RoomAutomationPauseRepository;
+
 use App\Domain\Rooms\Room;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Infrastructure\Gateways\Switch\SwitchGatewayFactory;
@@ -31,7 +33,8 @@ final class SwitchService
 
     public function __construct(
         DeviceRepositoryInterface $devices,
-        RoomRepositoryInterface $rooms
+        RoomRepositoryInterface $rooms,
+        private ?RoomAutomationPauseRepository $automationPause = null
     ) {
         $this->devices = $devices;
         $this->rooms   = $rooms;
@@ -44,6 +47,9 @@ final class SwitchService
      */
     public function turnOn(int $roomId): array
     {
+        if ($this->automationPause !== null && $this->automationPause->isPaused($roomId)) {
+            return ['ok' => false, 'provider' => 'PAUSED', 'error' => 'automation_paused'];
+        }
         $gateway = $this->resolveGateway($roomId);
         if ($gateway === null) {
             return $this->noSwitchResult();
@@ -74,6 +80,9 @@ final class SwitchService
      */
     public function turnOff(int $roomId): array
     {
+        if ($this->automationPause !== null && $this->automationPause->isPaused($roomId)) {
+            return ['ok' => false, 'provider' => 'PAUSED', 'error' => 'automation_paused'];
+        }
         $gateway = $this->resolveGateway($roomId);
         if ($gateway === null) {
             return $this->noSwitchResult();

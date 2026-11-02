@@ -25574,3 +25574,17 @@ Comprobado el 2026-11-02:
   - ventana 2: `inconsistent_majority`;
   - ventanas 3 y 4: `accepted` con 2,91 m y 2,97 m.
 - Regresión completa: 934 passed, 0 failed, 14 skipped.
+
+## F109 — Pausa manual de automatizaciones y luz alcanzable
+
+- `room_automation_pause` (migración `0138`) guarda la pausa por sala. No caduca.
+- `RoomAutomationPauseRepository` expone `status`, `isPaused`, `pause`, `resume`.
+- `POST /dashboard-api/sensores/v2/automation/pause` acepta `pause|resume`.
+- La UI de `/sensores` muestra el estado y los botones en la cabecera.
+- `WarehouseRecordingService`, el recorder, `AnomalyService` y `SwitchService`
+  consultan la pausa; los comandos manuales de luz no pasan por `SwitchService`.
+- `ZigbeeSwitchGateway::probeForDevice()` publica `/get state` mediante
+  `read-state.js`; el controlador espera `last_seen_at` fresco.
+- `startAttempt('light')` devuelve `switch_unreachable` si la sonda no responde.
+- `switch/test` devuelve `reachable`; la UI bloquea la pregunta humana si no hay
+  respuesta física.

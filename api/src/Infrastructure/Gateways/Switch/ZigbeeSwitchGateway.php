@@ -26,11 +26,16 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
     /** @var Closure(string,string):array{ok:bool,error:?string}|null */
     private ?Closure $publisher;
 
+    /** @var Closure(string):array{ok:bool,error:?string}|null */
+    private ?Closure $reader;
+
     public function __construct(
         private DeviceRepositoryInterface $devices,
-        ?Closure $publisher = null
+        ?Closure $publisher = null,
+        ?Closure $reader = null
     ) {
         $this->publisher = $publisher;
+        $this->reader = $reader;
     }
 
     public function turnOn(int $roomId, array $ctx = []): array
@@ -79,6 +84,67 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
     public static function payloadForState(string $state): string
     {
         return json_encode(['state' => $state], JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
+     * F109: sonda de alcance. Publica una lectura /get; la respuesta real llega
+     * por push y el controlador espera telemetría fresca.
+     */
+    public function probeForDevice(Device $device): array
+    {
+        $topic = $this->getTopic($device);
+        if (!$this->isValidGetTopic($topic)) {
+            return ['ok' => false, 'provider' => self::PROVIDER, 'error' => 'invalid_topic'];
+        }
+        try {
+            $result = $this->reader !== null
+                ? ($this->reader)($topic)
+                : $this->runReader($topic);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'provider' => self::PROVIDER, 'error' => $e->getMessage()];
+        }
+        return ($result['ok'] ?? false) === true
+            ? ['ok' => true, 'provider' => self::PROVIDER, 'error' => null, 'pending_confirmation' => true]
+            : ['ok' => false, 'provider' => self::PROVIDER, 'error' => (string) ($result['error'] ?? 'publish_failed')];
+    }
+
+    private function getTopic(Device $device): string
+    {
+        return preg_replace('/\/set$/', '/get', $this->setTopic($device)) ?? '';
+    }
+
+    private function runReader(string $topic): array
+    {
+        $apiDir = dirname(__DIR__, 4);
+        $helper = $apiDir . '/bin/zigbee-ingress/read-state.js';
+        if (!is_file($helper)) {
+            return ['ok' => false, 'error' => 'read_helper_missing'];
+        }
+        $node = (string) (Config::get('ZIGBEE_NODE_BIN', 'node') ?? 'node');
+        $timeout = (int) (Config::get('ZIGBEE_SWITCH_TIMEOUT_SECONDS', '5') ?? 5);
+        $process = proc_open([$node, $helper, $topic, (string) max(1, $timeout)],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $apiDir);
+        if (!is_resource($process)) {
+            return ['ok' => false, 'error' => 'read_process_failed'];
+        }
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]) ?: '';
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]) ?: '';
+        fclose($pipes[2]);
+        $code = proc_close($process);
+        if ($code !== 0) {
+            return ['ok' => false, 'error' => substr(trim($stderr) !== '' ? trim($stderr) : 'read_failed', 0, 300)];
+        }
+        return str_contains($stdout, 'OK') ? ['ok' => true, 'error' => null] : ['ok' => false, 'error' => 'read_no_ack'];
+    }
+
+    private function isValidGetTopic(string $topic): bool
+    {
+        if ($topic === '' || strlen($topic) > 220 || str_contains(strtolower($topic), '-oficina')) {
+            return false;
+        }
+        return preg_match('/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/get$/', $topic) === 1;
     }
 
     /** @return array{ok:bool,provider:string,error:string|null} */

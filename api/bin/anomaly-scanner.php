@@ -63,7 +63,7 @@ if ($enabled('A4')) $periodicDetectors[] = $a4Detector;
 if ($enabled('A7')) $periodicDetectors[] = $a7Detector;
 $pipeline = new AnomalyPipeline($periodicDetectors);
 
-$anomalyService = new AnomalyService($pipeline, $anomalyRepo, $a5Detector);
+$anomalyService = new AnomalyService($pipeline, $anomalyRepo, $a5Detector, new \App\Domain\Presence\RoomAutomationPauseRepository($pdo));
 
 $tickInterval = 15;
 $running = true;

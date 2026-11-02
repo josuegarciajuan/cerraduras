@@ -13037,3 +13037,27 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - Un cero no es una muestra de distancia.
 - La huella de configuración se guarda como SHA-256 de 64 caracteres.
 - El algoritmo F105 anterior conserva su mínimo de dos muestras.
+
+# F109 — Pausa manual de automatizaciones y luz alcanzable (RF-249…RF-250)
+
+## RF-249: Pausa manual e indefinida
+- En `/sensores` existen **Pausar automatizaciones** y **Reanudar automatizaciones**.
+- La pausa es por sala y permanece activa **sin caducidad** hasta que el operador
+  pulse Reanudar.
+- No se reanuda automáticamente al terminar la corrida, resetear, recargar o
+  reiniciar servicios.
+- Mientras está pausada:
+  - no se crean visitas del almacén;
+  - no se crean grabaciones;
+  - el recorder no inicia nuevos `ffmpeg` y marca para parar los activos de la sala;
+  - no se crean anomalías;
+  - no se ejecutan automatismos de luz por puerta/presencia.
+- Siguen funcionando sensores, puerta, presencia, distancia DP 9, MQTT y los
+  comandos manuales de la prueba de luz.
+- El estado se persiste y se muestra en la cabecera.
+
+## RF-250: Luz alcanzable
+- Antes de iniciar la prueba de luz se envía una lectura `/get state`.
+- La prueba no se inicia si no llega telemetría fresca: `switch_unreachable`.
+- El PUBACK del broker no es confirmación del dispositivo.
+- El panel muestra un error claro y no ofrece reintentos ciegos.
