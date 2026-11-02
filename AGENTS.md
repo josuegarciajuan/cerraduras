@@ -1043,6 +1043,8 @@ para Tuya cloud.
   laterales de 20–30 cm; la dispersión lateral no invalida la medida (se usa la
   mediana de todas las lecturas positivas). El alcance es `mediana interior +
   0.10 m` ajustado a 0.15 m, nunca menor que el interior.
+- **Interior**: ventana de 60 s. Si no hay DP9 nuevo, se usa la distancia
+  PRESENT de la primera subfase (<=60 s) como `seed_distance_hold`.
 - **Exterior**: no se mide distancia; se verifica solo por presencia. La
   ausencia explícita (>=2 ABSENT, último ABSENT) se normaliza como suficiente
   (`presence_absent`). Si el radar sigue detectando fuera, se baja 0.15 m
@@ -1054,8 +1056,9 @@ para Tuya cloud.
 - **Preparación obligatoria**: antes de cada prueba física ejecutar
   `docs/ops-sensores.md` §12 (`bin/sensor-test-prepare.php`) y confirmar base,
   pausa y luz. No reutilizar calibraciones ni corridas anteriores.
-- **Verificación**: units `RadarCalibrationTest` + BLOCK 82. Regresión local
-  **947 passed, 0 failed, 14 skipped** contra instancia temporal; prueba física pendiente.
+- **Evidencia DP9**: `radar_distance_reports` guarda solo distancias positivas;
+  retención 30 días con `bin/radar-distance-retention.php` y timer systemd.
+- **Verificación**: units F110 + BLOCK 82; pendiente regresión final y prueba física.
 
 ## Operaciones
 

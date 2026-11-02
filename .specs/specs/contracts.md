@@ -15905,6 +15905,9 @@ Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "
   exige `outside_point` ni distancia exterior.
 - La evidencia interior admite `reason=lateral_median`; no usa el rechazo
   `incoherent_readings` del modo estático.
+- `reason=seed_distance_hold` acepta la distancia PRESENT de la primera
+  subfase (<=60 s) si no hay DP9 nuevo.
+- `radar_distance_reports` solo contiene `distance_m > 0`; retención 30 días.
 - En `distance_inside_only_v1`, `outside_valid`/`outside_pass` pueden ser de
   presencia: `sufficient=true`, `reason=presence_absent`, `detected=false`,
   `absent_reports>=2`, último `ABSENT`, misma `config_version`.

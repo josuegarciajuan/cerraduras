@@ -27,7 +27,7 @@ final class RadarDistancePointMeasurement
 
     /**
      * @param list<array<string,mixed>> $reports filas de radar_distance_reports
-     * @param array{min_samples?:int,min_span_seconds?:int,tolerance?:float,coverage?:float,device_id?:?int,config_key?:?string,lateral?:bool} $options
+     * @param array{min_samples?:int,min_span_seconds?:int,tolerance?:float,coverage?:float,device_id?:?int,config_key?:?string,lateral?:bool,require_push?:bool} $options
      * @return array<string,mixed>
      */
     public static function analyze(
@@ -50,11 +50,13 @@ final class RadarDistancePointMeasurement
         // 20–30 cm. La distancia cambia a propósito; no se exige coherencia
         // entre pasos, solo lecturas positivas y la mediana.
         $lateral = ($options['lateral'] ?? false) === true;
+        $requirePush = ($options['require_push'] ?? false) === true;
 
         $seen = [];
         $inside = [];
         $discardedDevice = 0;
         $discardedConfig = 0;
+        $discardedOrigin = 0;
         foreach ($reports as $report) {
             if (!is_array($report)) {
                 continue;
@@ -72,6 +74,10 @@ final class RadarDistancePointMeasurement
             }
             if ($configKey !== null && (string) ($report['config_key'] ?? '') !== $configKey) {
                 $discardedConfig++;
+                continue;
+            }
+            if ($requirePush && strtolower((string) ($report['origin'] ?? '')) !== 'push') {
+                $discardedOrigin++;
                 continue;
             }
             if (($startMs !== null && $ts < $startMs) || ($endMs !== null && $ts > $endMs)) {
@@ -196,6 +202,7 @@ final class RadarDistancePointMeasurement
             'positive_last_at' => $lastPositiveTs !== null ? self::isoFromMs($lastPositiveTs) : null,
             'discarded_device' => $discardedDevice,
             'discarded_config' => $discardedConfig,
+            'discarded_origin' => $discardedOrigin,
             'readings' => array_map(static fn (array $r): array => [
                 'at' => $r['at'],
                 'distance' => round($r['distance'], 3),

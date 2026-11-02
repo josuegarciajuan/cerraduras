@@ -188,6 +188,16 @@ $notLateral = analyze([
 ], ['min_samples' => 1, 'min_span_seconds' => 0]);
 same('F110: sin lateral sigue exigiendo coherencia', $notLateral['status'], 'unstable');
 
+// F110 opción 3: solo DP9 push con distancia positiva.
+$pushOnly = analyze([
+    report(0, 3.20, 'push-a', 'push'),
+    report(2, 3.30, 'push-b', 'push'),
+    report(4, 3.40, 'unattributed-c', 'unattributed'),
+], ['min_samples' => 1, 'min_span_seconds' => 0, 'require_push' => true]);
+same('F110: ignora DP9 no push', $pushOnly['status'], 'accepted');
+same('F110: cuenta descartados por origen', $pushOnly['discarded_origin'], 1);
+same('F110: solo positivos push', $pushOnly['positive_reports'], 2);
+
 $empty = analyze([]);
 same('sin reportes', $empty['status'], 'no_reports');
 same('motivo sin reportes', $empty['reason'], 'no_reports');

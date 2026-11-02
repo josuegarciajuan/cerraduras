@@ -64,7 +64,7 @@
   async function api(path, opts) {
     opts = opts || {};
     var ctrl = new AbortController();
-    var to = setTimeout(function () { ctrl.abort(); }, 15000);
+    var to = setTimeout(function () { ctrl.abort(); }, 60000);
     try {
       var res = await fetch(path, Object.assign({}, opts, { signal: ctrl.signal }));
       var data = await res.json().catch(function () { return {}; });
@@ -557,16 +557,22 @@
     if (!p) return '';
     var reports = Number(p.reports || 0);
     var status = {
-      accepted: 'Punto medido',
+      accepted: (p.reason === 'seed_distance_hold' ? 'Referencia capturada' : 'Punto medido'),
       insufficient: 'Faltan lecturas nuevas',
       unstable: 'Lecturas incoherentes',
       config_changed: 'Configuración cambiada',
-      not_detected: reports === 0 ? 'El radar no envió datos' : 'Sin detección'
+      no_reports: 'Sin lecturas DP9 positivas',
+      not_detected: reports === 0 ? 'Sin lecturas DP9 positivas' : 'Sin detección'
     }[p.status] || p.status || '';
     var readings = (p.readings || []).map(function (r) {
       return Number(r.distance).toFixed(2);
     });
-    var out = status + ': ' + (p.fresh_readings || 0) + ' / ' + (p.min_samples || 2) + ' lecturas nuevas';
+    var out = status;
+    if (p.reason === 'seed_distance_hold') {
+      out += ': primera subfase (sin DP9 nuevo)';
+    } else {
+      out += ': ' + (p.fresh_readings || 0) + ' / ' + (p.min_samples || 2) + ' lecturas nuevas';
+    }
     if (p.attempt != null) out += ' · intento ' + p.attempt;
     out += ' · ' + reports + (p.window_seconds != null ? ' mensajes en ' + p.window_seconds + ' s' : ' mensajes');
     if (reports > 0 && p.last_report_age_seconds != null) {
@@ -602,7 +608,7 @@
       short_window: 'ventana corta',
       unstable: 'inestable',
       no_distance: 'sin distancia positiva',
-      no_reports: 'sin reportes DP 9'
+      no_reports: 'sin DP9 positivos'
     }[d.status] || d.status || '';
     var label = st && st.distance_authority === 'distance_evidence'
       ? 'Distancia DP 9 (autoridad)'
@@ -612,7 +618,8 @@
       + ' · ' + (d.reports || 0) + ' reportes'
       + ' · ' + (d.positive_reports || 0) + ' con distancia';
     if (span != null) out += ' · ' + Number(span).toFixed(1) + ' s positivos';
-    if (d.mean != null) out += ' · media ' + Number(d.mean).toFixed(2) + ' m';
+    if (d.median != null) out += ' · mediana ' + Number(d.median).toFixed(2) + ' m';
+    else if (d.mean != null) out += ' · media ' + Number(d.mean).toFixed(2) + ' m';
     if (d.spread != null) out += ' · dispersión ' + Number(d.spread).toFixed(2) + ' m';
     if (d.coverage != null) out += ' · cobertura ' + Math.round(Number(d.coverage) * 100) + ' %';
     if (d.frozen) out += ' · ventana cerrada';
@@ -640,10 +647,10 @@
     var age = st && (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) != null
       ? (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) : null;
     var parts = [];
-    if (m && (m.evidence_mode === 'state_hold' || m.seed_used)) {
-      parts.push('Sin distancia nueva en esta ventana (el radar solo envía al cambiar)');
+    if (m && (m.evidence_mode === 'state_hold' || m.seed_used || m.seed_distance_used)) {
+      parts.push('Sin DP9 nuevo en esta ventana; se usa la referencia de la primera subfase');
     } else {
-      parts.push('Sin distancia utilizable en esta ventana');
+      parts.push('Sin lecturas DP9 positivas en esta ventana');
     }
     if (age != null) parts.push('último reporte hace ' + age + ' s');
     var target = st && st.current_settings ? st.current_settings.target_distance : null;
@@ -655,7 +662,7 @@
 
   function renderRadar(stepId, step) {
     if (!activeAttemptFor(stepId)) {
-      return '<div class="divider"></div><p class="hint">La calibración se hace en ventanas de 30 segundos. Pulsa para empezar.</p>'
+      return '<div class="divider"></div><p class="hint">La calibración se hace en ventanas de medición. Pulsa para empezar.</p>'
         + '<div class="actions"><button class="primary" data-action="start-attempt" data-step="' + stepId + '">Empezar prueba</button></div>';
     }
     var st = S.radarState;
@@ -705,7 +712,7 @@
     var cal = st.calibration || null;
     if (cal && (cal.inside_reference != null || cal.boundary != null || cal.target_range != null)) {
       html += '<div class="hint" id="radarCalibration">'
-        + (cal.inside_reference != null ? 'Interior (media) ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
+        + (cal.inside_reference != null ? 'Interior (mediana) ' + Number(cal.inside_reference).toFixed(2) + ' m' : 'Interior —')
         + ' · ' + (st.model === 'distance_inside_only_v1' ? 'exterior verificado por presencia'
             : (cal.outside_point != null ? 'exterior (media) ' + Number(cal.outside_point).toFixed(2) + ' m' : 'exterior —'))
         + ' · ' + (cal.target_range != null ? 'ajuste ' + Number(cal.target_range).toFixed(2) + ' m' : 'ajuste —')
@@ -1150,7 +1157,7 @@
   async function resetRun(targetRunId) {
     var runId = targetRunId || (S.run && S.run.run_id) || (S.preflight && S.preflight.active_run && S.preflight.active_run.run_id);
     if (!runId) { toast('No hay una verificación activa para reiniciar'); return; }
-    if (!confirm('Se guardará la prueba actual como interrumpida y se empezará otra desde Puerta. La polaridad y los ajustes del radar se conservan. ¿Continuar?')) return;
+    if (!confirm('Se guardará la prueba actual como interrumpida y se empezará otra desde Puerta. El radar vuelve a la base 6,0 m y se limpia la calibración anterior. ¿Continuar?')) return;
     busy(true);
     stopPolling();
     try {
@@ -1230,6 +1237,12 @@
   }
 
   async function restart(stepId) {
+    if (stepId === 'radar_inside' || stepId === 'radar_outside') {
+      // F110: repetir el radar exige volver a la base y limpiar toda la
+      // evidencia; no se puede reutilizar el alcance ni el punto anterior.
+      await resetRun();
+      return;
+    }
     if (!confirm('¿Repetir este paso? Se abrirá una ventana nueva.')) return;
     stopPolling();
     S.stepId = stepId;

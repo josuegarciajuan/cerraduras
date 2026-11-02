@@ -24,6 +24,13 @@ final class RadarDistanceReportRepository
      */
     public function record(int $deviceId, string $externalId, int $roomId, array $report): bool
     {
+        // F110 opción 3: un DP9 con distancia 0 no es una medición. La
+        // presencia/ausencia se conserva en presence_events; aquí solo se
+        // guardan distancias positivas para no llenar la tabla.
+        if (!isset($report['distance_m']) || !is_numeric($report['distance_m'])
+            || (float) $report['distance_m'] <= 0.0) {
+            return false;
+        }
         $stmt = $this->pdo->prepare(
             'INSERT IGNORE INTO radar_distance_reports
                 (device_id, external_id, room_id, marker, session_id, report_counter, distance_m, origin, config_key, received_at)

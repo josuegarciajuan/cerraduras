@@ -1179,7 +1179,7 @@ final class SensorWizardController
             $code = in_array($e->getMessage(), [
                 'operation_pending', 'measure_in_progress', 'measure_not_ready',
                 'measure_insufficient', 'inside_not_valid', 'invalid_state', 'unknown_action',
-                'presence_stale', 'reentry_not_clear', 'scan_must_start_inside',
+                'presence_stale', 'reentry_not_clear', 'inside_requires_reset', 'scan_must_start_inside',
                 'legacy_calibration', 'inside_not_detected', 'no_distance_separation',
             ], true) ? 409 : 500;
             return Response::json($code, ['error' => $e->getMessage()]);
@@ -1449,8 +1449,16 @@ final class SensorWizardController
                     $op['state'] = 'INVALID_SETTINGS';
                     $session['state'] = 'INVALID_SETTINGS';
                 } elseif ($conf['state'] === 'mismatch') {
-                    $op['state'] = 'INDETERMINATE';
-                    $session['state'] = 'INDETERMINATE';
+                    // F110: no declarar fallo en el primer reporte con otro
+                    // valor; el radar puede publicar un estado transitorio.
+                    $deadline = isset($op['published_at'])
+                        ? strtotime((string) $op['published_at'] . ' UTC') + 15 : null;
+                    if ($deadline !== null && $now > $deadline) {
+                        $op['state'] = 'INDETERMINATE';
+                        $session['state'] = 'INDETERMINATE';
+                    } else {
+                        $op['reason'] = 'waiting_for_matching_report';
+                    }
                 } else {
                     $deadline = isset($op['published_at']) ? strtotime((string) $op['published_at'] . ' UTC') + 15 : null;
                     if ($deadline !== null && $now > $deadline) {
@@ -2026,7 +2034,20 @@ final class SensorWizardController
             $kind = 'MEASURE';
             $opPhase = $phase;
             $seed = [];
+            if ($action === 'start_measure'
+                && (string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+                if ($phase === 'OUTSIDE_PASS') {
+                    throw new \RuntimeException('invalid_state');
+                }
+                if ($phase === 'INSIDE' && !empty($session['candidates'])) {
+                    throw new \RuntimeException('inside_requires_reset');
+                }
+                $this->clearRadarEvidenceForPhase($session, $phase);
+            }
             $window = $this->radarWindowSeconds((array) ($snapshot['settings'] ?? []), (array) ($session['current'] ?? []));
+            if ($phase === 'INSIDE' && (string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+                $window = $this->insideWindowSeconds();
+            }
             if ($action === 'start_reentry') {
                 if ($phase !== 'REENTRY') {
                     throw new \RuntimeException('invalid_state');
@@ -2230,9 +2251,22 @@ final class SensorWizardController
                         $distancePoint,
                         (bool) ($point['detected'] ?? false)
                     );
+                    if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                        && $mPhase === 'INSIDE'
+                        && ($point['sufficient'] ?? false) !== true) {
+                        $seedPoint = RadarMeasurement::insideSeedPoint($measurement, $this->insideSeedMaxAge());
+                        if ($seedPoint !== null) {
+                            $point = $seedPoint;
+                        }
+                    }
                     $measurement['distance_authority'] = 'distance_evidence';
                 }
                 $measurement = $this->applyPointMeasurement($measurement, $point, $mPhase);
+                if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                    && $mPhase === 'INSIDE'
+                    && isset($point['median']) && is_numeric($point['median'])) {
+                    $measurement['reference'] = (float) $point['median'];
+                }
                 $session['point_attempts'][$mPhase] =
                     (int) ($session['point_attempts'][$mPhase] ?? 0) + 1;
                 $measurement['point_attempt'] = (int) $session['point_attempts'][$mPhase];
@@ -2273,8 +2307,12 @@ final class SensorWizardController
                         && ($measurement['detected'] ?? false) === true) {
                         $session['inside_valid'] = $measurement;
                         $session['inside_point'] = $measurement['point'] ?? null;
+                        $insideReference = (string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                            && isset($measurement['point']['median']) && is_numeric($measurement['point']['median'])
+                            ? (float) $measurement['point']['median']
+                            : RadarCalibrationPlanner::ref($measurement, 'inside');
                         $session['inside_ref'] = [
-                            'reference' => RadarCalibrationPlanner::ref($measurement, 'inside'),
+                            'reference' => $insideReference,
                             'distance' => $measurement['distance'] ?? [],
                             'quality' => $measurement['distance']['quality'] ?? 'poor',
                             'config_version' => $measurement['config_version'] ?? 1,
@@ -2330,7 +2368,7 @@ final class SensorWizardController
                         $currentMax = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
                             ? (float) $settings['maximum_range'] : null;
                         $lower = ($reference !== null && $currentMax !== null)
-                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->midpointCapsV3(), 0.10)
+                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3(), 0.10)
                             : null;
                         if ($lower === null) {
                             $session['state'] = 'STOPPED';
@@ -2347,11 +2385,14 @@ final class SensorWizardController
                             $this->store->save($run);
                             return $run;
                         }
-                        $result = (new ZigbeeRadarCalibrationService($this->pdo()))->apply((int) $run['room_id'], [
+                        $cal = new ZigbeeRadarCalibrationService($this->pdo());
+                        $devicePayload = [
                             'id' => (int) $device->id,
                             'external_id' => (string) $device->externalId,
                             'meta' => is_array($device->meta) ? $device->meta : [],
-                        ], ['maximum_range' => $lower], true);
+                        ];
+                        $result = $cal->apply((int) $run['room_id'], $devicePayload,
+                            ['maximum_range' => $lower], false);
                         if (($result['applied'] ?? false) !== true) {
                             $session['state'] = 'STOPPED';
                             $session['result'] = 'inside_only_apply_failed';
@@ -2359,7 +2400,9 @@ final class SensorWizardController
                             $this->store->save($run);
                             return $run;
                         }
-                        $session['current'] = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+                        $confirmedSettings = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+                        $cal->persistCalibration($devicePayload, $confirmedSettings, $result['status']['settings_at'] ?? null);
+                        $session['current'] = $confirmedSettings;
                         $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
                         $session['state'] = 'MEASURED';
                         $session['outside_message'] = 'El radar todavía te detectó fuera; alcance reducido a '
@@ -3024,7 +3067,7 @@ final class SensorWizardController
                     return ['title' => 'Estado del radar antiguo', 'instruction' => 'Muévete ligeramente para que el radar reporte y vuelve a medir.', 'message' => 'No hay un estado reciente que sirva de referencia.'];
                 }
                 if ((int) ($last['reports'] ?? 0) === 0 && ($last['seed_used'] ?? false) !== true) {
-                    return ['title' => 'Sin datos del radar', 'instruction' => 'No llegó ningún reporte en la ventana. Muévete ligeramente y vuelve a medir.', 'message' => 'El radar no está enviando datos nuevos.'];
+                    return ['title' => 'Sin lecturas DP9 positivas', 'instruction' => 'No llegó ninguna distancia positiva en la ventana. Muévete lateralmente y vuelve a medir; si el radar ya te había capturado, se usará esa referencia.', 'message' => 'La ausencia de DP9 positivo no significa que el radar esté desconectado.'];
                 }
                 return ['title' => 'Evidencia insuficiente', 'instruction' => 'No hay evidencia suficiente en esta ventana. Mantén la posición y vuelve a medir.', 'message' => 'La ventana no ha reunido evidencia suficiente.'];
             }
@@ -3146,6 +3189,12 @@ final class SensorWizardController
                 return (($session['reentry']['detected'] ?? false) === true)
                     ? ['advance', 'restore'] : ['start_reentry', 'restore', 'cancel'];
             }
+        }
+        if ($phase === 'OUTSIDE_PASS' && (string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+            $pass = (array) ($session['outside_pass'] ?? []);
+            return (($pass['detected'] ?? false) === false)
+                ? ['advance', 'restore']
+                : ['start_measure', 'restore', 'cancel'];
         }
         return match ($phase) {
             'OUTSIDE_MEASURE' => ['start_measure', 'restore', 'cancel'],
@@ -3312,10 +3361,10 @@ final class SensorWizardController
             return match ($kind) {
                 'VERIFY' => ['title' => 'Comprobando el punto exterior', 'instruction' => 'Quédate quieto en el punto donde no quieres que te detecte.', 'message' => 'Ventana de verificación exterior.'],
                 'REENTRY' => ['title' => 'Comprobando reentrada', 'instruction' => 'Permanece dentro y quieto.', 'message' => 'Ventana de reentrada.'],
-                default => ['title' => $phase === 'OUTSIDE_MEASURE' ? 'Midiendo el punto exterior' : 'Midiendo',
+                default => ['title' => $phase === 'OUTSIDE_MEASURE' ? 'Comprobando el exterior' : 'Midiendo el interior',
                     'instruction' => $phase === 'OUTSIDE_MEASURE'
                         ? 'Permanece quieto donde NO quieres que te detecte.'
-                        : 'Permanece quieto.',
+                        : 'Muévete lateralmente 20–30 cm y vuelve al centro; el radar solo publica cambios.',
                     'message' => 'Ventana de medición en curso.'],
             };
         }
@@ -3361,6 +3410,12 @@ final class SensorWizardController
                 }
                 return ['title' => 'Interior medido', 'instruction' => 'Continúa para medir el punto exterior donde NO quieres que te detecte.', 'message' => 'Referencia interior guardada.'];
             }
+            if ($phase === 'OUTSIDE_PASS' && (string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                && (($session['outside_pass']['detected'] ?? true) === false)) {
+                return ['title' => 'Exterior correcto',
+                    'instruction' => 'El radar no te detecta fuera. Pulsa Continuar para preparar la reentrada.',
+                    'message' => 'Verificación exterior por presencia completada.'];
+            }
             if ($phase === 'OUTSIDE_PASS' && (($session['outside_pass']['detected'] ?? false) === true)) {
                 return ['title' => 'El radar detecta el pasillo', 'instruction' => 'Vuelve a medir la pasada. Si se repite, restaura o revisa la colocación.', 'message' => 'La medición fue válida, pero el radar detecta el pasillo.'];
             }
@@ -3373,11 +3428,15 @@ final class SensorWizardController
             'INSIDE' => ['title' => 'Medir punto interior', 'instruction' => 'Ponte en el punto más alejado del interior donde SÍ quieres que te detecte. Da pasos laterales cortos de 20–30 cm y vuelve al centro para que el radar te vea desde varios ángulos; luego pulsa Medir.', 'message' => 'Primero medimos el punto interior con pasos laterales.'],
             'OUTSIDE_MEASURE' => ['title' => 'Comprobar que no te detecta fuera', 'instruction' => 'Ponte en el punto exterior donde NO quieres que te detecte y pulsa Verificar. Esto no es una calibración de distancia: solo comprobamos la presencia con el alcance ya aplicado.', 'message' => 'Verificación exterior por presencia, sin medir distancia.'],
             'OUTSIDE_VERIFY' => ['title' => 'Verificar el punto exterior', 'instruction' => 'Permanece en el mismo punto donde NO quieres que te detecte y pulsa Verificar fuera. La app comprobará que el nuevo alcance ya no te detecta ahí.', 'message' => 'Comprobamos que el ajuste deja de detectarte fuera.'],
-            'OUTSIDE_PASS' => ['title' => 'Pasada por el pasillo',
-                'instruction' => (($session['outside_measure']['detected'] ?? true) === false
-                    ? 'El radar ya no te detectaba en el punto exterior; se mantiene el alcance actual. Pasa tres veces por delante de la puerta durante la ventana.'
-                    : 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.'),
-                'message' => 'Comprobamos el movimiento en el pasillo.'],
+            'OUTSIDE_PASS' => ((string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                ? ['title' => 'Exterior correcto',
+                    'instruction' => 'El radar no te detecta fuera con el alcance aplicado. Pulsa Continuar para preparar la reentrada.',
+                    'message' => 'Verificación exterior por presencia completada.']
+                : ['title' => 'Pasada por el pasillo',
+                    'instruction' => (($session['outside_measure']['detected'] ?? true) === false
+                        ? 'El radar ya no te detectaba en el punto exterior; se mantiene el alcance actual. Pasa tres veces por delante de la puerta durante la ventana.'
+                        : 'Colócate fuera y pulsa Empezar medición. Durante la ventana, pasa tres veces por delante de la puerta.'),
+                    'message' => 'Comprobamos el movimiento en el pasillo.']),
             'REENTRY' => ['title' => 'Comprobar reentrada', 'instruction' => 'Ya estás fuera. Pulsa «Voy a entrar» y entra; permanece dentro hasta que termine la ventana.', 'message' => 'Comprobamos que el alcance aplicado te vuelve a detectar al entrar.'],
             'DONE' => ['title' => 'Radar calibrado', 'instruction' => 'Valida el radar para cerrar la fase.', 'message' => 'Todas las comprobaciones están completas.'],
             default => ['title' => 'Radar', 'instruction' => '', 'message' => ''],
@@ -3710,9 +3769,13 @@ final class SensorWizardController
             'reason' => (string) ($point['reason'] ?? ''),
         ];
         $measurement['valid_reports'] = (int) ($point['fresh_readings'] ?? 0);
-        $measurement['evidence_mode'] = 'point_readings';
-        $measurement['seed_used'] = false;
-        $measurement['seed_distance_used'] = false;
+        $measurement['seed_distance_used'] = ($point['seed_distance_used'] ?? false) === true
+            || ($measurement['seed_distance_used'] ?? false) === true;
+        $measurement['evidence_mode'] = $measurement['seed_distance_used']
+            ? 'seed_distance_hold' : 'point_readings';
+        if ($measurement['seed_distance_used']) {
+            $measurement['seed_used'] = true;
+        }
         $measurement['sufficient'] = ($point['sufficient'] ?? false) === true
             && ($phase !== 'INSIDE' || ($point['detected'] ?? false) === true);
         $measurement['reason'] = (string) ($point['reason'] ?? 'insufficient');
@@ -3737,6 +3800,20 @@ final class SensorWizardController
             $last = (array) ($session['last_measurement'] ?? []);
             return is_array($last['point'] ?? null) && ($last['phase'] ?? null) === $phase
                 ? $last['point'] : null;
+        }
+        if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
+            $snapshot = $this->latestPresenceSnapshot((int) $run['room_id']);
+            $detected = strtoupper(trim((string) ($snapshot['value'] ?? ''))) === 'PRESENT';
+            $distancePoint = $this->radarDistancePointForWindow(
+                (int) $run['room_id'],
+                (string) ($op['window_start'] ?? ''),
+                gmdate('Y-m-d\TH:i:s\Z'),
+                (array) ($session['current'] ?? []),
+                $phase === 'INSIDE'
+            );
+            $point = $this->distancePointAsPoint($distancePoint, $detected);
+            $point['attempt'] = (int) ($session['point_attempts'][$phase] ?? 0) + 1;
+            return $point;
         }
         $ctx = $this->context();
         $events = $ctx->eventsSince((int) $run['room_id'], (string) ($op['window_start'] ?? ''), 3000);
@@ -3797,7 +3874,7 @@ final class SensorWizardController
         $session = (array) ($run['calibration_session'] ?? []);
         $inside = $this->insideInputV3($session);
         $reference = $this->insideOnlyReference($session);
-        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->midpointCapsV3(), 0.10);
+        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->insideOnlyCapsV3(), 0.10);
         if ($candidate === null) {
             $session['state'] = 'STOPPED';
             $session['result'] = 'inside_only_no_range';
@@ -3814,11 +3891,12 @@ final class SensorWizardController
             return;
         }
         $cal = new ZigbeeRadarCalibrationService($this->pdo());
-        $result = $cal->apply((int) $run['room_id'], [
+        $devicePayload = [
             'id' => (int) $device->id,
             'external_id' => (string) $device->externalId,
             'meta' => is_array($device->meta) ? $device->meta : [],
-        ], ['maximum_range' => $candidate], true);
+        ];
+        $result = $cal->apply((int) $run['room_id'], $devicePayload, ['maximum_range' => $candidate], false);
         if (($result['applied'] ?? false) !== true) {
             $session['state'] = 'STOPPED';
             $session['result'] = 'inside_only_apply_failed';
@@ -3826,7 +3904,9 @@ final class SensorWizardController
             $this->store->save($run);
             return;
         }
-        $session['current'] = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+        $confirmedSettings = (array) ($result['status']['settings'] ?? $session['current'] ?? []);
+        $cal->persistCalibration($devicePayload, $confirmedSettings, $result['status']['settings_at'] ?? null);
+        $session['current'] = $confirmedSettings;
         $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
         $session['phase'] = 'OUTSIDE_MEASURE';
         $session['state'] = 'IDLE';
@@ -3862,6 +3942,21 @@ final class SensorWizardController
      * @param array<string,mixed> $settings
      * @return array<string,mixed>
      */
+    /** @return array<string,mixed> */
+    private function emptyDistancePoint(string $start, string $end, string $reason): array
+    {
+        return [
+            'status' => 'insufficient', 'sufficient' => false, 'reason' => $reason,
+            'window' => ['started_at' => $start, 'ended_at' => $end], 'window_seconds' => null,
+            'reports' => 0, 'positive_reports' => 0, 'zeros' => 0, 'readings' => [],
+            'cluster' => [], 'excluded' => [], 'mean' => null, 'min' => null, 'max' => null,
+            'spread' => null, 'median' => null, 'tolerance' => 0.30, 'min_samples' => 1,
+            'positive_span_seconds' => 0, 'last_report_at' => null, 'last_report_age_seconds' => null,
+            'positive_last_at' => null, 'discarded_device' => 0, 'discarded_config' => 0,
+            'discarded_origin' => 0, 'frozen' => false, 'last_distance' => null,
+        ];
+    }
+
     private function radarDistancePointForWindow(
         int $roomId,
         string $windowStart,
@@ -3869,6 +3964,10 @@ final class SensorWizardController
         array $settings,
         bool $lateral = false
     ): array {
+        $configKey = RadarDistanceReport::configKey($settings);
+        if ($configKey === null) {
+            return $this->emptyDistancePoint($windowStart, $windowEnd, 'config_unknown');
+        }
         $repo = new RadarDistanceReportRepository($this->pdo());
         $reports = $repo->recentForRoom($roomId, $windowStart, 300);
         return RadarDistancePointMeasurement::analyze(
@@ -3881,8 +3980,9 @@ final class SensorWizardController
                 'tolerance' => 0.30,
                 'coverage' => 0.80,
                 'device_id' => $this->radarDeviceIdForRoom($roomId),
-                'config_key' => RadarDistanceReport::configKey($settings),
+                'config_key' => $configKey,
                 'lateral' => $lateral,
+                'require_push' => true,
             ]
         );
     }
@@ -3930,6 +4030,7 @@ final class SensorWizardController
             'positive_span_seconds' => $distance['positive_span_seconds'] ?? null,
             'discarded_device' => $distance['discarded_device'] ?? 0,
             'discarded_config' => $distance['discarded_config'] ?? 0,
+            'discarded_origin' => $distance['discarded_origin'] ?? 0,
             'frozen' => $distance['frozen'] ?? false,
         ];
     }
@@ -3977,21 +4078,29 @@ final class SensorWizardController
         }
         $frozen = (strtotime($windowEnd . ' UTC') ?: 0) <= time();
 
-        $repo = new RadarDistanceReportRepository($this->pdo());
-        $reports = $repo->recentForRoom((int) $run['room_id'], $windowStart, 300);
-        $point = RadarDistancePointMeasurement::analyze(
-            $reports,
-            $windowStart,
-            $windowEnd,
-            [
-                'min_samples' => 1,
-                'min_span_seconds' => 0,
-                'tolerance' => 0.30,
-                'coverage' => 0.80,
-                'device_id' => $this->radarDeviceIdForRoom((int) $run['room_id']),
-                'config_key' => RadarDistanceReport::configKey((array) ($session['current'] ?? [])),
-            ]
-        );
+        $configKey = RadarDistanceReport::configKey((array) ($session['current'] ?? []));
+        if ($configKey === null) {
+            $point = $this->emptyDistancePoint($windowStart, $windowEnd, 'config_unknown');
+        } else {
+            $repo = new RadarDistanceReportRepository($this->pdo());
+            $reports = $repo->recentForRoom((int) $run['room_id'], $windowStart, 300);
+            $point = RadarDistancePointMeasurement::analyze(
+                $reports,
+                $windowStart,
+                $windowEnd,
+                [
+                    'min_samples' => 1,
+                    'min_span_seconds' => 0,
+                    'tolerance' => 0.30,
+                    'coverage' => 0.80,
+                    'device_id' => $this->radarDeviceIdForRoom((int) $run['room_id']),
+                    'config_key' => $configKey,
+                    'require_push' => true,
+                    'lateral' => (string) ($session['model'] ?? '') === 'distance_inside_only_v1'
+                        && (string) ($session['phase'] ?? '') === 'INSIDE',
+                ]
+            );
+        }
         $point['frozen'] = $frozen;
         $point['authority'] = $mode;
         return ['mode' => $mode, 'point' => $point, 'query' => $query];
@@ -4130,6 +4239,48 @@ final class SensorWizardController
      * @param array<string,mixed> $primary
      * @param array<string,mixed> $fallback
      */
+    private function clearRadarEvidenceForPhase(array &$session, string $phase): void
+    {
+        unset($session['last_measurement'], $session['scan_preview'], $session['outside_message'],
+            $session['pending_phase'], $session['calibration']);
+        if ($phase === 'INSIDE') {
+            foreach (['inside_valid', 'inside_ref', 'inside_point', 'outside_scan', 'outside_measure',
+                         'outside_valid', 'outside_pass', 'outside_point', 'reentry'] as $key) {
+                unset($session[$key]);
+            }
+            $session['candidates'] = [];
+        } elseif ($phase === 'OUTSIDE_MEASURE') {
+            foreach (['outside_scan', 'outside_measure', 'outside_valid', 'outside_pass',
+                         'outside_point', 'reentry'] as $key) {
+                unset($session[$key]);
+            }
+        } elseif ($phase === 'REENTRY') {
+            $session['reentry'] = null;
+        }
+    }
+
+    private function insideWindowSeconds(): int
+    {
+        $seconds = (int) (getenv('RADAR_INSIDE_WINDOW_SECONDS') ?: 60);
+        return max(30, min(120, $seconds));
+    }
+
+    private function insideSeedMaxAge(): int
+    {
+        $seconds = (int) (getenv('RADAR_INSIDE_SEED_MAX_AGE_SECONDS') ?: 60);
+        return max(5, min(180, $seconds));
+    }
+
+    private function insideOnlyCapsV3(): array
+    {
+        $caps = $this->midpointCapsV3();
+        $caps['range_min'] = max(
+            (float) ZigbeeRadarCalibrationService::BASELINE['minimum_range'],
+            (float) $caps['range_min']
+        );
+        return $caps;
+    }
+
     private function radarWindowSeconds(array $primary, array $fallback = []): int
     {
         $settings = $primary !== [] ? $primary : $fallback;
