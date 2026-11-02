@@ -12907,3 +12907,23 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - Sin distancias manuales, sin pollers y sin llamadas a Tuya.
 - Migración aditiva; rollback = retirar conversor y dejar de escribir la tabla.
 - El firmware debe confirmarse con presencia real en la fase de validación.
+
+## RF-235: Algoritmo por reportes DP 9
+- La muestra es el reporte, no el valor: dos marcas distintas con la misma
+  distancia son dos muestras; la misma marca es una sola.
+- Se exige un mínimo de 2 muestras positivas y una cobertura temporal mínima
+  de 5 s.
+- Las muestras deben formar un conjunto con dispersión <= 0,30 m y representar
+  al menos el 80 % de las positivas.
+- Un cero no es una distancia, pero no invalida las positivas.
+- Estados: `accepted`, `insufficient`, `short_window`, `unstable`,
+  `no_distance`, `no_reports`.
+- La referencia es la media del conjunto coherente; nunca el máximo interior ni
+  el mínimo exterior.
+
+## RF-236: Límites del algoritmo
+- Es puro: no lee presencia, semillas, MQTT ni base de datos.
+- No cambia el flujo de `/sensores` ni `/radar/state`; el consumo se integra en
+  F108.
+- No relaja la coherencia por comodidad: una serie inestable sigue siendo
+  inestable.

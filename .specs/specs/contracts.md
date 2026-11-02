@@ -15750,3 +15750,20 @@ Persistencia interna:
 
 - `radar_distance_reports` (`0136`), única por `(device_id, marker)`.
 - No hay rutas HTTP nuevas ni cambios incompatibles en `/radar/state`.
+
+## §F107 Algoritmo por reportes
+
+`RadarDistancePointMeasurement::analyze(reports, windowStart, windowEnd, options)`
+es una función pura. Devuelve:
+
+- `status`: `accepted|insufficient|short_window|unstable|no_distance|no_reports`.
+- `sufficient`, `reason`.
+- `reports`, `positive_reports`, `zero_reports`, `query_reports`.
+- `first_report_at`, `last_report_at`, `span_seconds`.
+- `readings[]` (`at`, `distance`, `origin`).
+- `cluster[]`, `excluded[]`, `coverage`.
+- `mean`, `min`, `max`, `spread`, `median`.
+- `tolerance`, `min_samples`, `min_span_seconds`.
+
+Parámetros por defecto: `min_samples=2`, `min_span_seconds=5`,
+`tolerance=0.30`, `coverage=0.80`. No hay endpoints nuevos en esta fase.
