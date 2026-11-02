@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Warehouse;
 
+use App\Domain\Presence\RoomAutomationPauseRepository;
 use App\Support\Clock;
 use PDO;
 
@@ -23,8 +24,11 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
     private PDO $pdo;
     private string $warehouseTypeCode;
 
-    public function __construct(PDO $pdo, string $warehouseTypeCode = 'ALMACEN_BEBIDAS')
-    {
+    public function __construct(
+        PDO $pdo,
+        string $warehouseTypeCode = 'ALMACEN_BEBIDAS',
+        private ?RoomAutomationPauseRepository $automationPause = null
+    ) {
         $this->pdo = $pdo;
         $this->warehouseTypeCode = $warehouseTypeCode;
     }
@@ -96,6 +100,11 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         }
 
         if (!$this->isWarehouseRoom($roomId)) {
+            return;
+        }
+        // F109: pausa manual de automatizaciones. Los sensores siguen
+        // procesándose, pero no se crean visitas, grabaciones ni efectos.
+        if ($this->automationPause !== null && $this->automationPause->isPaused($roomId)) {
             return;
         }
         $config = $this->roomConfig($roomId);

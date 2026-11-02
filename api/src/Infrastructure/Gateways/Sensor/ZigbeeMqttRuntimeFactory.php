@@ -18,6 +18,7 @@ use App\Domain\Locks\AccessEventRepository;
 use App\Domain\Presence\IotSessionRepository;
 use App\Domain\Presence\IotSessionServiceFactory;
 use App\Domain\Presence\PresenceEventRepository;
+use App\Domain\Presence\RoomAutomationPauseRepository;
 use App\Domain\Presence\RoomSensorStateRepository;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomTypeRepository;
@@ -42,7 +43,7 @@ final class ZigbeeMqttRuntimeFactory
         $iotSessions = new IotSessionRepository($pdo);
         $presenceEvents = new PresenceEventRepository($pdo);
         $workerSessions = new WorkerSessionRepository($pdo);
-        $switchService = new SwitchService($devices, $rooms);
+        $switchService = new SwitchService($devices, $rooms, new RoomAutomationPauseRepository($pdo));
 
         $anomalyEnabledTypes = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
         $setting = $pdo->query(
@@ -74,7 +75,7 @@ final class ZigbeeMqttRuntimeFactory
         if ($enabled('A8')) {
             $detectors[] = new SensorFlapping($pdo);
         }
-        $anomalies = new AnomalyService(new AnomalyPipeline($detectors), $anomalyRepository, $exitWithoutDoor);
+        $anomalies = new AnomalyService(new AnomalyPipeline($detectors), $anomalyRepository, $exitWithoutDoor, new RoomAutomationPauseRepository($pdo));
 
         $iotService = IotSessionServiceFactory::create(
             $presenceEvents,
@@ -87,7 +88,7 @@ final class ZigbeeMqttRuntimeFactory
             $switchService,
             $anomalies,
             $workerSessions,
-            new WarehouseRecordingService($pdo),
+            new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', new RoomAutomationPauseRepository($pdo)),
             new RoomSensorStateRepository($pdo)
         );
 

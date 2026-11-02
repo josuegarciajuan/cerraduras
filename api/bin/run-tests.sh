@@ -8039,6 +8039,67 @@ else
 fi
 
 # =============================================================================
+# BLOCK 81 — F109: pausa manual de automatizaciones
+# Trazabilidad: RF-249 · design.md §F109
+# =============================================================================
+block "BLOCK 81 — F109: pausa manual de automatizaciones"
+
+F109_PAUSE=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
+  -d '{"room_id":14,"action":"pause"}' "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
+if printf '%s' "$F109_PAUSE" | grep -q '"paused":true'; then
+  pass "F109: pausa manual activada"
+else
+  fail "F109: pausa manual" "$(printf '%s' "$F109_PAUSE" | head -c 300)"
+fi
+
+F109_PRE=$(curl -s --max-time 10 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" 2>/dev/null || echo '')
+if printf '%s' "$F109_PRE" | grep -q '"automation_pause".*"paused":true'; then
+  pass "F109: preflight refleja pausa"
+else
+  fail "F109: preflight pausa" "$(printf '%s' "$F109_PRE" | head -c 300)"
+fi
+
+F109_EFFECT=$(php -r '
+require "src/Support/Autoload.php";
+App\Support\Config::load(".env");
+$pdo = App\Infrastructure\Db\PdoFactory::make();
+$pause = new App\Domain\Presence\RoomAutomationPauseRepository($pdo);
+$svc = new App\Domain\Warehouse\WarehouseRecordingService($pdo, "ALMACEN_BEBIDAS", $pause);
+$before = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=14")->fetchColumn();
+$svc->onSignal(14, "DOOR_OPEN", ["provider" => "ZIGBEE2MQTT", "source" => "zigbee2mqtt"]);
+$after = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=14")->fetchColumn();
+echo $before === $after ? "paused_no_effect" : "effect_created";
+' 2>/dev/null || echo 'error')
+if [ "$F109_EFFECT" = "paused_no_effect" ]; then
+  pass "F109: grabación/visita no reacciona a la señal"
+else
+  fail "F109: efecto durante pausa" "$F109_EFFECT"
+fi
+
+F109_RESUME=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
+  -d '{"room_id":14,"action":"resume"}' "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
+if printf '%s' "$F109_RESUME" | grep -q '"paused":false'; then
+  pass "F109: reanudación manual"
+else
+  fail "F109: reanudación" "$(printf '%s' "$F109_RESUME" | head -c 300)"
+fi
+
+if grep -q "automationPause" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "room_automation_pause" migrations/0138_room_automation_pause.sql \
+    && grep -q "btnPauseAutomation" public/sensores.html \
+    && grep -q "probeForDevice" src/Infrastructure/Gateways/Switch/ZigbeeSwitchGateway.php; then
+  pass "F109: API, UI, persistencia y sonda de luz"
+else
+  fail "F109: cableado" "falta API, UI, migración o sonda"
+fi
+
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f109-js.log 2>&1; then
+  pass "F109: JavaScript válido"
+else
+  fail "F109: JavaScript" "$(tail -5 /tmp/f109-js.log)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

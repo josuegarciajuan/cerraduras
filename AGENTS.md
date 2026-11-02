@@ -184,6 +184,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F106 Diagnóstico de captura del radar (silencio vs lecturas)** | **BLOCK 68F + units F106** | **Completado (código); prueba física pendiente** |
 | **F107 Evidencia de distancia del radar (DP 9 + consulta bajo demanda)** | **BLOCK 68G/68H/68I + units F107** | **Fases 1–3 completadas; activación y prueba física pendientes (F109)** |
 | **F108 Calibración fiable del radar (ingesta, consulta, algoritmo, panel)** | **BLOCK 72/74/75/76/77/78/79/80 + units F108** | **Fases 0–9 + corrección final completadas; prueba física pendiente (Fase 10)** |
+| **F109 Pausa manual de automatizaciones y luz alcanzable** | **BLOCK 81 + units F109** | **Código implementado; diagnóstico activo de luz y prueba física pendientes** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 

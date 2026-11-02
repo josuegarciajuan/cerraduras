@@ -6,6 +6,7 @@ namespace App\Domain\Anomalies;
 use App\Domain\Anomalies\Detectors\ExitWithoutDoorOpen;
 use App\Domain\Presence\IotSession;
 use App\Domain\Stays\Stay;
+use App\Domain\Presence\RoomAutomationPauseRepository;
 use App\Support\Clock;
 
 /**
@@ -27,7 +28,8 @@ final class AnomalyService
     public function __construct(
         AnomalyPipeline             $pipeline,
         AnomalyRepositoryInterface  $repo,
-        ExitWithoutDoorOpen         $detectorA5
+        ExitWithoutDoorOpen         $detectorA5,
+        private ?RoomAutomationPauseRepository $automationPause = null
     ) {
         $this->pipeline   = $pipeline;
         $this->repo       = $repo;
@@ -44,6 +46,9 @@ final class AnomalyService
      */
     public function detectAndPersist(IotSession $session, \App\Domain\Presence\PresenceEvent $trigger, ?Stay $stay): array
     {
+        if ($this->automationPause !== null && $this->automationPause->isPaused($session->roomId)) {
+            return [];
+        }
         $results = $this->pipeline->evaluate($session, $trigger, $stay);
 
         $created = [];
@@ -87,6 +92,9 @@ final class AnomalyService
         Stay       $stay,
         string     $exitDetectedAt
     ): ?Anomaly {
+        if ($this->automationPause !== null && $this->automationPause->isPaused($session->roomId)) {
+            return null;
+        }
         $result = $this->detectorA5->check(
             $session, $stay,
             $exitDetectedAt,

@@ -19,6 +19,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/Support/Autoload.php';
 
+use App\Domain\Presence\RoomAutomationPauseRepository;
 use App\Domain\Warehouse\WarehouseRecordingService;
 use App\Infrastructure\Db\PdoFactory;
 use App\Support\Config;
@@ -36,7 +37,8 @@ if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0775, true) && !is_dir($stora
 }
 
 $pdo = PdoFactory::make();
-$service = new WarehouseRecordingService($pdo);
+$pauseRepo = new RoomAutomationPauseRepository($pdo);
+$service = new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', $pauseRepo);
 
 // F73/RF-85: tope de duración de grabaciones (0 = sin límite).
 $maxRecordingSeconds = Config::getInt('WAREHOUSE_MAX_RECORDING_SECONDS', 0) ?? 0;
@@ -65,6 +67,12 @@ while ($running) {
         // F73/RF-85: marca para parar los clips que superan el tope; el propio
         // tick los finaliza como SAVED al procesar stop_requested.
         $service->enforceRecordingCap($maxRecordingSeconds);
+        $pausedRooms = array_fill_keys($pauseRepo->pausedRoomIds(), true);
+        if ($pausedRooms !== []) {
+            $ids = implode(',', array_map('intval', array_keys($pausedRooms)));
+            $pdo->exec("UPDATE camera_recordings SET stop_requested=1
+                        WHERE status='RECORDING' AND stop_requested=0 AND room_id IN ({$ids})");
+        }
         $pdo->beginTransaction();
 
         // 1. Start pending recordings.
@@ -85,6 +93,9 @@ while ($running) {
              ORDER BY id ASC LIMIT 20"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
             if (isset($busyDevices[(int) $r['device_id']])) {
+                continue;
+            }
+            if (isset($pausedRooms[(int) $r['room_id']])) {
                 continue;
             }
             startRecording($pdo, $procs, $log, $ffmpeg, $storageRoot, $r);

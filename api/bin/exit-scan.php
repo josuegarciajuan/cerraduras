@@ -51,7 +51,7 @@ $deviceRepo      = new DeviceRepository($pdo);
 // Services
 $stateMachine = new StayStateMachine($stayRepo);
 $exitEval     = new ExitRuleEvaluator($iotSessionRepo, $roomRepo, $roomTypeRepo, $stayRepo);
-$switchSvc    = new SwitchService($deviceRepo, $roomRepo);
+$switchSvc    = new SwitchService($deviceRepo, $roomRepo, new \App\Domain\Presence\RoomAutomationPauseRepository($pdo));
 // F41: exit-scan only delegates the idempotent evaluation; it never writes
 // the sensor state itself (RF-48.3 / RF-43.2).
 $exitAction   = new ExitActionService(

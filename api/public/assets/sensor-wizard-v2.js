@@ -125,12 +125,51 @@
       S.preflight = await api(V2 + '/preflight?room_id=' + roomId());
       $('connBadge').textContent = S.preflight.can_start ? 'Dispositivos listos' : 'Falta un dispositivo';
       $('connBadge').className = 'badge ' + (S.preflight.can_start ? 'ok' : 'bad');
-      renderRoster(); renderTech();
+      renderRoster(); renderTech(); renderAutomationPause();
     } catch (e) {
       S.preflight = null;
       $('connBadge').textContent = 'Sin conexión';
       $('connBadge').className = 'badge bad';
       banner('No se pudo leer la sala: ' + e.message, 'bad');
+    }
+  }
+
+  function renderAutomationPause() {
+    var st = (S.preflight && S.preflight.automation_pause) || { paused: false };
+    var badge = $('automationBadge');
+    var btn = $('btnPauseAutomation');
+    if (badge) {
+      badge.textContent = st.paused ? 'Automatizaciones pausadas' : 'Automatizaciones activas';
+      badge.className = 'badge ' + (st.paused ? 'warn' : 'ok');
+    }
+    if (btn) {
+      btn.textContent = st.paused ? 'Reanudar automatizaciones' : 'Pausar automatizaciones';
+      btn.className = st.paused ? 'primary' : 'ghost';
+    }
+  }
+
+  async function toggleAutomationPause() {
+    var st = (S.preflight && S.preflight.automation_pause) || { paused: false };
+    var action = st.paused ? 'resume' : 'pause';
+    var btn = $('btnPauseAutomation');
+    if (btn) btn.disabled = true;
+    try {
+      var data = await api(V2 + '/automation/pause', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id: roomId(),
+          run_id: S.run && S.run.status === 'running' ? S.run.run_id : '',
+          action: action
+        })
+      });
+      if (!S.preflight) S.preflight = {};
+      S.preflight.automation_pause = data.automation_pause;
+      renderAutomationPause();
+      toast(action === 'pause' ? 'Automatizaciones pausadas' : 'Automatizaciones reanudadas');
+    } catch (e) {
+      banner('No se pudo cambiar la pausa: ' + e.message, 'bad');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -723,6 +762,12 @@
       + (h.on === true ? 'confirmado' : h.on === false ? 'falló' : 'pendiente') + '</span>'
       + '<span class="pill ' + (h.off === true ? 'ok' : h.off === false ? 'bad' : 'dim') + '">Apagar: '
       + (h.off === true ? 'confirmado' : h.off === false ? 'falló' : 'pendiente') + '</span></div>';
+    if (S.lightPhase === 'unreachable') {
+      html += '<div class="expect">La luz no responde al comando Zigbee. No sigas reintentando hasta revisar alimentación y red.</div>'
+        + '<div class="actions"><button class="primary" data-action="switch" data-on="' + esc(S.lastSwitchAction || 'OFF') + '">Comprobar de nuevo</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
+      return html;
+    }
     if (S.lightPhase === 'prep') {
       html += '<p class="hint">Primero dejamos la lámpara apagada para que el encendido demuestre un cambio real.</p>'
         + '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Apagar lámpara</button>'
@@ -1020,8 +1065,15 @@
         body: JSON.stringify({ room_id: roomId(), action: action })
       });
       S.lastSwitch = data;
+      S.lastSwitchAction = action;
       if (!data.ok) {
         banner('No se pudo enviar la orden: ' + (data.error || 'desconocido') + '. Comprueba la lámpara antes de reintentar.', 'bad');
+        render();
+        return;
+      }
+      if (data.reachable === false) {
+        S.lightPhase = 'unreachable';
+        banner('La luz no responde. Comprueba alimentación y red Zigbee.', 'bad');
         render();
         return;
       }
@@ -1498,6 +1550,7 @@
     };
     $('operator').onchange = function () { localStorage.setItem(LS_OP, operator()); };
     $('btnRuns').onclick = showRuns;
+    $('btnPauseAutomation').onclick = toggleAutomationPause;
     $('btnResetRun').onclick = function () { resetRun(); };
     $('runsClose').onclick = function () { $('runsDialog').close(); };
     $('btnRefreshEvents').onclick = refreshEvents;

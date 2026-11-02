@@ -11342,6 +11342,19 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] `bash bin/run-tests.sh` con 0 fallos (932/0/14).
 - [x] SKIP revisados.
 
+## TSK-F109-01: Pausa manual
+- [x] Migración `0138` y repositorio.
+- [x] API `automation/pause` y estado en preflight.
+- [x] Botones en cabecera de `/sensores`.
+- [x] Pausa en visitas, grabaciones, recorder, anomalías y luz automática.
+- [x] Pruebas y BLOCK 81.
+
+## TSK-F109-02: Luz alcanzable
+- [x] Sonda `/get state` con `read-state.js`.
+- [x] `startAttempt('light')` bloquea con `switch_unreachable`.
+- [x] `switch/test` devuelve `reachable` y la UI no pregunta si no hay respuesta.
+- [ ] Diagnóstico activo y reemparejamiento físico de la luz.
+
 ## TSK-F108-11: Suficiencia de una lectura fresca
 - [x] `min_samples=1` y `min_span_seconds=0` para evidencia DP 9.
 - [x] Una muestra positiva fresca aceptada; varias exigen coherencia.
