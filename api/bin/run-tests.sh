@@ -8118,8 +8118,8 @@ else
   fail "F110: reinicio de base" "no se aplica en startRun/resetRun"
 fi
 
-if grep -q "distance_inside_only_v1" src/Http/Controllers/SensorWizardController.php     && grep -q "insideOnlyCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php     && grep -q "lowerCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php; then
-  pass "F110: modelo solo interior + margen 0,10"
+if grep -q "distance_inside_only_v1" src/Http/Controllers/SensorWizardController.php     && grep -q "insideOnlyCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php     && grep -q "lowerCandidate" src/Domain/Sensors/RadarCalibrationPlanner.php     && grep -q "'lateral' => \$lateral" src/Http/Controllers/SensorWizardController.php     && grep -q "'lateral' => true" tests/Unit/RadarDistancePointMeasurementTest.php; then
+  pass "F110: modelo solo interior + margen 0,10 + mediana lateral"
 else
   fail "F110: modelo solo interior" "faltan piezas"
 fi

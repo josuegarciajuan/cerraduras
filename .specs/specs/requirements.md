@@ -13079,7 +13079,8 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
 - El punto interior se mide en el punto más alejado donde SÍ debe detectarse.
 - El operador da pasos laterales cortos de 20–30 cm y vuelve al centro durante
   la ventana.
-- La referencia interior es la mediana de las distancias DP 9 válidas.
+- La referencia interior es la mediana de las distancias DP 9 válidas; la
+dispersión producida por los pasos laterales no invalida la medición.
 - Una única lectura fresca sigue siendo suficiente (F108).
 
 ## RF-253: Alcance y verificación exterior

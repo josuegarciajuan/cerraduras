@@ -1038,8 +1038,9 @@ para Tuya cloud.
   esperan confirmación por push; si no confirma, `409 radar_baseline_failed`.
   La calibración anterior se archiva en `devices.meta_json.calibration_previous`.
 - **Modelo**: sesión v5 `distance_inside_only_v1`. El interior se mide con pasos
-  laterales de 20–30 cm. El alcance es `mediana interior + 0.10 m` ajustado a
-  0.15 m, nunca menor que el interior.
+  laterales de 20–30 cm; la dispersión lateral no invalida la medida (se usa la
+  mediana de todas las lecturas positivas). El alcance es `mediana interior +
+  0.10 m` ajustado a 0.15 m, nunca menor que el interior.
 - **Exterior**: no se mide distancia; se verifica solo por presencia. Si el radar
   sigue detectando fuera, se baja 0.15 m manteniendo el margen interior; si no
   queda margen, `inside_only_no_separation`.

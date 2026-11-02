@@ -11382,6 +11382,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 ## TSK-F110-02: Modelo solo interior
 - [x] Sesión v5 `distance_inside_only_v1`.
 - [x] `insideOnlyCandidate()` con margen 0,10 y rejilla 0,15.
+- [x] Mediana lateral: no rechaza la dispersión de los pasos de 20–30 cm.
 - [x] `lowerCandidate()` con protección del margen interior.
 - [x] Aplicación del candidato al aprobar el interior.
 - [x] Exterior solo por presencia y reducción paso a paso.
