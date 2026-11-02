@@ -22,7 +22,8 @@ const ea = exposes.access;
 const SESSION = Date.now().toString(36);
 const seen = new Map();
 let counter = 0;
-let queryUntil = 0;
+let queryPending = false;
+let queryPendingUntil = 0;
 
 function isDuplicate(seq, txn) {
   const key = `${seq ?? ''}|${txn ?? ''}`;
@@ -59,11 +60,13 @@ const fzDistanceReport = {
   convert: (model, msg) => {
     const dp = (msg.data.dpValues || []).find((d) => d.dp === 9);
     if (!dp) return {};
-    if (isDuplicate(msg.data.seq, msg.meta && msg.meta.zclTransactionSequenceNumber)) return {};
+    const pending = queryPending && Date.now() <= queryPendingUntil;
+    if (!pending && isDuplicate(msg.data.seq, msg.meta && msg.meta.zclTransactionSequenceNumber)) return {};
     const value = decodeDistance(dp);
     if (value === null || !Number.isFinite(value) || value < 0) return {};
     counter += 1;
-    const origin = Date.now() <= queryUntil ? 'query' : 'push';
+    const origin = queryPending && Date.now() <= queryPendingUntil ? 'query' : 'push';
+    queryPending = false;
     return {
       f107_distance_report: `v1|${SESSION}|${counter}|${value.toFixed(3)}|${origin}`,
     };
@@ -73,9 +76,10 @@ const fzDistanceReport = {
 const tzDistanceQuery = {
   key: ['distance_query'],
   convertSet: async (entity) => {
-    queryUntil = Date.now() + 1500;
+    queryPending = true;
+    queryPendingUntil = Date.now() + 5000;
     await entity.command('manuSpecificTuya', 'dataQuery', {});
-    return { state: { distance_query: 'requested' } };
+    return {};
   },
 };
 
