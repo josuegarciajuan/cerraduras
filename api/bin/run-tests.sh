@@ -7824,6 +7824,27 @@ else
 fi
 
 # =============================================================================
+# BLOCK 73 — F108: consulta directa no disponible
+# Trazabilidad: RF-240, RF-247 · design.md §108 Fase 2
+# =============================================================================
+block "BLOCK 73 — F108: consulta directa no disponible"
+
+if [ -f "../docs/hardware/radar-distance-query-f108.md" ] \
+    && grep -q "ZIGBEE_DELIVERY_FAILED" ../docs/hardware/radar-distance-query-f108.md \
+    && grep -q "No usar .dataQuery" ../docs/hardware/radar-distance-query-f108.md; then
+    pass "F108: conclusión documentada con entrega fallida"
+else
+    fail "F108: documento de consulta" "falta evidencia o conclusión"
+fi
+
+if grep -q "^RADAR_DISTANCE_QUERY_ENABLED=false$" .env.example \
+    && ! grep -q "^RADAR_DISTANCE_QUERY_ENABLED=true$" .env.example; then
+    pass "F108: consulta desactivada por defecto"
+else
+    fail "F108: configuración de consulta" "debe quedar desactivada"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

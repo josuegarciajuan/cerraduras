@@ -11279,11 +11279,12 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Desplegado y verificado: pending 0,14–1,09 ms vs full ~836 ms.
 
 ## TSK-F108-02: Consulta demostrable
-- [ ] Verificar conversor y definición activos.
-- [ ] Prueba controlada de `dataQuery` y captura de respuesta.
-- [ ] Estados `requested`…`distance_reported`/`unattributed`.
-- [ ] Timeout honesto y ausencia de bucles.
-- [ ] Documento de conclusión.
+- [x] Definición externa y `toZigbee` verificados.
+- [x] Una única consulta publicada con captura debug.
+- [x] Resultado: `ZIGBEE_DELIVERY_FAILED`; sin respuesta atribuible.
+- [x] `RADAR_DISTANCE_QUERY_ENABLED=false` en producción.
+- [x] Documento `docs/hardware/radar-distance-query-f108.md`.
+- [x] Conclusión: no usar consulta directa; solo push DP 9.
 
 ## TSK-F108-03: Evidencia DP 9
 - [ ] Conversor con identidad de reporte y correlación opcional.
@@ -11315,10 +11316,10 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [ ] Pruebas de UI y textos.
 
 ## TSK-F108-08: Consulta acotada en medición
-- [ ] Solo si Fase 2 la acredita.
-- [ ] Límite por operación y cancelación.
-- [ ] Sin consultas desde `/radar/state`.
-- [ ] Pruebas de timeout y retransmisión.
+- [x] No aplica: Fase 2 no acreditó consulta directa.
+- [x] No se envían órdenes `distance_query` en el flujo normal.
+- [x] La UI no debe prometer respuesta en tiempo real.
+- [ ] Eliminar la heurística `origin=query` (Fase 3).
 
 ## TSK-F108-09: Pruebas y regresión
 - [ ] Units, integración, UI y latencia.

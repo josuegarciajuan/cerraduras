@@ -15815,3 +15815,17 @@ Reglas de compatibilidad:
 - En `legacy`/`shadow`, el resultado no cambia las decisiones antiguas.
 - En `distance_evidence`, el servidor decide con la nueva evidencia.
 - Nunca se presenta `unattributed` como respuesta confirmada.
+
+### F108 Fase 2 — consulta no disponible
+
+- `distance_query.status` puede ser `unsupported` cuando el envío Zigbee no se
+  entrega (`ZIGBEE_DELIVERY_FAILED`).
+- `distance_query.ok` deja de representar una consulta confirmada; solo podrá
+  indicar que la petición fue aceptada por el broker si el campo se conserva
+  por compatibilidad.
+- El contrato no promete `device_response` ni `distance_reported` sin una
+  correlación demostrada.
+- Las órdenes `distance_query` no se envían en el flujo normal; permanecen
+  desactivadas por configuración.
+- `origin=query` solo podrá usarse con correlación real. En caso contrario,
+  `unattributed`.

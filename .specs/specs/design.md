@@ -25425,3 +25425,18 @@ nuevos y no mezclan referencias calculadas con reglas distintas.
 - La latencia de persistencia se expone en el estado.
 - Medición local: `pendingStats` 0,14–1,09 ms frente a `stats` completo
   ~836 ms con ~95.000 ficheros. El histórico solo se recorre en reconciliación.
+
+### F108 Fase 2 — consulta directa
+
+Prueba controlada con `log_level: debug`:
+
+- definición externa activa y `toZigbee` con `distance_query`;
+- llegada de la petición MQTT y ejecución del conversor confirmadas;
+- `manuSpecificTuya.dataQuery` enviado;
+- `ZIGBEE_DELIVERY_FAILED` en el envío al dispositivo;
+- DP 9 posteriores sin correlación demostrable.
+
+Decisión: no usar `dataQuery` en la calibración. El flujo mostrará la
+limitación y usará exclusivamente reportes push DP 9 con identidad
+independiente. La heurística `origin=query` de cinco segundos se eliminará o
+marcará como `unattributed` en la siguiente fase.

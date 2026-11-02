@@ -13015,3 +13015,15 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   dispositivo.
 - Regresión completa con 0 fallos.
 - Sin sondeo continuo a Tuya ni procesos de diagnóstico abandonados.
+
+## RF-247: Resultado de la consulta directa (Fase 2)
+- Se probó una única orden `distance_query` con captura de Zigbee2MQTT.
+- La orden llegó al broker y al conversor, pero el envío Zigbee terminó en
+  `ZIGBEE_DELIVERY_FAILED`.
+- No se demostró respuesta del dispositivo; los DP 9 posteriores fueron
+  reportes espontáneos.
+- Queda prohibido presentar una petición publicada como consulta confirmada.
+- `RADAR_DISTANCE_QUERY_ENABLED` permanece en `false`.
+- La calibración no dependerá de consultas directas.
+- Cualquier `origin=query` basado solo en proximidad temporal se tratará como
+  no atribuido.
