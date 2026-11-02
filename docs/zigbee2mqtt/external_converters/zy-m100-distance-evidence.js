@@ -10,7 +10,7 @@
  *
  * No existe consulta directa funcional: la prueba F108 demostró
  * ZIGBEE_DELIVERY_FAILED para dataQuery. Por eso este conversor no expone
- * `distance_query` ni envía comandos al dispositivo.
+ * ninguna orden de consulta ni envía comandos al dispositivo.
  */
 
 const exposes = require('zigbee-herdsman-converters/lib/exposes');
