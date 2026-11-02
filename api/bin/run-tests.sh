@@ -7035,10 +7035,11 @@ else
 fi
 
 if grep -q "radarPoint" public/assets/sensor-wizard-v2.js \
-    && grep -q "mueve los brazos" src/Http/Controllers/SensorWizardController.php; then
-    pass "F105: UI muestra lecturas y pide mover brazos"
+    && grep -q "Permanece en el punto" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -q "mueve los brazos" src/Http/Controllers/SensorWizardController.php; then
+    pass "F105/F108: UI muestra lecturas sin pedir movimiento"
 else
-    fail "F105: UI" "faltan lecturas o ayuda de movimiento"
+    fail "F105: UI" "faltan lecturas o queda ayuda de movimiento"
 fi
 
 # =============================================================================
@@ -7981,7 +7982,7 @@ if grep -q "radarAuthority" public/assets/sensor-wizard-v2.js \
     && grep -q "radarQuery" public/assets/sensor-wizard-v2.js \
     && grep -q "radarComm" public/assets/sensor-wizard-v2.js \
     && grep -q "distance_authority" public/assets/sensor-wizard-v2.js \
-    && grep -q "No disponible en este firmware" public/assets/sensor-wizard-v2.js; then
+    && grep -q "no disponible en este firmware" public/assets/sensor-wizard-v2.js; then
     pass "F108: bloques de autoridad, consulta y comunicación"
 else
     fail "F108: bloques del panel" "faltan autoridad/consulta/comunicación"
