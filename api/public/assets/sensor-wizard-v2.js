@@ -548,6 +548,12 @@
     return out;
   }
 
+  function authorityText(st) {
+    return st && st.distance_authority === 'distance_evidence'
+      ? 'Autoridad de calibración: distancia DP 9'
+      : 'Autoridad de calibración: algoritmo anterior (modo sombra)';
+  }
+
   function distanceEvidenceText(st) {
     var d = st && st.distance_point;
     if (!d) return '';
@@ -559,19 +565,36 @@
       no_distance: 'sin distancia positiva',
       no_reports: 'sin reportes DP 9'
     }[d.status] || d.status || '';
-    var out = 'Distancia del radar (provisional): ' + status
+    var label = st && st.distance_authority === 'distance_evidence'
+      ? 'Distancia DP 9 (autoridad)'
+      : 'Distancia DP 9 (provisional)';
+    var span = d.positive_span_seconds != null ? d.positive_span_seconds : d.span_seconds;
+    var out = label + ': ' + status
       + ' · ' + (d.reports || 0) + ' reportes'
       + ' · ' + (d.positive_reports || 0) + ' con distancia';
-    if (d.span_seconds != null) out += ' · ' + Number(d.span_seconds).toFixed(1) + ' s';
+    if (span != null) out += ' · ' + Number(span).toFixed(1) + ' s positivos';
     if (d.mean != null) out += ' · media ' + Number(d.mean).toFixed(2) + ' m';
     if (d.spread != null) out += ' · dispersión ' + Number(d.spread).toFixed(2) + ' m';
     if (d.coverage != null) out += ' · cobertura ' + Math.round(Number(d.coverage) * 100) + ' %';
-    var q = st.distance_query || {};
-    if (q.at) {
-      out += ' · consulta ' + (q.ok ? 'enviada' : 'no enviada');
-      if (q.error) out += ' (' + q.error + ')';
-    }
+    if (d.frozen) out += ' · ventana cerrada';
+    if (d.discarded_device) out += ' · ' + d.discarded_device + ' de otro radar';
+    if (d.discarded_config) out += ' · ' + d.discarded_config + ' de otra configuración';
     return out;
+  }
+
+  function queryText(st) {
+    var q = st && st.distance_query ? st.distance_query : {};
+    if (q.at) {
+      return 'Consulta directa: no disponible en este firmware (sin respuesta atribuible).';
+    }
+    return 'Consulta directa: no disponible en este firmware.';
+  }
+
+  function communicationText(st) {
+    var age = st ? (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) : null;
+    if (st && st.raw_presence_stale) return 'Comunicación: sin mensajes recientes del radar.';
+    if (age != null) return 'Comunicación: último mensaje hace ' + age + ' s.';
+    return 'Comunicación: sin datos del radar.';
   }
 
   function distanceText(st, m) {
@@ -607,16 +630,16 @@
     html += '<div class="row"><span class="pill ' + live.cls + '" id="radarLive">' + esc(live.text) + '</span>'
       + '<span class="pill dim" id="radarPhase">' + esc(st.phase || '') + '</span></div>';
     html += '<div class="row"><span class="pill ' + presencePillCls(m) + '" id="radarPresence">' + esc(presenceText(m)) + '</span></div>';
+    html += '<div class="hint" id="radarAuthority">' + esc(authorityText(st)) + '</div>';
     var pointDiag = st.point || {};
     if (pointDiag.reports === 0) {
       html += '<div class="hint" style="color:var(--warn)">No ha llegado ningún mensaje del radar en esta ventana. '
-        + 'Este sensor solo publica cuando cambia lo que detecta: da un paso o mueve el cuerpo entero '
-        + '(mover solo los brazos puede no cambiar la distancia).</div>';
+        + 'Permanece en el punto; el sistema no puede completar la muestra sin datos.</div>';
     } else {
       html += '<div class="hint">El radar solo envía cuando cambia algo; si no hay reportes nuevos se usa el estado al inicio de la ventana.</div>';
     }
     if (dist.samples > 0) {
-      html += '<div class="hint" id="radarDistance">Distancia: '
+      html += '<div class="hint" id="radarDistance">Distancia por eventos: '
         + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
         + ' · ' + qualityLabel(dist.quality)
         + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes</div>';
@@ -627,6 +650,8 @@
     if (st.distance_mode && st.distance_mode !== 'off' && st.distance_point) {
       html += '<div class="hint" id="radarDistanceEvidence">' + esc(distanceEvidenceText(st)) + '</div>';
     }
+    html += '<div class="hint" id="radarQuery">' + esc(queryText(st)) + '</div>';
+    html += '<div class="hint" id="radarComm">' + esc(communicationText(st)) + '</div>';
     var outsideMeasure = st.outside_measure || null;
     if (outsideMeasure) {
       var omDist = (outsideMeasure.distance && outsideMeasure.distance.median != null)
@@ -1186,7 +1211,7 @@
     var dist = m.distance || {};
     if (distance) {
       if (dist.samples > 0) {
-        distance.textContent = 'Distancia: ' + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
+        distance.textContent = 'Distancia por eventos: ' + (dist.median != null ? dist.median.toFixed(2) + ' m' : '—')
           + ' · ' + qualityLabel(dist.quality)
           + ' · ' + (dist.valid || 0) + ' con distancia / ' + (dist.samples || 0) + ' reportes';
       } else {
@@ -1197,6 +1222,12 @@
     if (pointEl) pointEl.textContent = pointText(st);
     var evidenceEl = $('radarDistanceEvidence');
     if (evidenceEl) evidenceEl.textContent = distanceEvidenceText(st);
+    var authorityEl = $('radarAuthority');
+    if (authorityEl) authorityEl.textContent = authorityText(st);
+    var queryEl = $('radarQuery');
+    if (queryEl) queryEl.textContent = queryText(st);
+    var commEl = $('radarComm');
+    if (commEl) commEl.textContent = communicationText(st);
     var warning = $('radarWarning');
     if (warning && st.message) warning.textContent = st.message;
   }

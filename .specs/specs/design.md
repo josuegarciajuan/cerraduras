@@ -25493,3 +25493,20 @@ marcará como `unattributed` en la siguiente fase.
   `verify_insufficient:no_absence_evidence`.
 - Los motivos se muestran en el asistente.
 - La presencia sigue siendo independiente de la distancia.
+
+### F108 Fase 7 — panel honesto
+
+- El panel muestra bloques separados:
+  - presencia;
+  - autoridad de calibración;
+  - distancia DP 9 (provisional o autoridad);
+  - comunicación;
+  - consulta directa (no disponible).
+- Se eliminaron las instrucciones de mover brazos, dar pasos o cambiar de
+  postura durante la medición.
+- La distancia DP 9 muestra `positive_span_seconds`, `frozen`, descartes por
+  radar/configuración y media.
+- El resultado antiguo se etiqueta como «Distancia por eventos» para no
+  confundirlo con la evidencia DP 9.
+- La consulta directa se presenta como **no disponible**, nunca como enviada o
+  confirmada.
