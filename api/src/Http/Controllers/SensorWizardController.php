@@ -11,7 +11,9 @@ use App\Domain\Presence\DoorPolarityEvidence;
 use App\Domain\Sensors\AttemptEvidence;
 use App\Domain\Sensors\RadarBoundaryScan;
 use App\Domain\Sensors\RadarCalibrationPlanner;
+use App\Domain\Sensors\RadarDistancePointMeasurement;
 use App\Domain\Sensors\RadarDistanceQuality;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarEvidencePolicy;
 use App\Domain\Sensors\RadarMeasurement;
 use App\Domain\Sensors\RadarPointMeasurement;
@@ -1122,6 +1124,7 @@ final class SensorWizardController
         $point = $this->radarLivePoint($run, $session);
         $copy = $this->withPointInstruction($copy, $point, $session);
         $pointPolicy = $this->radarPointOptions();
+        $distanceEvidence = $this->radarDistanceEvidence($run, $session);
         return Response::json(200, [
             'ok' => true,
             'run_id' => (string) $run['run_id'],
@@ -1148,6 +1151,10 @@ final class SensorWizardController
             'point_attempts' => $session['point_attempts'] ?? [],
             'inside_point' => $session['inside_point'] ?? null,
             'outside_point' => $session['outside_point'] ?? null,
+            // F107: evidencia DP 9 en modo sombra; no decide todavía.
+            'distance_mode' => $distanceEvidence['mode'],
+            'distance_point' => $distanceEvidence['point'],
+            'distance_query' => $distanceEvidence['query'],
             'inside_valid' => $session['inside_valid'] ?? null,
             'outside_valid' => $session['outside_valid'] ?? null,
             'outside_pass' => $session['outside_pass'] ?? null,
@@ -2007,6 +2014,14 @@ final class SensorWizardController
                 'point_attempt' => in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
                     ? (int) ($session['point_attempts'][$opPhase] ?? 0) + 1 : null,
             ];
+            if ($kind === 'MEASURE'
+                && in_array($opPhase, ['INSIDE', 'OUTSIDE_MEASURE'], true)
+                && !$this->isRadarDistanceModeOff()) {
+                $query = $this->requestRadarDistanceQuery($roomId);
+                $op['distance_query_at'] = gmdate('Y-m-d\TH:i:s\Z');
+                $op['distance_query_ok'] = $query['ok'];
+                $op['distance_query_error'] = $query['error'];
+            }
             unset($session['manual_start_required'], $session['scan_preview']);
             $session['phase'] = $opPhase;
             $session['state'] = 'MEASURING';
@@ -3438,7 +3453,98 @@ final class SensorWizardController
     }
 
     /**
-     * @param array{title:string,instruction:string,message:string} $copy
+     * F107: evidencia DP 9 en modo sombra. Es aditiva: no altera `point` ni
+     * las decisiones de la calibración actual.
+     *
+     * @param array<string,mixed> $run
+     * @param array<string,mixed> $session
+     * @return array{mode:string,point:?array<string,mixed>,query:array<string,mixed>}
+     */
+    private function radarDistanceEvidence(array $run, array $session): array
+    {
+        $mode = strtolower(trim((string) (getenv('RADAR_DISTANCE_EVIDENCE_MODE') ?: 'off')));
+        if (!in_array($mode, ['off', 'shadow', 'active'], true)) {
+            $mode = 'off';
+        }
+        $active = is_array($session['active_operation'] ?? null) ? $session['active_operation'] : [];
+        $query = [
+            'enabled' => $this->radarDistanceQueryEnabled(),
+            'at' => $active['distance_query_at'] ?? null,
+            'ok' => $active['distance_query_ok'] ?? null,
+            'error' => $active['distance_query_error'] ?? null,
+        ];
+        if ($mode === 'off') {
+            return ['mode' => $mode, 'point' => null, 'query' => $query];
+        }
+
+        $windowStart = null;
+        if (($active['kind'] ?? '') === 'MEASURE' && isset($active['window_start'])) {
+            $windowStart = (string) $active['window_start'];
+        } elseif (isset($session['last_measurement']['window']['started_at'])) {
+            $windowStart = (string) $session['last_measurement']['window']['started_at'];
+        }
+        if ($windowStart === null || $windowStart === '') {
+            return ['mode' => $mode, 'point' => null, 'query' => $query];
+        }
+
+        $repo = new RadarDistanceReportRepository($this->pdo());
+        $reports = $repo->recentForRoom((int) $run['room_id'], $windowStart, 300);
+        $point = RadarDistancePointMeasurement::analyze(
+            $reports,
+            $windowStart,
+            gmdate('Y-m-d\TH:i:s\Z'),
+            [
+                'min_samples' => 2,
+                'min_span_seconds' => 5,
+                'tolerance' => 0.30,
+                'coverage' => 0.80,
+            ]
+        );
+        return ['mode' => $mode, 'point' => $point, 'query' => $query];
+    }
+
+    private function radarDistanceQueryEnabled(): bool
+    {
+        $raw = strtolower(trim((string) (getenv('RADAR_DISTANCE_QUERY_ENABLED') ?: 'false')));
+        return in_array($raw, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private function isRadarDistanceModeOff(): bool
+    {
+        $mode = strtolower(trim((string) (getenv('RADAR_DISTANCE_EVIDENCE_MODE') ?: 'off')));
+        return $mode === 'off' || !in_array($mode, ['off', 'shadow', 'active'], true);
+    }
+
+    /**
+     * @return array{ok:bool,error:?string}
+     */
+    private function requestRadarDistanceQuery(int $roomId): array
+    {
+        if (!$this->radarDistanceQueryEnabled()) {
+            return ['ok' => false, 'error' => 'query_disabled'];
+        }
+        $stmt = $this->pdo()->prepare(
+            "SELECT d.id, d.external_id, d.meta_json
+               FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+              WHERE r.id = :rid AND d.kind = 'PRESENCE' AND d.transport = 'ZIGBEE2MQTT'
+              LIMIT 1"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return ['ok' => false, 'error' => 'radar_not_found'];
+        }
+        $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
+        $device = [
+            'id' => (int) $row['id'],
+            'external_id' => (string) $row['external_id'],
+            'meta' => is_array($meta) ? $meta : [],
+        ];
+        return (new ZigbeeRadarCalibrationService($this->pdo()))->requestDistance($device);
+    }
+
+    /**
+     * @param array<string,mixed> $copy
      * @param array<string,mixed>|null $point
      * @param array<string,mixed> $session
      * @return array{title:string,instruction:string,message:string}

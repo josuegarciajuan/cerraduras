@@ -546,6 +546,32 @@
     return out;
   }
 
+  function distanceEvidenceText(st) {
+    var d = st && st.distance_point;
+    if (!d) return '';
+    var status = {
+      accepted: 'aceptado',
+      insufficient: 'faltan reportes',
+      short_window: 'ventana corta',
+      unstable: 'inestable',
+      no_distance: 'sin distancia positiva',
+      no_reports: 'sin reportes DP 9'
+    }[d.status] || d.status || '';
+    var out = 'Distancia del radar (provisional): ' + status
+      + ' · ' + (d.reports || 0) + ' reportes'
+      + ' · ' + (d.positive_reports || 0) + ' con distancia';
+    if (d.span_seconds != null) out += ' · ' + Number(d.span_seconds).toFixed(1) + ' s';
+    if (d.mean != null) out += ' · media ' + Number(d.mean).toFixed(2) + ' m';
+    if (d.spread != null) out += ' · dispersión ' + Number(d.spread).toFixed(2) + ' m';
+    if (d.coverage != null) out += ' · cobertura ' + Math.round(Number(d.coverage) * 100) + ' %';
+    var q = st.distance_query || {};
+    if (q.at) {
+      out += ' · consulta ' + (q.ok ? 'enviada' : 'no enviada');
+      if (q.error) out += ' (' + q.error + ')';
+    }
+    return out;
+  }
+
   function distanceText(st, m) {
     var age = st && (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) != null
       ? (st.raw_presence_age_seconds != null ? st.raw_presence_age_seconds : st.presence_age_seconds) : null;
@@ -596,6 +622,9 @@
       html += '<div class="hint" id="radarDistance">' + esc(distanceText(st, m)) + '</div>';
     }
     html += '<div class="hint" id="radarPoint">' + esc(pointText(st)) + '</div>';
+    if (st.distance_mode && st.distance_mode !== 'off' && st.distance_point) {
+      html += '<div class="hint" id="radarDistanceEvidence">' + esc(distanceEvidenceText(st)) + '</div>';
+    }
     var outsideMeasure = st.outside_measure || null;
     if (outsideMeasure) {
       var omDist = (outsideMeasure.distance && outsideMeasure.distance.median != null)
@@ -1164,6 +1193,8 @@
     }
     var pointEl = $('radarPoint');
     if (pointEl) pointEl.textContent = pointText(st);
+    var evidenceEl = $('radarDistanceEvidence');
+    if (evidenceEl) evidenceEl.textContent = distanceEvidenceText(st);
     var warning = $('radarWarning');
     if (warning && st.message) warning.textContent = st.message;
   }

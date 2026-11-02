@@ -25337,3 +25337,21 @@ la usa; se integrará en F108. Sin cambios en `/radar/state` ni en la UI.
 
 No lee presencia, semillas ni base de datos. Los ceros se cuentan como
 `zero_reports` pero no invalidan una serie positiva.
+
+### Integración sombra
+`SensorWizardController::radarDistanceEvidence()`:
+
+- lee `RADAR_DISTANCE_EVIDENCE_MODE` (def. `off`);
+- toma la ventana de la operación activa o del último `last_measurement`;
+- consulta `radar_distance_reports` por sala y ventana;
+- ejecuta `RadarDistancePointMeasurement`;
+- expone `distance_mode`, `distance_point` y `distance_query` sin tocar el
+  resultado existente.
+
+Al iniciar una medición `INSIDE`/`OUTSIDE_MEASURE`, si el modo no es `off` y
+`RADAR_DISTANCE_QUERY_ENABLED=true`, se publica una sola `distance_query` y se
+guarda su resultado en la operación. Nunca se consulta desde `configure`, un
+temporizador o `finish_measure`.
+
+La UI muestra la línea «Distancia del radar (provisional)» con estado, reportes,
+cobertura, media/dispersión y resultado de la consulta.
