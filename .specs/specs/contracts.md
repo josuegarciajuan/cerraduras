@@ -15767,3 +15767,18 @@ es una función pura. Devuelve:
 
 Parámetros por defecto: `min_samples=2`, `min_span_seconds=5`,
 `tolerance=0.30`, `coverage=0.80`. No hay endpoints nuevos en esta fase.
+
+## §F107 Integración sombra en `/radar/state`
+
+Aditivo:
+
+- `distance_mode`: `off|shadow|active`.
+- `distance_point`: resultado de `RadarDistancePointMeasurement` o `null`.
+- `distance_query`: `{enabled, at, ok, error}`.
+
+En `shadow` el resultado es **provisional**: no cambia `point`, `sufficient`,
+`next_actions` ni la calibración aplicada. La UI lo etiqueta como provisional.
+
+Al iniciar una medición se puede publicar una sola orden
+`{"distance_query":"request"}`. `distance_query` refleja el resultado de la
+publicación, no la confirmación física del dispositivo.

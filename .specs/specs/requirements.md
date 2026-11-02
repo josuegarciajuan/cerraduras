@@ -12927,3 +12927,19 @@ la operación OTA, de modo que un fallo de OTA dejaba un guardado parcial y sile
   F108.
 - No relaja la coherencia por comodidad: una serie inestable sigue siendo
   inestable.
+
+## RF-237: Integración en modo sombra
+- `RADAR_DISTANCE_EVIDENCE_MODE=off|shadow|active` (por defecto `off`).
+- En `shadow`, `/radar/state` expone de forma aditiva `distance_mode`,
+  `distance_point` y `distance_query`.
+- El resultado nuevo **no altera** `point`, `sufficient`, los intentos ni las
+  decisiones de calibración.
+- La UI lo muestra como **provisional**.
+
+## RF-238: Consulta al iniciar la medición
+- Si `RADAR_DISTANCE_QUERY_ENABLED=true` y el modo no es `off`, al iniciar una
+  medición `INSIDE`/`OUTSIDE_MEASURE` se envía **una** `distance_query`.
+- El resultado de la publicación se guarda en la operación
+  (`distance_query_at`, `distance_query_ok`, `distance_query_error`).
+- No se consulta en `finish_measure`, ni por temporizador, ni desde `configure`.
+- Un fallo de consulta no bloquea la medición; solo se informa.

@@ -7136,6 +7136,35 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68I — F107: integración sombra en el asistente
+# Trazabilidad: RF-237, RF-238
+# =============================================================================
+block "BLOCK 68I — F107: integración sombra en el asistente"
+
+if grep -q "radarDistanceEvidence" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_mode" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_point" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_query" src/Http/Controllers/SensorWizardController.php; then
+    pass "F107: estado sombra y consulta cableados en el controlador"
+else
+    fail "F107: integración del controlador" "faltan campos de evidencia o consulta"
+fi
+
+if grep -q "distanceEvidenceText" public/assets/sensor-wizard-v2.js \
+    && grep -q "radarDistanceEvidence" public/assets/sensor-wizard-v2.js \
+    && grep -q "RADAR_DISTANCE_EVIDENCE_MODE" src/Http/Controllers/SensorWizardController.php; then
+    pass "F107: UI muestra la distancia provisional"
+else
+    fail "F107: UI sombra" "falta el bloque de distancia provisional"
+fi
+
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f107-js.log 2>&1; then
+    pass "F107: JavaScript válido"
+else
+    fail "F107: JavaScript" "$(tail -5 /tmp/f107-js.log)"
+fi
+
+# =============================================================================
 # BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
 # Trazabilidad: RF-219, RF-220
 # =============================================================================

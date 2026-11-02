@@ -11247,3 +11247,16 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Unit `RadarDistancePointMeasurementTest` (26 checks).
 - [x] BLOCK 68H del runner.
 - [ ] Integración en el flujo de calibración (F108).
+
+## TSK-F107-07: Integración sombra
+- [x] `RADAR_DISTANCE_EVIDENCE_MODE=off|shadow|active`.
+- [x] `distance_mode`, `distance_point`, `distance_query` aditivos.
+- [x] La UI muestra «Distancia del radar (provisional)».
+- [x] El resultado no altera las decisiones actuales.
+
+## TSK-F107-08: Consulta al iniciar medición
+- [x] `requestRadarDistanceQuery` localiza el radar de la sala.
+- [x] Una sola `distance_query` al iniciar `INSIDE`/`OUTSIDE_MEASURE`.
+- [x] Resultado guardado en la operación; un fallo no bloquea.
+- [x] BLOCK 68I del runner.
+- [ ] Validación física con presencia real (F109).
