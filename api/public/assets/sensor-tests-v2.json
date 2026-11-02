@@ -36,8 +36,8 @@
       "id": "radar_outside",
       "order": 3,
       "device": "presencia",
-      "title": "Radar · fuera",
-      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Verificar». No hace falta medir distancia: comprobamos solo que el radar deja de detectarte por presencia.",
+      "title": "Radar · comprobar exterior (presencia)",
+      "action": "Ponte en el punto exterior donde NO quieres que te detecte y pulsa «Verificar». Esto NO es una calibración de distancia: solo comprobamos que el radar deja de detectarte por presencia.",
       "expected": "El radar deja de detectar presencia en el punto exterior, vuelve a detectarte al entrar y no crea visitas, grabaciones ni luces falsas.",
       "rule": "radar_outside",
       "params": {

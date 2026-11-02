@@ -1037,6 +1037,8 @@ para Tuya cloud.
   `detection_delay=0.1`, `fading_time=15.5`. `startRun`/`resetRun` la aplican y
   esperan confirmación por push; si no confirma, `409 radar_baseline_failed`.
   La calibración anterior se archiva en `devices.meta_json.calibration_previous`.
+- **Aplicación**: el candidato interior se aplica tanto al validar como al pulsar
+  «Continuar»; nunca se comprueba el exterior con la base 6,0 m.
 - **Modelo**: sesión v5 `distance_inside_only_v1`. El interior se mide con pasos
   laterales de 20–30 cm; la dispersión lateral no invalida la medida (se usa la
   mediana de todas las lecturas positivas). El alcance es `mediana interior +

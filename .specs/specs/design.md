@@ -25624,7 +25624,8 @@ Comprobado el 2026-11-02:
   no exige coherencia entre pasos; usa todas las lecturas positivas y su mediana.
 - `RadarCalibrationPlanner::insideOnlyCandidate()` calcula
   `snap(interior + 0,10)`; devuelve `null` si no queda margen.
-- Al aprobar `radar_inside`, el controlador aplica el candidato con
+- Al aprobar `radar_inside` —tanto por `attempt/check` como por el botón
+  «Continuar»— el controlador aplica el candidato con
   `ZigbeeRadarCalibrationService::apply(..., persist=true)` y pasa a
   `OUTSIDE_MEASURE`.
 - `OUTSIDE_MEASURE` no exige DP 9: usa `outsideEvidenceState()`.

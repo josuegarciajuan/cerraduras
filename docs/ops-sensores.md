@@ -313,8 +313,11 @@ alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
 1. Puerta/polaridad.
 2. Radar interior: punto más alejado donde SÍ debe detectarse; pasos laterales
    de 20–30 cm y volver al centro; pulsar «Medir».
-3. Validar interior. La app usa la mediana y acepta la dispersión lateral.
-4. Verificar el exterior solo por presencia. Si detecta, baja 0,15 m; si no
+3. Validar/Continuar interior. Ambos aplican el alcance `mediana + 0,10 m`
+   antes de pasar al exterior. La app usa la mediana y acepta la dispersión
+   lateral.
+4. Comprobar el exterior solo por presencia. Esto no es una calibración de
+   distancia; la app solo verifica que el alcance aplicado ya no te detecta. Si detecta, baja 0,15 m; si no
    queda margen, se detiene con `inside_only_no_separation`.
 5. Reentrada.
 6. Luz: preparación OFF, encender, apagar, validar.
