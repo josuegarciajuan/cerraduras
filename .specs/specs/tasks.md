@@ -11347,7 +11347,7 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Una muestra positiva fresca aceptada; varias exigen coherencia.
 - [x] `configKey` SHA-256 de 64 caracteres.
 - [x] Tests de una muestra, cero y longitud de huella.
-- [ ] Desplegar y verificar con datos reales.
+- [x] Desplegado y verificado: huella de 64 caracteres coincide con los ajustes vigentes.
 
 ## TSK-F108-10: Despliegue y aceptación
 - [x] Migraciones `0136`/`0137` aplicadas.
