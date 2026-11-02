@@ -1154,6 +1154,8 @@ final class SensorWizardController
             'outside_point' => $session['outside_point'] ?? null,
             // F107: evidencia DP 9 en modo sombra; no decide todavía.
             'distance_mode' => $distanceEvidence['mode'],
+            'distance_authority' => (string) ($session['model'] ?? '') === 'distance_evidence_v1'
+                ? 'distance_evidence' : 'legacy',
             'distance_point' => $distanceEvidence['point'],
             'distance_query' => $distanceEvidence['query'],
             'inside_valid' => $session['inside_valid'] ?? null,
@@ -1234,9 +1236,10 @@ final class SensorWizardController
         $roomId = (int) $run['room_id'];
         $baseline = (array) ($run['calibration']['initial_settings'] ?? []);
         $current = $this->latestSettings($roomId);
+        $distanceAuthority = $this->radarDistanceAuthorityActive();
         return [
-            'version' => 3,
-            'model' => 'outside_point_v1',
+            'version' => $distanceAuthority ? 4 : 3,
+            'model' => $distanceAuthority ? 'distance_evidence_v1' : 'outside_point_v1',
             'config_version' => 1,
             'phase' => 'INSIDE',
             'state' => 'IDLE',
@@ -2126,6 +2129,22 @@ final class SensorWizardController
                     $settings,
                     $this->radarPointOptions()
                 );
+                if ((string) ($session['model'] ?? '') === 'distance_evidence_v1') {
+                    // F108/RF-243: en sesiones nuevas la distancia y su
+                    // suficiencia las manda DP 9. La presencia sigue siendo
+                    // una señal independiente del radar.
+                    $distancePoint = $this->radarDistancePointForWindow(
+                        (int) $run['room_id'],
+                        (string) $active['window_start'],
+                        $windowEnd,
+                        $settings
+                    );
+                    $point = $this->distancePointAsPoint(
+                        $distancePoint,
+                        (bool) ($point['detected'] ?? false)
+                    );
+                    $measurement['distance_authority'] = 'distance_evidence';
+                }
                 $measurement = $this->applyPointMeasurement($measurement, $point, $mPhase);
                 $session['point_attempts'][$mPhase] =
                     (int) ($session['point_attempts'][$mPhase] ?? 0) + 1;
@@ -3443,6 +3462,87 @@ final class SensorWizardController
         );
         $point['attempt'] = (int) ($session['point_attempts'][$phase] ?? 0) + 1;
         return $point;
+    }
+
+    private function radarDistanceAuthorityActive(): bool
+    {
+        return strtolower(trim((string) (getenv('RADAR_DISTANCE_EVIDENCE_MODE') ?: 'off'))) === 'active';
+    }
+
+    /**
+     * F108/RF-243: punto calculado exclusivamente con evidencia DP 9.
+     *
+     * @param array<string,mixed> $settings
+     * @return array<string,mixed>
+     */
+    private function radarDistancePointForWindow(
+        int $roomId,
+        string $windowStart,
+        string $windowEnd,
+        array $settings
+    ): array {
+        $repo = new RadarDistanceReportRepository($this->pdo());
+        $reports = $repo->recentForRoom($roomId, $windowStart, 300);
+        return RadarDistancePointMeasurement::analyze(
+            $reports,
+            $windowStart,
+            $windowEnd,
+            [
+                'min_samples' => 2,
+                'min_span_seconds' => 5,
+                'tolerance' => 0.30,
+                'coverage' => 0.80,
+                'device_id' => $this->radarDeviceIdForRoom($roomId),
+                'config_key' => RadarDistanceReport::configKey($settings),
+            ]
+        );
+    }
+
+    /**
+     * Adapta el resultado de evidencia DP 9 al contrato interno que ya usan
+     * el planificador y la UI. `detected` sigue viniendo de presencia; la
+     * distancia y su suficiencia vienen exclusivamente de DP 9.
+     *
+     * @param array<string,mixed> $distance
+     * @return array<string,mixed>
+     */
+    private function distancePointAsPoint(array $distance, bool $detected): array
+    {
+        return [
+            'status' => (string) ($distance['status'] ?? 'insufficient'),
+            'sufficient' => ($distance['sufficient'] ?? false) === true,
+            'reason' => (string) ($distance['reason'] ?? 'insufficient'),
+            'help' => RadarPointMeasurement::HELP_NONE,
+            'window' => $distance['window'] ?? null,
+            'window_seconds' => $distance['window_seconds'] ?? null,
+            'reports' => (int) ($distance['reports'] ?? 0),
+            'has_reports' => (int) ($distance['reports'] ?? 0) > 0,
+            'last_report_at' => $distance['last_report_at'] ?? null,
+            'last_report_age_seconds' => null,
+            'last_distance' => $distance['median'] ?? null,
+            'last_distance_at' => $distance['positive_last_at'] ?? null,
+            'repeated_values' => 0,
+            'presence_reports' => (int) ($distance['positive_reports'] ?? 0),
+            'detected' => $detected,
+            'last_value' => $detected ? 'PRESENT' : 'ABSENT',
+            'observations' => [],
+            'fresh_readings' => (int) ($distance['positive_reports'] ?? 0),
+            'readings' => $distance['readings'] ?? [],
+            'all_positive_readings' => $distance['cluster'] ?? [],
+            'cluster' => $distance['cluster'] ?? [],
+            'excluded' => $distance['excluded'] ?? [],
+            'mean' => $distance['mean'] ?? null,
+            'min' => $distance['min'] ?? null,
+            'max' => $distance['max'] ?? null,
+            'spread' => $distance['spread'] ?? null,
+            'median' => $distance['median'] ?? null,
+            'tolerance' => $distance['tolerance'] ?? 0.30,
+            'min_samples' => $distance['min_samples'] ?? 2,
+            'positive_span_seconds' => $distance['positive_span_seconds'] ?? null,
+            'discarded_device' => $distance['discarded_device'] ?? 0,
+            'discarded_config' => $distance['discarded_config'] ?? 0,
+            'frozen' => $distance['frozen'] ?? false,
+        ];
     }
 
     /**

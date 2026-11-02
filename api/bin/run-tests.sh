@@ -7902,6 +7902,34 @@ else
 fi
 
 # =============================================================================
+# BLOCK 76 — F108: autoridad única de sesión
+# Trazabilidad: RF-243 · design.md §108 Fase 5
+# =============================================================================
+block "BLOCK 76 — F108: autoridad única de sesión"
+
+if php tests/Unit/RadarWizardV3Test.php >/tmp/f108-wizard5.log 2>&1; then
+    pass "F108: adaptación DP 9 al contrato del asistente"
+else
+    fail "F108: unit RadarWizardV3" "$(tail -20 /tmp/f108-wizard5.log | head -c 600)"
+fi
+
+if grep -q "distance_evidence_v1" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "radarDistancePointForWindow" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distancePointAsPoint" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "distance_authority" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "version' => \$distanceAuthority ? 4 : 3" src/Http/Controllers/SensorWizardController.php; then
+    pass "F108: sesión nueva y autoridad DP 9 cableadas"
+else
+    fail "F108: autoridad de sesión" "faltan modelo, adaptador o versión"
+fi
+
+if ! grep -q "requestRadarDistanceQuery" src/Http/Controllers/SensorWizardController.php; then
+    pass "F108: no se reintroduce consulta directa"
+else
+    fail "F108: consulta directa" "queda una llamada"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

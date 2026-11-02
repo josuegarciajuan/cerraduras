@@ -146,6 +146,27 @@ $copy105 = $withPoint->invoke($controller,
 check('F105: la UI pide mover los brazos', str_contains($copy105['instruction'], 'mueve los brazos'));
 check('F105: progreso 1 de 2', str_contains($copy105['message'], '1 de 2'));
 
+// ── F108: autoridad por evidencia DP 9 ───────────────────────────────
+$asPoint = new ReflectionMethod($controller, 'distancePointAsPoint');
+$asPoint->setAccessible(true);
+$distance = [
+    'status' => 'accepted', 'sufficient' => true, 'reason' => 'ok',
+    'window' => ['started_at' => '2026-11-02T09:00:00Z', 'ended_at' => '2026-11-02T09:00:30Z'],
+    'window_seconds' => 30, 'reports' => 3, 'positive_reports' => 2,
+    'readings' => [['at' => '2026-11-02T09:00:05Z', 'distance' => 2.71]],
+    'cluster' => [2.71, 2.71], 'excluded' => [], 'mean' => 2.71,
+    'min' => 2.71, 'max' => 2.71, 'spread' => 0.0, 'median' => 2.71,
+    'tolerance' => 0.30, 'min_samples' => 2, 'positive_span_seconds' => 5.0,
+    'positive_last_at' => '2026-11-02T09:00:10Z', 'discarded_device' => 0,
+    'discarded_config' => 0, 'frozen' => true,
+];
+$legacy = $asPoint->invoke($controller, $distance, true);
+same('F108: distancia DP9 manda en la media', $legacy['mean'], 2.71);
+same('F108: muestra suficiente', $legacy['sufficient'], true);
+same('F108: presencia se conserva aparte', $legacy['detected'], true);
+same('F108: lecturas nuevas = positivas', $legacy['fresh_readings'], 2);
+same('F108: ayuda neutra', $legacy['help'], 'none');
+
 // ── F106: diagnóstico de "sin mensajes" frente a "sin distancia" ──────
 $diagPoint = $pointBad;
 $diagPoint['reports'] = 2;

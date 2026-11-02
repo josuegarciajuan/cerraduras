@@ -15843,3 +15843,11 @@ Aditivo en `distance_point`:
 
 `device_id` y `config_key` se usan como filtros internos; no se exponen como
 datos de otras salas.
+
+### F108 Fase 5 — autoridad
+
+- `distance_authority`: `legacy|distance_evidence`.
+- En una sesión `distance_evidence_v1`, `point` refleja la evidencia DP 9 para
+  distancia y suficiencia; `detected` sigue viniendo de presencia.
+- Las sesiones v3 anteriores no cambian de significado.
+- La activación real queda para la fase de despliegue/prueba física.

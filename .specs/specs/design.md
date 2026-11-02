@@ -25467,3 +25467,17 @@ marcará como `unattributed` en la siguiente fase.
   marca `frozen=true` cuando ya ha cerrado; no recalcula con `now`.
 - Migración `0137` añade `config_key` a `radar_distance_reports`.
 - El mapper guarda la huella de configuración junto a cada reporte.
+
+### F108 Fase 5 — autoridad única
+
+- `newRadarSession()` crea versión 4 / modelo `distance_evidence_v1` cuando
+  `RADAR_DISTANCE_EVIDENCE_MODE=active`; en `shadow`/`off` mantiene la v3.
+- En una sesión v4, el `MEASURE` usa `RadarDistancePointMeasurement` para
+  suficiencia, media y dispersión.
+- La presencia sigue siendo una señal independiente: `detected` se toma del
+  análisis de eventos; la distancia no la sustituye.
+- `distancePointAsPoint()` adapta el resultado DP 9 al contrato interno del
+  planificador y la UI.
+- `/radar/state` expone `distance_authority` (`legacy|distance_evidence`).
+- Las corridas v3 existentes no se reinterpretan.
+- La producción permanece en `shadow` hasta la fase de despliegue/validación.
