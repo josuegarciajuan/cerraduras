@@ -11333,8 +11333,9 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 ## TSK-F108-08: Consulta acotada en medición
 - [x] No aplica: Fase 2 no acreditó consulta directa.
 - [x] No se envían órdenes `distance_query` en el flujo normal.
-- [x] La UI no debe prometer respuesta en tiempo real.
-- [ ] Eliminar la heurística `origin=query` (Fase 3).
+- [x] La UI no promete respuesta en tiempo real.
+- [x] Heurística `origin=query` eliminada en Fase 3.
+- [x] BLOCK 79 de verificación de ausencia de consultas.
 
 ## TSK-F108-09: Pruebas y regresión
 - [ ] Units, integración, UI y latencia.

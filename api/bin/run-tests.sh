@@ -7989,6 +7989,35 @@ else
 fi
 
 # =============================================================================
+# BLOCK 79 — F108: consulta acotada no aplicable
+# Trazabilidad: RF-240, RF-247 · design.md §108 Fase 8
+# =============================================================================
+block "BLOCK 79 — F108: consulta acotada no aplicable"
+
+if ! grep -q "distance_query" bin/zigbee-ingress/publish-json.js \
+    && ! grep -q "distance_query" ../docs/zigbee2mqtt/external_converters/zy-m100-distance-evidence.js \
+    && ! grep -q "requestRadarDistanceQuery" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -q "RADAR_DISTANCE_QUERY_ENABLED" src/Http/Controllers/SensorWizardController.php; then
+    pass "F108: sin publicador ni llamada de consulta directa"
+else
+    fail "F108: consulta retirada" "queda un camino de consulta"
+fi
+
+if grep -q "^RADAR_DISTANCE_QUERY_ENABLED=false$" .env.example \
+    && grep -q "no disponible en este firmware" public/assets/sensor-wizard-v2.js \
+    && grep -q "ZIGBEE_DELIVERY_FAILED" ../docs/hardware/radar-distance-query-f108.md; then
+    pass "F108: consulta desactivada y documentada"
+else
+    fail "F108: cierre de consulta" "falta configuración, texto o evidencia"
+fi
+
+if ! grep -RqsE --exclude-dir=node_modules "setInterval|while *\( *true *\)" bin/zigbee-ingress 2>/dev/null; then
+    pass "F108: sin bucles de consulta en ingreso"
+else
+    fail "F108: bucle de consulta" "setInterval/while(true) encontrado"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

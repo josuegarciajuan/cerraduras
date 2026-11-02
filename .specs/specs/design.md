@@ -25510,3 +25510,16 @@ marcará como `unattributed` en la siguiente fase.
   confundirlo con la evidencia DP 9.
 - La consulta directa se presenta como **no disponible**, nunca como enviada o
   confirmada.
+
+### F108 Fase 8 — consulta acotada (no aplicable)
+
+La Fase 2 demostró `ZIGBEE_DELIVERY_FAILED`; no existe consulta directa
+funcional. Por tanto:
+
+- no se implementan consultas acotadas;
+- no queda publicador de `distance_query`;
+- no queda llamada desde el controlador;
+- la UI muestra que la consulta no está disponible;
+- no se crean temporizadores ni workers de consulta.
+
+Esta fase se cierra por evidencia, no por ausencia de implementación.
