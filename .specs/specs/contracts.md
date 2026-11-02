@@ -15703,3 +15703,26 @@ ventana no ha terminado. `restore` no exige intento activo.
 - Al agotar intentos: `STOPPED` con `inside_point_*` u `outside_point_*`.
 - Cálculo: `outside_not_farther` si la media exterior no es mayor;
   `points_too_close` si la separación no supera la tolerancia.
+
+## §F106 Diagnóstico de captura del radar
+
+Aditivo en `point` de `GET /dashboard-api/sensores/v2/radar/state`:
+
+- `window_seconds`: duración de la ventana analizada.
+- `has_reports`: `true` si llegó al menos un evento de presencia del radar.
+- `first_report_at`, `last_report_at`: instantes del primer y último reporte.
+- `last_report_age_seconds`: segundos desde el último reporte hasta el cierre de
+  la ventana.
+- `last_distance`, `last_distance_at`: última distancia positiva observada,
+  aunque fuera repetida.
+- `repeated_values`: número de valores positivos repetidos que no cuentan como
+  lectura nueva.
+
+Motivos nuevos de `point.reason`:
+
+- `no_reports`: la ventana no recibió ningún evento del radar.
+- `not_present`: llegaron eventos, pero ninguno indicó presencia.
+
+`STOPPED` mantiene `inside_point_*` y `outside_point_*`; el mensaje distingue
+silencio del sensor, ausencia de presencia y falta de lecturas nuevas. No hay
+rutas nuevas ni cambios de forma incompatibles.

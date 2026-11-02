@@ -7042,6 +7042,34 @@ else
 fi
 
 # =============================================================================
+# BLOCK 68F — F106: diagnóstico de captura del radar
+# Trazabilidad: RF-227…RF-229
+# =============================================================================
+block "BLOCK 68F — F106: diagnóstico de captura del radar"
+
+if php tests/Unit/RadarPointMeasurementTest.php >/tmp/f106-point.log 2>&1; then
+    pass "F106: diagnóstico de ventana en el dominio"
+else
+    fail "F106: unit RadarPointMeasurement" "$(tail -20 /tmp/f106-point.log | head -c 600)"
+fi
+
+if php tests/Unit/RadarWizardV3Test.php >/tmp/f106-wizard.log 2>&1; then
+    pass "F106: mensajes de silencio y falta de evidencia"
+else
+    fail "F106: unit RadarWizardV3" "$(tail -20 /tmp/f106-wizard.log | head -c 600)"
+fi
+
+if grep -q "no_reports" src/Domain/Sensors/RadarPointMeasurement.php \
+    && grep -q "last_report_age_seconds" src/Domain/Sensors/RadarPointMeasurement.php \
+    && grep -q "El radar no envió datos" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "Mensajes del radar: 0" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "No ha llegado ningún mensaje del radar" public/assets/sensor-wizard-v2.js; then
+    pass "F106: diagnóstico cableado en dominio, controlador y UI"
+else
+    fail "F106: cableado" "faltan motivos, diagnóstico o aviso de la UI"
+fi
+
+# =============================================================================
 # BLOCK 68D — F104.3: polaridad estable y arranque cerrado de la puerta
 # Trazabilidad: RF-219, RF-220
 # =============================================================================

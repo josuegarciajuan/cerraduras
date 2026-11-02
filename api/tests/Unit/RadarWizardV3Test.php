@@ -146,5 +146,43 @@ $copy105 = $withPoint->invoke($controller,
 check('F105: la UI pide mover los brazos', str_contains($copy105['instruction'], 'mueve los brazos'));
 check('F105: progreso 1 de 2', str_contains($copy105['message'], '1 de 2'));
 
+// ── F106: diagnóstico de "sin mensajes" frente a "sin distancia" ──────
+$diagPoint = $pointBad;
+$diagPoint['reports'] = 2;
+$diagPoint['has_reports'] = true;
+$diagPoint['window_seconds'] = 30;
+$diagPoint['last_report_age_seconds'] = 7;
+$diagPoint['last_distance'] = 2.71;
+$diagPoint['repeated_values'] = 2;
+$copyDiag = $withPoint->invoke($controller,
+    ['title' => 'X', 'instruction' => 'Y', 'message' => 'Z'], $diagPoint,
+    ['state' => 'MEASURING', 'phase' => 'INSIDE']);
+check('F106: la UI muestra mensajes y último reporte', str_contains($copyDiag['message'], 'Mensajes del radar: 2 en 30 s'));
+check('F106: la UI muestra edad del último reporte', str_contains($copyDiag['message'], 'último hace 7 s'));
+check('F106: la UI muestra distancia repetida', str_contains($copyDiag['message'], '2 valores repetidos'));
+
+$copyNoReports = $copy->invoke($controller, sess([
+    'phase' => 'INSIDE',
+    'state' => 'STOPPED',
+    'result' => 'inside_point_no_reports',
+    'last_measurement' => [
+        'phase' => 'INSIDE',
+        'point' => ['reports' => 0, 'has_reports' => false, 'window_seconds' => 30],
+    ],
+]));
+same('F106: distingue sensor en silencio', $copyNoReports['title'], 'El radar no envió datos');
+same('F106: informa cero mensajes', $copyNoReports['message'], 'Mensajes del radar en la ventana: 0.');
+
+$copyNotPresent = $copy->invoke($controller, sess([
+    'phase' => 'INSIDE',
+    'state' => 'STOPPED',
+    'result' => 'inside_point_not_present',
+    'last_measurement' => [
+        'phase' => 'INSIDE',
+        'point' => ['reports' => 4, 'has_reports' => true, 'window_seconds' => 30],
+    ],
+]));
+same('F106: distingue envío sin presencia', $copyNotPresent['title'], 'El radar no detecta presencia');
+
 echo "\nTotal: {$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

@@ -91,7 +91,21 @@ check('ceros registrados', count($zeroOnly['observations']) === 2);
 
 $empty = analyze([]);
 same('sin reportes → sin detección', $empty['status'], 'not_detected');
+same('sin reportes → motivo no_reports', $empty['reason'], 'no_reports');
+same('sin reportes → has_reports false', $empty['has_reports'], false);
+same('sin reportes → sin último reporte', $empty['last_report_at'], null);
 same('no usa semilla', $empty['fresh_readings'], 0);
+
+$absentOnly = analyze([ev(2, 0, 'ABSENT'), ev(8, 0, 'ABSENT')]);
+same('solo ausencias → not_present', $absentOnly['reason'], 'not_present');
+same('solo ausencias → sí hubo reportes', $absentOnly['has_reports'], true);
+
+$diag = analyze([ev(2, 2.84), ev(8, 2.84), ev(14, 2.84)]);
+same('diagnóstico: reportes de la ventana', $diag['reports'], 3);
+same('diagnóstico: último reporte', $diag['last_report_at'], '2023-11-14T22:13:34.000Z');
+same('diagnóstico: edad del último reporte', $diag['last_report_age_seconds'], 16);
+same('diagnóstico: última distancia observada', $diag['last_distance'], 2.84);
+same('diagnóstico: valores repetidos', $diag['repeated_values'], 2);
 
 $config = analyze([ev(2, 2.84, 'PRESENT', ['maximum_range' => 6.0])]);
 same('cambio de configuración → no aceptado', $config['status'], 'config_changed');

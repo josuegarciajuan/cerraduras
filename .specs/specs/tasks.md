@@ -11188,3 +11188,26 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Units de dominio y planificador.
 - [ ] Regresión completa.
 - [ ] Prueba física en sala 14.
+
+# Fase 106 — Tareas
+
+## TSK-F106-01: Diagnóstico de ventana
+- [x] Añadir `has_reports`, `last_report_at`, `last_report_age_seconds`,
+      `last_distance`, `repeated_values` y `window_seconds` a
+      `RadarPointMeasurement`.
+- [x] Motivos `no_reports` y `not_present`.
+
+## TSK-F106-02: Mensajes del asistente
+- [x] Distinguir «El radar no envió datos», «no detecta presencia» y
+      «sin lecturas nuevas».
+- [x] Instrucción de mover brazos y cuerpo o dar un paso corto.
+
+## TSK-F106-03: UI
+- [x] `pointText` muestra mensajes, último reporte, distancia y repetidos.
+- [x] Aviso visible cuando la ventana termina con cero mensajes.
+
+## TSK-F106-04: Verificación
+- [x] Ampliar `RadarPointMeasurementTest` y `RadarWizardV3Test`.
+- [x] BLOCK 68F del runner.
+- [ ] Regresión completa.
+- [ ] Repetir la prueba física en la sala 14.

@@ -2946,10 +2946,36 @@ final class SensorWizardController
                 return ['title' => 'Puntos demasiado próximos', 'instruction' => 'Las medias exterior e interior están demasiado próximas para proponer un alcance fiable. Repite la medición de ambos puntos.', 'message' => 'No se ha aplicado ningún alcance.'];
             }
             if (str_starts_with($reason, 'inside_point_') || str_starts_with($reason, 'outside_point_')) {
+                $point = is_array($session['last_measurement']['point'] ?? null)
+                    ? (array) $session['last_measurement']['point'] : [];
+                $reports = (int) ($point['reports'] ?? 0);
+                if (str_contains($reason, 'no_reports') || (!isset($point['has_reports']) && $reports === 0)) {
+                    return [
+                        'title' => 'El radar no envió datos',
+                        'instruction' => 'No se ha aplicado ningún ajuste. Durante la ventana no llegó ningún mensaje del radar. '
+                            . 'Este sensor solo publica cuando cambia lo que detecta: da un paso o mueve el cuerpo entero '
+                            . '(mover solo los brazos puede no cambiar la distancia) y repite la medición.',
+                        'message' => 'Mensajes del radar en la ventana: 0.',
+                    ];
+                }
+                if (str_contains($reason, 'not_present')) {
+                    return [
+                        'title' => 'El radar no detecta presencia',
+                        'instruction' => 'No se ha aplicado ningún ajuste. El radar sí envió mensajes, pero ninguno indicó presencia '
+                            . 'en ese punto. Revisa la posición, la línea de visión y que estés dentro del alcance configurado.',
+                        'message' => $this->radarPointDiagnostics($point),
+                    ];
+                }
                 $why = str_contains($reason, 'incoherent_readings')
                     ? 'Las lecturas no eran coherentes entre sí.'
                     : 'No se obtuvieron dos lecturas nuevas de distancia.';
-                return ['title' => 'Medición del punto sin evidencia', 'instruction' => 'No se ha aplicado ningún ajuste. ' . $why . ' Repite la medición moviendo ligeramente los brazos si faltan lecturas.', 'message' => $reason];
+                return [
+                    'title' => 'Medición del punto sin evidencia',
+                    'instruction' => 'No se ha aplicado ningún ajuste. ' . $why
+                        . ' Repite la medición moviendo los brazos y el cuerpo; si el radar detecta pero repite la misma distancia, '
+                        . 'da un paso corto y vuelve al punto.',
+                    'message' => $this->radarPointDiagnostics($point),
+                ];
             }
             if (str_starts_with($reason, 'outside_distance_missing')) {
                 return ['title' => 'Sin distancia exterior', 'instruction' => 'El radar te detecta pero no reporta distancia en ese punto. Muévete ligeramente y repite la medición.', 'message' => $reason];
@@ -3427,20 +3453,53 @@ final class SensorWizardController
             ? 'Permanece en el punto exterior donde NO quieres que te detecte'
             : 'Permanece en el punto interior más alejado donde SÍ quieres que te detecte';
         $help = (string) ($point['help'] ?? RadarPointMeasurement::HELP_NONE);
+        $diag = $this->radarPointDiagnostics($point);
         if ($help === RadarPointMeasurement::HELP_MOVE_ARMS) {
-            $copy['instruction'] = $where . '. Si no llegan lecturas nuevas, mueve los brazos 5 segundos sin mover los pies.';
-            $copy['message'] = 'Lecturas válidas: ' . (int) ($point['fresh_readings'] ?? 0)
+            $copy['instruction'] = $where . '. Si no llegan lecturas nuevas, mueve los brazos y el cuerpo durante 5 segundos; '
+                . 'si el radar repite la misma distancia, da un paso corto y vuelve al punto.';
+            $copy['message'] = 'Lecturas nuevas: ' . (int) ($point['fresh_readings'] ?? 0)
                 . ' de ' . (int) ($point['min_samples'] ?? 2)
-                . '. Necesitamos al menos dos distancias nuevas y coherentes.';
+                . '. Necesitamos dos distancias nuevas y coherentes. ' . $diag;
         } elseif ($help === RadarPointMeasurement::HELP_POSITION) {
-            $copy['instruction'] = $where . '. El radar no está detectando en este punto.';
-            $copy['message'] = 'Comprueba la posición y que el radar tenga línea de visión.';
+            $copy['instruction'] = $where . (
+                ($point['has_reports'] ?? false) === true
+                    ? '. El radar envía mensajes pero no detecta presencia en este punto.'
+                    : '. No ha llegado ningún mensaje del radar en esta ventana.'
+            );
+            $copy['message'] = $diag . ' Comprueba la posición y que el radar tenga línea de visión.';
         } elseif ($help === RadarPointMeasurement::HELP_REPEAT) {
             $copy['instruction'] = $where . '. Las lecturas no son coherentes; mantén la posición y repite la medición.';
             $copy['message'] = 'Dispersión observada: ' . self::meters($point['spread'] ?? null)
                 . ' · tolerancia ' . self::meters($point['tolerance'] ?? null) . '.';
         }
         return $copy;
+    }
+
+    /**
+     * F106/RF-227: diagnóstico de la ventana. Distingue "el sensor no envió
+     * nada" de "envió mensajes pero la distancia no cambió", sin inventar
+     * lecturas ni medir distancias a mano.
+     *
+     * @param array<string,mixed> $point
+     */
+    private function radarPointDiagnostics(array $point): string
+    {
+        $reports = (int) ($point['reports'] ?? 0);
+        $window = (int) ($point['window_seconds'] ?? 0);
+        $parts = ['Mensajes del radar: ' . $reports . ($window > 0 ? ' en ' . $window . ' s' : '')];
+        $age = $point['last_report_age_seconds'] ?? null;
+        if ($reports > 0 && is_numeric($age)) {
+            $parts[] = 'último hace ' . (int) $age . ' s';
+        } elseif ($reports === 0) {
+            $parts[] = 'no llegó ningún reporte';
+        }
+        if (isset($point['last_distance']) && is_numeric($point['last_distance'])) {
+            $parts[] = 'última distancia ' . self::meters($point['last_distance']);
+        }
+        if (isset($point['repeated_values']) && (int) $point['repeated_values'] > 0) {
+            $parts[] = (int) $point['repeated_values'] . ' valores repetidos';
+        }
+        return implode(' · ', $parts) . '.';
     }
 
     private static function meters(mixed $value): string
