@@ -16,6 +16,29 @@ workers y diagnósticos manuales que se dejen corriendo.
 - Regresión automática: BLOCK 35 del runner (marcadores F78) y guardia en `start-all.sh`.
 - Detalle e histórico: `design.md` §42 (F78 / RF-101).
 
+## Diagnóstico de la luz Zigbee (F112)
+
+Si en una sesión futura se reporta que **«la luz Zigbee no responde»**:
+
+1. **No cortar la alimentación ni reemparejar todavía.** El corte recupera el
+   dispositivo pero destruye la evidencia.
+2. Leer `docs/ops/diagnostico-luz-zigbee.md` y seguir su protocolo.
+3. Exportar la evidencia persistida:
+
+   ```bash
+   curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/switch/diagnostics?room_id=14&window_minutes=120' | python3 -m json.tool
+   curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/switch/diagnostics/export?room_id=14&window_minutes=120&format=md'
+   ```
+
+4. Interpretar `published`, `reachable`, `fresh`, `reported_state` y `verdict`
+   por separado. Ninguno demuestra por sí solo actuación física.
+5. Los logs de Zigbee2MQTT están en hora local (CET, UTC+1); la API y la BD en
+   UTC. Restar una hora al log para correlacionar.
+
+La evidencia vive en `switch_command_evidence` (migración `0140`) y se conserva
+30 días por defecto (`SWITCH_EVIDENCE_RETENTION_DAYS`). Sin polling a Tuya.
+Causa raíz de los incidentes 2026-11-02/03: **no determinada**.
+
 ## Flujo obligatorio
 - No escribir código de negocio hasta que requirements, design, contracts y tasks estén aprobados.
 - Trabajar siempre en este orden:

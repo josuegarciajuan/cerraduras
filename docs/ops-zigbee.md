@@ -148,6 +148,19 @@ availability:
 - Los mensajes `<topic>/availability` solo actualizan conectividad; no cambian
   presencia, puerta, visitas ni grabaciones.
 
+## Diagnóstico de la luz (`ZBMINIL2`)
+
+Un fallo de entrega (`Delivery failed for '<nwk>'`) no se resuelve reemparejando.
+Antes de cortar la alimentación, exporta la evidencia persistida de las órdenes:
+
+```bash
+curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/switch/diagnostics?room_id=14&window_minutes=120'
+```
+
+Procedimiento completo, interpretación de veredictos y recogida de logs:
+[`diagnostico-luz-zigbee.md`](diagnostico-luz-zigbee.md).
+Los logs de Zigbee2MQTT están en CET (UTC+1); la API y la BD en UTC.
+
 ## Rollback
 
 - Poner los flags a `false` y ejecutar `bash stop-all.sh`.

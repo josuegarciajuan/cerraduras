@@ -32,9 +32,13 @@ ZBMINIL2):
    `P <= I`, la app **no** baja la sensibilidad a ciegas: se detiene y pide
    revisar la colocación/repetir la medición exterior. `Restaurar ajustes
    iniciales` revierte alcance/sensibilidad/fading/retardo y exige confirmación.
-5. **Luz**: al empezar se apaga y confirmas que está apagada; después enciendes y
-   confirmas, y por último apagas y confirmas. Una pregunta por orden. La telemetría
-   solo cuenta si es posterior a la orden; si no llega, manda tu observación.
+5. **Luz**: la app pide dejar la lámpara **apagada** y que lo confirmes. Al pulsar
+   `Empezar prueba` **se enciende automáticamente**; confirmas que encendió, la app
+   la apaga y confirmas que apagó. Una pregunta por orden. La telemetría solo cuenta
+   si es posterior a la orden; si no llega, manda tu observación. La fase se guarda
+   en el servidor: recargar no reenvía órdenes. Si algo falla, consulta
+   [`docs/ops/diagnostico-luz-zigbee.md`](diagnostico-luz-zigbee.md) **antes** de
+   cortar la alimentación.
 6. **Veredicto**: descarga el informe. `Comprobar reposo` revisa los últimos
    30 min cuando la sala lleve ese tiempo vacía (sin proceso de fondo).
 
@@ -305,6 +309,10 @@ confirmación humana y no debe mostrar “sin conexión”.
 
 Si `reachable` es `false`, **no** iniciar la prueba de luz: revisar
 alimentación/Zigbee y repetir la sonda. No se reempareja por este fallo.
+
+Si el fallo se repite o no hay confirmación, **no cortes la alimentación
+todavía**: exporta primero la evidencia y sigue
+[`diagnostico-luz-zigbee.md`](diagnostico-luz-zigbee.md).
 
 ### 12.4 Estado final esperado
 

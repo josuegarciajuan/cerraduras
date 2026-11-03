@@ -13244,7 +13244,7 @@ sesión futura no puede analizar un fallo equivalente.
 - No se introduce ningún sondeo periódico a la API REST de Tuya; el estado
   sigue llegando por push.
 
-**Estado F112:** planificado. Implementación por bloques; ver `tasks.md`.
+**Estado F112:** bloques 1–4 completados (evidencia, consulta, fases de luz y runbook `docs/ops/diagnostico-luz-zigbee.md`). Regresión y prueba física completa pendientes (bloques 5–6); ver `tasks.md`.
 
 ---
 
