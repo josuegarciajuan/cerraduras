@@ -377,13 +377,16 @@ final class SensorWizardController
         if ($stepId === 'light') {
             // F112: la fase y las confirmaciones viven en el servidor. La UI
             // puede reenviar solo lo que falte sin perder lo ya confirmado.
+            // F112: las confirmaciones viven en el servidor. Un `null` del
+            // cliente (p.ej. tras recargar) NO debe borrar lo ya confirmado.
             $persisted = (array) ($step['human'] ?? []);
             $telemetry = (array) ($step['telemetry'] ?? []);
-            $human = array_merge($persisted, $human);
-            if (!array_key_exists('telemetry_on', $human)) {
+            $provided = array_filter($human, static fn ($v): bool => $v !== null);
+            $human = array_merge($persisted, $provided);
+            if (($human['telemetry_on'] ?? null) === null) {
                 $human['telemetry_on'] = $telemetry['on'] ?? null;
             }
-            if (!array_key_exists('telemetry_off', $human)) {
+            if (($human['telemetry_off'] ?? null) === null) {
                 $human['telemetry_off'] = $telemetry['off'] ?? null;
             }
         }

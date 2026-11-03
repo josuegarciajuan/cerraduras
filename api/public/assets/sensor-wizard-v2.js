@@ -1032,10 +1032,24 @@
     } finally { busy(false); }
   }
 
+  function lightHumanFromServer() {
+    var l = lightStep() || {};
+    var h = l.human || {};
+    var tel = l.telemetry || {};
+    return {
+      prep_off: h.prep_off === true ? true : (h.prep_off === false ? false : null),
+      on: h.on === true ? true : (h.on === false ? false : null),
+      off: h.off === true ? true : (h.off === false ? false : null),
+      telemetry_on: tel.on === undefined ? null : tel.on,
+      telemetry_off: tel.off === undefined ? null : tel.off
+    };
+  }
+
   async function checkAttempt(stepId) {
     var att = activeAttemptFor(stepId);
     if (!att) { toast('Primero empieza la prueba'); return; }
-    if (stepId === 'light' && (S.human.prep_off === null || S.human.on === null || S.human.off === null)) {
+    var lightHuman = stepId === 'light' ? lightHumanFromServer() : null;
+    if (stepId === 'light' && (lightHuman.prep_off === null || lightHuman.on === null || lightHuman.off === null)) {
       toast('Completa la preparación, el encendido y el apagado');
       return;
     }
@@ -1046,7 +1060,7 @@
         run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id,
         check_id: 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)
       };
-      if (stepId === 'light') body.human = S.human;
+      if (stepId === 'light') body.human = lightHuman;
       await api(V2 + '/attempt/check', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
