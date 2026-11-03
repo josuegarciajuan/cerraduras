@@ -15983,3 +15983,8 @@ Campo aditivo:
 - No se modifican campos existentes de `/radar/state`.
 - `raw_presence_state` se conserva; `presence_report` es la evidencia auténtica.
 - Las corridas con sesión < v6 conservan su comportamiento.
+
+La implementación software F111 añade la evaluación determinista de reportes DP1:
+`detected` para cualquier `PRESENT` nuevo, `clear` solo con al menos dos `ABSENT`
+reales y último `ABSENT`, e `inconclusive` ante silencio o evidencia incompatible.
+La aceptación física no forma parte de este contrato de entrega.
