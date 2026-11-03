@@ -758,76 +758,104 @@
     return html;
   }
 
+  function lightStep() {
+    return (S.run && S.run.steps && S.run.steps.light) || null;
+  }
+  function lightPhaseOf() {
+    var l = lightStep();
+    return (l && l.phase) || 'PREPARE_OFF';
+  }
+  function lightPill(label, val) {
+    return '<span class="pill ' + (val === true ? 'ok' : val === false ? 'bad' : 'dim') + '">' + label + ': '
+      + (val === true ? 'sí' : val === false ? 'no' : 'pendiente') + '</span>';
+  }
+
   function renderLight(step) {
     var att = activeAttemptFor('light');
     if (!att) {
-      return '<div class="actions"><button class="primary" data-action="start-attempt" data-step="light">Empezar prueba</button></div>';
+      return '<div class="expect">Antes de empezar, deja la lámpara <strong>apagada</strong>.</div>'
+        + '<div class="actions"><button class="primary" data-action="start-attempt" data-step="light">Preparar prueba de luz</button></div>';
     }
-    if (S.lightPhase === 'idle') {
-      return '<div class="divider"></div><div class="expect">La prueba de luz ya estaba abierta y las confirmaciones visuales no se conservan al recargar. Cancela y repite para registrar una observación nueva.</div>'
-        + '<div class="actions"><button class="danger" data-action="cancel" data-step="light">Cancelar y repetir</button></div>';
-    }
-    var h = S.human;
+    var l = lightStep() || {};
+    var phase = lightPhaseOf();
+    var human = l.human || {};
+    var tel = l.telemetry || {};
     var html = '<div class="divider"></div>';
-    html += '<div class="row"><span class="pill ' + (h.prep_off === true ? 'ok' : h.prep_off === false ? 'bad' : 'dim') + '">Apagada al empezar: '
-      + (h.prep_off === true ? 'sí' : h.prep_off === false ? 'no' : 'pendiente') + '</span>'
-      + '<span class="pill ' + (h.on === true ? 'ok' : h.on === false ? 'bad' : 'dim') + '">Encender: '
-      + (h.on === true ? 'confirmado' : h.on === false ? 'falló' : 'pendiente') + '</span>'
-      + '<span class="pill ' + (h.off === true ? 'ok' : h.off === false ? 'bad' : 'dim') + '">Apagar: '
-      + (h.off === true ? 'confirmado' : h.off === false ? 'falló' : 'pendiente') + '</span></div>';
-    if (S.lightPhase === 'unreachable') {
-      html += '<div class="expect">La luz no responde al comando Zigbee. No sigas reintentando hasta revisar alimentación y red.</div>'
-        + '<div class="actions"><button class="primary" data-action="switch" data-on="' + esc(S.lastSwitchAction || 'OFF') + '">Comprobar de nuevo</button>'
+    html += '<div class="row">'
+      + lightPill('Apagada al empezar', human.prep_off)
+      + lightPill('Encender', human.on)
+      + lightPill('Apagar', human.off)
+      + '</div>';
+    if (phase === 'PREPARE_OFF') {
+      html += '<p class="hint">Paso 1 de 3: la lámpara debe estar apagada para que el encendido demuestre un cambio real.</p>'
+        + '<div class="actions"><button class="primary" data-action="light" data-op="prepare_off">Apagar lámpara ahora</button>'
+        + '<button class="ghost" data-action="light" data-op="confirm_prep_off" data-value="1">Ya está apagada</button>'
         + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
       return html;
     }
-    if (S.lightPhase === 'prep') {
-      html += '<p class="hint">Primero dejamos la lámpara apagada para que el encendido demuestre un cambio real.</p>'
-        + '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Apagar lámpara</button>'
+    if (phase === 'READY_TO_START') {
+      html += '<div class="expect">La lámpara está apagada. <strong>Al pulsar «Empezar prueba» se encenderá automáticamente</strong>.</div>'
+        + '<div class="actions"><button class="primary" data-action="light" data-op="start_on">Empezar prueba (encender)</button>'
+        + '<button class="ghost" data-action="light" data-op="confirm_prep_off" data-value="0">No está apagada</button>'
         + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
       return html;
     }
-    if (S.lightPhase === 'prep_sent') {
-      if (h.prep_off === false) {
-        html += '<div class="expect">La lámpara no está apagada. Vuelve a intentarlo.</div>'
-          + '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Reintentar apagado</button>'
-          + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
-      } else {
-        html += '<div class="action">¿La lámpara está apagada?</div>'
-          + '<div class="actions"><button class="primary" data-action="human" data-field="prep_off" data-value="1">Sí, está apagada</button>'
-          + '<button class="danger" data-action="human" data-field="prep_off" data-value="0">No, sigue encendida</button></div>';
-      }
-      return html;
-    }
-    if (S.lightPhase === 'ready_on') {
-      html += '<div class="actions"><button class="primary" data-action="switch" data-on="ON">Encender luz</button>'
-        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
-      return html;
-    }
-    if (S.lightPhase === 'on_sent') {
-      if (h.telemetry_on === null) html += '<p class="hint">Sin confirmación de telemetría para el encendido; tu observación manda.</p>';
-      if (h.telemetry_on === false) html += '<p class="hint">La telemetría dice que sigue apagada; se tendrá en cuenta.</p>';
+    if (phase === 'CONFIRM_ON') {
+      if (tel.on === null || tel.on === undefined) html += '<p class="hint">Sin confirmación de telemetría para el encendido; tu observación manda.</p>';
+      if (tel.on === false) html += '<p class="hint">La telemetría dice que sigue apagada; se tendrá en cuenta.</p>';
       html += '<div class="action">¿Se encendió la lámpara?</div>'
-        + '<div class="actions"><button class="primary" data-action="human" data-field="on" data-value="1">Sí, está encendida</button>'
-        + '<button class="danger" data-action="human" data-field="on" data-value="0">No, sigue apagada</button></div>';
+        + '<div class="actions"><button class="primary" data-action="light" data-op="confirm_on" data-value="1">Sí, está encendida</button>'
+        + '<button class="danger" data-action="light" data-op="confirm_on" data-value="0">No, sigue apagada</button></div>';
       return html;
     }
-    if (S.lightPhase === 'ready_off') {
-      html += '<div class="actions"><button class="primary" data-action="switch" data-on="OFF">Apagar luz</button>'
+    if (phase === 'CONFIRM_OFF') {
+      if (tel.off === null || tel.off === undefined) html += '<p class="hint">Sin confirmación de telemetría para el apagado; tu observación manda.</p>';
+      if (tel.off === false) html += '<p class="hint">La telemetría dice que sigue encendida; se tendrá en cuenta.</p>';
+      html += '<div class="action">¿Se apagó la lámpara?</div>'
+        + '<div class="actions"><button class="primary" data-action="light" data-op="confirm_off" data-value="1">Sí, está apagada</button>'
+        + '<button class="danger" data-action="light" data-op="confirm_off" data-value="0">No, sigue encendida</button></div>';
+      return html;
+    }
+    if (phase === 'READY_TO_VALIDATE') {
+      html += '<div class="expect">Encendido y apagado confirmados. Valida el paso para registrar el resultado.</div>'
+        + '<div class="actions"><button class="primary" data-action="check" data-step="light">Validar luz</button>'
+        + '<button class="ghost" data-action="light" data-op="retry">Repetir prueba de luz</button>'
         + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
       return html;
     }
-    if (S.lightPhase === 'off_sent') {
-      if (h.telemetry_off === null) html += '<p class="hint">Sin confirmación de telemetría para el apagado; tu observación manda.</p>';
-      if (h.telemetry_off === false) html += '<p class="hint">La telemetría dice que sigue encendida; se tendrá en cuenta.</p>';
-      html += '<div class="action">¿Se apagó la lámpara?</div>'
-        + '<div class="actions"><button class="primary" data-action="human" data-field="off" data-value="1">Sí, está apagada</button>'
-        + '<button class="danger" data-action="human" data-field="off" data-value="0">No, sigue encendida</button></div>';
+    if (phase === 'INDETERMINATE') {
+      html += '<div class="expect">Resultado indeterminado: no hay evidencia suficiente de encendido y apagado. Revisa la lámpara y el diagnóstico antes de repetir.</div>'
+        + '<div class="actions"><button class="primary" data-action="light" data-op="retry">Repetir prueba de luz</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
       return html;
     }
     html += '<div class="actions"><button class="primary" data-action="check" data-step="light">Validar luz</button>'
       + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
     return html;
+  }
+
+  async function lightCall(action, value) {
+    var att = activeAttemptFor('light');
+    if (!att) { toast('Primero prepara la prueba de luz'); return; }
+    busy(true);
+    try {
+      var body = { run_id: S.run.run_id, step_id: 'light', attempt_id: att.attempt_id, action: action };
+      if (value !== null && value !== undefined) body.value = !!value;
+      var data = await api(V2 + '/light/phase', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (data.order) {
+        if (!data.order.published) {
+          banner('No se pudo enviar la orden a la luz (' + (data.order.verdict || 'desconocido') + '). Revisa el diagnóstico.', 'bad');
+        } else if (data.order.telemetry === null) {
+          toast('Orden enviada. Sin telemetría de confirmación: observa la lámpara.');
+        }
+      }
+      await reloadRun();
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
   }
 
   function renderFinishCta(host) {
@@ -942,19 +970,17 @@
       S.attempt = data.attempt;
       S.attemptData = null;
       S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
-      S.lastSwitch = null;
-      S.lightPhase = stepId === 'light' ? 'prep' : 'idle';
+      S.lightPhase = 'idle';
       S.radarKey = null;
       S.doorKey = null;
       S.radarPhaseKey = null;
       S.radarState = null;
       S.radarStateKey = null;
       S.lastRadarState = null;
+      // F112: no se envia ninguna orden al crear el intento. La fase
+      // persistida (PREPARE_OFF) indica al operador el siguiente paso.
       await reloadRun();
       render();
-      if (stepId === 'light') {
-        await switchTest('OFF');
-      }
     } catch (e) {
       banner(e.message, 'bad');
       if (e.data && e.data.active) {
@@ -1064,41 +1090,6 @@
       toast(data.message || (data.applied ? 'Ajuste aplicado' : 'Ajuste no confirmado'));
       await refreshEvents();
       await loadPreflight();
-      render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  async function switchTest(action) {
-    busy(true);
-    try {
-      var phaseBefore = S.lightPhase;
-      var data = await api(V2 + '/switch/test', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_id: roomId(), action: action })
-      });
-      S.lastSwitch = data;
-      S.lastSwitchAction = action;
-      if (!data.ok) {
-        banner('No se pudo enviar la orden: ' + (data.error || 'desconocido') + '. Comprueba la lámpara antes de reintentar.', 'bad');
-        render();
-        return;
-      }
-      if (data.reachable === false) {
-        S.lightPhase = 'unreachable';
-        banner('La luz no responde. Comprueba alimentación y red Zigbee.', 'bad');
-        render();
-        return;
-      }
-      if (action === 'ON') {
-        S.lightPhase = 'on_sent';
-        S.human.telemetry_on = data.fresh ? (data.reported_state === 'ON') : null;
-      } else if (phaseBefore === 'ready_off') {
-        S.lightPhase = 'off_sent';
-        S.human.telemetry_off = data.fresh ? (data.reported_state === 'OFF') : null;
-      } else {
-        S.lightPhase = 'prep_sent';
-      }
       render();
     } catch (e) { banner(e.message, 'bad'); }
     finally { busy(false); }
@@ -1595,16 +1586,11 @@
         else if (op === 'apply-only') calibrate('apply');
         else calibrate(op);
       }
-      else if (a === 'switch') switchTest(b.getAttribute('data-on'));
-      else if (a === 'human') {
-        var f = b.getAttribute('data-field');
-        var val = b.getAttribute('data-value') === '1';
-        S.human[f] = val;
-        if (f === 'prep_off') S.lightPhase = val ? 'ready_on' : 'prep';
-        else if (f === 'on') S.lightPhase = 'ready_off';
-        else if (f === 'off') S.lightPhase = 'done';
-        render();
-      } else if (a === 'advance') advance();
+      else if (a === 'light') {
+        var lightValue = b.getAttribute('data-value');
+        lightCall(b.getAttribute('data-op'), lightValue === null ? null : lightValue === '1');
+      }
+      else if (a === 'advance') advance();
       else if (a === 'restart') restart(step);
       else if (a === 'finish') finishRun();
       else if (a === 'soak') soak();

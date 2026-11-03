@@ -11470,10 +11470,10 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
   - Verificación: purga respeta días configurados y `0` conserva.
 
 ### Bloque 3 — Calibrador
-- [ ] TSK-F112-08: fases persistidas de `light` y transiciones validadas.
-- [ ] TSK-F112-09: panel `/sensores` con preparación, aviso de encendido
+- [x] TSK-F112-08: fases persistidas de `light` y transiciones validadas.
+- [x] TSK-F112-09: panel `/sensores` con preparación, aviso de encendido
   automático, confirmaciones y reanudación.
-- [ ] TSK-F112-10: compatibilidad con intentos antiguos de luz.
+- [x] TSK-F112-10: compatibilidad con intentos antiguos de luz.
 
 ### Bloque 4 — Documentación
 - [ ] TSK-F112-11: `docs/ops/diagnostico-luz-zigbee.md` y referencias en

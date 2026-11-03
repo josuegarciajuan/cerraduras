@@ -56,8 +56,8 @@
       "order": 4,
       "device": "luz",
       "title": "Luz",
-      "action": "Enciende la luz y confirma que la lámpara encendió. Después apágala y confirma.",
-      "expected": "La orden Zigbee llega y la lámpara responde físicamente.",
+      "action": "Deja la luz apagada y confírmalo. Al pulsar «Empezar prueba» se encenderá automáticamente; después se apagará y confirmarás.",
+      "expected": "La orden Zigbee llega, la lámpara responde físicamente y queda apagada al terminar.",
       "rule": "light_test",
       "params": {
         "require_prepare_off": true
