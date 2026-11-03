@@ -25,28 +25,37 @@ final class SwitchCommandEvidenceRepository
     public function begin(array $row): bool
     {
         $stmt = $this->pdo->prepare(
-            'INSERT IGNORE INTO switch_command_evidence
+            'INSERT INTO switch_command_evidence
                 (operation_id, room_id, device_id, external_id, provider, origin, action, actor,
                  requested_at, prior_state, prior_state_at, verdict)
              VALUES
                 (:operation_id, :room_id, :device_id, :external_id, :provider, :origin, :action, :actor,
                  :requested_at, :prior_state, :prior_state_at, :verdict)'
         );
-        $stmt->execute([
-            ':operation_id' => $row['operation_id'],
-            ':room_id' => $row['room_id'],
-            ':device_id' => $row['device_id'],
-            ':external_id' => $row['external_id'],
-            ':provider' => $row['provider'],
-            ':origin' => $row['origin'],
-            ':action' => $row['action'],
-            ':actor' => $row['actor'],
-            ':requested_at' => $row['requested_at'],
-            ':prior_state' => $row['prior_state'],
-            ':prior_state_at' => $row['prior_state_at'],
-            ':verdict' => 'indeterminate',
-        ]);
-        return $stmt->rowCount() > 0;
+        try {
+            $stmt->execute([
+                ':operation_id' => $row['operation_id'],
+                ':room_id' => $row['room_id'],
+                ':device_id' => $row['device_id'],
+                ':external_id' => $row['external_id'],
+                ':provider' => $row['provider'],
+                ':origin' => $row['origin'],
+                ':action' => $row['action'],
+                ':actor' => $row['actor'],
+                ':requested_at' => self::dbDate($row['requested_at']),
+                ':prior_state' => $row['prior_state'],
+                ':prior_state_at' => self::dbDate($row['prior_state_at']),
+                ':verdict' => 'indeterminate',
+            ]);
+        } catch (PDOException $e) {
+            // Solo el operation_id duplicado es un "ya existe". Cualquier otro
+            // error (p.ej. fecha invalida) debe propagarse y verse.
+            if ((string) $e->getCode() === '23000') {
+                return false;
+            }
+            throw $e;
+        }
+        return true;
     }
 
     public function markPublished(string $operationId, string $publishedAt): void
@@ -56,7 +65,7 @@ final class SwitchCommandEvidenceRepository
                 SET publish_ok = 1, publish_error = NULL, published_at = :at
               WHERE operation_id = :op'
         );
-        $stmt->execute([':at' => $publishedAt, ':op' => $operationId]);
+        $stmt->execute([':at' => self::dbDate($publishedAt), ':op' => $operationId]);
     }
 
     public function markPublishFailed(string $operationId, string $error): void
@@ -88,11 +97,11 @@ final class SwitchCommandEvidenceRepository
         );
         $stmt->execute([
             ':reported_state' => $result['reported_state'],
-            ':reported_at' => $result['reported_at'],
+            ':reported_at' => self::dbDate($result['reported_at']),
             ':fresh' => $result['fresh'] === null ? null : ($result['fresh'] ? 1 : 0),
             ':report_source' => $result['report_source'],
             ':human_state' => $result['human_state'],
-            ':human_at' => $result['human_at'],
+            ':human_at' => self::dbDate($result['human_at']),
             ':verdict' => $result['verdict'],
             ':diagnosis' => $result['diagnosis'],
             ':op' => $operationId,
@@ -106,7 +115,36 @@ final class SwitchCommandEvidenceRepository
                 SET human_state = :state, human_at = :at
               WHERE operation_id = :op'
         );
-        $stmt->execute([':state' => $humanState, ':at' => $humanAt, ':op' => $operationId]);
+        $stmt->execute([':state' => $humanState, ':at' => self::dbDate($humanAt), ':op' => $operationId]);
+    }
+
+    /**
+     * F112: normaliza cualquier fecha a UTC `Y-m-d H:i:s.v` antes de escribir.
+     *
+     * Acepta el formato SQL y el ISO 8601 que llega por push/telemetria
+     * (`2026-11-03T15:32:01.197Z` o con desplazamiento). MariaDB en modo
+     * estricto rechaza el ISO con `T`/`Z` en una columna DATETIME(3).
+     */
+    public static function dbDate(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = trim($value);
+        if ($v === '') {
+            return null;
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/', $v) === 1) {
+            $parts = explode('.', $v, 2);
+            $micro = isset($parts[1]) ? substr($parts[1] . '000000', 0, 6) : '000000';
+            return $parts[0] . '.' . substr($micro, 0, 3);
+        }
+        try {
+            $dt = new \DateTimeImmutable($v);
+        } catch (\Throwable $e) {
+            throw new \InvalidArgumentException('invalid_datetime: ' . $v);
+        }
+        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.v');
     }
 
     /** @return array<string,mixed>|null */
