@@ -848,6 +848,8 @@
       if (data.order) {
         if (!data.order.published) {
           banner('No se pudo enviar la orden a la luz (' + (data.order.verdict || 'desconocido') + '). Revisa el diagnóstico.', 'bad');
+        } else if (data.fresh === false) {
+          toast('Orden enviada sin telemetría nueva. Observa la lámpara y confirma.');
         } else if (data.order.telemetry === null) {
           toast('Orden enviada. Sin telemetría de confirmación: observa la lámpara.');
         }

@@ -956,6 +956,7 @@ final class SensorWizardController
                 'ok' => $nextPhase !== 'INDETERMINATE',
                 'phase' => $nextPhase,
                 'order' => is_array($order) ? $order : null,
+                'fresh' => is_array($order) ? ($order['fresh'] ?? null) : null,
                 'step' => $this->lightStepView((array) ($run['steps']['light'] ?? [])),
             ]);
         } catch (Throwable $e) {
@@ -1083,6 +1084,7 @@ final class SensorWizardController
             'verdict' => (string) ($payload['verdict'] ?? 'indeterminate'),
             'published' => (bool) ($payload['published'] ?? false),
             'reachable' => (bool) ($payload['reachable'] ?? false),
+            'fresh' => $payload['fresh'] ?? null,
         ];
     }
 

@@ -69,6 +69,9 @@ truthy('resultado indeterminado visible', str_contains($js, 'Resultado indetermi
 truthy('reintento visible', str_contains($js, 'Repetir prueba de luz'));
 truthy('recarga no envia orden', !str_contains($js, "stepId === 'light') {\n        await switchTest"));
 truthy('sin handler humano antiguo', !str_contains($js, "else if (a === 'human')"));
+truthy('panel usa la frescura de la orden', str_contains($js, 'data.fresh'));
+truthy('servidor devuelve frescura', str_contains($controller, "'fresh' => is_array(\$order)"));
+truthy('orden incluye frescura', str_contains($controller, "'fresh' => \$payload['fresh'] ?? null"));
 
 // ── catalogo y validador ─────────────────────────────────────────────
 truthy('catalogo describe el nuevo flujo', str_contains($catalog, 'se encenderá automáticamente'));
