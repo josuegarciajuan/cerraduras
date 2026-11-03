@@ -13161,3 +13161,87 @@ dispersión producida por los pasos laterales no invalida la medición.
 
 **Estado F111 implementación:** RF-255…RF-260 cubiertos por TSK-F111-01…11.
 La prueba física y la aceptación de campo (TSK-F111-12) permanecen pendientes.
+
+# F112 — Diagnóstico de luz Zigbee y prueba de luz reanudable (RF-261…RF-269)
+
+## Contexto
+La luz `ZBMINIL2` (`almacen-zb-luz`) ha dejado de responder a órdenes Zigbee en
+dos ocasiones y se recuperó tras un ciclo de alimentación. La prueba de luz del
+calibrador confundía al operador («Empezar prueba» enviaba un apagado) y sus
+confirmaciones vivían solo en el navegador. Sin evidencia persistente, una
+sesión futura no puede analizar un fallo equivalente.
+
+## RF-261: Registro persistente de órdenes de luz
+- Toda orden enviada a un `SWITCH` Zigbee registra un identificador único,
+  sala, dispositivo, acción, origen, instante y actor.
+- El registro distingue, como mínimo: intención, publicación aceptada, fallo de
+  publicación, telemetría posterior y observación humana.
+- Un fallo al escribir el registro no provoca una segunda orden ni se presenta
+  como éxito.
+- El registro sobrevive a recargas del panel y a reinicios de la aplicación.
+
+## RF-262: Veredicto explícito de la orden
+- Cada operación termina en `confirmed`, `unconfirmed`, `discrepant`,
+  `publish_failed` o `indeterminate`.
+- «Publicada» no se muestra nunca como «confirmada».
+- Un estado anterior a la orden no confirma esa orden.
+- Una telemetría fresca contraria se conserva como discrepancia, no se descarta.
+
+## RF-263: Contexto de infraestructura
+- El diagnóstico conserva el contexto disponible del momento: último estado
+  reportado y su antigüedad, anuncios o reinicios del dispositivo y salud de
+  túnel, ingreso y spool.
+- Un error de Zigbee2MQTT solo se atribuye a una orden cuando la correlación es
+  fiable; si no, se presenta como evento cercano.
+- Las fuentes que no puedan obtenerse se declaran `unavailable` con su motivo;
+  no se inventan ni se rellenan con supuestos.
+- La captura no introduce sondeos REST ni consultas Zigbee en bucle.
+
+## RF-264: Consulta y exportación
+- Debe poder consultarse la evidencia por sala y ventana temporal.
+- El resumen muestra la última orden, su veredicto, el último estado reportado
+  con edad, la discrepancia con la observación humana y las fuentes ausentes.
+- Debe poder exportarse en un formato legible para análisis y en JSON técnico.
+- La exportación no incluye credenciales, claves de red ni secretos.
+
+## RF-265: Retención y protección
+- La evidencia tiene retención configurable y purga periódica; `0` significa
+  conservar.
+- Los registros se limitan en tamaño y no almacenan payloads indiscriminados.
+- El acceso sigue los mecanismos de autorización existentes del panel.
+
+## RF-266: Documentación para futuras sesiones
+- Debe existir un runbook operativo que explique qué detecta el mecanismo, qué
+  no puede demostrar, cómo consultar el último incidente y qué evidencia
+  recoger antes de reiniciar o cortar alimentación.
+- `AGENTS.md` debe referenciar ese runbook para que una sesión futura lo
+  encuentre al abordar un fallo de la luz Zigbee.
+- Los incidentes conocidos se documentan como antecedente, separando hechos de
+  hipótesis.
+
+## RF-267: Flujo de prueba de luz comprensible
+- Antes de empezar se indica que la luz debe estar apagada y se permite
+  dejarla apagada bajo demanda.
+- El operador confirma visualmente el apagado inicial.
+- El panel explica que **«Empezar prueba» encenderá la luz automáticamente**.
+- Solo la acción explícita del operador envía `ON`; después se pregunta si se
+  encendió.
+- El apagado se solicita en su propio paso y se pregunta si se apagó.
+- La telemetría y la observación humana se muestran por separado.
+
+## RF-268: Reanudación sin duplicar órdenes
+- Las fases y confirmaciones de la prueba de luz se persisten en el servidor.
+- Recargar o cerrar la pestaña reconstruye el estado sin reenviar órdenes.
+- Repetir una petición con el mismo identificador devuelve el resultado
+  conocido sin actuar de nuevo.
+- Un resultado desconocido se presenta como indeterminado, nunca como éxito.
+- Dos pestañas no pueden ejecutar la misma transición dos veces.
+
+## RF-269: Invariantes de no regresión
+- No se modifica la lógica de puerta, radar interior, radar exterior, reentrada
+  ni la base F110.
+- Los contratos existentes solo cambian de forma aditiva.
+- No se introduce ningún sondeo periódico a la API REST de Tuya; el estado
+  sigue llegando por push.
+
+**Estado F112:** planificado. Implementación por bloques; ver `tasks.md`.
