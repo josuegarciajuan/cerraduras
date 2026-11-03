@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Domain\AccessKeys\AccessKeyService;
+use App\Domain\AccessKeys\CredentialFormat;
 use App\Domain\Qr\QrCredentialRepository;
 use App\Domain\Qr\QrIssueService;
 use App\Domain\Qr\QrValidateService;
@@ -73,21 +74,32 @@ final class QrController
         $deviceId  = JsonBody::string($body, 'device_id');
         $corrId    = (string) $request->attr('correlation_id', '');
         $provider  = (string) ($request->query('provider') ?? 'TUYA');
+        $roomId    = !empty($body['room_id']) ? (int) $body['room_id'] : null;
 
-        // F96: access-key QR tokens are valid on every reader endpoint. A key
-        // token carries no room: the room is resolved from the reader device.
-        if ($this->accessKeys !== null && $this->tokenizer !== null) {
+        $claims = null;
+        if ($this->tokenizer !== null) {
             try {
                 $claims = $this->tokenizer->parse($qrText);
             } catch (\Throwable $e) {
                 $claims = null;
             }
-            if (is_array($claims) && ($claims['sub'] ?? '') === 'key') {
-                $roomId = !empty($body['room_id']) ? (int) $body['room_id'] : null;
-                return Response::json(200, $this->accessKeys->validateQrToken(
-                    $qrText, $roomId, $deviceId, $provider, $corrId
-                ));
-            }
+        }
+
+        // F96: access-key QR tokens are valid on every reader endpoint. A key
+        // token carries no room: the room is resolved from the reader device.
+        if ($this->accessKeys !== null && is_array($claims) && ($claims['sub'] ?? '') === 'key') {
+            return Response::json(200, $this->accessKeys->validateQrToken(
+                $qrText, $roomId, $deviceId, $provider, $corrId
+            ));
+        }
+
+        // F113: the R35D-B sends a plain-text NFC card id with no dots. It is
+        // validated as a ficha; tokens keep their own flow and error codes.
+        if ($this->accessKeys !== null && $claims === null
+            && CredentialFormat::isPlainTextFicha($qrText)) {
+            return Response::json(200, $this->accessKeys->validateFicha(
+                $qrText, $roomId, $deviceId, $provider, $corrId
+            ));
         }
 
         $result = $this->validateService->validate($qrText, $deviceId, $corrId);

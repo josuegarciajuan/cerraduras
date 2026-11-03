@@ -11496,12 +11496,14 @@ Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
   - Verificación: `requirements.md`, `design.md`, `contracts.md`, `tasks.md`.
 
 ## Fase 1 — Backend
-- [ ] TSK-F113-02: clasificación de credencial en `QrController`.
-  - Verificación: unitario del clasificador; token y ficha no se confunden.
-- [ ] TSK-F113-03: normalización hex en `NfcCardService` y `validateFicha`.
-  - Verificación: alta y validación con minúsculas/mayúsculas equivalentes.
-- [ ] TSK-F113-04: auditoría de ficha y motivos de denegación.
-  - Verificación: `key_access_events` con `credential_type='NFC'`.
+- [x] TSK-F113-02: clasificación de credencial en `QrController`.
+  - Verificación: `CredentialFormatTest` 21 checks; token con puntos y ficha no
+    se confunden.
+- [x] TSK-F113-03: normalización hex en `NfcCardService` y `validateFicha`.
+  - Verificación: 8/10 hex se normalizan a mayúsculas; el resto solo se recorta.
+- [x] TSK-F113-04: auditoría de ficha y motivos de denegación.
+  - Verificación: `validateFicha` existente registra `credential_type='NFC'` y
+    reutiliza los motivos de `authorise`/`deny`; unitarios 94/94 sin fallos.
 
 ## Fase 2 — Datos de prueba
 - [ ] TSK-F113-05: ficha `EM-00EFA5BB` y llave NFC de Josue (worker 172).

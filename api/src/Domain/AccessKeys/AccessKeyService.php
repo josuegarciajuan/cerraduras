@@ -503,8 +503,8 @@ final class AccessKeyService
     }
 
     /**
-     * Validate a physical NFC card code. Kept for the reader-integration work;
-     * the current readers do not send NFC credentials.
+     * Validate a physical NFC card code (F96/F113). The R35D-B reader sends
+     * the card id as plain text; it is normalised before hashing.
      *
      * @return array<string,mixed>
      */
@@ -515,7 +515,8 @@ final class AccessKeyService
         string $provider,
         string $correlationId
     ): array {
-        $card = $this->cards->findByCodeHash(hash('sha256', trim($code)));
+        $code = CredentialFormat::normaliseCode($code);
+        $card = $this->cards->findByCodeHash(hash('sha256', $code));
         if ($card === null) {
             $this->recordAccess([
                 'room_id' => $roomId,
