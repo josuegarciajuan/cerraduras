@@ -351,41 +351,52 @@ final class RadarCalibrationPlanner
      * @param array<string,mixed> $measurement
      */
     /**
-     * F110: candidato de alcance para calibración solo interior.
+     * F111: candidato de alcance para calibración solo interior.
+     *
+     * Se elige el MENOR escalón configurable que cubra la referencia interior,
+     * sin margen fijo añadido. El margen implícito es como máximo un paso de
+     * rejilla (0,15 m) y, si la referencia cae justo en la rejilla, es cero.
+     *
      * Devuelve null si la referencia no es válida o no cabe en el rango.
      *
      * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
      */
-    public static function insideOnlyCandidate(?float $insideRef, array $caps, float $margin = 0.10): ?float
+    public static function insideOnlyCandidate(?float $insideRef, array $caps): ?float
     {
         if ($insideRef === null || !is_finite($insideRef) || $insideRef <= 0) {
             return null;
         }
         $min = (float) $caps['range_min'];
+        $max = (float) $caps['range_max'];
         $step = max(0.01, (float) $caps['range_step']);
-        $raw = $insideRef + max(0.0, $margin);
-        // F110: la rejilla del radar es de 0,15 m. Se elige el primer valor
-        // que NO quede por debajo del margen solicitado.
-        $steps = (int) ceil(($raw - $min) / $step - 0.0000001);
+        // Primer escalón >= referencia. El epsilon evita subir un paso extra
+        // cuando la referencia ya está exactamente sobre la rejilla.
+        $steps = (int) ceil(($insideRef - $min) / $step - 0.0000001);
         $candidate = round($min + max(0, $steps) * $step, 3);
-        if ($candidate <= $insideRef + 0.0001 || $candidate > (float) $caps['range_max'] + 0.0001) {
+        if ($candidate < $insideRef - 0.0001) {
+            // Deriva de coma flotante: se sube un paso para no quedar por debajo.
+            $candidate = round($min + ($steps + 1) * $step, 3);
+        }
+        if ($candidate < $insideRef - 0.0001 || $candidate > $max + 0.0001) {
             return null;
         }
         return $candidate;
     }
 
     /**
-     * F110: siguiente alcance hacia abajo para dejar de detectar fuera,
-     * manteniendo un margen sobre la referencia interior.
+     * F111: siguiente alcance hacia abajo para dejar de detectar fuera.
+     * Solo se permite mientras siga cubriendo la referencia interior; ya no
+     * exige un margen fijo de 0,10 m.
      *
      * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
      */
-    public static function lowerCandidate(float $current, float $insideRef, array $caps, float $margin = 0.10): ?float
+    public static function lowerCandidate(float $current, float $insideRef, array $caps): ?float
     {
         $step = max(0.01, (float) $caps['range_step']);
         $candidate = self::snap($current - $step, $caps);
-        if ($candidate < (float) $caps['range_min'] - 0.0001
-            || $candidate <= $insideRef + max(0.0, $margin) + 0.0001) {
+        if ($candidate >= $current - 0.0001
+            || $candidate < (float) $caps['range_min'] - 0.0001
+            || $candidate < $insideRef - 0.0001) {
             return null;
         }
         return $candidate;

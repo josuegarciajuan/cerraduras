@@ -2368,7 +2368,7 @@ final class SensorWizardController
                         $currentMax = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
                             ? (float) $settings['maximum_range'] : null;
                         $lower = ($reference !== null && $currentMax !== null)
-                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3(), 0.10)
+                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3())
                             : null;
                         if ($lower === null) {
                             $session['state'] = 'STOPPED';
@@ -3874,7 +3874,7 @@ final class SensorWizardController
         $session = (array) ($run['calibration_session'] ?? []);
         $inside = $this->insideInputV3($session);
         $reference = $this->insideOnlyReference($session);
-        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->insideOnlyCapsV3(), 0.10);
+        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->insideOnlyCapsV3());
         if ($candidate === null) {
             $session['state'] = 'STOPPED';
             $session['result'] = 'inside_only_no_range';

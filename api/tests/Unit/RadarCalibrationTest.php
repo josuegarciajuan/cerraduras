@@ -238,20 +238,29 @@ $closePlan = RadarCalibrationPlanner::planFromOutsidePoint($insideMean,
     ['maximum_range' => 6, 'radar_sensitivity' => 7], $caps105);
 same('F105: medias demasiado próximas → points_too_close', $closePlan['reason'], 'points_too_close');
 
-// F110: base sin calibrar y calibración solo interior.
-$f110Caps = ['range_min' => 0.15, 'range_max' => 9.5, 'range_step' => 0.15,
+// F111: alcance mínimo que cubre la mediana, sin margen fijo de 0,10 m.
+$f111Caps = ['range_min' => 0.15, 'range_max' => 9.5, 'range_step' => 0.15,
     'sens_min' => 0, 'sens_max' => 9];
-same('F110: candidato interior 2,74 + 0,10 → 2,85', RadarCalibrationPlanner::insideOnlyCandidate(2.74, $f110Caps), 2.85);
-same('F110: candidato interior 3,35 + 0,10 → 3,45', RadarCalibrationPlanner::insideOnlyCandidate(3.35, $f110Caps), 3.45);
-same('F110: interior fuera de rango → null', RadarCalibrationPlanner::insideOnlyCandidate(null, $f110Caps), null);
-same('F110: interior en el máximo no deja margen → null', RadarCalibrationPlanner::insideOnlyCandidate(9.5, $f110Caps), null);
-same('F110: bajar 3,75 con interior 3,35 → 3,60', RadarCalibrationPlanner::lowerCandidate(3.75, 3.35, $f110Caps), 3.60);
-same('F110: no bajar si rompe el margen interior → null', RadarCalibrationPlanner::lowerCandidate(3.45, 3.35, $f110Caps), null);
-$f110MinCaps = ['range_min' => 0.6, 'range_max' => 9.5, 'range_step' => 0.15,
+same('F111: 2,74 → 2,85', RadarCalibrationPlanner::insideOnlyCandidate(2.74, $f111Caps), 2.85);
+same('F111: 3,35 → 3,45', RadarCalibrationPlanner::insideOnlyCandidate(3.35, $f111Caps), 3.45);
+// Caso del incidente 2026-11-03: [3,39; 3,46; 2,84] → mediana 3,39.
+same('F111: 3,39 → 3,45 (sin sumar 0,10)', RadarCalibrationPlanner::insideOnlyCandidate(3.39, $f111Caps), 3.45);
+// Si la mediana cae exactamente en la rejilla no se sube otro paso.
+same('F111: 3,45 sobre rejilla → 3,45', RadarCalibrationPlanner::insideOnlyCandidate(3.45, $f111Caps), 3.45);
+same('F111: 3,46 → 3,60 (primer escalón que cubre)', RadarCalibrationPlanner::insideOnlyCandidate(3.46, $f111Caps), 3.60);
+same('F111: interior fuera de rango → null', RadarCalibrationPlanner::insideOnlyCandidate(null, $f111Caps), null);
+same('F111: referencia por encima del mayor escalón → null', RadarCalibrationPlanner::insideOnlyCandidate(9.5, $f111Caps), null);
+same('F111: no bajar si queda bajo la referencia', RadarCalibrationPlanner::lowerCandidate(3.45, 3.35, $f111Caps), null);
+same('F111: bajar 3,75 con interior 3,35 → 3,60', RadarCalibrationPlanner::lowerCandidate(3.75, 3.35, $f111Caps), 3.60);
+// Antes el margen de 0,10 impedía probar 3,45 con referencia 3,39.
+same('F111: bajar 3,60 con interior 3,39 → 3,45', RadarCalibrationPlanner::lowerCandidate(3.60, 3.39, $f111Caps), 3.45);
+$f111MinCaps = ['range_min' => 0.6, 'range_max' => 9.5, 'range_step' => 0.15,
     'sens_min' => 0, 'sens_max' => 9];
-same('F110: 2,81 + 0,10 → 3,00 (nunca menos de 0,10)', RadarCalibrationPlanner::insideOnlyCandidate(2.81, $f110MinCaps), 3.0);
-same('F110: 2,80 + 0,10 → 3,00', RadarCalibrationPlanner::insideOnlyCandidate(2.80, $f110MinCaps), 3.0);
-same('F110: no bajar por debajo del mínimo 0,6', RadarCalibrationPlanner::lowerCandidate(0.70, 0.55, $f110MinCaps), null);
+same('F111: 2,81 → 2,85', RadarCalibrationPlanner::insideOnlyCandidate(2.81, $f111MinCaps), 2.85);
+same('F111: 2,80 → 2,85', RadarCalibrationPlanner::insideOnlyCandidate(2.80, $f111MinCaps), 2.85);
+same('F111: 0,70 con interior 0,55 → 0,60', RadarCalibrationPlanner::lowerCandidate(0.70, 0.55, $f111MinCaps), 0.60);
+same('F111: no repetir el mismo alcance', RadarCalibrationPlanner::lowerCandidate(0.60, 0.55, $f111MinCaps), null);
+same('F111: no bajar por debajo de la referencia', RadarCalibrationPlanner::lowerCandidate(0.70, 0.65, $f111MinCaps), null);
 same('F110: baseline 6,0 / 0,6 / sens 7 / delay 0,1 / fading 15,5',
     ZigbeeRadarCalibrationService::BASELINE,
     ['maximum_range' => 6.0, 'minimum_range' => 0.6, 'radar_sensitivity' => 7,
