@@ -1,0 +1,14 @@
+[Unit]
+Description=Cerraduras — retención de evidencia de órdenes de luz
+After=network-online.target cerraduras-api.service
+Wants=network-online.target cerraduras-api.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/cerraduras/api
+Environment=SWITCH_EVIDENCE_RETENTION_DAYS=30
+ExecStart=/usr/bin/php bin/switch-evidence-retention.php
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

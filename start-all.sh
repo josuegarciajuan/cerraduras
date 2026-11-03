@@ -168,6 +168,13 @@ else
   echo "       (unit cerraduras-radar-distance-retention.timer ausente — ejecutar 'php bin/radar-distance-retention.php --days=30')"
 fi
 
+echo "[5d3/8] Retención de evidencia de órdenes de luz (F112)..."
+if systemctl enable --now cerraduras-switch-evidence-retention.timer 2>/dev/null; then
+  echo "       switch-evidence-retention: timer diario activo"
+else
+  echo "       (unit cerraduras-switch-evidence-retention.timer ausente — ejecutar 'php bin/switch-evidence-retention.php' a mano)"
+fi
+
 echo "[5e/8] Detector de movimiento de cámaras (systemd — F88/RF-122)..."
 # F88: verificación física de presencia por diferencia de frames (local, sin cuota).
 if systemctl restart cerraduras-camera-motion 2>/dev/null; then

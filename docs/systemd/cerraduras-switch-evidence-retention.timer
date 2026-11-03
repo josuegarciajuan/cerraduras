@@ -1,0 +1,11 @@
+[Unit]
+Description=Cerraduras — retención diaria de evidencia de órdenes de luz
+
+[Timer]
+OnCalendar=*-*-* 04:40:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=cerraduras-switch-evidence-retention.service
+
+[Install]
+WantedBy=timers.target
