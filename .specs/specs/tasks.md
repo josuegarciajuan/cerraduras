@@ -11483,8 +11483,10 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
 - [x] TSK-F112-14: base ya aplicada sin push (`confirmed_by=stored_state`).
   - Verificación: `RadarBaselineTrustTest` (21 checks); corridas encadenadas
     dejan de devolver `409 radar_baseline_failed`.
-- [ ] TSK-F112-12: volcado previo, BLOCK nuevo y regresión completa con 0
+- [x] TSK-F112-12: volcado previo, BLOCK nuevo y regresión completa con 0
   fallos.
+  - Verificación: BLOCK 84 (F112) + regresión completa; volcado en
+    `/root/cerraduras-backups/db-f112-20261103T121705Z.sql.gz` (14 MB, 43 tablas).
 
 ### Bloque 6 — Cierre
 - [ ] TSK-F112-13: publicación final y corrida completa del usuario.

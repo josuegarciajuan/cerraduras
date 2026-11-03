@@ -8321,6 +8321,102 @@ else
 fi
 
 # =============================================================================
+# BLOCK 84 — F112: diagnóstico de luz y fases reanudables
+# Trazabilidad: RF-261…RF-269 · tasks.md TSK-F112-01…13
+# =============================================================================
+block "BLOCK 84 — F112: evidencia de luz y fases persistidas"
+
+if [ -f src/Domain/Sensors/SwitchCommandEvidence.php ] \
+    && [ -f src/Domain/Sensors/SwitchCommandEvidenceRepository.php ] \
+    && [ -f src/Infrastructure/Sensors/SwitchDiagnosticsService.php ] \
+    && [ -f migrations/0140_switch_command_evidence.sql ] \
+    && [ -f bin/switch-evidence-retention.php ] \
+    && [ -f ../docs/ops/diagnostico-luz-zigbee.md ]; then
+  pass "F112: piezas de evidencia, retención y runbook presentes"
+else
+  fail "F112: piezas" "falta algún fichero del bloque"
+fi
+
+if php tests/Unit/SwitchCommandEvidenceTest.php >/tmp/f112-ev.log 2>&1; then
+  pass "F112: veredicto y evidencia (SwitchCommandEvidence)"
+else
+  fail "F112: veredicto" "$(tail -5 /tmp/f112-ev.log)"
+fi
+
+if php tests/Unit/LightPhaseFlowTest.php >/tmp/f112-light.log 2>&1; then
+  pass "F112: fases de luz y panel"
+else
+  fail "F112: fases de luz" "$(tail -5 /tmp/f112-light.log)"
+fi
+
+if php tests/Unit/F112DocumentationTest.php >/tmp/f112-doc.log 2>&1; then
+  pass "F112: runbook y referencias permanentes"
+else
+  fail "F112: documentación" "$(tail -5 /tmp/f112-doc.log)"
+fi
+
+if php tests/Unit/RadarBaselineTrustTest.php >/tmp/f112-base.log 2>&1; then
+  pass "F112: base del radar ya aplicada sin push"
+else
+  fail "F112: base del radar" "$(tail -5 /tmp/f112-base.log)"
+fi
+
+if grep -q "light/phase" public/index.php \
+    && grep -q "switch/diagnostics" public/index.php \
+    && grep -q "switch/diagnostics/export" public/index.php; then
+  pass "F112: rutas de fase y diagnóstico"
+else
+  fail "F112: rutas" "faltan endpoints aditivos"
+fi
+
+if grep -q "se encenderá automáticamente" public/assets/sensor-wizard-v2.js \
+    && grep -q "data.fresh" public/assets/sensor-wizard-v2.js \
+    && ! grep -q "V2 + '/switch/test'" public/assets/sensor-wizard-v2.js \
+    && ! grep -nE "setInterval|tuyaPresenceApi|openapi\.tuya" src/Http/Controllers/SensorWizardController.php src/Infrastructure/Sensors/SwitchDiagnosticsService.php >/tmp/f112-guard.log 2>&1; then
+  pass "F112: panel explica el encendido y no reusa switch/test"
+else
+  fail "F112: panel" "textos o guardia anti-polling"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+  F112_DIAG=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics?room_id=14&window_minutes=60")
+  F112_DIAG_OK=$(printf '%s' "$F112_DIAG" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+s=d.get('sources') or []
+print('ok' if d.get('ok') is True and isinstance(s,list) and s and all(x.get('name') for x in s) else 'bad')
+" 2>/dev/null)
+  if [ "$F112_DIAG_OK" = "ok" ]; then
+    pass "F112: switch/diagnostics responde con fuentes"
+  else
+    fail "F112: diagnostics" "$(printf '%s' "$F112_DIAG" | head -c 200)"
+  fi
+
+  F112_MD=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics/export?room_id=14&format=md")
+  if printf '%s' "$F112_MD" | grep -q "Diagnostico de luz Zigbee"; then
+    pass "F112: exportación markdown"
+  else
+    fail "F112: export" "$(printf '%s' "$F112_MD" | head -c 120)"
+  fi
+
+  F112_L404=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST \
+    -H 'Content-Type: application/json' \
+    -d '{"run_id":"14-20260101T000000Z-zzzzzz","step_id":"light","attempt_id":"a-x","action":"prepare_off"}' \
+    "${API_BASE}/dashboard-api/sensores/v2/light/phase")
+  F112_L400=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST \
+    -H 'Content-Type: application/json' \
+    -d '{"run_id":"x","step_id":"light","attempt_id":"a-x","action":"nope"}' \
+    "${API_BASE}/dashboard-api/sensores/v2/light/phase")
+  if [ "$F112_L404" = "404" ] && [ "$F112_L400" = "400" ]; then
+    pass "F112: light/phase valida sin efectos laterales"
+  else
+    fail "F112: light/phase" "404=$F112_L404 400=$F112_L400"
+  fi
+else
+  skip "F112 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""
