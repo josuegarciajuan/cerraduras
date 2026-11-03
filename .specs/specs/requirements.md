@@ -13107,3 +13107,54 @@ dispersión producida por los pasos laterales no invalida la medición.
   un comando redundante no convierte una luz conectada en “sin conexión”.
 - La corrida termina con la reentrada detectada y sin efectos falsos.
 - Sin polling a Tuya ni consultas periódicas.
+
+
+# F111 — Calibración interior mínima y verificación exterior fiable (RF-255…RF-260)
+
+## RF-255: Alcance interior sin margen fijo
+- El candidato es el **menor escalón configurable** que cubre la mediana interior.
+- No se añade un margen fijo de 0,10 m.
+- Si la mediana cae exactamente en la rejilla, no se sube otro escalón.
+- Si la referencia supera el mayor escalón disponible, no hay candidato.
+- Al reducir alcance, el nuevo valor nunca queda por debajo de la referencia
+  interior y debe ser estrictamente menor que el actual.
+- La validación física sigue siendo obligatoria: el candidato no garantiza
+  detección.
+
+## RF-256: Identidad real de la presencia (DP 1)
+- El conversor externo emite `f107_presence_report` **solo** cuando la trama
+  Zigbee contiene el DP 1.
+- El marcador se repite idéntico si Zigbee2MQTT republica el estado cacheado
+  por otro atributo (iluminancia, LQI, distancia).
+- Un marcador nuevo es un reporte real, aunque el valor sea el mismo.
+- Una longitud de DP no reconocible no genera marcador.
+
+## RF-257: Persistencia y separación de fuentes
+- `radar_presence_reports` guarda solo reportes DP 1 identificados, con su
+  `marker`, `session_id`, `report_counter`, `value`, `config_key` y
+  `received_at`.
+- La calibración usa la evidencia cruda del sensor; nunca el estado fusionado
+  de `iot_sessions` ni el campo `presence` del payload combinado.
+- Se distinguen tres fuentes: configuración conocida, último reporte real y
+  actividad de comunicación.
+- Reprocesar una trama no crea evidencia duplicada.
+
+## RF-258: Verificación exterior por presencia
+- La fase exterior no exige distancia ni DP 9.
+- Una transición `ABSENT` real del tramo actual, mantenida con la puerta
+  cerrada, es evidencia suficiente.
+- Un `PRESENT` real durante la observación indica detección exterior.
+- Sin evidencia fiable, el resultado es **inconcluso**, nunca aprobado.
+- El silencio no se interpreta como ausencia si no hay reporte previo válido.
+
+## RF-259: Reentrada y confirmación del punto interior
+- La reentrada exige un `PRESENT` con marcador nuevo posterior al inicio.
+- Después se confirma la posición y se observa la detección en el punto
+  interior de referencia.
+- Detectar solo al cruzar el umbral no completa la calibración.
+
+## RF-260: Configuración y trazabilidad
+- Un cambio confirmado de configuración invalida exterior, reentrada y
+  confirmación interior anteriores.
+- Los resultados invalidados se conservan como histórico.
+- El panel explica mediana, rejilla, candidato, motivo del resultado y acción.

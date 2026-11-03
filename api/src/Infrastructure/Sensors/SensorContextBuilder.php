@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Sensors;
 
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use PDO;
 
 /**
@@ -228,6 +229,31 @@ final class SensorContextBuilder
             'settings_at' => $at !== '' ? $at : null,
             'settings_age_seconds' => $age,
             'value' => (string) ($row['value'] ?? ''),
+        ];
+    }
+
+    /**
+     * F111: último reporte REAL del DP 1. Es independiente del estado
+     * fusionado de la sala y del campo `presence` del payload combinado.
+     *
+     * @return array{value:string,occurred_at:string,age_seconds:?int,marker:string,session_id:string,report_counter:int,config_key:?string}|null
+     */
+    public function latestPresenceReport(int $roomId): ?array
+    {
+        $report = (new RadarPresenceReportRepository($this->pdo))->latestForRoom($roomId);
+        if ($report === null) {
+            return null;
+        }
+        $at = (string) $report['received_at'];
+        $ts = $at !== '' ? strtotime($at . ' UTC') : false;
+        return [
+            'value' => (string) $report['value'],
+            'occurred_at' => $at,
+            'age_seconds' => $ts !== false ? max(0, time() - $ts) : null,
+            'marker' => (string) $report['marker'],
+            'session_id' => (string) $report['session_id'],
+            'report_counter' => (int) $report['report_counter'],
+            'config_key' => $report['config_key'],
         ];
     }
 

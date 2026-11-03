@@ -1264,6 +1264,8 @@ final class SensorWizardController
             'raw_presence_at' => $snapshot['settings_at'] ?? null,
             'raw_presence_age_seconds' => $rawAge,
             'raw_presence_stale' => $rawStale,
+            // F111: evidencia DP 1 autentica (aditivo).
+            'presence_report' => $snapshot['report'] ?? null,
             'server_ts' => gmdate('Y-m-d\TH:i:s\Z'),
         ])->withHeader('Cache-Control', 'no-store');
     }
@@ -2368,7 +2370,7 @@ final class SensorWizardController
                         $currentMax = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
                             ? (float) $settings['maximum_range'] : null;
                         $lower = ($reference !== null && $currentMax !== null)
-                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3(), 0.10)
+                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3())
                             : null;
                         if ($lower === null) {
                             $session['state'] = 'STOPPED';
@@ -3874,7 +3876,7 @@ final class SensorWizardController
         $session = (array) ($run['calibration_session'] ?? []);
         $inside = $this->insideInputV3($session);
         $reference = $this->insideOnlyReference($session);
-        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->insideOnlyCapsV3(), 0.10);
+        $candidate = RadarCalibrationPlanner::insideOnlyCandidate($reference, $this->insideOnlyCapsV3());
         if ($candidate === null) {
             $session['state'] = 'STOPPED';
             $session['result'] = 'inside_only_no_range';
@@ -4228,7 +4230,12 @@ final class SensorWizardController
      */
     private function latestPresenceSnapshot(int $roomId): array
     {
-        return $this->context()->latestSettings($roomId);
+        $snapshot = $this->context()->latestSettings($roomId);
+        // F111: reporte REAL del DP 1, separado de la configuracion y del
+        // estado fusionado. Aditivo: `value` se conserva para los consumidores
+        // actuales hasta que la evaluacion exterior use `report`.
+        $snapshot['report'] = $this->context()->latestPresenceReport($roomId);
+        return $snapshot;
     }
 
     /**

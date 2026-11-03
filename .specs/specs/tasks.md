@@ -11423,3 +11423,25 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] Retención DP9 30 días.
 - [x] Timeout de UI y reinicio de radar por corrida.
 - [ ] Prueba física final.
+
+
+## F111 — Calibración interior mínima y verificación exterior fiable
+
+- [x] TSK-F111-01: sonda real y marcador DP 1 en el conversor.
+  - Verificación: `p1|...|1|PRESENT` y `p1|...|2|ABSENT` estables; DP 9 intacto.
+- [x] TSK-F111-02: candidato interior mínimo sin margen fijo.
+  - Verificación: 3,39 → 3,45; 3,45 → 3,45; bajada 3,60 → 3,45.
+- [x] TSK-F111-03: parser `RadarPresenceReport`.
+  - Verificación: `RadarPresenceReportTest` 24 checks.
+- [x] TSK-F111-04: persistencia `radar_presence_reports` (migración 0139).
+  - Verificación: `php bin/migrate.php` + tabla e índices.
+- [x] TSK-F111-05: mapper y processor registran `meta.presence_report`.
+  - Verificación: `ZigbeeMqttMessageMapperTest` (DP1, DP1+DP9, inválido).
+- [x] TSK-F111-06: separar configuración, presencia real y comunicación.
+  - Verificación: `latestPresenceReport()` + `presence_report` en `/radar/state`.
+- [ ] TSK-F111-07: evaluador exterior con reloj inyectado.
+- [ ] TSK-F111-08: reentrada auténtica y confirmación del punto interior.
+- [ ] TSK-F111-09: ajustes acotados e invalidación por configuración.
+- [ ] TSK-F111-10: UI, validador final y textos.
+- [ ] TSK-F111-11: BLOCK 83 y regresión completa.
+- [ ] TSK-F111-12: despliegue y prueba física de aceptación.

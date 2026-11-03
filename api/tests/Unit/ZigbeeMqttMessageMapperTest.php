@@ -158,6 +158,45 @@ $noMarker = $mapper->mapMessage('zigbee2mqtt/door-contact', '{"occupancy":true,"
 same('F107: sin marca no hay evidencia', $noMarker['events'][0]['meta']['distance_report'] ?? null, null);
 same('F107: el estado combinado sigue siendo diagnóstico', $noMarker['events'][0]['meta']['settings']['target_distance'] ?? null, 2.71);
 
+// F111: el marcador DP 1 identifica un reporte real de presencia.
+$presenceMarker = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"target_distance":2.71,"maximum_range":3.9,"minimum_range":0.6,'
+    . '"radar_sensitivity":7,"fading_time":15.5,"detection_delay":0.1,'
+    . '"f107_presence_report":"p1|sess|1|PRESENT|push"}',
+    $at
+);
+$presenceReport = $presenceMarker['events'][0]['meta']['presence_report'] ?? null;
+same('F111: marca DP1 adjunta', $presenceReport['marker'] ?? null, 'p1|sess|1|PRESENT|push');
+same('F111: valor DP1', $presenceReport['value'] ?? null, 'PRESENT');
+same('F111: contador DP1', $presenceReport['report_counter'] ?? null, 1);
+check('F111: huella de configuración en DP1', isset($presenceReport['config_key']) && is_string($presenceReport['config_key']));
+
+$bothMarkers = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"target_distance":2.71,'
+    . '"f107_presence_report":"p1|sess|2|PRESENT|push",'
+    . '"f107_distance_report":"v1|sess|11|2.710|push"}',
+    $at
+);
+$bothMeta = $bothMarkers['events'][0]['meta'] ?? [];
+same('F111: DP1 y DP9 conviven', $bothMeta['presence_report']['value'] ?? null, 'PRESENT');
+same('F111: DP9 intacto junto a DP1', $bothMeta['distance_report']['distance_m'] ?? null, 2.71);
+
+$noPresenceMarker = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"target_distance":2.71,"f107_distance_report":"v1|sess|12|2.710|push"}',
+    $at
+);
+same('F111: sin marca DP1 no hay evidencia', $noPresenceMarker['events'][0]['meta']['presence_report'] ?? null, null);
+
+$badPresenceMarker = $mapper->mapMessage(
+    'zigbee2mqtt/door-contact',
+    '{"occupancy":true,"f107_presence_report":"p1|sess|x|PRESENT|push"}',
+    $at
+);
+same('F111: marca DP1 inválida se ignora', $badPresenceMarker['events'][0]['meta']['presence_report'] ?? null, null);
+
 // Bad configuration fails closed before any transport can start.
 $invalidConfig = mapperConfig();
 $invalidConfig['devices']['zigbee2mqtt/door-contact']['entities']['model_dp'] = [

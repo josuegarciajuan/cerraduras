@@ -25664,3 +25664,74 @@ Comprobado el 2026-11-02:
 - Antes de cada prueba física se ejecuta `docs/ops-sensores.md` §12:
   `bin/sensor-test-prepare.php`, base confirmada, pausa off y luz OFF.
 - Prueba física pendiente.
+
+
+## F111 — Calibración interior mínima y verificación exterior fiable
+
+### Motivo
+
+La corrida `14-20261103T080942Z-eb3b38` midió el interior correctamente
+(3,39 · 3,46 · 2,84 m; mediana 3,39) pero el candidato se fijó en 3,60 m por el
+margen fijo de 0,10 m más el redondeo ascendente. Al reducir después a 3,45 m,
+la protección `referencia + 0,10` lo impedía y la corrida terminó en
+`inside_only_no_separation`. Además, el exterior seguía evaluándose con lógica
+de distancia aunque el modelo declarase verificación solo por presencia.
+
+### Evidencia empírica (F111 fase 0)
+
+- El firmware **publica periódicamente** (~1 tramas cada 1,5 s) con DP 9 = 0 en
+  reposo; el silencio prolongado no es el caso normal.
+- El DP 1 **solo viaja cuando cambia la presencia**. El marcador
+  `p1|session|counter|PRESENT|ABSENT|push` se repite idéntico mientras el estado
+  no cambia, aunque cambien iluminancia o distancia.
+- La ingesta registra esos eventos; en `camera_fusion` pueden quedar `noop` o
+  `candidate_absent`, por lo que la calibración debe usar la señal cruda.
+
+### Cálculo del alcance (fase 2)
+
+```text
+candidato = primer escalón de la rejilla >= mediana_interior
+```
+
+- Rejilla 0,15 m; mínimo efectivo 0,6 m.
+- Caso real: mediana 3,39 → candidato **3,45**.
+- `lowerCandidate` solo exige `candidato >= referencia` y `candidato < actual`.
+
+### Evidencia de presencia (fase 1)
+
+```text
+conversor z2m
+  -> DP 1 presente en la trama
+  -> f107_presence_report = p1|session|counter|VALOR|push
+  -> ZigbeeMqttMessageMapper: meta.presence_report (parseado + config_key)
+  -> ZigbeeMqttEventProcessor: INSERT IGNORE en radar_presence_reports
+  -> SensorContextBuilder.latestPresenceReport(room)
+```
+
+- `marker` es la identidad; `UNIQUE(device_id, marker)` evita duplicados.
+- `config_key` es la huella de la configuración de detección.
+- El campo `received_at` conserva el instante del mensaje, no el de proceso.
+
+### Separación de fuentes
+
+| Fuente | Origen | Uso |
+|---|---|---|
+| Configuración | último evento con `meta.settings` | saber ajustes vigentes |
+| Presencia real | `radar_presence_reports` | decidir exterior y reentrada |
+| Comunicación | último evento de la sala / transporte | distinguir silencio de fallo |
+
+### Fases de implementación
+
+1. Fase 0: marcador DP 1 y sonda real. **Completada.**
+2. Fase 2: candidato mínimo sin margen. **Completada.**
+3. Fase 1: parser, persistencia y separación de fuentes. **Completada.**
+4. Fase 3: evaluador exterior, reentrada y punto interior. Pendiente.
+5. Fase 4: contrato de estado, UI y validador final. Pendiente.
+6. Fase 5: regresión, despliegue y prueba física. Pendiente.
+
+### Invariantes
+
+- Sin polling a Tuya ni al radar.
+- Sin `configure` ni `dataQuery` en el conversor.
+- Un reporte cacheado nunca se cuenta como reporte nuevo.
+- Un cambio de configuración invalida la evidencia anterior.
