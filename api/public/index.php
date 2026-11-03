@@ -621,6 +621,7 @@ $router->post('/dashboard-api/sensores/v2/door/state', [$sensorWizardV2, 'doorSt
 $router->post('/dashboard-api/sensores/v2/radar/tune', [$sensorWizardV2, 'tune']);
 $router->post('/dashboard-api/sensores/v2/radar/calibrate', [$sensorWizardV2, 'radarCalibrate']);
 $router->post('/dashboard-api/sensores/v2/switch/test', [$sensorWizardV2, 'switchTest']);
+$router->post('/dashboard-api/sensores/v2/light/phase', [$sensorWizardV2, 'lightPhase']);
 $router->get('/dashboard-api/sensores/v2/switch/diagnostics', [$sensorWizardV2, 'switchDiagnostics']);
 $router->get('/dashboard-api/sensores/v2/switch/diagnostics/export', [$sensorWizardV2, 'switchDiagnosticsExport']);
 $router->post('/dashboard-api/sensores/v2/automation/pause', [$sensorWizardV2, 'automationPause']);
