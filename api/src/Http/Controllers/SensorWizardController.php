@@ -929,13 +929,14 @@ final class SensorWizardController
                 $nextPhase = $value ? 'READY_TO_VALIDATE' : 'INDETERMINATE';
             }
 
-            if (in_array($action, ['confirm_prep_off', 'confirm_on', 'confirm_off'], true)) {
+            $humanKey = $this->lightHumanKey($action);
+            if ($humanKey !== null) {
                 // Fase E: la observacion humana queda en la evidencia de la orden.
                 $this->recordHumanConfirmation(
                     $runId,
                     $attemptId,
                     $cycle,
-                    (string) $orderKey,
+                    $humanKey,
                     match ($action) {
                         'confirm_prep_off' => $value ? 'OFF' : 'ON',
                         'confirm_on' => $value ? 'ON' : 'OFF',
@@ -1007,6 +1008,19 @@ final class SensorWizardController
                 'retryable' => true,
             ]);
         }
+    }
+
+    /**
+     * F112: clave de la orden a la que se refiere cada confirmacion humana.
+     */
+    private function lightHumanKey(string $action): ?string
+    {
+        return match ($action) {
+            'confirm_prep_off' => 'prep_off',
+            'confirm_on' => 'on',
+            'confirm_off' => 'off',
+            default => null,
+        };
     }
 
     /**

@@ -66,6 +66,18 @@ truthy('limite de alcance 2,5 s', str_contains($controller, "SWITCH_REACHABLE_WA
 truthy('sonda con su propio limite', str_contains($controller, "SWITCH_PROBE_WAIT_MS', 4000"));
 truthy('sin bucles infinitos', !str_contains($controller, 'while (true)'));
 
+// ── confirmacion humana ──────────────────────────────────────────────
+truthy('mapeo humano separado de la orden', str_contains($controller, 'private function lightHumanKey'));
+$ctl = new ReflectionClass(App\Http\Controllers\SensorWizardController::class);
+$instance = $ctl->newInstanceWithoutConstructor();
+$hk = $ctl->getMethod('lightHumanKey');
+$hk->setAccessible(true);
+same('confirm_prep_off → prep_off', $hk->invoke($instance, 'confirm_prep_off'), 'prep_off');
+same('confirm_on → on', $hk->invoke($instance, 'confirm_on'), 'on');
+same('confirm_off → off', $hk->invoke($instance, 'confirm_off'), 'off');
+same('start_on no es humano', $hk->invoke($instance, 'start_on'), null);
+same('turn_off no es humano', $hk->invoke($instance, 'turn_off'), null);
+
 // ── panel ────────────────────────────────────────────────────────────
 truthy('panel bloquea durante envio', str_contains($js, 'if (S.lightBusy) return;'));
 truthy('panel aplica enfriamiento', str_contains($js, 'S.lightCooldownUntil = Date.now() + 600'));
