@@ -127,6 +127,8 @@ systemctl stop cerraduras-warehouse-recorder 2>/dev/null || true
 # F87/RF-120: timer de retención del almacén.
 systemctl stop cerraduras-warehouse-retention.timer 2>/dev/null || true
 systemctl stop cerraduras-radar-distance-retention.timer 2>/dev/null || true
+# F112/RF-265: timer de retención de evidencia de órdenes de luz.
+systemctl stop cerraduras-switch-evidence-retention.timer 2>/dev/null || true
 # F88/RF-122: detector de movimiento de cámaras del almacén.
 systemctl stop cerraduras-camera-motion 2>/dev/null || true
 # F70/RF-80: servidor MJPEG de cámaras (directo del almacén).

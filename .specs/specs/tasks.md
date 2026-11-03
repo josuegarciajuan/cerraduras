@@ -11458,14 +11458,15 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
 - [x] TSK-F112-02: congelar alcance y contratos en las specs.
 
 ### Bloque 2 — Evidencia persistente
-- [ ] TSK-F112-03: migración `0140_switch_command_evidence.sql`.
+- [x] TSK-F112-03: migración `0140_switch_command_evidence.sql`.
   - Verificación: tabla e índices en BD; migración idempotente.
-- [ ] TSK-F112-04: registro de operaciones en `ZigbeeSwitchGateway` y
-  `switch/test`, con `operation_id` idempotente y veredicto.
-  - Verificación: unitarios con publicador y reloj simulados.
-- [ ] TSK-F112-05: contexto de infraestructura con fuentes `unavailable`.
-- [ ] TSK-F112-06: `switch/diagnostics` y `switch/diagnostics/export`.
-- [ ] TSK-F112-07: retención con script y timer.
+- [x] TSK-F112-04: registro de operaciones en `switch/test` mediante
+  `SwitchCommandEvidenceRepository`, con `operation_id` idempotente y veredicto.
+  El gateway sigue sin persistir: solo publica y declara pendiente.
+  - Verificación: `SwitchCommandEvidenceTest` (83 checks) + veredicto puro.
+- [x] TSK-F112-05: contexto de infraestructura con fuentes `unavailable`.
+- [x] TSK-F112-06: `switch/diagnostics` y `switch/diagnostics/export`.
+- [x] TSK-F112-07: retención con script y timer.
   - Verificación: purga respeta días configurados y `0` conserva.
 
 ### Bloque 3 — Calibrador

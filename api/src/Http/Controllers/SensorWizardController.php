@@ -20,12 +20,15 @@ use App\Domain\Sensors\RadarEvidencePolicy;
 use App\Domain\Sensors\RadarMeasurement;
 use App\Domain\Sensors\RadarPointMeasurement;
 use App\Domain\Sensors\SensorCalibrationValidator;
+use App\Domain\Sensors\SwitchCommandEvidence;
+use App\Domain\Sensors\SwitchCommandEvidenceRepository;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Gateways\Switch\ZigbeeSwitchGateway;
 use App\Infrastructure\Sensors\SensorContextBuilder;
 use App\Infrastructure\Sensors\SensorRunStore;
 use App\Infrastructure\Sensors\SensorVerdict;
+use App\Infrastructure\Sensors\SwitchDiagnosticsService;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use PDO;
 use Throwable;
@@ -780,10 +783,21 @@ final class SensorWizardController
     {
         $body = $request->jsonBody ?? [];
         $roomId = (int) ($body['room_id'] ?? 0);
-        $action = strtoupper((string) ($body['action'] ?? ''));
-        if ($roomId <= 0 || !in_array($action, ['ON', 'OFF'], true)) {
+        $action = SwitchCommandEvidence::normalizeAction($body['action'] ?? null);
+        if ($roomId <= 0 || $action === null) {
             return Response::json(400, ['error' => 'room_id and action ON/OFF required']);
         }
+        $origin = SwitchCommandEvidence::label($body['origin'] ?? null, 32) ?? 'manual';
+        $actor = SwitchCommandEvidence::label($body['actor'] ?? ($body['operator'] ?? null), 64);
+        $rawOperation = $body['operation_id'] ?? null;
+        if ($rawOperation !== null && $rawOperation !== ''
+            && !SwitchCommandEvidence::isOperationId($rawOperation)) {
+            return Response::json(400, ['error' => 'operation_id_invalid']);
+        }
+        $operationId = is_string($rawOperation) && $rawOperation !== ''
+            ? strtolower($rawOperation)
+            : SwitchCommandEvidence::newOperationId();
+
         try {
             $pdo = $this->pdo();
             $deviceRepo = new DeviceRepository($pdo);
@@ -791,12 +805,52 @@ final class SensorWizardController
             if ($device === null) {
                 return Response::json(404, ['error' => 'switch_not_found']);
             }
+
+            $evidence = new SwitchCommandEvidenceRepository($pdo);
+            $existing = $evidence->findByOperationId($operationId);
+            if ($existing !== null) {
+                if (strtoupper((string) $existing['action']) !== $action) {
+                    return Response::json(409, [
+                        'error' => 'operation_conflict',
+                        'operation_id' => $operationId,
+                    ]);
+                }
+                return Response::json(200, $this->switchPayloadFromEvidence($existing, true));
+            }
+
+            $meta = is_array($device->meta) ? $device->meta : [];
+            $priorState = SwitchCommandEvidence::normalizeState($meta['switch_state'] ?? null);
+            $priorAt = isset($meta['switch_state_at']) ? (string) $meta['switch_state_at'] : null;
+            $requestedAt = $this->nowUtcMs();
+            $evidence->begin([
+                'operation_id' => $operationId,
+                'room_id' => $roomId,
+                'device_id' => (int) $device->id,
+                'external_id' => (string) $device->externalId,
+                'provider' => 'ZIGBEE2MQTT',
+                'origin' => $origin,
+                'action' => $action,
+                'actor' => $actor,
+                'requested_at' => $requestedAt,
+                'prior_state' => $priorState,
+                'prior_state_at' => $priorAt,
+            ]);
+
             $gateway = new ZigbeeSwitchGateway($deviceRepo);
             $commandTs = microtime(true);
-            $commandAt = gmdate('Y-m-d\TH:i:s.v\Z');
             $result = $action === 'ON'
                 ? $gateway->turnOnForDevice($device)
                 : $gateway->turnOffForDevice($device);
+
+            if (($result['ok'] ?? false) !== true) {
+                // F112/RF-261: el fallo de publicacion queda registrado; no se
+                // reintenta solo ni se presenta como actuacion.
+                $evidence->markPublishFailed($operationId, (string) ($result['error'] ?? 'publish_failed'));
+                $row = $evidence->findByOperationId($operationId) ?? [];
+                return Response::json(200, $this->switchPayloadFromEvidence($row, false));
+            }
+            $evidence->markPublished($operationId, $this->nowUtcMs());
+
             $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
             $reachable = $this->waitSwitchReachable($deviceRepo, (int) $device->id, $commandTs);
             $reachabilitySource = 'command';
@@ -813,23 +867,181 @@ final class SensorWizardController
                         'state_at' => $probe['state_at'] ?? $wait['state_at'],
                         'fresh' => false,
                     ];
+                } else {
+                    $reachabilitySource = 'none';
                 }
             }
-            return Response::json(200, [
-                'ok' => (bool) ($result['ok'] ?? false),
-                'reachable' => $reachable,
-                'reachability_source' => $reachabilitySource,
+
+            $reportedState = SwitchCommandEvidence::normalizeState($wait['state'] ?? null);
+            $verdict = SwitchCommandEvidence::evaluate([
                 'action' => $action,
-                'error' => $result['error'] ?? null,
-                'command_at' => $commandAt,
-                'pending_confirmation' => (bool) ($result['pending_confirmation'] ?? false),
-                'reported_state' => $wait['state'],
-                'state_at' => $wait['state_at'],
-                'fresh' => $wait['fresh'],
+                'publish_ok' => true,
+                'reported_state' => $reportedState,
+                'fresh' => (bool) ($wait['fresh'] ?? false),
+                'human_state' => null,
             ]);
+            $evidence->close($operationId, [
+                'reported_state' => $reportedState,
+                'reported_at' => $wait['state_at'] ?? null,
+                'fresh' => (bool) ($wait['fresh'] ?? false),
+                'report_source' => $reachabilitySource,
+                'human_state' => null,
+                'human_at' => null,
+                'verdict' => $verdict['verdict'],
+                'diagnosis' => $verdict['diagnosis'],
+            ]);
+            $row = $evidence->findByOperationId($operationId) ?? [];
+            return Response::json(200, $this->switchPayloadFromEvidence($row, false));
         } catch (Throwable $e) {
             return Response::json(500, ['error' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * F112/RF-264: contexto de solo lectura para analizar un fallo de la luz.
+     */
+    public function switchDiagnostics(Request $request): Response
+    {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['error' => 'room_id required']);
+        }
+        $window = (int) ($request->query['window_minutes'] ?? 60);
+        $limit = (int) ($request->query['limit'] ?? 50);
+        try {
+            $service = new SwitchDiagnosticsService($this->pdo());
+            return Response::json(200, $service->report($roomId, $window, $limit));
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * F112/RF-264: exportacion legible o JSON tecnico.
+     */
+    public function switchDiagnosticsExport(Request $request): Response
+    {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['error' => 'room_id required']);
+        }
+        $window = (int) ($request->query['window_minutes'] ?? 60);
+        $limit = (int) ($request->query['limit'] ?? 50);
+        $format = strtolower((string) ($request->query['format'] ?? 'md'));
+        if (!in_array($format, ['md', 'json'], true)) {
+            return Response::json(400, ['error' => 'format md|json required']);
+        }
+        try {
+            $service = new SwitchDiagnosticsService($this->pdo());
+            $report = $service->report($roomId, $window, $limit);
+            if ($format === 'json') {
+                return Response::json(200, $report);
+            }
+            return new Response(200, [
+                'Content-Type' => 'text/markdown; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="switch-diagnostics-' . $roomId . '.md"',
+            ], $this->diagnosticsMarkdown($report));
+        } catch (Throwable $e) {
+            return Response::json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Reconstruye la respuesta de switch/test desde la evidencia persistida.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function switchPayloadFromEvidence(array $row, bool $idempotent): array
+    {
+        $published = ((int) ($row['publish_ok'] ?? 0)) === 1;
+        $source = (string) ($row['report_source'] ?? 'none');
+        $verdict = (string) ($row['verdict'] ?? 'indeterminate');
+        return [
+            'ok' => $published,
+            'operation_id' => (string) ($row['operation_id'] ?? ''),
+            'verdict' => $verdict,
+            'published' => $published,
+            'idempotent' => $idempotent,
+            'reachable' => $published && in_array($source, ['command', 'probe'], true),
+            'reachability_source' => $source,
+            'action' => (string) ($row['action'] ?? ''),
+            'error' => $row['publish_error'] !== null ? (string) $row['publish_error'] : null,
+            'command_at' => (string) ($row['published_at'] ?? $row['requested_at'] ?? ''),
+            'pending_confirmation' => $published && in_array($verdict, ['unconfirmed', 'indeterminate'], true),
+            'reported_state' => $row['reported_state'] !== null ? (string) $row['reported_state'] : 'UNKNOWN',
+            'state_at' => $row['reported_at'] !== null ? (string) $row['reported_at'] : null,
+            'fresh' => $row['fresh'] !== null ? ((int) $row['fresh']) === 1 : false,
+            'report' => [
+                'state' => $row['reported_state'] !== null ? (string) $row['reported_state'] : null,
+                'at' => $row['reported_at'] !== null ? (string) $row['reported_at'] : null,
+                'fresh' => $row['fresh'] !== null ? ((int) $row['fresh']) === 1 : null,
+                'source' => $row['report_source'] !== null ? (string) $row['report_source'] : null,
+            ],
+            'evidence' => [
+                'recorded' => $row !== [],
+                'error' => null,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $report
+     */
+    private function diagnosticsMarkdown(array $report): string
+    {
+        $lines = [];
+        $lines[] = '# Diagnostico de luz Zigbee · sala ' . (int) ($report['room_id'] ?? 0);
+        $lines[] = '';
+        $window = (array) ($report['window'] ?? []);
+        $lines[] = '- Ventana: ' . (string) ($window['from'] ?? '') . ' → ' . (string) ($window['to'] ?? '');
+        $state = (array) ($report['state'] ?? []);
+        $lines[] = '- Ultimo estado reportado: ' . (string) ($state['last_reported'] ?? 'sin datos')
+            . ' (edad: ' . ($state['age_seconds'] === null ? 'desconocida' : ((int) $state['age_seconds'] . ' s')) . ')';
+        $lines[] = '';
+        $lines[] = '## Fuentes';
+        foreach ((array) ($report['sources'] ?? []) as $source) {
+            $line = '- ' . (string) ($source['name'] ?? '?') . ': ' . (string) ($source['status'] ?? '?');
+            if (!empty($source['reason'])) {
+                $line .= ' (' . (string) $source['reason'] . ')';
+            }
+            $lines[] = $line;
+        }
+        $lines[] = '';
+        $lines[] = '## Operaciones';
+        $operations = (array) ($report['operations'] ?? []);
+        if ($operations === []) {
+            $lines[] = 'Sin operaciones en la ventana.';
+        }
+        foreach ($operations as $op) {
+            $op = (array) $op;
+            $reportBlock = (array) ($op['report'] ?? []);
+            $human = (array) ($op['human'] ?? []);
+            $lines[] = '- ' . (string) ($op['requested_at'] ?? '') . ' · ' . (string) ($op['action'] ?? '')
+                . ' · ' . (string) ($op['verdict'] ?? '')
+                . ' · publicado: ' . (($op['published'] ?? null) === true ? 'si' : (($op['published'] ?? null) === false ? 'no' : 'desconocido'))
+                . ' · reporte: ' . (string) ($reportBlock['state'] ?? 'sin datos')
+                . ' · humano: ' . (string) ($human['state'] ?? 'sin observacion');
+            if (!empty($op['diagnosis'])) {
+                $lines[] = '  - diagnostico: ' . (string) $op['diagnosis'];
+            }
+        }
+        $lines[] = '';
+        $lines[] = '## Notas';
+        foreach ((array) ($report['notes'] ?? []) as $note) {
+            $lines[] = '- ' . (string) $note;
+        }
+        $lines[] = '';
+        return implode("\n", $lines);
+    }
+
+    private function nowUtcMs(): string
+    {
+        $now = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true)));
+        if ($now === false) {
+            return gmdate('Y-m-d H:i:s') . '.000';
+        }
+        return $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.v');
     }
 
     public function attemptEvents(Request $request): Response
