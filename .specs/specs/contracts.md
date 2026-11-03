@@ -16104,6 +16104,9 @@ Transiciones:
   servidor.
 - Transición no permitida: `409 light_phase_invalid` con `phase` vigente.
 - Repetición idempotente: `200` con el estado actual y `idempotent: true`.
+- La respuesta de `light/phase` añade `fresh` (nulable) con la frescura de la
+  última telemetría de esa transición, y `order.fresh` dentro de `order`.
+  `fresh=false` significa «sin reporte nuevo», no fallo del dispositivo.
 
 ### Errores nuevos
 
