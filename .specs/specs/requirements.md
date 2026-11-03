@@ -13245,3 +13245,65 @@ sesión futura no puede analizar un fallo equivalente.
   sigue llegando por push.
 
 **Estado F112:** planificado. Implementación por bloques; ver `tasks.md`.
+
+---
+
+# Fase 113 — Fichas NFC por texto plano en el lector R35D-B (RF-270…RF-275)
+
+## RF-270: Lectura y clasificación de credenciales
+- **RF-270.1**: el lector R35D-B entrega por UART1 tanto tokens QR como el
+  identificador de una ficha como texto ASCII plano + CRLF.
+- **RF-270.2**: `/api/v1/qr/validate` acepta ese texto sin cambios en el
+  firmware: si es un token firmado conserva su flujo; si no lo es, se valida
+  como ficha NFC.
+- **RF-270.3**: un texto se considera ficha cuando no es un token firmado, no
+  contiene `.`, es imprimible y mide entre 4 y 64 caracteres.
+- **RF-270.4**: un token firmado corrupto que contiene `.` no se interpreta
+  como ficha y conserva el error de token.
+- **RF-270.5**: no se modifica el sketch productivo ni se añade una segunda
+  ruta de validación en el ESP.
+
+## RF-271: Normalización del identificador
+- **RF-271.1**: un identificador hexadecimal de 8 o 10 caracteres se normaliza
+  a mayúsculas al crear la ficha y al validarla.
+- **RF-271.2**: la comparación de la ficha se hace por hash del texto
+  normalizado; nunca se compara el texto en claro.
+- **RF-271.3**: el texto original no se devuelve en ninguna respuesta.
+
+## RF-272: Autorización de la ficha
+- **RF-272.1**: la ficha debe existir y estar `ASSIGNED` a una llave `NFC`.
+- **RF-272.2**: se aplican las mismas reglas que a la llave QR: estado
+  `ACTIVE`, vigencia, trabajador activo, permiso por tipo de sala y sala
+  resuelta desde el lector.
+- **RF-272.3**: solo se ordena abrir la cerradura si todas las comprobaciones
+  pasan; el cierre sigue siendo automático por sensor/regla de salida.
+- **RF-272.4**: una ficha sin llave, una llave revocada o caducada y una sala
+  sin permiso se deniegan y se auditan.
+
+## RF-273: Auditoría
+- **RF-273.1**: toda decisión se registra en `key_access_events` con
+  `credential_type='NFC'`, resultado, motivo, lector y sala.
+- **RF-273.2**: una apertura concedida registra además `QR_VALIDATE` y `OPEN`
+  en `access_events`, igual que una llave QR.
+- **RF-273.3**: los motivos usados son `ficha_invalid`, `ficha_unassigned`,
+  `key_expired`, `key_revoked`, `worker_inactive`, `room_unresolved` y
+  `key_room_denied`.
+
+## RF-274: Sin cambios de firmware ni cuota
+- **RF-274.1**: el sketch `CERRADURA`/`IMAN` sigue enviando `qr_text` a
+  `/api/v1/qr/validate`; no requiere reflasheo para esta fase.
+- **RF-274.2**: no se introduce polling a Tuya ni a ningún sensor.
+
+## RF-275: Verificación y restauración
+- **RF-275.1**: se crea una ficha de prueba con el identificador leído
+  (`00EFA5BB`) y una llave NFC del trabajador Josue.
+- **RF-275.2**: se verifican por HTTP los casos válido, desconocido, sin llave,
+  revocado, caducado y sin permiso, sin romper el QR de estancia.
+- **RF-275.3**: se realiza una prueba física con el llavero real y se guarda la
+  evidencia.
+- **RF-275.4**: al terminar se verifica que el ESP conserva la variante
+  productiva original `CERRADURA 2.6-ota` y, si no, se restaura con el binario
+  guardado.
+- **RF-275.5**: se ejecuta la regresión completa con 0 fallos.
+
+**Estado F113:** planificado. Implementación por fases; ver `tasks.md`.

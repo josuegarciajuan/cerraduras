@@ -25865,3 +25865,83 @@ Reglas duras:
 - Sin cambios en la lógica de puerta/radar/base F110.
 - Sin `configure` ni `dataQuery` en el conversor.
 - Una recarga no genera órdenes.
+
+---
+
+# F113 — Fichas NFC por texto plano en el lector R35D-B (RF-270…RF-275)
+
+## 113.1 Motivo
+
+El R35D-B entrega por la misma UART el texto de un QR y el identificador de un
+llavero EM. El firmware productivo no distingue el tipo: envía todo como
+`qr_text` a `/api/v1/qr/validate`. La prueba física confirmó que un llavero
+produce una trama ASCII + CRLF estable (`00EFA5BB`, tres lecturas idénticas).
+La integración de fichas no forma parte de F96 (RF-168.4); esta fase la añade
+sin tocar el firmware.
+
+## 113.2 Clasificación
+
+En `QrController::validate`, antes del flujo actual:
+
+1. Se intenta parsear `qr_text` como token firmado.
+2. Si es `sub=key`, se valida como llave QR (sin cambios).
+3. Si es un token de estancia válido, se valida como QR de huésped (sin
+   cambios).
+4. Si no es un token, no contiene `.`, es imprimible y mide 4–64 caracteres,
+   se valida como ficha con `AccessKeyService::validateFicha`.
+5. Cualquier otro caso conserva el flujo actual y su error de token.
+
+El criterio “sin `.`” separa los tokens (siempre con dos puntos) de una ficha
+en texto plano. Un token corrupto con puntos nunca se degrada a ficha.
+
+## 113.3 Normalización
+
+Los identificadores hexadecimales de 8 o 10 caracteres se convierten a
+mayúsculas antes de calcular el hash, tanto en `NfcCardService::create` como en
+`AccessKeyService::validateFicha`. El hash sigue siendo SHA-256; el texto en
+claro no se persiste ni se devuelve.
+
+## 113.4 Flujo de autorización
+
+`validateFicha` ya aplica las mismas reglas que una llave QR:
+
+1. Buscar la ficha por hash del código.
+2. Exigir `ASSIGNED` y `current_key_id`.
+3. Cargar la llave y exigir `key_type=NFC`.
+4. `authorise()`: estado `ACTIVE`, vigencia, trabajador activo, sala resuelta
+   desde el RPI (`device → pack → room`), permiso por tipo de sala y sesión
+   duplicada para llaves `WORKER`.
+5. Abrir con `LockGatewayFactory` y auditar.
+
+El cierre no se autoriza con credencial: sigue en el sensor de puerta y la
+regla de salida.
+
+## 113.5 Datos de prueba
+
+- Ficha: `number=EM-00EFA5BB`, `code=00EFA5BB`.
+- Llave: `label=Llave NFC Josue`, `owner_type=WORKER`, `worker_id=172`,
+  `key_type=NFC`, permiso `ALMACEN_BEBIDAS`, vigencia futura.
+- Lector: device 23 (`d443229fc114`), pack 532, sala 14 `almacenZigbee`.
+
+## 113.6 No objetivos
+
+- No se cambia el sketch productivo `CERRADURA`/`IMAN`.
+- No se añade polling de Tuya ni de sensores.
+- No se integra el QR antiguo `sub=worker` en este lector.
+- No se autoriza el cierre con credencial.
+
+## 113.7 Verificación y restauración
+
+- Pruebas HTTP en BLOCK 69 y unidad del clasificador/normalización.
+- Prueba física con el llavero real y log serie.
+- Al cerrar, verificar `CERRADURA 2.6-ota` en el heartbeat; si no, restaurar
+  con el binario guardado (`firmware/flash-variant.sh`).
+
+## 113.8 Fases
+
+1. Fase 0: especificación (este documento).
+2. Fase 1: despacho y normalización en backend.
+3. Fase 2: alta de ficha y llave de Josue.
+4. Fase 3: pruebas HTTP y regresión.
+5. Fase 4: prueba física y evidencia.
+6. Fase 5: restauración/verificación del firmware y cierre documental.
