@@ -32,7 +32,7 @@ final class NfcCardService
     public function create(array $data): array
     {
         $number = trim((string) ($data['number'] ?? ''));
-        $code   = trim((string) ($data['code'] ?? ''));
+        $code   = CredentialFormat::normaliseCode((string) ($data['code'] ?? ''));
         $notes  = isset($data['notes']) && trim((string) $data['notes']) !== ''
             ? trim((string) $data['notes']) : null;
 
