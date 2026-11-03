@@ -6438,12 +6438,15 @@ if ! grep -qi "tuyaPresenceApi\|openapi.tuya" src/Http/Controllers/SensorWizardC
 else
     fail "F95: sin Tuya" "aparece Tuya en el flujo universal"
 fi
+# F112 movió la frescura de la telemetría de luz al servidor: el wizard pinta
+# `l.telemetry` y SensorWizardController decide `fresh`/telemetry_on/off.
 if grep -q "attempt/events" public/index.php \
     && grep -q "attempt/events" public/assets/sensor-wizard-v2.js \
-    && grep -q "data.fresh" public/assets/sensor-wizard-v2.js; then
+    && grep -q "l.telemetry" public/assets/sensor-wizard-v2.js \
+    && grep -q "'fresh' =>" src/Http/Controllers/SensorWizardController.php; then
     pass "F95: evidencia por intento y telemetría fresca cableadas"
 else
-    fail "F95: evidencia/telemetría" "faltan attempt/events o el uso de fresh"
+    fail "F95: evidencia/telemetría" "faltan attempt/events o la telemetría fresca"
 fi
 if grep -q "radar/calibrate" public/index.php \
     && grep -q "radar/calibrate" public/assets/sensor-wizard-v2.js \
@@ -7326,12 +7329,129 @@ else
 fi
 http_test GET "/api/v1/keys/$F96_KEY_ID/accesses" 200 "F96: historial por llave" --key ADMIN-CLI
 
+# ── F113: ficha NFC por texto plano en /qr/validate ─────────────────────
+# Trazabilidad: RF-270…RF-273. El R35D-B envía el UID como qr_text.
+F113_TS=$(date +%s)
+F113_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M)
+F113_HEX=$(printf '%08x' "$F113_TS")
+F113_HEX_UP=$(printf '%s' "$F113_HEX" | tr '[:lower:]' '[:upper:]')
+
+f113_card_id() {
+  curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+    -d "{\"number\":\"$1\",\"code\":\"$2\"}" "${API_BASE}/api/v1/nfc-cards" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null
+}
+
+f113_key_id() {
+  curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+    -d "{\"label\":\"$1\",\"owner_type\":\"ROLE\",\"role_id\":1,\"key_type\":\"NFC\",\"nfc_card_id\":$2,\"valid_until\":\"$F113_VALID\",\"room_type_ids\":[$3]}" \
+    "${API_BASE}/api/v1/keys" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null
+}
+
+f113_expect_error() {
+  local label="$1" path="$2" body="$3" want_http="$4" want_code="$5"
+  local resp http ecode
+  resp=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}${path}" \
+    -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
+    -d "$body" --max-time 10)
+  http=$(printf '%s' "$resp" | tail -1)
+  ecode=$(printf '%s' "$resp" | sed '$d' \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("error",{}).get("code",""))' 2>/dev/null)
+  if [ "$http" = "$want_http" ] && [ "$ecode" = "$want_code" ]; then
+    pass "$label"
+  else
+    fail "$label" "HTTP $http code=$ecode (esperado $want_http $want_code)"
+  fi
+}
+
+# Válida y normalización: se guarda en minúsculas y se valida en mayúsculas.
+F113_CARD_ID=$(f113_card_id "F113-HEX-$F113_TS" "$F113_HEX")
+F113_KEY_ID=$(f113_key_id "F113-HEX-$F113_TS" "$F113_CARD_ID" 1)
+if [ -n "$F113_CARD_ID" ] && [ -n "$F113_KEY_ID" ]; then
+  F113_OK=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}/api/v1/qr/validate" \
+    -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
+    -d "{\"qr_text\":\"$F113_HEX_UP\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}")
+  F113_OK_CODE=$(printf '%s' "$F113_OK" | tail -1)
+  F113_OK_BODY=$(printf '%s' "$F113_OK" | sed '$d')
+  if [ "$F113_OK_CODE" = "200" ] \
+     && printf '%s' "$F113_OK_BODY" | grep -q '"allow":true' \
+     && printf '%s' "$F113_OK_BODY" | grep -q "\"key_id\":$F113_KEY_ID" \
+     && printf '%s' "$F113_OK_BODY" | grep -q '"action":"open"'; then
+    pass "F113: ficha por qr_text abre y normaliza mayúsculas"
+  else
+    fail "F113: ficha por qr_text" "HTTP $F113_OK_CODE $(printf '%s' "$F113_OK_BODY" | head -c 300)"
+  fi
+
+  F113_AUD=$($MYSQL -sN -e "SELECT COUNT(*) FROM key_access_events WHERE key_id=$F113_KEY_ID AND credential_type='NFC' AND result='OK'" 2>/dev/null)
+  if [ "${F113_AUD:-0}" -ge 1 ]; then
+    pass "F113: auditoría NFC registrada"
+  else
+    fail "F113: auditoría NFC" "esperado >=1 evento OK, got ${F113_AUD:-0}"
+  fi
+else
+  fail "F113: crear ficha/llave en minúsculas" "card=$F113_CARD_ID key=$F113_KEY_ID"
+fi
+
+f113_expect_error "F113: ficha desconocida → ficha_invalid" "/api/v1/qr/validate" \
+  "{\"qr_text\":\"F113NOPE$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+  403 ficha_invalid
+
+# Ficha creada pero sin llave asignada.
+f113_card_id "F113-UNAS-$F113_TS" "F113UNAS$F113_TS" >/dev/null
+f113_expect_error "F113: ficha sin llave → ficha_unassigned" "/api/v1/qr/validate" \
+  "{\"qr_text\":\"F113UNAS$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+  403 ficha_unassigned
+
+# Llave revocada conservando la ficha asignada (revocación directa para el caso).
+F113_REV_CARD=$(f113_card_id "F113-REV-$F113_TS" "F113REV$F113_TS")
+F113_REV_KEY=$(f113_key_id "F113-REV-$F113_TS" "$F113_REV_CARD" 1)
+if [ -n "$F113_REV_KEY" ]; then
+  $MYSQL -e "UPDATE access_keys SET status='REVOKED', revoked_at=UTC_TIMESTAMP(3) WHERE id=$F113_REV_KEY" >/dev/null 2>&1 || true
+  f113_expect_error "F113: llave revocada → key_revoked" "/api/v1/qr/validate" \
+    "{\"qr_text\":\"F113REV$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+    403 key_revoked
+else
+  fail "F113: crear llave para revocación" "sin key_id"
+fi
+
+# Llave caducada.
+F113_EXP_CARD=$(f113_card_id "F113-EXP-$F113_TS" "F113EXP$F113_TS")
+F113_EXP_KEY=$(f113_key_id "F113-EXP-$F113_TS" "$F113_EXP_CARD" 1)
+if [ -n "$F113_EXP_KEY" ]; then
+  $MYSQL -e "UPDATE access_keys SET valid_until=UTC_TIMESTAMP(3) - INTERVAL 1 DAY WHERE id=$F113_EXP_KEY" >/dev/null 2>&1 || true
+  f113_expect_error "F113: llave caducada → key_expired" "/api/v1/qr/validate" \
+    "{\"qr_text\":\"F113EXP$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+    403 key_expired
+else
+  fail "F113: crear llave para caducidad" "sin key_id"
+fi
+
+# Sin permiso: llave de tipo STANDARD usada en una sala TIPO_NORMAL.
+F113_DENY_CARD=$(f113_card_id "F113-DENY-$F113_TS" "F113DENY$F113_TS")
+F113_DENY_KEY=$(f113_key_id "F113-DENY-$F113_TS" "$F113_DENY_CARD" 2)
+if [ -n "$F113_DENY_KEY" ]; then
+  f113_expect_error "F113: sala sin permiso → key_room_denied" "/api/v1/qr/validate" \
+    "{\"qr_text\":\"F113DENY$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+    403 key_room_denied
+else
+  fail "F113: crear llave sin permiso" "sin key_id"
+fi
+
+# Un token corrupto con puntos nunca se degrada a ficha.
+f113_expect_error "F113: token corrupto → qr_invalid_signature" "/api/v1/qr/validate" \
+  '{"qr_text":"abc.def.ghi","room_id":1,"device_id":"ESP32-TEST"}' \
+  403 qr_invalid_signature
+
 # Limpieza de datos de prueba
 if [ -n "$F96_W_ID" ]; then
   $MYSQL -e "DELETE FROM worker_sessions WHERE worker_id=$F96_W_ID; UPDATE workers SET active=0 WHERE id=$F96_W_ID; DELETE FROM workers WHERE id=$F96_W_ID" >/dev/null 2>&1 || true
 fi
 $MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F96-%'; DELETE FROM access_keys WHERE label LIKE 'F96-%'; DELETE FROM nfc_cards WHERE number LIKE 'F96-%'; DELETE FROM key_access_events WHERE key_id IS NULL AND occurred_at >= '$F96_START'" >/dev/null 2>&1 || true
 pass "F96: limpieza de datos de prueba"
+
+$MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F113-%'; DELETE FROM access_keys WHERE label LIKE 'F113-%'; DELETE FROM nfc_cards WHERE number LIKE 'F113-%';" >/dev/null 2>&1 || true
+pass "F113: limpieza de datos de prueba"
 
 
 # =============================================================================
