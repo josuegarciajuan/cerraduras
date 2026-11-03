@@ -8361,6 +8361,12 @@ else
   fail "F112: base del radar" "$(tail -5 /tmp/f112-base.log)"
 fi
 
+if php tests/Unit/SwitchOrderRecoveryTest.php >/tmp/f112-recovery.log 2>&1; then
+  pass "F112: recuperacion de ordenes y evidencia cerrada"
+else
+  fail "F112: recuperacion" "$(tail -5 /tmp/f112-recovery.log)"
+fi
+
 if grep -q "light/phase" public/index.php \
     && grep -q "switch/diagnostics" public/index.php \
     && grep -q "switch/diagnostics/export" public/index.php; then
@@ -8376,6 +8382,17 @@ if grep -q "se encenderá automáticamente" public/assets/sensor-wizard-v2.js \
   pass "F112: panel explica el encendido y no reusa switch/test"
 else
   fail "F112: panel" "textos o guardia anti-polling"
+fi
+
+if grep -q "READY_TO_TURN_OFF" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "'turn_off'" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "Apagar luz" public/assets/sensor-wizard-v2.js \
+    && grep -q "lightBusy" public/assets/sensor-wizard-v2.js \
+    && grep -q "light_order_failed" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "reconcilePendingEvidence" src/Http/Controllers/SensorWizardController.php; then
+  pass "F112: apagado explicito, antiduplicado y recuperacion cableados"
+else
+  fail "F112: apagado/recuperacion" "faltan piezas del bloque 6"
 fi
 
 if [ "$SERVER_UP" = true ]; then

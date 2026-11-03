@@ -16,7 +16,7 @@
     rooms: [], catalog: null, preflight: null, run: null,
     stepId: null, attempt: null, busy: false,
     human: { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null },
-    lightPhase: 'idle', attemptData: null, pollTimer: null, pollStep: null, pollBusy: false,
+    lightPhase: 'idle', lightBusy: false, lightCooldownUntil: 0, attemptData: null, pollTimer: null, pollStep: null, pollBusy: false,
     doorKey: null, radarPhaseKey: null, radarState: null, radarStateKey: null,
     lastRadarState: null, autoFinishOp: null,
     lastSwitch: null, lastEvents: [], eventsTimer: null
@@ -787,7 +787,7 @@
       + lightPill('Apagar', human.off)
       + '</div>';
     if (phase === 'PREPARE_OFF') {
-      html += '<p class="hint">Paso 1 de 3: la lámpara debe estar apagada para que el encendido demuestre un cambio real.</p>'
+      html += '<p class="hint">Paso 1 de 4: la lámpara debe estar apagada para que el encendido demuestre un cambio real.</p>'
         + '<div class="actions"><button class="primary" data-action="light" data-op="prepare_off">Apagar lámpara ahora</button>'
         + '<button class="ghost" data-action="light" data-op="confirm_prep_off" data-value="1">Ya está apagada</button>'
         + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
@@ -806,6 +806,13 @@
       html += '<div class="action">¿Se encendió la lámpara?</div>'
         + '<div class="actions"><button class="primary" data-action="light" data-op="confirm_on" data-value="1">Sí, está encendida</button>'
         + '<button class="danger" data-action="light" data-op="confirm_on" data-value="0">No, sigue apagada</button></div>';
+      return html;
+    }
+    if (phase === 'READY_TO_TURN_OFF') {
+      html += '<div class="expect">Encendido confirmado. Ahora pulsa <strong>Apagar luz</strong>: se enviará una única orden de apagado.</div>'
+        + '<div class="actions"><button class="primary" data-action="light" data-op="turn_off">Apagar luz</button>'
+        + '<button class="ghost" data-action="light" data-op="retry">Repetir prueba de luz</button>'
+        + '<button class="ghost" data-action="cancel" data-step="light">Cancelar prueba</button></div>';
       return html;
     }
     if (phase === 'CONFIRM_OFF') {
@@ -837,7 +844,11 @@
   async function lightCall(action, value) {
     var att = activeAttemptFor('light');
     if (!att) { toast('Primero prepara la prueba de luz'); return; }
+    if (S.lightBusy) return;
+    if ((S.lightCooldownUntil || 0) > Date.now()) return;
+    S.lightBusy = true;
     busy(true);
+    banner('Enviando orden a la luz…', 'warn');
     try {
       var body = { run_id: S.run.run_id, step_id: 'light', attempt_id: att.attempt_id, action: action };
       if (value !== null && value !== undefined) body.value = !!value;
@@ -845,9 +856,10 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+      banner('', null);
       if (data.order) {
         if (!data.order.published) {
-          banner('No se pudo enviar la orden a la luz (' + (data.order.verdict || 'desconocido') + '). Revisa el diagnóstico.', 'bad');
+          banner('No se pudo enviar la orden a la luz. Revisa el diagnóstico y reintenta.', 'bad');
         } else if (data.fresh === false) {
           toast('Orden enviada sin telemetría nueva. Observa la lámpara y confirma.');
         } else if (data.order.telemetry === null) {
@@ -856,245 +868,20 @@
       }
       await reloadRun();
       render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  function renderFinishCta(host) {
-    host.innerHTML = '<div class="card"><div class="eyebrow">Fin</div><h1>Pasos finalizados</h1>'
-      + '<p class="hint">Genera el veredicto con los resultados disponibles.</p>'
-      + '<div class="actions"><button class="primary" data-action="finish">Ver veredicto</button></div></div>';
-  }
-
-  function renderVerdict(host) {
-    var v = S.run.verdict || {};
-    var labels = { door: 'Puerta', presence: 'Presencia', light: 'Luz' };
-    var icons = { PASS: '✓', FAIL: '✕', UNVERIFIED: '?', SKIP: '—', NOT_INSTALLED: '—' };
-    var cls = { PASS: 'ok', FAIL: 'bad', UNVERIFIED: 'warnc', SKIP: 'warnc', NOT_INSTALLED: 'muted' };
-    var stLabel = STATUS_LABEL;
-    var title = S.run.status === 'abandoned' ? 'Verificación interrumpida' : ({
-      CORRECT: 'Verificación correcta', WITH_RESERVES: 'Correcta con reservas',
-      REVIEW: 'Revisar instalación', INCOMPLETE: 'Verificación incompleta', NOT_EVALUABLE: 'No evaluable'
-    }[v.verdict || 'INCOMPLETE'] || 'Verificación');
-    var html = '<div class="card">';
-    html += '<div class="eyebrow">Veredicto</div><h1 class="' + (v.verdict === 'CORRECT' ? 'ok' : v.verdict === 'REVIEW' ? 'bad' : 'warnc') + '">'
-      + esc(title) + '</h1>';
-    html += '<div class="techgrid">';
-    Object.keys(labels).forEach(function (k) {
-      var st = (v.devices || {})[k] || 'PENDING';
-      html += '<div class="techrow"><span>' + labels[k] + '</span><span class="' + (cls[st] || '') + '">'
-        + (icons[st] || '·') + ' ' + esc(stLabel[st] || st) + '</span></div>';
-    });
-    var soakLabel = { PASS: 'Correcto', FAIL: 'Revisar', PENDING: 'Pendiente' }[v.soak || 'PENDING'] || 'Pendiente';
-    html += '<div class="techrow"><span>Reposo</span><span>' + esc(soakLabel) + '</span></div>';
-    html += '</div>';
-    var settings = (S.run.calibration && S.run.calibration.initial_settings) || {};
-    if (settings.maximum_range != null) {
-      html += '<p class="hint">Configuración inicial: sensibilidad ' + settings.radar_sensitivity
-        + '/9 · alcance ' + settings.maximum_range + ' m · fading ' + settings.fading_time + ' s</p>';
-    }
-    if (v.soak !== 'PASS') {
-      html += '<p class="hint">El reposo revisa los últimos 30 minutos con la sala vacía. Puedes comprobarlo ahora o al volver a abrir la sala.</p>';
-    }
-    html += '<div class="actions">';
-    if (v.verdict === 'REVIEW' || v.verdict === 'INCOMPLETE') {
-      html += '<button class="primary" data-action="new">Repetir verificación</button>';
-    }
-    if (v.soak !== 'PASS') html += '<button data-action="soak">Comprobar reposo</button>';
-    html += '<button class="' + (v.verdict === 'CORRECT' ? 'primary' : '') + '" data-action="export">Descargar informe</button>';
-    html += '<button class="ghost" data-action="new">Nueva verificación</button>';
-    html += '</div></div>';
-    host.innerHTML = html;
-  }
-
-  function renderTech() {
-    var body = $('techBody');
-    if (!body) return;
-    var p = S.preflight || {};
-    var d = (p.devices) || {};
-    var rows = [];
-    rows.push(['Sala', (p.room && p.room.code) || '—']);
-    rows.push(['Actor', (p.room && p.room.room_type_code) || '—']);
-    rows.push(['Run', (S.run && S.run.run_id) || '—']);
-    rows.push(['Versión', 'F104']);
-    rows.push(['Técnico', (S.run && S.run.operator) || operator() || '—']);
-    ['proximity', 'presence', 'switch'].forEach(function (k) {
-      var dev = d[k];
-      if (!dev) return;
-      rows.push([dev.label || k, (dev.model || '') + ' · ' + (dev.transport || '') + ' · '
-        + (dev.battery_pct != null ? 'pila ' + dev.battery_pct + '%' : '—')
-        + ' · ' + healthLine(dev)]);
-    });
-    var settings = p.settings || {};
-    if (settings.maximum_range != null) {
-      rows.push(['Radar', 'sens ' + settings.radar_sensitivity + '/9 · alcance ' + settings.maximum_range
-        + ' m · mín ' + settings.minimum_range + ' m · delay ' + settings.detection_delay
-        + ' s · fading ' + settings.fading_time + ' s']);
-    }
-    if (p.settings_age_seconds != null) rows.push(['Config recibida', age(p.settings_age_seconds)]);
-    if (p.radar_settings_valid === false) rows.push(['Config radar', 'INVÁLIDA — restaurar']);
-    if (S.run && S.run.door_polarity) rows.push(['Polaridad puerta', S.run.door_polarity.value]);
-    body.innerHTML = rows.map(function (r) {
-      return '<div class="techrow"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>';
-    }).join('');
-  }
-
-  // ── acciones ─────────────────────────────────────────────────────────
-  async function startRun() {
-    if (!operator()) { toast('Escribe el nombre del técnico'); $('operator').focus(); return; }
-    localStorage.setItem(LS_OP, operator());
-    busy(true);
-    try {
-      var data = await api(V2 + '/run/start', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_id: roomId(), operator: operator() })
-      });
-      S.run = data.run;
-      S.stepId = currentStep();
-      S.attempt = null;
-      S.attemptData = null;
-      S.lightPhase = 'idle';
-      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
-      saveRunLocal();
-      render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  async function startAttempt(stepId) {
-    busy(true);
-    stopPolling();
-    try {
-      var data = await api(V2 + '/attempt/start', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId })
-      });
-      S.attempt = data.attempt;
-      S.attemptData = null;
-      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
-      S.lightPhase = 'idle';
-      S.radarKey = null;
-      S.doorKey = null;
-      S.radarPhaseKey = null;
-      S.radarState = null;
-      S.radarStateKey = null;
-      S.lastRadarState = null;
-      // F112: no se envia ninguna orden al crear el intento. La fase
-      // persistida (PREPARE_OFF) indica al operador el siguiente paso.
-      await reloadRun();
-      render();
+      // F112: la pantalla siguiente no debe recibir el segundo clic del usuario.
+      S.lightCooldownUntil = Date.now() + 600;
     } catch (e) {
-      banner(e.message, 'bad');
-      if (e.data && e.data.active) {
-        toast('Hay una prueba en curso en esta sala');
-      }
-    } finally { busy(false); }
-  }
-
-  async function checkAttempt(stepId) {
-    var att = activeAttemptFor(stepId);
-    if (!att) { toast('Primero empieza la prueba'); return; }
-    if (stepId === 'light' && (S.human.prep_off === null || S.human.on === null || S.human.off === null)) {
-      toast('Completa la preparación, el encendido y el apagado');
-      return;
+      var failed = e.data && e.data.error === 'light_order_failed';
+      banner(failed
+        ? 'La operación no se completó. Puedes reintentar: la orden no se repetirá.'
+        : ('No se pudo completar: ' + e.message), 'bad');
+      await reloadRun().catch(function () {});
+      render();
+      S.lightCooldownUntil = Date.now() + 600;
+    } finally {
+      S.lightBusy = false;
+      busy(false);
     }
-    stopPolling();
-    busy(true);
-    try {
-      var body = {
-        run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id,
-        check_id: 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)
-      };
-      if (stepId === 'light') body.human = S.human;
-      await api(V2 + '/attempt/check', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      await reloadRun();
-      await loadPreflight();
-      S.attemptData = null;
-      render();
-      var res = document.querySelector('.result');
-      if (res) res.focus();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  async function cancelAttempt(stepId) {
-    var att = activeAttemptFor(stepId);
-    if (!att) return;
-    if (!confirm('¿Cancelar esta prueba? La ventana se cerrará sin veredicto.')) return;
-    stopPolling();
-    busy(true);
-    try {
-      await api(V2 + '/attempt/cancel', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id })
-      });
-      await reloadRun();
-      S.attemptData = null;
-      S.lightPhase = 'idle';
-      render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  async function invertPolarity() {
-    var current = (S.run && S.run.door_polarity && S.run.door_polarity.value) || 'normal';
-    var force = current === 'inverted' ? 'normal' : 'inverted';
-    busy(true);
-    try {
-      var data = await api(V2 + '/door/polarity', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_id: roomId(), run_id: S.run.run_id,
-          physical: 'CLOSED', force: force })
-      });
-      toast(data.message || 'Polaridad invertida. Repite los ciclos.');
-      await reloadRun();
-      await loadPreflight();
-      var step = S.run.steps && S.run.steps.door;
-      if (step) step.status = 'PENDING';
-      S.stepId = 'door';
-      S.attempt = null;
-      S.attemptData = null;
-      render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
-  }
-
-  async function polarity() {
-    busy(true);
-    try {
-      var data = await api(V2 + '/door/polarity', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_id: roomId(), run_id: S.run.run_id, physical: 'CLOSED' })
-      });
-      await reloadRun();
-      await loadPreflight();
-      toast(data.message || 'Polaridad comprobada');
-      render();
-    } catch (e) {
-      if (e.status === 422) toast(e.message);
-      else banner(e.message, 'bad');
-    } finally { busy(false); }
-  }
-
-  async function tune(phase) {
-    var stepId = phase === 'inside' ? 'radar_inside' : 'radar_outside';
-    var att = activeAttemptFor(stepId);
-    if (!att) { toast('Primero empieza la prueba'); return; }
-    busy(true);
-    try {
-      var data = await api(V2 + '/radar/tune', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id, phase: phase })
-      });
-      toast(data.message || (data.applied ? 'Ajuste aplicado' : 'Ajuste no confirmado'));
-      await refreshEvents();
-      await loadPreflight();
-      render();
-    } catch (e) { banner(e.message, 'bad'); }
-    finally { busy(false); }
   }
 
   async function calibrateCall(action) {

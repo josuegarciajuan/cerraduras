@@ -25872,6 +25872,23 @@ corrida nueva podía quedarse esperando un push que no llega y devolver
 - El fallback también existe tras la espera, por si el reporte se refresca
   durante la ventana.
 
+### Robustez del flujo de luz (bloque 6)
+
+- **Evidencia siempre cerrada:** `executeSwitchOrder` cierra la fila en `catch`
+  (mejor esfuerzo) y registra `light_order_failed` con acción, operación, fase y
+  mensaje. El navegador solo recibe `light_order_failed` + `retryable`.
+- **Reconciliación:** si el `operation_id` ya existe y la fila quedó abierta, se
+  cierra con el último reporte real y se responde `reconciled: true` sin publicar.
+- **Apagado explícito:** `confirm_on` no publica; el `OFF` se envía en
+  `turn_off`. Se elimina la transición implícita que apagaba la luz.
+- **Antiduplicado:** el panel bloquea el botón durante la petición y aplica una
+  ventana de 600 ms tras el render para que el segundo clic no caiga en el botón
+  de la pantalla siguiente.
+- **Esperas acotadas:** 3 s de telemetría, 2,5 s de alcance y 4 s de sonda
+  (configurables). No hay sondeo periódico.
+- **Evidencia humana:** las confirmaciones se guardan en
+  `switch_command_evidence` (`human_state`, `human_at`) y recomputan el veredicto.
+
 ### Invariantes
 
 - Sin polling REST de Tuya ni al radar.

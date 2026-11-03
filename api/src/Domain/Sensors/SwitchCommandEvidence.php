@@ -99,6 +99,20 @@ final class SwitchCommandEvidence
     }
 
     /**
+     * F112: una operacion publicada pero sin cerrar necesita reconciliarse.
+     * No se republica; se completa con el estado actual.
+     *
+     * @param array<string,mixed> $row
+     */
+    public static function needsReconcile(array $row): bool
+    {
+        return $row !== []
+            && (int) ($row['publish_ok'] ?? 0) === 1
+            && ($row['reported_at'] ?? null) === null
+            && (string) ($row['verdict'] ?? 'indeterminate') === 'indeterminate';
+    }
+
+    /**
      * Recorta una etiqueta de origen/actor. Nunca guarda secretos.
      */
     public static function label(mixed $value, int $max = 32): ?string
