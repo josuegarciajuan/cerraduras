@@ -114,6 +114,13 @@ final class SensorWizardController
             if (empty($pre['room']['code'])) {
                 return Response::json(404, ['error' => 'room_not_found']);
             }
+            // F102: no se puede abrir una segunda corrida mientras la anterior
+            // siga activa; de lo contrario ambas consumen la misma evidencia.
+            $running = $this->store->findRunningRunForRoom($roomId);
+            if ($running !== null) {
+                return Response::json(409, ['error' => 'run_already_active',
+                    'run_id' => (string) ($running['run_id'] ?? '')]);
+            }
             if (empty($pre['can_start'])) {
                 return Response::json(409, [
                     'error' => 'core_devices_missing',
@@ -3864,7 +3871,7 @@ final class SensorWizardController
     }
 
     /**
-     * F110: tras validar el punto interior, fija maximum_range = interior + 0,10
+     * F111: tras validar el punto interior, fija el menor escalón que lo cubre
      * y deja la sesión lista para verificar el exterior por presencia.
      */
     private function applyInsideOnlyCandidate(string $runId): void

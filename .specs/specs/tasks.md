@@ -11439,9 +11439,9 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
   - Verificación: `ZigbeeMqttMessageMapperTest` (DP1, DP1+DP9, inválido).
 - [x] TSK-F111-06: separar configuración, presencia real y comunicación.
   - Verificación: `latestPresenceReport()` + `presence_report` en `/radar/state`.
-- [ ] TSK-F111-07: evaluador exterior con reloj inyectado.
-- [ ] TSK-F111-08: reentrada auténtica y confirmación del punto interior.
-- [ ] TSK-F111-09: ajustes acotados e invalidación por configuración.
-- [ ] TSK-F111-10: UI, validador final y textos.
-- [ ] TSK-F111-11: BLOCK 83 y regresión completa.
+- [x] TSK-F111-07: evaluador exterior con reloj inyectado.
+- [x] TSK-F111-08: reentrada auténtica y confirmación del punto interior.
+- [x] TSK-F111-09: ajustes acotados e invalidación por configuración.
+- [x] TSK-F111-10: UI, validador final y textos.
+- [x] TSK-F111-11: BLOCK 83 y regresión completa.
 - [ ] TSK-F111-12: despliegue y prueba física de aceptación.

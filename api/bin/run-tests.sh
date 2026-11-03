@@ -8176,6 +8176,31 @@ else
 fi
 
 # =============================================================================
+# BLOCK 83 — F111: presencia exterior DP1, reentrada e invalidación
+# Trazabilidad: RF-255…RF-260 · tasks.md TSK-F111-07…11
+# =============================================================================
+block "BLOCK 83 — F111: exterior DP1 y reentrada"
+if php tests/Unit/RadarExteriorPresenceEvaluatorTest.php >/tmp/f111-evaluator.log 2>&1; then
+  pass "F111: evaluador exterior con reloj y silencio inconcluso"
+else
+  fail "F111: evaluador exterior" "$(tail -5 /tmp/f111-evaluator.log)"
+fi
+if grep -q "f107_presence_report" src/Infrastructure/Gateways/Sensor/ZigbeeMqttMessageMapper.php \
+    && grep -q "latestPresenceReport" src/Domain/Sensors/SensorContextBuilder.php \
+    && grep -q "config_version" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "presence_absent" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -nE "setInterval|tuyaPresenceApi|openapi\.tuya" src/Domain/Sensors/RadarExteriorPresenceEvaluator.php src/Http/Controllers/SensorWizardController.php >/tmp/f111-guard.log 2>&1; then
+  pass "F111: evidencia DP1, versión de configuración y guardia anti-polling"
+else
+  fail "F111: invariantes" "$(tail -5 /tmp/f111-guard.log)"
+fi
+if node --check public/assets/sensor-wizard-v2.js >/tmp/f111-js.log 2>&1; then
+  pass "F111: UI del asistente válida"
+else
+  fail "F111: UI" "$(tail -5 /tmp/f111-js.log)"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

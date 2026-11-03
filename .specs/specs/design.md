@@ -25735,3 +25735,10 @@ conversor z2m
 - Sin `configure` ni `dataQuery` en el conversor.
 - Un reporte cacheado nunca se cuenta como reporte nuevo.
 - Un cambio de configuración invalida la evidencia anterior.
+
+### Cierre software F111
+
+El evaluador exterior/reentrada es determinista y recibe el reloj por inyección; el
+silencio devuelve `inconclusive`, no `clear`. La corrida se bloquea si ya existe otra
+activa y BLOCK 83 verifica la evidencia DP1, la invalidación por configuración y la
+ausencia de polling. La instalación y prueba física de aceptación siguen diferidas.

@@ -354,8 +354,7 @@ final class RadarCalibrationPlanner
      * F111: candidato de alcance para calibración solo interior.
      *
      * Se elige el MENOR escalón configurable que cubra la referencia interior,
-     * sin margen fijo añadido. El margen implícito es como máximo un paso de
-     * rejilla (0,15 m) y, si la referencia cae justo en la rejilla, es cero.
+     * sin margen fijo añadido. Si la referencia cae justo en la rejilla, es cero.
      *
      * Devuelve null si la referencia no es válida o no cabe en el rango.
      *

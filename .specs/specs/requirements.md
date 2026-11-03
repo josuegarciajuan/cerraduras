@@ -13158,3 +13158,6 @@ dispersión producida por los pasos laterales no invalida la medición.
   confirmación interior anteriores.
 - Los resultados invalidados se conservan como histórico.
 - El panel explica mediana, rejilla, candidato, motivo del resultado y acción.
+
+**Estado F111 implementación:** RF-255…RF-260 cubiertos por TSK-F111-01…11.
+La prueba física y la aceptación de campo (TSK-F111-12) permanecen pendientes.
