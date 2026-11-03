@@ -19,6 +19,8 @@ use RuntimeException;
  *   no un valor inventado.
  * - `apply()` publica en `<topic>/set` (QoS 1) y espera a que el dispositivo
  *   reemita su configuración con un evento NUEVO. Solo entonces `applied=true`.
+ *   Excepción F112: al restaurar la base (`persist=false`) se acepta el último
+ *   reporte real si ya coincide y es reciente; el radar solo publica cambios.
  *
  * Nunca llama a Tuya y no crea temporizadores ni pollers.
  */
@@ -261,6 +263,29 @@ final class ZigbeeRadarCalibrationService
             throw new RuntimeException('no_parameters');
         }
 
+        if (!$persist) {
+            // F112: si el radar ya está en la base no se publica nada. Evita
+            // esperas inútiles y trafico Zigbee cuando se encadenan corridas.
+            $trust = (int) (Config::get('RADAR_BASELINE_TRUST_SECONDS', '900') ?? 900);
+            $stored = $this->latestSnapshot($roomId);
+            if ($trust > 0
+                && self::settingsMatch($commands, $stored['settings'])
+                && $stored['age_seconds'] !== null
+                && $stored['age_seconds'] <= $trust) {
+                return [
+                    'ok' => true,
+                    'applied' => true,
+                    'persisted' => false,
+                    'saved' => null,
+                    'confirmed_by' => 'stored_state',
+                    'warning' => 'already_at_target',
+                    'published_at' => null,
+                    'commands' => $commands,
+                    'status' => $this->status($roomId, $device),
+                ];
+            }
+        }
+
         $topic = $this->setTopic($device);
         $beforeId = $this->latestEventId($roomId);
         $publishedAt = gmdate('Y-m-d H:i:s.v');
@@ -303,6 +328,23 @@ final class ZigbeeRadarCalibrationService
             }
         }
 
+        $confirmedBy = $applied ? 'push' : null;
+        if (!$applied && !$persist) {
+            // F112: restaurar la base cuando el radar YA está en la base no debe
+            // exigir un push nuevo. El ZY-M100 solo publica cambios, así que una
+            // segunda corrida seguida podía quedarse en 409 sin motivo real.
+            $trust = (int) (Config::get('RADAR_BASELINE_TRUST_SECONDS', '900') ?? 900);
+            $stored = $this->latestSnapshot($roomId);
+            if ($trust > 0
+                && self::settingsMatch($commands, $stored['settings'])
+                && $stored['age_seconds'] !== null
+                && $stored['age_seconds'] <= $trust) {
+                $applied = true;
+                $confirmedBy = 'stored_state';
+                $latest = $stored;
+            }
+        }
+
         $snapshotForStatus = $latest ?? $this->latestSnapshot($roomId);
         $invalidReason = self::settingsInvalidReason($snapshotForStatus['settings']);
         if ($applied && $invalidReason !== null) {
@@ -338,13 +380,35 @@ final class ZigbeeRadarCalibrationService
             'applied' => $applied,
             'persisted' => $saved !== null,
             'saved' => $saved,
+            'confirmed_by' => $confirmedBy,
             'warning' => $applied
-                ? null
+                ? ($confirmedBy === 'stored_state' ? 'already_at_target' : null)
                 : 'El radar aún no ha confirmado la nueva configuración por push; no se guarda',
             'published_at' => $publishedAt,
             'commands' => $commands,
             'status' => $status,
         ];
+    }
+
+    /**
+     * Compara los parámetros pedidos con los del último reporte real.
+     * Compartido por la confirmación por push y por la base ya aplicada.
+     *
+     * @param array<string,mixed> $commands
+     * @param array<string,mixed> $settings
+     */
+    public static function settingsMatch(array $commands, array $settings): bool
+    {
+        if ($commands === [] || $settings === []) {
+            return false;
+        }
+        foreach ($commands as $key => $expected) {
+            $actual = $settings[$key] ?? null;
+            if (!is_numeric($actual) || abs((float) $actual - (float) $expected) > 0.001) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -25859,6 +25859,19 @@ Reglas duras:
 5. Bloque 5: regresión completa en producción.
 6. Bloque 6: publicación final y prueba física del usuario.
 
+### Base del radar ya aplicada
+
+El ZY-M100 solo publica cambios. Restaurar la base (`persist=false`) en una
+corrida nueva podía quedarse esperando un push que no llega y devolver
+`409 radar_baseline_failed` cuando el radar **ya estaba** en la base.
+
+- Si el último reporte real coincide con la base y tiene menos de
+  `RADAR_BASELINE_TRUST_SECONDS` (def. 900 s), se acepta como
+  `confirmed_by=stored_state` y **no se publica** nada.
+- La calibración real (`persist=true`) sigue exigiendo confirmación por push.
+- El fallback también existe tras la espera, por si el reporte se refresca
+  durante la ventana.
+
 ### Invariantes
 
 - Sin polling REST de Tuya ni al radar.

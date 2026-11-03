@@ -11480,6 +11480,9 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
   `AGENTS.md`, `docs/ops-sensores.md` y `docs/ops-zigbee.md`.
 
 ### Bloque 5 — Regresión
+- [x] TSK-F112-14: base ya aplicada sin push (`confirmed_by=stored_state`).
+  - Verificación: `RadarBaselineTrustTest` (21 checks); corridas encadenadas
+    dejan de devolver `409 radar_baseline_failed`.
 - [ ] TSK-F112-12: volcado previo, BLOCK nuevo y regresión completa con 0
   fallos.
 
