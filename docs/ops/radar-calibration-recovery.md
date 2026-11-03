@@ -11,7 +11,7 @@ calibración antes de modificar producción.
 | Imagen | `ghcr.io/koenkk/zigbee2mqtt:2.14.2@sha256:addbfb08…` |
 | Configuración | `/opt/cerraduras-zigbee/data/zigbee2mqtt/configuration.yaml` |
 | Conversores externos | `/opt/cerraduras-zigbee/data/zigbee2mqtt/external_converters/` |
-| Conversor F107 | `zy-m100-distance-evidence.js` |
+| Conversor F107/F108/F111 | `zy-m100-distance-evidence.js` (DP 9 + marcador DP 1) |
 | Log level | `info` |
 | Broker | Mosquitto local del nodo `oficina` |
 | API | `cerraduras-api.service` |
