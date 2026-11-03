@@ -25907,6 +25907,14 @@ rondas o suelo: `outside_reduction_attempts_reached`,
 La referencia interior solo elige el punto de partida; ya no bloquea la
 reducción (`lowerCandidate` recibe un `$floor` de prueba, no la referencia).
 
+### Fechas de la evidencia (F112)
+
+`reported_at`, `prior_state_at`, `human_at` y `published_at` pueden llegar en
+ISO 8601. `SwitchCommandEvidenceRepository::dbDate()` los normaliza a UTC
+`Y-m-d H:i:s.v` antes de escribir; MariaDB en modo estricto rechaza `T`/`Z` en
+`DATETIME(3)` (incidente 2026-11-03: 500 al encender la luz). El `INSERT` ya no
+usa `IGNORE`: solo el duplicado de `operation_id` se trata como reintento.
+
 ### Invariantes
 
 - Sin polling REST de Tuya ni al radar.
