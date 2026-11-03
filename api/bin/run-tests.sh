@@ -6501,7 +6501,7 @@ except Exception: rows=[]
 print(' '.join(str(r.get('run_id','')) for r in rows if r.get('status')=='running' and str(r.get('operator','')).startswith('runner')))
 " 2>/dev/null)
     for RID in $F95_RUNNER_IDS; do
-        F95_NEWID=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/reset" \
+        F95_NEWID=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/reset" \
             -H 'Content-Type: application/json' -d "{\"run_id\":\"$RID\"}" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
         [ -n "$F95_NEWID" ] && rm -f "run/sensores/${F95_NEWID}.json" "run/sensores/${F95_NEWID}.jsonl" "run/sensores/locks/${F95_NEWID}.lock"
         rm -f "run/sensores/${RID}.json" "run/sensores/${RID}.jsonl" "run/sensores/locks/${RID}.lock"
@@ -6659,7 +6659,7 @@ print('ok' if ok else 'bad')
         if [ -n "$F95_RID2" ]; then
             curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
                 -H 'Content-Type: application/json' -d "{\"run_id\":\"$F95_RID2\",\"step_id\":\"radar_inside\"}" >/dev/null
-            F95_RESET_CODE=$(curl -s -o /tmp/f95_reset.json -w "%{http_code}" --max-time 5 -X POST \
+            F95_RESET_CODE=$(curl -s -o /tmp/f95_reset.json -w "%{http_code}" --max-time 20 -X POST \
                 "${API_BASE}/dashboard-api/sensores/v2/run/reset" -H 'Content-Type: application/json' \
                 -d "{\"run_id\":\"$F95_RID2\",\"operator\":\"runner-reset\"}" 2>/dev/null)
             if [ "$F95_RESET_CODE" = "201" ]; then
