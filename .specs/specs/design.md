@@ -25889,6 +25889,24 @@ corrida nueva podía quedarse esperando un push que no llega y devolver
 - **Evidencia humana:** las confirmaciones se guardan en
   `switch_command_evidence` (`human_state`, `human_at`) y recomputan el veredicto.
 
+### Reducción progresiva desde el exterior (F112)
+
+```text
+medición interior -> alcance inicial aplicado y confirmado
+  -> ronda exterior (presencia DP1 + ventana)
+     detectado -> siguiente escalón (3,60 → 3,45 → 3,30 → 3,15 → 3,00)
+     despejado -> candidato -> reentrada + punto interior -> aprobar
+     inconcluso -> repetir, nunca aprobar
+```
+
+Límites acordados: **4 reducciones** y **1,00 m** por debajo del alcance
+inicial. El escalón es el del dispositivo (`range_step`, 0,15 m). Al agotar
+rondas o suelo: `outside_reduction_attempts_reached`,
+`outside_reduction_limit_reached` o `outside_range_min_reached`.
+
+La referencia interior solo elige el punto de partida; ya no bloquea la
+reducción (`lowerCandidate` recibe un `$floor` de prueba, no la referencia).
+
 ### Invariantes
 
 - Sin polling REST de Tuya ni al radar.

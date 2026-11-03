@@ -8367,6 +8367,12 @@ else
   fail "F112: recuperacion" "$(tail -5 /tmp/f112-recovery.log)"
 fi
 
+if php tests/Unit/RadarReductionPlanTest.php >/tmp/f112-reduction.log 2>&1; then
+  pass "F112: reduccion progresiva del alcance exterior"
+else
+  fail "F112: reduccion exterior" "$(tail -5 /tmp/f112-reduction.log)"
+fi
+
 if grep -q "light/phase" public/index.php \
     && grep -q "switch/diagnostics" public/index.php \
     && grep -q "switch/diagnostics/export" public/index.php; then
@@ -8382,6 +8388,17 @@ if grep -q "se encenderá automáticamente" public/assets/sensor-wizard-v2.js \
   pass "F112: panel explica el encendido y no reusa switch/test"
 else
   fail "F112: panel" "textos o guardia anti-polling"
+fi
+
+if grep -q "nextReduction" src/Domain/Sensors/RadarCalibrationPlanner.php \
+    && grep -q "RadarCalibrationPlanner::nextReduction" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outside_reduction_attempts_reached" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "outsidePresenceEvidence" src/Http/Controllers/SensorWizardController.php \
+    && grep -q "inside_only" src/Http/Controllers/SensorWizardController.php \
+    && ! grep -q 'lowerCandidate($currentMax, $reference' src/Http/Controllers/SensorWizardController.php; then
+  pass "F112: reduccion exterior acotada y evidencia DP1"
+else
+  fail "F112: reduccion exterior" "faltan piezas del bloque 7"
 fi
 
 if grep -q "READY_TO_TURN_OFF" src/Http/Controllers/SensorWizardController.php \
