@@ -5,6 +5,7 @@ namespace App\Infrastructure\Gateways\Sensor;
 
 use App\Domain\Presence\PresenceEvent;
 use App\Domain\Sensors\RadarDistanceReport;
+use App\Domain\Sensors\RadarPresenceReport;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -219,6 +220,17 @@ final class ZigbeeMqttMessageMapper
                     // trama, para no mezclar muestras de ajustes distintos.
                     $distanceReport['config_key'] = RadarDistanceReport::configKey($settings);
                     $meta['distance_report'] = $distanceReport;
+                }
+                // F111: identidad del reporte real de presencia. El campo
+                // `presence` del payload combinado puede ser un valor heredado;
+                // solo el marcador demuestra un DP 1 nuevo.
+                $presenceReport = RadarPresenceReport::fromMarker(
+                    $decoded->f107_presence_report ?? null,
+                    $occurredAt
+                );
+                if ($presenceReport !== null) {
+                    $presenceReport['config_key'] = RadarDistanceReport::configKey($settings);
+                    $meta['presence_report'] = $presenceReport;
                 }
             }
 

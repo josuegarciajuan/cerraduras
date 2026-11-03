@@ -15917,3 +15917,69 @@ Respuesta: `{ "ok": true, "automation_pause": { "paused": bool, "run_id": ..., "
 - Motivos nuevos: `inside_only_no_range`, `inside_only_no_separation`,
   `inside_only_apply_failed`.
 - `devices.meta_json.calibration_previous` conserva la calibración anterior.
+
+
+## §F111 Calibración interior mínima y evidencia de presencia
+
+### Marcador DP 1 (Zigbee2MQTT)
+
+```text
+f107_presence_report = p1|<session>|<counter>|<PRESENT|ABSENT>|push
+```
+
+- `session`: identificador del conversor (base36, máximo 64).
+- `counter`: entero decimal, independiente del contador DP 9.
+- `value`: `PRESENT` o `ABSENT` (se normaliza a mayúsculas).
+- `origin`: `push` (se rechaza `query`).
+
+Aditivo. El campo se ignora en versiones anteriores del backend.
+
+### Tabla `radar_presence_reports`
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `id` | BIGINT UNSIGNED | PK |
+| `device_id` | BIGINT UNSIGNED | FK `devices.id` |
+| `external_id` | VARCHAR(128) | identidad Zigbee |
+| `room_id` | BIGINT UNSIGNED | sala resuelta |
+| `marker` | VARCHAR(160) | identidad única del reporte |
+| `session_id` | VARCHAR(64) | origen |
+| `report_counter` | BIGINT UNSIGNED | orden dentro de la sesión |
+| `value` | VARCHAR(8) | `PRESENT` / `ABSENT` |
+| `origin` | VARCHAR(16) | por defecto `push` |
+| `config_key` | VARCHAR(64) NULL | huella de configuración |
+| `received_at` | DATETIME(3) | instante del mensaje |
+| `created_at` | DATETIME(3) | alta |
+
+Índices: `UNIQUE(device_id, marker)`, `(room_id, received_at)`,
+`(device_id, received_at)` y `(room_id, config_key, received_at)`.
+
+### `GET /dashboard-api/sensores/v2/radar/state`
+
+Campo aditivo:
+
+```json
+"presence_report": {
+  "value": "ABSENT",
+  "occurred_at": "2026-11-03 10:11:20.415",
+  "age_seconds": 6,
+  "marker": "p1|mw0gscxb|2|ABSENT|push",
+  "session_id": "mw0gscxb",
+  "report_counter": 2,
+  "config_key": "<sha256>"
+}
+```
+
+`null` si todavía no hay ningún reporte DP 1 identificado.
+
+### Motivos previstos (fase 3)
+
+`outside_no_evidence`, `outside_detected`, `outside_clear`,
+`reentry_not_detected`, `inside_not_confirmed`, `evidence_invalidated`,
+`communication_gap`.
+
+### Compatibilidad
+
+- No se modifican campos existentes de `/radar/state`.
+- `raw_presence_state` se conserva; `presence_report` es la evidencia auténtica.
+- Las corridas con sesión < v6 conservan su comportamiento.

@@ -9,6 +9,7 @@ use App\Domain\Presence\DoorPolarity;
 use App\Domain\Presence\PresenceEvent;
 use App\Domain\Presence\IotSessionService;
 use App\Domain\Sensors\RadarDistanceReportRepository;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use InvalidArgumentException;
 
 /** Resolves configured Zigbee identities and delegates state changes to the domain writer. */
@@ -18,7 +19,8 @@ final class ZigbeeMqttEventProcessor
         private DeviceRepositoryInterface $devices,
         private IotSessionService $iotSessions,
         private ?ZigbeeSwitchStateService $switchStates = null,
-        private ?RadarDistanceReportRepository $distanceReports = null
+        private ?RadarDistanceReportRepository $distanceReports = null,
+        private ?RadarPresenceReportRepository $presenceReports = null
     ) {
         $this->switchStates ??= new ZigbeeSwitchStateService($devices);
     }
@@ -131,6 +133,14 @@ final class ZigbeeMqttEventProcessor
             && is_array($meta['distance_report'] ?? null)
             && !$isBootstrap) {
             $this->distanceReports->record($device->id, $externalId, $roomId, $meta['distance_report']);
+        }
+
+        // F111: evidencia del DP 1, separada de la fusion de presencia. Un
+        // reporte del radar no es una transicion de estancia.
+        if ($this->presenceReports !== null
+            && is_array($meta['presence_report'] ?? null)
+            && !$isBootstrap) {
+            $this->presenceReports->record($device->id, $externalId, $roomId, $meta['presence_report']);
         }
 
         if ($isBootstrap && $sensor === 'PROXIMITY') {
