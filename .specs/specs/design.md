@@ -25855,7 +25855,7 @@ Reglas duras:
 1. Bloque 1: evidencia, alcance y contratos. **Completado.**
 2. Bloque 2: tabla, registro, contexto, consulta y exportación.
 3. Bloque 3: máquina de estados y panel.
-4. Bloque 4: runbook y documentación permanente.
+4. Bloque 4: runbook y documentación permanente. **Completado.**
 5. Bloque 5: regresión completa en producción.
 6. Bloque 6: publicación final y prueba física del usuario.
 
