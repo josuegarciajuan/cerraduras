@@ -11516,9 +11516,15 @@ Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
     en BD.
 
 ## Fase 3 — Pruebas HTTP
-- [ ] TSK-F113-06: casos válido/desconocido/sin llave/revocado/caducado/sin
+- [x] TSK-F113-06: casos válido/desconocido/sin llave/revocado/caducado/sin
   permiso en BLOCK 69.
+  - Verificación: 8 cheques F113 PASS (ficha normalizada, auditoría, errores y
+    limpieza) en tres ejecuciones.
 - [ ] TSK-F113-07: regresión completa (`bash bin/run-tests.sh`) con 0 fallos.
+  - Estado: F113 estable; la suite global queda pendiente de una corrida sin
+    otra sesión concurrente sobre el mismo worktree. Se corrigieron dos
+    comprobaciones F95 obsoletas (`data.fresh` tras F112) y los timeouts de
+    `run/start`/`run/reset` frente al baseline del radar.
 
 ## Fase 4 — Prueba física
 - [ ] TSK-F113-08: lectura del llavero real, apertura y evidencia en
