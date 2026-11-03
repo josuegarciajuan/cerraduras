@@ -8373,6 +8373,12 @@ else
   fail "F112: reduccion exterior" "$(tail -5 /tmp/f112-reduction.log)"
 fi
 
+if php tests/Unit/SwitchEvidenceDatetimeTest.php >/tmp/f112-datetime.log 2>&1; then
+  pass "F112: fechas normalizadas en la evidencia de luz"
+else
+  fail "F112: fechas de evidencia" "$(tail -5 /tmp/f112-datetime.log)"
+fi
+
 if grep -q "light/phase" public/index.php \
     && grep -q "switch/diagnostics" public/index.php \
     && grep -q "switch/diagnostics/export" public/index.php; then

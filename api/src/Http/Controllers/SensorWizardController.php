@@ -1098,7 +1098,7 @@ final class SensorWizardController
         $priorState = SwitchCommandEvidence::normalizeState($meta['switch_state'] ?? null);
         $priorAt = isset($meta['switch_state_at']) ? (string) $meta['switch_state_at'] : null;
         $requestedAt = $this->nowUtcMs();
-        $evidence->begin([
+        $recorded = $evidence->begin([
             'operation_id' => $operationId,
             'room_id' => $roomId,
             'device_id' => (int) $device->id,
@@ -1111,6 +1111,18 @@ final class SensorWizardController
             'prior_state' => $priorState,
             'prior_state_at' => $priorAt,
         ]);
+        if (!$recorded) {
+            // Carrera: otra peticion creo la misma operacion entre el SELECT y
+            // el INSERT. Se reconcilia; NUNCA se publica una segunda orden.
+            $row = $evidence->findByOperationId($operationId);
+            if ($row !== null && strtoupper((string) $row['action']) === $action) {
+                $reconciled = $this->reconcilePendingEvidence($action, $evidence, $row);
+                $payload = $this->switchPayloadFromEvidence($reconciled, true);
+                $payload['reconciled'] = true;
+                return ['status' => 200, 'payload' => $payload];
+            }
+            throw new \RuntimeException('evidence_start_conflict');
+        }
 
         $startedAt = microtime(true);
         $closed = false;
