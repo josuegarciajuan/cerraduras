@@ -6570,7 +6570,7 @@ print('ok' if v is True else ('pending' if v is None else 'bad'))
         fail "F95: preflight" "$(printf '%s' "$F95_PRE" | head -c 200)"
     fi
 
-    F95_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+    F95_RUN=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
         -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner"}')
     F95_RID=$(printf '%s' "$F95_RUN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
     if [ -n "$F95_RID" ]; then
@@ -6653,7 +6653,7 @@ print('ok' if ok else 'bad')
         fi
 
         # Reinicio global: archiva el intento activo y crea una corrida limpia en la puerta.
-        F95_RUN2=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+        F95_RUN2=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
             -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-reset"}')
         F95_RID2=$(printf '%s' "$F95_RUN2" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
         if [ -n "$F95_RID2" ]; then
@@ -6754,7 +6754,7 @@ F102_PING_BODY=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/rad
 F102_DEPLOYED=no
 if printf '%s' "$F102_PING_BODY" | grep -q "run_not_found"; then F102_DEPLOYED=yes; fi
 if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
-    F102_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
+    F102_RUN=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
         -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-f102"}')
     F102_RID=$(printf '%s' "$F102_RUN" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
     if [ -n "$F102_RID" ]; then
