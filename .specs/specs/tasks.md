@@ -11507,8 +11507,10 @@ Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
     reutiliza los motivos de `authorise`/`deny`; unitarios 94/94 sin fallos.
 
 ## Fase 2 — Datos de prueba
-- [ ] TSK-F113-05: ficha `EM-00EFA5BB` y llave NFC de Josue (worker 172).
-  - Verificación: ficha `ASSIGNED`, llave `ACTIVE`, permiso `ALMACEN_BEBIDAS`.
+- [x] TSK-F113-05: ficha `EM-00EFA5BB` y llave NFC de Josue (worker 172).
+  - Verificación: ficha 209 `ASSIGNED` (`current_key_id=468`), llave 468
+    `ACTIVE`, permiso `room_type_id=6` (`ALMACEN_BEBIDAS`); sin código en claro
+    en BD.
 
 ## Fase 3 — Pruebas HTTP
 - [ ] TSK-F113-06: casos válido/desconocido/sin llave/revocado/caducado/sin
