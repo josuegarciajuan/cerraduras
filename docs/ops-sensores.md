@@ -254,6 +254,10 @@ Verificar que no queda ninguna corrida `running`:
 curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/runs?room_id=14&limit=10'
 ```
 
+Para F111 esta preparación es obligatoria y debe ejecutarse justo antes de
+crear la corrida. Solo limpia estado local: no consulta Tuya, no aplica la
+base del radar y no constituye un resultado de hardware.
+
 ### 12.2 Crear la corrida y aplicar la base
 
 ```bash

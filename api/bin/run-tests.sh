@@ -8186,7 +8186,7 @@ else
   fail "F111: evaluador exterior" "$(tail -5 /tmp/f111-evaluator.log)"
 fi
 if grep -q "f107_presence_report" src/Infrastructure/Gateways/Sensor/ZigbeeMqttMessageMapper.php \
-    && grep -q "latestPresenceReport" src/Domain/Sensors/SensorContextBuilder.php \
+    && grep -q "latestPresenceReport" src/Infrastructure/Sensors/SensorContextBuilder.php \
     && grep -q "config_version" src/Http/Controllers/SensorWizardController.php \
     && grep -q "presence_absent" src/Http/Controllers/SensorWizardController.php \
     && ! grep -nE "setInterval|tuyaPresenceApi|openapi\.tuya" src/Domain/Sensors/RadarExteriorPresenceEvaluator.php src/Http/Controllers/SensorWizardController.php >/tmp/f111-guard.log 2>&1; then
