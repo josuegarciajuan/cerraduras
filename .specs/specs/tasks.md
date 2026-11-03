@@ -11527,9 +11527,13 @@ Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
     `run/start`/`run/reset` frente al baseline del radar.
 
 ## Fase 4 — Prueba física
-- [ ] TSK-F113-08: lectura del llavero real, apertura y evidencia en
-  `docs/hardware/`.
+- [x] TSK-F113-08: lectura del llavero real, apertura y evidencia en
+  `docs/hardware/r35d-nfc-ficha-20261103.md`.
+  - Verificación: apertura confirmada por el operador; `key_access_events`
+    756 `NFC OK`, `access_events` 8094/8095, sesión 573.
 
 ## Fase 5 — Cierre
-- [ ] TSK-F113-09: verificar/restaurar `CERRADURA 2.6-ota` y documentar.
-- [ ] TSK-F113-10: actualizar la tabla de fases de `AGENTS.md`.
+- [x] TSK-F113-09: verificar/restaurar `CERRADURA 2.6-ota` y documentar.
+  - Verificación: device 23 declara `CERRADURA 2.6-ota`; respaldo completo y
+    binarios con SHA-256 en el runbook de evidencia.
+- [x] TSK-F113-10: actualizar la tabla de fases de `AGENTS.md`.

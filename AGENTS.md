@@ -211,6 +211,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F110 Base sin calibrar y calibración solo interior** | **BLOCK 82 + units F110** | **Implementado (código); regresión 961/0/12; prueba física pendiente** |
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
+| **F113 Lector R35D-B como lector de fichas NFC** | **BLOCK 69 + `CredentialFormatTest`** | **Completado (código); prueba física 2026-11-03 OK con `00EFA5BB`; regresión global pendiente de corrida sin sesión concurrente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
