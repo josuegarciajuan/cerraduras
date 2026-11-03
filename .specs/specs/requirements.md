@@ -13244,6 +13244,28 @@ sesión futura no puede analizar un fallo equivalente.
 - No se introduce ningún sondeo periódico a la API REST de Tuya; el estado
   sigue llegando por push.
 
+## RF-270: Ningún fallo oculta la evidencia
+- Si la ejecución de una orden falla, la evidencia se cierra igualmente con un
+  veredicto honesto y el detalle técnico se registra en el log y en la corrida.
+- El navegador recibe un código estable y reintentable; nunca el mensaje interno.
+- Un reintento del mismo `operation_id` no republica la orden.
+
+## RF-271: Reconciliación de operaciones pendientes
+- Una operación publicada pero sin cerrar se completa con el estado actual antes
+  de responder, sin enviar una segunda orden.
+- Si no hay telemetría suficiente, el veredicto es `unconfirmed`, nunca `confirmed`.
+
+## RF-272: Apagado explícito y sin sorpresas
+- Confirmar el encendido no envía ninguna orden.
+- El apagado exige la acción explícita `turn_off`.
+- Un doble clic o un clic durante el cambio de pantalla no puede confirmar ni
+  apagar por accidente.
+
+## RF-273: Esperas acotadas y visibles
+- Las esperas de telemetría/alcance están acotadas y son configurables.
+- El panel indica que está enviando y permite cancelar sin romper la fase.
+- Ninguna espera se convierte en polling ni en sondeo periódico.
+
 **Estado F112:** bloques 1–4 completados (evidencia, consulta, fases de luz y runbook `docs/ops/diagnostico-luz-zigbee.md`). Regresión y prueba física completa pendientes (bloques 5–6); ver `tasks.md`.
 
 ---

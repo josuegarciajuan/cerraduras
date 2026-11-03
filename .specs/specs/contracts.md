@@ -16108,12 +16108,51 @@ Transiciones:
   última telemetría de esa transición, y `order.fresh` dentro de `order`.
   `fresh=false` significa «sin reporte nuevo», no fallo del dispositivo.
 
+### Fases y acciones (F112, revisión bloque 6)
+
+Fases: `PREPARE_OFF → READY_TO_START → CONFIRM_ON → READY_TO_TURN_OFF →
+CONFIRM_OFF → READY_TO_VALIDATE` (más `INDETERMINATE` y `DONE`).
+
+Acciones de `light/phase`:
+
+| Acción | Efecto | Orden enviada |
+|---|---|---|
+| `prepare_off` | apaga bajo demanda | `OFF` |
+| `confirm_prep_off` | confirma el apagado inicial | ninguna |
+| `start_on` | enciende la lámpara | `ON` |
+| `confirm_on` | confirma el encendido | **ninguna** |
+| `turn_off` | apaga la lámpara | `OFF` |
+| `confirm_off` | confirma el apagado | ninguna |
+| `retry` | nuevo ciclo desde `PREPARE_OFF` | ninguna |
+
+Reglas:
+
+- `confirm_on` **no** apaga: el apagado exige la acción explícita `turn_off`.
+- `confirm_prep_off`, `confirm_on` y `confirm_off` exigen `value` booleano.
+- Cada orden usa un `operation_id` derivado de corrida + intento + ciclo + clave.
+- Si una orden ya se publicó, un reintento **reconcilia** con el estado actual y
+  **no vuelve a publicar**; la respuesta incluye `reconciled: true`.
+- La respuesta de orden incluye `elapsed_ms` (espera real de confirmación).
+
 ### Errores nuevos
 
 `operation_conflict`, `light_phase_invalid`, `light_not_prepared`,
 `evidence_unavailable`.
 
 Se conservan `switch_unreachable`, `switch_not_found` y los códigos actuales.
+
+`light/phase` devuelve `500 { "error": "light_order_failed", "operation_id": ...,
+"retryable": true }` si la operación falla. El detalle técnico se registra en
+`api.log` y en el JSONL de la corrida (`light_order_failed`), nunca en la
+respuesta. Un reintento con el mismo `operation_id` no duplica la orden.
+
+### Esperas acotadas
+
+- `SWITCH_STATE_WAIT_MS` (def. 3000): espera de telemetría posterior a la orden.
+- `SWITCH_REACHABLE_WAIT_MS` (def. 2500): espera de actividad del dispositivo.
+- `SWITCH_PROBE_WAIT_MS` (def. 4000): sonda puntual `/get` bajo demanda.
+
+Ninguna de estas esperas crea polling: solo aplican dentro de la petición.
 
 ### Sin migración de contrato
 

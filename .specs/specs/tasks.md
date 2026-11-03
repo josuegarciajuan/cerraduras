@@ -11489,6 +11489,11 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
     `/root/cerraduras-backups/db-f112-20261103T121705Z.sql.gz` (14 MB, 43 tablas).
 
 ### Bloque 6 — Cierre
+- [x] TSK-F112-15: evidencia cerrada ante fallo y log `light_order_failed`.
+- [x] TSK-F112-16: reconciliación idempotente sin republicar.
+- [x] TSK-F112-17: fase `READY_TO_TURN_OFF` y acción `turn_off`.
+- [x] TSK-F112-18: antiduplicado en panel y esperas acotadas.
+- [x] TSK-F112-19: confirmación humana en `switch_command_evidence`.
 - [ ] TSK-F112-13: publicación final y corrida completa del usuario.
 
 ---

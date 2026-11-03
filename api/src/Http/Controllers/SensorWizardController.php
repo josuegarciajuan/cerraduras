@@ -842,11 +842,12 @@ final class SensorWizardController
         $attemptId = (string) ($body['attempt_id'] ?? '');
         $action = strtolower(trim((string) ($body['action'] ?? '')));
         $value = array_key_exists('value', $body) ? (bool) $body['value'] : null;
+        $actions = ['prepare_off', 'confirm_prep_off', 'start_on', 'confirm_on', 'turn_off', 'confirm_off', 'retry'];
 
         if ($stepId !== 'light') {
             return Response::json(400, ['error' => 'step_not_supported']);
         }
-        if (!in_array($action, ['prepare_off', 'confirm_prep_off', 'start_on', 'confirm_on', 'confirm_off', 'retry'], true)) {
+        if (!in_array($action, $actions, true)) {
             return Response::json(400, ['error' => 'action_invalid']);
         }
         if (in_array($action, ['confirm_prep_off', 'confirm_on', 'confirm_off'], true) && $value === null) {
@@ -865,6 +866,15 @@ final class SensorWizardController
 
         $phase = $this->lightPhaseName($step);
         $cycle = max(1, (int) ($step['cycle'] ?? 1));
+        $orderKey = match ($action) {
+            'prepare_off' => 'prep_off',
+            'start_on' => 'on',
+            'turn_off' => 'off',
+            default => null,
+        };
+        $operationId = $orderKey !== null
+            ? $this->lightOperationId($runId, $attemptId, $cycle, $orderKey)
+            : null;
 
         try {
             if ($this->lightActionAlreadyDone($action, $step)) {
@@ -906,24 +916,40 @@ final class SensorWizardController
                 $telemetry['on'] = $order['telemetry'];
                 $nextPhase = $order['ok'] ? 'CONFIRM_ON' : 'INDETERMINATE';
             } elseif ($action === 'confirm_on') {
+                // F112: confirmar el encendido NO envia nada. El apagado es un
+                // paso explicito (turn_off) para que no se apague por sorpresa.
                 $human['on'] = $value;
-                if ($value) {
-                    $order = $this->runLightOrder($runId, $attemptId, $cycle, 'off', (int) $run['room_id'], 'OFF');
-                    $telemetry['off'] = $order['telemetry'];
-                    $nextPhase = $order['ok'] ? 'CONFIRM_OFF' : 'INDETERMINATE';
-                } else {
-                    $nextPhase = 'INDETERMINATE';
-                }
+                $nextPhase = $value ? 'READY_TO_TURN_OFF' : 'INDETERMINATE';
+            } elseif ($action === 'turn_off') {
+                $order = $this->runLightOrder($runId, $attemptId, $cycle, 'off', (int) $run['room_id'], 'OFF');
+                $telemetry['off'] = $order['telemetry'];
+                $nextPhase = $order['ok'] ? 'CONFIRM_OFF' : 'INDETERMINATE';
             } elseif ($action === 'confirm_off') {
                 $human['off'] = $value;
                 $nextPhase = $value ? 'READY_TO_VALIDATE' : 'INDETERMINATE';
+            }
+
+            if (in_array($action, ['confirm_prep_off', 'confirm_on', 'confirm_off'], true)) {
+                // Fase E: la observacion humana queda en la evidencia de la orden.
+                $this->recordHumanConfirmation(
+                    $runId,
+                    $attemptId,
+                    $cycle,
+                    (string) $orderKey,
+                    match ($action) {
+                        'confirm_prep_off' => $value ? 'OFF' : 'ON',
+                        'confirm_on' => $value ? 'ON' : 'OFF',
+                        default => $value ? 'OFF' : 'ON',
+                    }
+                );
             }
 
             $now = gmdate('Y-m-d\TH:i:s.v\Z');
             $finalHuman = $human;
             $finalTelemetry = $telemetry;
             $finalOrder = $order;
-            $run = $this->store->withLock($runId, function (array $r) use ($nextPhase, $finalHuman, $finalTelemetry, $cycle, $action, $now, $finalOrder): array {
+            $finalAction = $action;
+            $run = $this->store->withLock($runId, function (array $r) use ($nextPhase, $finalHuman, $finalTelemetry, $cycle, $finalAction, $now, $finalOrder): array {
                 $s = (array) ($r['steps']['light'] ?? []);
                 $s['phase'] = $nextPhase;
                 $s['cycle'] = $cycle;
@@ -931,7 +957,7 @@ final class SensorWizardController
                 $s['telemetry'] = $finalTelemetry;
                 if (is_array($finalOrder)) {
                     $s['operations'] = (array) ($s['operations'] ?? []);
-                    $s['operations'][$action] = $finalOrder['operation_id'];
+                    $s['operations'][$finalAction] = $finalOrder['operation_id'];
                     $s['last_order'] = [
                         'action' => $finalOrder['action'],
                         'operation_id' => $finalOrder['operation_id'],
@@ -957,10 +983,67 @@ final class SensorWizardController
                 'phase' => $nextPhase,
                 'order' => is_array($order) ? $order : null,
                 'fresh' => is_array($order) ? ($order['fresh'] ?? null) : null,
+                'elapsed_ms' => is_array($order) ? ($order['elapsed_ms'] ?? null) : null,
                 'step' => $this->lightStepView((array) ($run['steps']['light'] ?? [])),
             ]);
         } catch (Throwable $e) {
-            return Response::json(500, ['error' => $e->getMessage()]);
+            // F112: el mensaje queda en el log y en la corrida; al navegador
+            // solo llega un codigo estable y reintentable.
+            error_log('[f112] light_order_failed action=' . $action . ' op=' . ($operationId ?? '-')
+                . ' phase=' . $phase . ' cycle=' . $cycle . ' error=' . $e->getMessage());
+            $this->store->appendLog($runId, [
+                'type' => 'light_order_failed',
+                'attempt_id' => $attemptId,
+                'action' => $action,
+                'phase' => $phase,
+                'cycle' => $cycle,
+                'operation_id' => $operationId,
+                'error' => substr($e->getMessage(), 0, 300),
+                'at' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            ]);
+            return Response::json(500, [
+                'error' => 'light_order_failed',
+                'operation_id' => $operationId,
+                'retryable' => true,
+            ]);
+        }
+    }
+
+    /**
+     * F112: guarda la confirmacion humana en la evidencia de la orden.
+     * Nunca interrumpe el flujo de la prueba.
+     */
+    private function recordHumanConfirmation(string $runId, string $attemptId, int $cycle, string $key, string $state): void
+    {
+        if ($key === '') {
+            return;
+        }
+        try {
+            $operationId = $this->lightOperationId($runId, $attemptId, $cycle, $key);
+            $repo = new SwitchCommandEvidenceRepository($this->pdo());
+            $row = $repo->findByOperationId($operationId);
+            if ($row === null) {
+                return;
+            }
+            $verdict = SwitchCommandEvidence::evaluate([
+                'action' => (string) $row['action'],
+                'publish_ok' => $row['publish_ok'] === null ? null : ((int) $row['publish_ok'] === 1),
+                'reported_state' => $row['reported_state'],
+                'fresh' => $row['fresh'] !== null && ((int) $row['fresh'] === 1),
+                'human_state' => $state,
+            ]);
+            $repo->close($operationId, [
+                'reported_state' => $row['reported_state'] !== null ? (string) $row['reported_state'] : null,
+                'reported_at' => $row['reported_at'] !== null ? (string) $row['reported_at'] : null,
+                'fresh' => $row['fresh'] !== null && ((int) $row['fresh'] === 1),
+                'report_source' => $row['report_source'] !== null ? (string) $row['report_source'] : null,
+                'human_state' => $state,
+                'human_at' => $this->nowUtcMs(),
+                'verdict' => $verdict['verdict'],
+                'diagnosis' => $verdict['diagnosis'],
+            ]);
+        } catch (Throwable $e) {
+            error_log('[f112] human_confirmation_failed op_key=' . $key . ' error=' . $e->getMessage());
         }
     }
 
@@ -987,7 +1070,12 @@ final class SensorWizardController
                     'operation_id' => $operationId,
                 ]];
             }
-            return ['status' => 200, 'payload' => $this->switchPayloadFromEvidence($existing, true)];
+            // F112: reintento tras un fallo. Se reconcilia con el estado actual
+            // sin volver a publicar; nunca se envia una segunda orden.
+            $reconciled = $this->reconcilePendingEvidence($action, $evidence, $existing);
+            $payload = $this->switchPayloadFromEvidence($reconciled, true);
+            $payload['reconciled'] = true;
+            return ['status' => 200, 'payload' => $payload];
         }
 
         $meta = is_array($device->meta) ? $device->meta : [];
@@ -1008,66 +1096,147 @@ final class SensorWizardController
             'prior_state_at' => $priorAt,
         ]);
 
-        $gateway = new ZigbeeSwitchGateway($deviceRepo);
-        $commandTs = microtime(true);
-        $result = $action === 'ON'
-            ? $gateway->turnOnForDevice($device)
-            : $gateway->turnOffForDevice($device);
+        $startedAt = microtime(true);
+        $closed = false;
+        try {
+            $gateway = new ZigbeeSwitchGateway($deviceRepo);
+            $commandTs = microtime(true);
+            $result = $action === 'ON'
+                ? $gateway->turnOnForDevice($device)
+                : $gateway->turnOffForDevice($device);
 
-        if (($result['ok'] ?? false) !== true) {
-            // F112/RF-261: el fallo de publicacion queda registrado; no se
-            // reintenta solo ni se presenta como actuacion.
-            $evidence->markPublishFailed($operationId, (string) ($result['error'] ?? 'publish_failed'));
-            $row = $evidence->findByOperationId($operationId) ?? [];
-            return ['status' => 200, 'payload' => $this->switchPayloadFromEvidence($row, false)];
-        }
-        $evidence->markPublished($operationId, $this->nowUtcMs());
-
-        $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
-        $reachable = $this->waitSwitchReachable($deviceRepo, (int) $device->id, $commandTs);
-        $reachabilitySource = 'command';
-        if (!$reachable) {
-            // F109/F110: un comando redundante (p. ej. OFF ya estando OFF)
-            // puede no reemitir estado. La sonda /get es la autoridad de
-            // conexión; fresh queda separado de reachable.
-            $probe = $this->probeSwitch($roomId);
-            if (($probe['reachable'] ?? false) === true) {
-                $reachable = true;
-                $reachabilitySource = 'probe';
-                $wait = [
-                    'state' => (string) ($probe['state'] ?? $wait['state']),
-                    'state_at' => $probe['state_at'] ?? $wait['state_at'],
-                    'fresh' => false,
-                ];
-            } else {
-                $reachabilitySource = 'none';
+            if (($result['ok'] ?? false) !== true) {
+                // F112/RF-261: el fallo de publicacion queda registrado; no se
+                // reintenta solo ni se presenta como actuacion.
+                $evidence->markPublishFailed($operationId, (string) ($result['error'] ?? 'publish_failed'));
+                $closed = true;
+                $row = $evidence->findByOperationId($operationId) ?? [];
+                return ['status' => 200, 'payload' => $this->switchPayloadFromEvidence($row, false)];
             }
-        }
+            $evidence->markPublished($operationId, $this->nowUtcMs());
 
-        $reportedState = SwitchCommandEvidence::normalizeState($wait['state'] ?? null);
-        $verdict = SwitchCommandEvidence::evaluate([
-            'action' => $action,
-            'publish_ok' => true,
-            'reported_state' => $reportedState,
-            'fresh' => (bool) ($wait['fresh'] ?? false),
-            'human_state' => null,
-        ]);
-        $evidence->close($operationId, [
-            'reported_state' => $reportedState,
-            'reported_at' => $wait['state_at'] ?? null,
-            'fresh' => (bool) ($wait['fresh'] ?? false),
-            'report_source' => $reachabilitySource,
-            'human_state' => null,
-            'human_at' => null,
-            'verdict' => $verdict['verdict'],
-            'diagnosis' => $verdict['diagnosis'],
-        ]);
-        $row = $evidence->findByOperationId($operationId) ?? [];
-        return ['status' => 200, 'payload' => $this->switchPayloadFromEvidence($row, false)];
+            $wait = $this->waitSwitchState($deviceRepo, (int) $device->id, $action);
+            $reachable = $this->waitSwitchReachable($deviceRepo, (int) $device->id, $commandTs);
+            $reachabilitySource = 'command';
+            if (!$reachable) {
+                // F109/F110: un comando redundante (p. ej. OFF ya estando OFF)
+                // puede no reemitir estado. La sonda /get es la autoridad de
+                // conexión; fresh queda separado de reachable.
+                $probe = $this->probeSwitch($roomId);
+                if (($probe['reachable'] ?? false) === true) {
+                    $reachable = true;
+                    $reachabilitySource = 'probe';
+                    $wait = [
+                        'state' => (string) ($probe['state'] ?? $wait['state']),
+                        'state_at' => $probe['state_at'] ?? $wait['state_at'],
+                        'fresh' => false,
+                    ];
+                } else {
+                    $reachabilitySource = 'none';
+                }
+            }
+
+            $reportedState = SwitchCommandEvidence::normalizeState($wait['state'] ?? null);
+            $verdict = SwitchCommandEvidence::evaluate([
+                'action' => $action,
+                'publish_ok' => true,
+                'reported_state' => $reportedState,
+                'fresh' => (bool) ($wait['fresh'] ?? false),
+                'human_state' => null,
+            ]);
+            $evidence->close($operationId, [
+                'reported_state' => $reportedState,
+                'reported_at' => $wait['state_at'] ?? null,
+                'fresh' => (bool) ($wait['fresh'] ?? false),
+                'report_source' => $reachabilitySource,
+                'human_state' => null,
+                'human_at' => null,
+                'verdict' => $verdict['verdict'],
+                'diagnosis' => $verdict['diagnosis'],
+            ]);
+            $closed = true;
+            $row = $evidence->findByOperationId($operationId) ?? [];
+            $payload = $this->switchPayloadFromEvidence($row, false);
+            $payload['elapsed_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
+            return ['status' => 200, 'payload' => $payload];
+        } catch (Throwable $e) {
+            error_log('[f112] switch_order_exception op=' . $operationId . ' action=' . $action
+                . ' error=' . $e->getMessage());
+            if (!$closed) {
+                $this->closeEvidenceBestEffort($evidence, $operationId);
+            }
+            throw $e;
+        }
     }
 
     /**
-     * @return array{ok:bool,telemetry:?bool,operation_id:string,action:string,verdict:string,published:bool,reachable:bool}
+     * Cierra la evidencia sin evidencia suficiente. Nunca enmascara el fallo
+     * original ni sustituye una confirmacion real.
+     */
+    private function closeEvidenceBestEffort(SwitchCommandEvidenceRepository $evidence, string $operationId): void
+    {
+        try {
+            $evidence->close($operationId, [
+                'reported_state' => null,
+                'reported_at' => null,
+                'fresh' => false,
+                'report_source' => 'none',
+                'human_state' => null,
+                'human_at' => null,
+                'verdict' => 'indeterminate',
+                'diagnosis' => 'order_exception',
+            ]);
+        } catch (Throwable $e) {
+            error_log('[f112] close_evidence_failed op=' . $operationId . ' error=' . $e->getMessage());
+        }
+    }
+
+    /**
+     * F112: completa una operacion que quedo sin cerrar (p. ej. la peticion se
+     * corto). Solo lee el estado actual; no publica nada.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function reconcilePendingEvidence(string $action, SwitchCommandEvidenceRepository $evidence, array $row): array
+    {
+        $operationId = (string) ($row['operation_id'] ?? '');
+        if (!SwitchCommandEvidence::needsReconcile($row)) {
+            return $row;
+        }
+
+        $device = (new DeviceRepository($this->pdo()))->findById((int) ($row['device_id'] ?? 0));
+        $meta = is_array($device?->meta) ? $device->meta : [];
+        $state = SwitchCommandEvidence::normalizeState($meta['switch_state'] ?? null);
+        $at = isset($meta['switch_state_at']) ? (string) $meta['switch_state_at'] : null;
+        $fresh = false;
+        if ($state !== null && $at !== null) {
+            $stateTs = strtotime(str_replace('T', ' ', rtrim($at, 'Z')) . ' UTC');
+            $requestedTs = strtotime(str_replace('T', ' ', rtrim((string) $row['requested_at'], 'Z')) . ' UTC');
+            $fresh = $stateTs !== false && $requestedTs !== false && $stateTs >= $requestedTs - 1.0;
+        }
+        $verdict = SwitchCommandEvidence::evaluate([
+            'action' => $action,
+            'publish_ok' => true,
+            'reported_state' => $fresh ? $state : null,
+            'fresh' => $fresh,
+            'human_state' => $row['human_state'] ?? null,
+        ]);
+        $evidence->close($operationId, [
+            'reported_state' => $fresh ? $state : null,
+            'reported_at' => $fresh ? $at : null,
+            'fresh' => $fresh,
+            'report_source' => $fresh ? 'command' : 'none',
+            'human_state' => $row['human_state'] !== null ? (string) $row['human_state'] : null,
+            'human_at' => $row['human_at'] !== null ? (string) $row['human_at'] : null,
+            'verdict' => $verdict['verdict'],
+            'diagnosis' => $verdict['diagnosis'],
+        ]);
+        return $evidence->findByOperationId($operationId) ?? $row;
+    }
+
+    /**
+     * @return array{ok:bool,telemetry:?bool,operation_id:string,action:string,verdict:string,published:bool,reachable:bool,fresh:?bool,elapsed_ms:?int}
      */
     private function runLightOrder(string $runId, string $attemptId, int $cycle, string $key, int $roomId, string $action): array
     {
@@ -1085,6 +1254,7 @@ final class SensorWizardController
             'published' => (bool) ($payload['published'] ?? false),
             'reachable' => (bool) ($payload['reachable'] ?? false),
             'fresh' => $payload['fresh'] ?? null,
+            'elapsed_ms' => isset($payload['elapsed_ms']) ? (int) $payload['elapsed_ms'] : null,
         ];
     }
 
@@ -1101,7 +1271,8 @@ final class SensorWizardController
         $phase = (string) ($step['phase'] ?? 'PREPARE_OFF');
         return in_array($phase, [
             'PREPARE_OFF', 'READY_TO_START', 'ON_PENDING', 'CONFIRM_ON',
-            'OFF_PENDING', 'CONFIRM_OFF', 'READY_TO_VALIDATE', 'DONE', 'INDETERMINATE',
+            'READY_TO_TURN_OFF', 'OFF_PENDING', 'CONFIRM_OFF',
+            'READY_TO_VALIDATE', 'DONE', 'INDETERMINATE',
         ], true) ? $phase : 'PREPARE_OFF';
     }
 
@@ -1112,8 +1283,12 @@ final class SensorWizardController
             'confirm_prep_off' => $phase === 'PREPARE_OFF',
             'start_on' => $phase === 'READY_TO_START',
             'confirm_on' => $phase === 'CONFIRM_ON',
+            'turn_off' => $phase === 'READY_TO_TURN_OFF',
             'confirm_off' => $phase === 'CONFIRM_OFF',
-            'retry' => in_array($phase, ['PREPARE_OFF', 'CONFIRM_ON', 'CONFIRM_OFF', 'READY_TO_VALIDATE', 'INDETERMINATE'], true),
+            'retry' => in_array($phase, [
+                'PREPARE_OFF', 'CONFIRM_ON', 'READY_TO_TURN_OFF', 'CONFIRM_OFF',
+                'READY_TO_VALIDATE', 'INDETERMINATE',
+            ], true),
             default => false,
         };
     }
@@ -1127,7 +1302,8 @@ final class SensorWizardController
             'confirm_prep_off' => ($human['prep_off'] ?? null) !== null,
             'confirm_on' => ($human['on'] ?? null) !== null,
             'confirm_off' => ($human['off'] ?? null) !== null,
-            'start_on' => in_array($phase, ['CONFIRM_ON', 'CONFIRM_OFF', 'READY_TO_VALIDATE', 'DONE'], true),
+            'start_on' => in_array($phase, ['CONFIRM_ON', 'READY_TO_TURN_OFF', 'CONFIRM_OFF', 'READY_TO_VALIDATE', 'DONE'], true),
+            'turn_off' => in_array($phase, ['CONFIRM_OFF', 'READY_TO_VALIDATE', 'DONE'], true),
             default => false,
         };
     }
@@ -4838,7 +5014,12 @@ final class SensorWizardController
         if (($probe['ok'] ?? false) !== true) {
             return ['reachable' => false, 'error' => (string) ($probe['error'] ?? 'publish_failed')];
         }
-        $reachable = $this->waitSwitchReachable($repo, (int) $device->id, $since);
+        $reachable = $this->waitSwitchReachable(
+            $repo,
+            (int) $device->id,
+            $since,
+            max(500, (int) (\App\Support\Config::getInt('SWITCH_PROBE_WAIT_MS', 4000) ?? 4000))
+        );
         $freshDevice = $repo->findById((int) $device->id);
         $meta = is_array($freshDevice?->meta) ? $freshDevice->meta : [];
         return [
@@ -4849,9 +5030,12 @@ final class SensorWizardController
         ];
     }
 
-    private function waitSwitchReachable(DeviceRepository $repo, int $deviceId, float $since): bool
+    private function waitSwitchReachable(DeviceRepository $repo, int $deviceId, float $since, int $maxMs = 0): bool
     {
-        for ($i = 0; $i < 12; $i++) {
+        // F112: espera acotada y configurable. Un valor alto bloquea el panel.
+        $maxMs = $maxMs > 0 ? $maxMs : max(500, (int) (\App\Support\Config::getInt('SWITCH_REACHABLE_WAIT_MS', 2500) ?? 2500));
+        $iterations = max(1, (int) ceil($maxMs / 500));
+        for ($i = 0; $i < $iterations; $i++) {
             if ($i > 0) {
                 usleep(500_000);
             }
@@ -4868,12 +5052,16 @@ final class SensorWizardController
         return false;
     }
 
-    private function waitSwitchState(DeviceRepository $repo, int $deviceId, string $expected): array
+    private function waitSwitchState(DeviceRepository $repo, int $deviceId, string $expected, int $maxMs = 0): array
     {
         $commandTs = microtime(true);
         $lastState = 'UNKNOWN';
         $lastAt = null;
-        for ($i = 0; $i < 16; $i++) {
+        // F112: 3 s por defecto. La luz suele reportar en 1-2 s; esperar 8 s
+        // solo alarga la pantalla sin aportar evidencia.
+        $maxMs = $maxMs > 0 ? $maxMs : max(500, (int) (\App\Support\Config::getInt('SWITCH_STATE_WAIT_MS', 3000) ?? 3000));
+        $iterations = max(1, (int) ceil($maxMs / 500));
+        for ($i = 0; $i < $iterations; $i++) {
             if ($i > 0) {
                 usleep(500_000);
             }

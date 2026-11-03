@@ -36,6 +36,27 @@ truthy('fase INDETERMINATE', str_contains($controller, "'INDETERMINATE'"));
 truthy('error de fase invalida', str_contains($controller, 'light_phase_invalid'));
 truthy('error de intento no activo', str_contains($controller, 'attempt_not_active'));
 truthy('reintento incrementa ciclo', str_contains($controller, '$cycle++'));
+truthy('fase de apagado explicita', str_contains($controller, "'READY_TO_TURN_OFF'"));
+truthy('accion turn_off', str_contains($controller, "'turn_off'"));
+truthy('turn_off publica OFF', str_contains($controller, "\$this->runLightOrder(\$runId, \$attemptId, \$cycle, 'off'"));
+truthy('confirm_on NO publica', (function () use ($controller): bool {
+    $start = strpos($controller, "elseif (\$action === 'confirm_on') {");
+    $end = strpos($controller, "} elseif (\$action === 'turn_off') {");
+    if ($start === false || $end === false || $end <= $start) {
+        return false;
+    }
+    $block = substr($controller, $start, $end - $start);
+    return !str_contains($block, 'runLightOrder');
+})());
+truthy('fallo devuelve codigo estable', str_contains($controller, "'error' => 'light_order_failed'"));
+truthy('fallo se registra en log', str_contains($controller, "error_log('[f112] light_order_failed"));
+truthy('fallo queda en la corrida', str_contains($controller, "'type' => 'light_order_failed'"));
+truthy('evidencia se cierra en fallo', str_contains($controller, 'closeEvidenceBestEffort'));
+truthy('reconciliacion sin republicar', str_contains($controller, 'reconcilePendingEvidence'));
+truthy('respuesta reconciled', str_contains($controller, "\$payload['reconciled'] = true"));
+truthy('confirmacion humana persistida', str_contains($controller, 'recordHumanConfirmation'));
+truthy('esperas configurables', str_contains($controller, 'SWITCH_STATE_WAIT_MS') && str_contains($controller, 'SWITCH_REACHABLE_WAIT_MS'));
+truthy('orden informa elapsed_ms', str_contains($controller, "\$payload['elapsed_ms']"));
 
 // startAttempt de luz ya no envia ordenes
 truthy(
@@ -59,6 +80,11 @@ truthy('check usa telemetria persistida', str_contains($controller, "\$human['te
 truthy('panel lee fase del servidor', str_contains($js, 'function lightPhaseOf()'));
 truthy('panel lee paso de luz', str_contains($js, 'function lightStep()'));
 truthy('panel usa light/phase', str_contains($js, "V2 + '/light/phase'"));
+truthy('panel boton apagar luz', str_contains($js, 'Apagar luz'));
+truthy('panel no confirma apagando', str_contains($js, 'Encendido confirmado. Ahora pulsa'));
+truthy('panel anti doble clic', str_contains($js, 'lightBusy') && str_contains($js, 'lightCooldownUntil'));
+truthy('panel muestra envio', str_contains($js, 'Enviando orden a la luz'));
+truthy('panel explica fallo reintentable', str_contains($js, 'la orden no se repetirá'));
 truthy('panel ya no usa switch/test en luz', !str_contains($js, "V2 + '/switch/test'"));
 truthy('texto de apagado previo', str_contains($js, 'deja la lámpara <strong>apagada</strong>'));
 truthy('aviso de encendido automatico', str_contains($js, 'se encenderá automáticamente'));
