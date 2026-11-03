@@ -11488,6 +11488,13 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
   - Verificación: BLOCK 84 (F112) + regresión completa; volcado en
     `/root/cerraduras-backups/db-f112-20261103T121705Z.sql.gz` (14 MB, 43 tablas).
 
+### Bloque 7 — Reducción progresiva exterior
+- [x] TSK-F112-20: `nextReduction` con 4 rondas, suelo 1,00 m y rejilla.
+- [x] TSK-F112-21: controlador aplica y confirma cada ronda.
+- [x] TSK-F112-22: evidencia DP1 refuerza la detección de la ventana.
+- [x] TSK-F112-23: `inside_only` en `/radar/state` y panel.
+- [ ] TSK-F112-24: prueba física de reducción progresiva.
+
 ### Bloque 6 — Cierre
 - [x] TSK-F112-15: evidencia cerrada ante fallo y log `light_order_failed`.
 - [x] TSK-F112-16: reconciliación idempotente sin republicar.

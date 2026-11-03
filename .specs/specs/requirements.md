@@ -13266,6 +13266,31 @@ sesión futura no puede analizar un fallo equivalente.
 - El panel indica que está enviando y permite cancelar sin romper la fase.
 - Ninguna espera se convierte en polling ni en sondeo periódico.
 
+## RF-277: Reducción progresiva del alcance desde el exterior
+- La medición interior fija el **alcance inicial**, no un suelo que impida
+  seguir probando.
+- Si una ronda exterior detecta presencia real, se reduce **un escalón
+  admitido por el dispositivo**, se confirma el nuevo valor y se repite la ronda.
+- Se permiten como máximo **4 reducciones** y nunca más de **1,00 m** por debajo
+  del alcance inicial.
+- Si se agotan las rondas o el suelo con detección exterior, se detiene con un
+  motivo explícito; no se declara éxito.
+- El escalón lo determina la capacidad confirmada del dispositivo; no se envían
+  valores fuera de rejilla sin confirmación.
+
+## RF-278: Evidencia por ronda
+- Cada ronda exterior queda asociada al alcance **confirmado por push** en ese
+  momento y a su ventana temporal.
+- Los reportes DP1 reales de la ventana refuerzan la detección; nunca se usan
+  para declarar ausencia.
+- Un cambio de configuración invalida la ronda en curso.
+
+## RF-279: Aprobación solo con reentrada
+- Un exterior despejado no basta: se exige reentrada y detección real en el
+  punto interior con el mismo alcance confirmado.
+- Si fuera queda despejado pero dentro no detecta, se informa del conflicto y
+  se ofrece repetir o restaurar.
+
 **Estado F112:** bloques 1–4 completados (evidencia, consulta, fases de luz y runbook `docs/ops/diagnostico-luz-zigbee.md`). Regresión y prueba física completa pendientes (bloques 5–6); ver `tasks.md`.
 
 ---

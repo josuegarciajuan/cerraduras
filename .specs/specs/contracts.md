@@ -16152,6 +16152,34 @@ respuesta. Un reintento con el mismo `operation_id` no duplica la orden.
 - `SWITCH_REACHABLE_WAIT_MS` (def. 2500): espera de actividad del dispositivo.
 - `SWITCH_PROBE_WAIT_MS` (def. 4000): sonda puntual `/get` bajo demanda.
 
+### `/radar/state` — bloque aditivo `inside_only`
+
+```json
+"inside_only": {
+  "start_range": 3.6,
+  "tested_range": 3.45,
+  "floor": 2.6,
+  "attempts": 1,
+  "max_attempts": 4,
+  "remaining": 3,
+  "max_reduction": 1.0,
+  "stop_reason": null,
+  "presence_evidence": { "status": "detected", "presents": 3, "absents": 0, "reports": 3 }
+}
+```
+
+- `start_range`: alcance inicial confirmado tras medir dentro.
+- `tested_range`: último alcance aplicado.
+- `floor`: suelo de prueba (`start_range - 1,00`, nunca bajo el mínimo).
+- `attempts` / `max_attempts`: reducciones consumidas y límite (4).
+- `stop_reason`: motivo si se detuvo (`max_attempts_reached`,
+  `reduction_limit_reached`, `range_min_reached`).
+- `presence_evidence`: resultado DP1 de la ventana; puede reforzar la detección,
+  nunca declarar ausencia.
+
+Motivos de parada expuestos en la sesión: `outside_reduction_attempts_reached`,
+`outside_reduction_limit_reached`, `outside_range_min_reached`.
+
 Ninguna de estas esperas crea polling: solo aplican dentro de la petición.
 
 ### Sin migración de contrato

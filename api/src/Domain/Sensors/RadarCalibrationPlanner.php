@@ -383,22 +383,69 @@ final class RadarCalibrationPlanner
     }
 
     /**
-     * F111: siguiente alcance hacia abajo para dejar de detectar fuera.
-     * Solo se permite mientras siga cubriendo la referencia interior; ya no
-     * exige un margen fijo de 0,10 m.
+     * F112: siguiente alcance hacia abajo. `$floor` es el minimo PERMITIDO para
+     * esta prueba (no la referencia interior): la referencia solo elige el punto
+     * de partida. Se reduce hasta que una ronda exterior deje de detectar.
      *
      * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
      */
-    public static function lowerCandidate(float $current, float $insideRef, array $caps): ?float
+    public static function lowerCandidate(float $current, ?float $floor, array $caps): ?float
     {
         $step = max(0.01, (float) $caps['range_step']);
         $candidate = self::snap($current - $step, $caps);
         if ($candidate >= $current - 0.0001
             || $candidate < (float) $caps['range_min'] - 0.0001
-            || $candidate < $insideRef - 0.0001) {
+            || ($floor !== null && $candidate < $floor - 0.0001)) {
             return null;
         }
         return $candidate;
+    }
+
+    /**
+     * F112: plan de reduccion acotado para la verificacion exterior.
+     *
+     * Reglas acordadas:
+     *  - punto de partida: alcance inicial aplicado tras medir dentro;
+     *  - suelo de prueba: `start - maxReduction` (def. 1,00 m), nunca bajo range_min;
+     *  - maximo de reducciones por corrida (def. 4);
+     *  - escalon: el admitido por el dispositivo (`range_step`).
+     *
+     * @param array{range_min:float,range_max:float,range_step:float,sens_min:int,sens_max:int} $caps
+     * @return array{ok:bool,candidate:?float,reason:?string,floor:float,attempts:int,max_attempts:int}
+     */
+    public static function nextReduction(
+        float $current,
+        float $start,
+        int $attempts,
+        array $caps,
+        int $maxAttempts = 4,
+        float $maxReduction = 1.0
+    ): array {
+        $min = (float) $caps['range_min'];
+        $floor = max($min, round($start - max(0.0, $maxReduction), 3));
+        $base = [
+            'ok' => false, 'candidate' => null, 'floor' => $floor,
+            'attempts' => $attempts, 'max_attempts' => $maxAttempts,
+        ];
+        if ($attempts >= $maxAttempts) {
+            return $base + ['reason' => 'max_attempts_reached'];
+        }
+        $candidate = self::lowerCandidate($current, $floor, $caps);
+        if ($candidate === null) {
+            $nextOnGrid = self::snap($current - max(0.01, (float) $caps['range_step']), $caps);
+            $reason = $nextOnGrid >= $current - 0.0001 || $nextOnGrid < $min - 0.0001
+                ? 'range_min_reached'
+                : 'reduction_limit_reached';
+            return $base + ['reason' => $reason];
+        }
+        return [
+            'ok' => true,
+            'candidate' => $candidate,
+            'reason' => null,
+            'floor' => $floor,
+            'attempts' => $attempts,
+            'max_attempts' => $maxAttempts,
+        ];
     }
 
     public static function ref(array $measurement, string $kind): ?float

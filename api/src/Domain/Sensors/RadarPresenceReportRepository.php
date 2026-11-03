@@ -54,6 +54,30 @@ final class RadarPresenceReportRepository
     }
 
     /**
+     * F112: reportes DP1 de una ventana, para evaluar el exterior por presencia.
+     *
+     * @return list<array{value:string,received_at:string,config_key:?string,marker:string}>
+     */
+    public function listSince(int $roomId, string $since, int $limit = 500): array
+    {
+        $limit = max(1, min(2000, $limit));
+        $stmt = $this->pdo->prepare(
+            'SELECT value, received_at, config_key, marker
+               FROM radar_presence_reports
+              WHERE room_id = :room AND received_at >= :since
+              ORDER BY received_at ASC, id ASC
+              LIMIT ' . $limit
+        );
+        $stmt->execute([':room' => $roomId, ':since' => $since]);
+        return array_map(static fn (array $r): array => [
+            'value' => (string) $r['value'],
+            'received_at' => (string) $r['received_at'],
+            'config_key' => $r['config_key'] !== null ? (string) $r['config_key'] : null,
+            'marker' => (string) $r['marker'],
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    }
+
+    /**
      * @return array{marker:string,session_id:string,report_counter:int,value:string,origin:string,config_key:?string,received_at:string}|null
      */
     public function latestForRoom(int $roomId): ?array

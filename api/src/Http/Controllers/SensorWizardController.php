@@ -17,8 +17,10 @@ use App\Domain\Sensors\RadarDistanceReport;
 use App\Domain\Sensors\RadarDistanceQuality;
 use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarEvidencePolicy;
+use App\Domain\Sensors\RadarExteriorPresenceEvaluator;
 use App\Domain\Sensors\RadarMeasurement;
 use App\Domain\Sensors\RadarPointMeasurement;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Sensors\SensorCalibrationValidator;
 use App\Domain\Sensors\SwitchCommandEvidence;
 use App\Domain\Sensors\SwitchCommandEvidenceRepository;
@@ -1896,6 +1898,8 @@ final class SensorWizardController
             'settings_invalid_reason' => $valid ? null : ZigbeeRadarCalibrationService::settingsInvalidReason($settings),
             'active_operation' => $session['active_operation'] ?? null,
             'last_measurement' => $session['last_measurement'] ?? null,
+            // F112: ronda de ajuste exterior (alcance inicial, probado y suelo).
+            'inside_only' => $this->insideOnlyView($session),
             // F105/RF-221: progreso de lecturas nuevas del punto actual.
             'point' => $point,
             'point_tolerance' => $pointPolicy['tolerance'],
@@ -3001,6 +3005,19 @@ final class SensorWizardController
                     $outsidePoint = is_array($measurement['point'] ?? null)
                         ? (array) $measurement['point'] : null;
                     $outsideEvidence = $this->outsideEvidenceState($measurement, $outsidePoint);
+                    // F112: confirmar con reportes DP1 reales de la ventana. Solo
+                    // puede reforzar la deteccion; nunca declarar ausencia.
+                    $presenceEvidence = $this->outsidePresenceEvidence(
+                        (int) $run['room_id'],
+                        (string) ($active['window_start'] ?? '')
+                    );
+                    $session['outside_presence_evidence'] = $presenceEvidence;
+                    if (($presenceEvidence['detected'] ?? false) === true
+                        && ($outsideEvidence['detected'] ?? false) !== true) {
+                        $outsideEvidence['detected'] = true;
+                        $outsideEvidence['clear'] = false;
+                        $outsideEvidence['reason'] = 'detected_dp1';
+                    }
                     if ((string) ($session['model'] ?? '') === 'distance_inside_only_v1') {
                         if (!$outsideEvidence['detected']) {
                             if (!$outsideEvidence['clear']) {
@@ -3036,16 +3053,61 @@ final class SensorWizardController
                         $reference = $this->insideOnlyReference($session);
                         $currentMax = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
                             ? (float) $settings['maximum_range'] : null;
-                        $lower = ($reference !== null && $currentMax !== null)
-                            ? RadarCalibrationPlanner::lowerCandidate($currentMax, $reference, $this->insideOnlyCapsV3())
-                            : null;
-                        if ($lower === null) {
+                        $insideOnly = (array) ($session['inside_only'] ?? []);
+                        $startRange = isset($insideOnly['start_range']) && is_numeric($insideOnly['start_range'])
+                            ? (float) $insideOnly['start_range'] : $currentMax;
+                        $reduceAttempts = (int) ($insideOnly['attempts'] ?? 0);
+                        $maxAttempts = (int) ($insideOnly['max_attempts'] ?? 4);
+                        $maxReduction = isset($insideOnly['max_reduction']) && is_numeric($insideOnly['max_reduction'])
+                            ? (float) $insideOnly['max_reduction'] : 1.0;
+                        $plan = ($startRange !== null && $currentMax !== null)
+                            ? RadarCalibrationPlanner::nextReduction(
+                                $currentMax,
+                                $startRange,
+                                $reduceAttempts,
+                                $this->insideOnlyCapsV3(),
+                                $maxAttempts,
+                                $maxReduction
+                            )
+                            : ['ok' => false, 'candidate' => null, 'reason' => 'range_unknown',
+                               'floor' => null, 'attempts' => $reduceAttempts, 'max_attempts' => $maxAttempts];
+                        if (($plan['ok'] ?? false) !== true) {
+                            // F112: se agotaron las rondas o el suelo de prueba. No
+                            // se declara nada: se explica y se conserva la evidencia.
                             $session['state'] = 'STOPPED';
-                            $session['result'] = 'inside_only_no_separation';
+                            $session['result'] = match ((string) ($plan['reason'] ?? '')) {
+                                'max_attempts_reached' => 'outside_reduction_attempts_reached',
+                                'reduction_limit_reached' => 'outside_reduction_limit_reached',
+                                'range_min_reached' => 'outside_range_min_reached',
+                                default => 'inside_only_no_separation',
+                            };
+                            $session['inside_only'] = array_merge($insideOnly, [
+                                'start_range' => $startRange,
+                                'attempts' => $reduceAttempts,
+                                'max_attempts' => $maxAttempts,
+                                'max_reduction' => $maxReduction,
+                                'floor' => $plan['floor'] ?? null,
+                                'stop_reason' => $plan['reason'] ?? null,
+                                'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                            ]);
+                            $session['outside_message'] = $this->outsideReductionStopMessage(
+                                (string) $session['result'],
+                                $startRange,
+                                isset($plan['floor']) && is_numeric($plan['floor']) ? (float) $plan['floor'] : null,
+                                $reduceAttempts,
+                                $maxAttempts
+                            );
                             $run['calibration_session'] = $session;
                             $this->store->save($run);
+                            $this->store->appendLog($runId, ['type' => 'outside_reduction_stop',
+                                'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                                'reason' => $plan['reason'] ?? null,
+                                'current' => $currentMax,
+                                'start' => $startRange,
+                                'attempts' => $reduceAttempts]);
                             return $run;
                         }
+                        $lower = (float) $plan['candidate'];
                         $device = (new DeviceRepository($this->pdo()))->findForRoomKind((int) $run['room_id'], Device::KIND_PRESENCE);
                         if ($device === null) {
                             $session['state'] = 'STOPPED';
@@ -3065,6 +3127,8 @@ final class SensorWizardController
                         if (($result['applied'] ?? false) !== true) {
                             $session['state'] = 'STOPPED';
                             $session['result'] = 'inside_only_apply_failed';
+                            $session['outside_message'] = 'No se pudo confirmar el ajuste a '
+                                . number_format($lower, 2, ',', '') . ' m. Revisa el radar antes de repetir.';
                             $run['calibration_session'] = $session;
                             $this->store->save($run);
                             return $run;
@@ -3074,8 +3138,20 @@ final class SensorWizardController
                         $session['current'] = $confirmedSettings;
                         $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
                         $session['state'] = 'MEASURED';
-                        $session['outside_message'] = 'El radar todavía te detectó fuera; alcance reducido a '
-                            . number_format($lower, 2, ',', '') . ' m. Vuelve a verificar el exterior.';
+                        $session['inside_only'] = array_merge($insideOnly, [
+                            'start_range' => $startRange,
+                            'attempts' => $reduceAttempts + 1,
+                            'max_attempts' => $maxAttempts,
+                            'max_reduction' => $maxReduction,
+                            'floor' => $plan['floor'],
+                            'last_from' => $currentMax,
+                            'last_to' => $lower,
+                            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                        ]);
+                        $session['outside_message'] = 'El radar todavía te detectó fuera con '
+                            . number_format((float) $currentMax, 2, ',', '') . ' m; ajustado a '
+                            . number_format($lower, 2, ',', '') . ' m (ronda '
+                            . ($reduceAttempts + 1) . '/' . $maxAttempts . '). Vuelve a verificar el exterior.';
                         $session['candidates'][] = [
                             'candidate_id' => 'inside-only-lower-' . bin2hex(random_bytes(4)),
                             'params' => ['maximum_range' => $lower],
@@ -3093,7 +3169,9 @@ final class SensorWizardController
                         $run['calibration_session'] = $session;
                         $this->store->save($run);
                         $this->store->appendLog($runId, ['type' => 'inside_only_lower',
-                            'at' => gmdate('Y-m-d\TH:i:s\Z'), 'maximum_range' => $lower]);
+                            'at' => gmdate('Y-m-d\TH:i:s\Z'),
+                            'from' => $currentMax, 'maximum_range' => $lower,
+                            'attempt' => $reduceAttempts + 1]);
                         return $run;
                     }
                     if (!$outsideEvidence['detected']) {
@@ -4531,6 +4609,81 @@ final class SensorWizardController
     }
 
     /**
+     * F112: vista aditiva de la ronda de reduccion exterior.
+     *
+     * @param array<string,mixed> $session
+     * @return array<string,mixed>
+     */
+    private function insideOnlyView(array $session): array
+    {
+        $data = (array) ($session['inside_only'] ?? []);
+        $attempts = (int) ($data['attempts'] ?? 0);
+        $maxAttempts = (int) ($data['max_attempts'] ?? 4);
+        return [
+            'start_range' => isset($data['start_range']) && is_numeric($data['start_range']) ? (float) $data['start_range'] : null,
+            'tested_range' => isset($data['last_to']) && is_numeric($data['last_to'])
+                ? (float) $data['last_to']
+                : (isset($data['start_range']) && is_numeric($data['start_range']) ? (float) $data['start_range'] : null),
+            'floor' => isset($data['floor']) && is_numeric($data['floor']) ? (float) $data['floor'] : null,
+            'attempts' => $attempts,
+            'max_attempts' => $maxAttempts,
+            'remaining' => max(0, $maxAttempts - $attempts),
+            'max_reduction' => isset($data['max_reduction']) && is_numeric($data['max_reduction']) ? (float) $data['max_reduction'] : 1.0,
+            'stop_reason' => $data['stop_reason'] ?? null,
+            'presence_evidence' => $session['outside_presence_evidence'] ?? null,
+            'updated_at' => $data['updated_at'] ?? null,
+        ];
+    }
+
+    /**
+     * F112: evidencia DP1 de la ventana exterior. Un fallo de lectura devuelve
+     * inconcluso; no se inventa ausencia.
+     *
+     * @return array<string,mixed>
+     */
+    private function outsidePresenceEvidence(int $roomId, string $since): array
+    {
+        $empty = ['status' => 'inconclusive', 'detected' => false, 'clear' => false,
+            'reports' => 0, 'presents' => 0, 'absents' => 0, 'last' => null];
+        if ($since === '') {
+            return $empty;
+        }
+        try {
+            $reports = (new RadarPresenceReportRepository($this->pdo()))->listSince($roomId, $since, 500);
+            return RadarExteriorPresenceEvaluator::evaluate($reports, $since, null);
+        } catch (Throwable $e) {
+            error_log('[f112] outside_presence_evidence_failed room=' . $roomId . ' error=' . $e->getMessage());
+            return $empty;
+        }
+    }
+
+    /**
+     * F112: mensaje de parada de la reduccion exterior.
+     */
+    private function outsideReductionStopMessage(
+        string $result,
+        ?float $start,
+        ?float $floor,
+        int $attempts,
+        int $maxAttempts
+    ): string {
+        $startTxt = $start !== null ? number_format($start, 2, ',', '') . ' m' : 'el alcance inicial';
+        $floorTxt = $floor !== null ? number_format($floor, 2, ',', '') . ' m' : 'el mínimo';
+        return match ($result) {
+            'outside_reduction_attempts_reached' => 'Se agotaron las ' . $maxAttempts
+                . ' rondas de ajuste (último alcance probado: ' . $floorTxt . '). '
+                . 'No se encontró un valor que deje de detectarte fuera; revisa la colocación o repite la prueba.',
+            'outside_reduction_limit_reached' => 'Se alcanzó el límite de 1,00 m de reducción desde '
+                . $startTxt . ' (suelo ' . $floorTxt . ') y el radar sigue detectando fuera. '
+                . 'Revisa la colocación o repite la medición interior.',
+            'outside_range_min_reached' => 'El radar llegó a su alcance mínimo (' . $floorTxt
+                . ') y sigue detectando fuera. Revisa la colocación del radar.',
+            default => 'No se pudo reducir el alcance con la evidencia actual ('
+                . $attempts . '/' . $maxAttempts . ' rondas). Revisa la lectura y repite.',
+        };
+    }
+
+    /**
      * F111: tras validar el punto interior, fija el menor escalón que lo cubre
      * y deja la sesión lista para verificar el exterior por presencia.
      */
@@ -4577,6 +4730,16 @@ final class SensorWizardController
         $cal->persistCalibration($devicePayload, $confirmedSettings, $result['status']['settings_at'] ?? null);
         $session['current'] = $confirmedSettings;
         $session['config_version'] = (int) ($session['config_version'] ?? 1) + 1;
+        // F112: el alcance inicial es el punto de partida; el suelo de prueba
+        // es 1,00 m por debajo y hay un maximo de 4 reducciones.
+        $session['inside_only'] = [
+            'start_range' => $candidate,
+            'attempts' => 0,
+            'max_attempts' => 4,
+            'max_reduction' => 1.0,
+            'floor' => max(0.15, round($candidate - 1.0, 3)),
+            'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
         $session['phase'] = 'OUTSIDE_MEASURE';
         $session['state'] = 'IDLE';
         $session['candidates'][] = [

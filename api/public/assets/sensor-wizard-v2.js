@@ -709,6 +709,23 @@
         + (outsideMeasure.reports != null ? ' · ' + outsideMeasure.reports + ' reportes' : '')
         + '</div>';
     }
+    var io = st.inside_only || null;
+    if (io && io.start_range != null) {
+      var tested = io.tested_range != null ? Number(io.tested_range) : null;
+      var floor = io.floor != null ? Number(io.floor) : null;
+      html += '<div class="hint" id="radarInsideOnly">Alcance inicial ' + Number(io.start_range).toFixed(2) + ' m'
+        + (tested != null ? ' · probando ' + tested.toFixed(2) + ' m' : '')
+        + (floor != null ? ' · suelo ' + floor.toFixed(2) + ' m' : '')
+        + ' · ronda ' + (io.attempts || 0) + '/' + (io.max_attempts || 4)
+        + '</div>';
+      var pe = io.presence_evidence || null;
+      if (pe && pe.reports != null) {
+        html += '<div class="hint" id="radarOutsideEvidence">Evidencia exterior: '
+          + (pe.status === 'detected' ? 'detectado' : (pe.status === 'clear' ? 'despejado' : 'inconcluso'))
+          + ' · ' + (pe.presents || 0) + ' PRESENT / ' + (pe.absents || 0) + ' ABSENT'
+          + '</div>';
+      }
+    }
     var cal = st.calibration || null;
     if (cal && (cal.inside_reference != null || cal.boundary != null || cal.target_range != null)) {
       html += '<div class="hint" id="radarCalibration">'
