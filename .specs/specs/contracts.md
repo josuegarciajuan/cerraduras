@@ -16119,3 +16119,47 @@ Se conservan `switch_unreachable`, `switch_not_found` y los códigos actuales.
   ofrece cancelar y repetir solo la luz.
 - Migración de datos: `0140_switch_command_evidence.sql` (solo crea tabla e
   índices).
+
+---
+
+# F113 — Ficha NFC por texto plano en `/api/v1/qr/validate`
+
+## Entrada
+
+`POST /api/v1/qr/validate` conserva el cuerpo actual:
+
+```json
+{"qr_text":"<texto>","device_id":"<external_id>","room_id":123}
+```
+
+`room_id` sigue siendo opcional. De forma **aditiva**:
+
+- Si `qr_text` es un token firmado (`sub=key` o de estancia), el
+  comportamiento no cambia.
+- Si `qr_text` no es un token, no contiene `.`, es imprimible y mide 4–64
+  caracteres, se valida como ficha NFC (texto plano del lector).
+
+## Salida correcta
+
+Igual que una llave NFC (`/api/v1/keys/validate` con `ficha_code`):
+
+```json
+{"allow":true,"key_id":1,"key_label":"…","owner_type":"WORKER",
+ "worker_id":172,"room_id":14,"room_type_id":6,"action":"open","reason":null}
+```
+
+## Errores
+
+`403`: `ficha_invalid`, `ficha_unassigned`, `key_expired`, `key_revoked`,
+`worker_inactive`, `room_unresolved`, `key_room_denied`.
+`409`: `already_inside`.
+Un token corrupto con `.` conserva `qr_invalid_signature`.
+
+## Compatibilidad
+
+- No se renombran ni eliminan campos.
+- `/api/v1/keys/validate` no cambia.
+- Un QR de estancia válido sigue abriendo por el flujo actual.
+- El firmware sigue enviando solo `qr_text`; no hay cambios de sketch.
+- La ficha se guarda y compara por SHA-256 del texto normalizado; nunca se
+  devuelve el código en claro.

@@ -11484,3 +11484,38 @@ Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
 
 ### Bloque 6 — Cierre
 - [ ] TSK-F112-13: publicación final y corrida completa del usuario.
+
+---
+
+# F113 — Fichas NFC por texto plano en el lector R35D-B
+
+Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
+
+## Fase 0 — Especificación
+- [x] TSK-F113-01: requisitos, diseño, contrato y tareas congelados.
+  - Verificación: `requirements.md`, `design.md`, `contracts.md`, `tasks.md`.
+
+## Fase 1 — Backend
+- [ ] TSK-F113-02: clasificación de credencial en `QrController`.
+  - Verificación: unitario del clasificador; token y ficha no se confunden.
+- [ ] TSK-F113-03: normalización hex en `NfcCardService` y `validateFicha`.
+  - Verificación: alta y validación con minúsculas/mayúsculas equivalentes.
+- [ ] TSK-F113-04: auditoría de ficha y motivos de denegación.
+  - Verificación: `key_access_events` con `credential_type='NFC'`.
+
+## Fase 2 — Datos de prueba
+- [ ] TSK-F113-05: ficha `EM-00EFA5BB` y llave NFC de Josue (worker 172).
+  - Verificación: ficha `ASSIGNED`, llave `ACTIVE`, permiso `ALMACEN_BEBIDAS`.
+
+## Fase 3 — Pruebas HTTP
+- [ ] TSK-F113-06: casos válido/desconocido/sin llave/revocado/caducado/sin
+  permiso en BLOCK 69.
+- [ ] TSK-F113-07: regresión completa (`bash bin/run-tests.sh`) con 0 fallos.
+
+## Fase 4 — Prueba física
+- [ ] TSK-F113-08: lectura del llavero real, apertura y evidencia en
+  `docs/hardware/`.
+
+## Fase 5 — Cierre
+- [ ] TSK-F113-09: verificar/restaurar `CERRADURA 2.6-ota` y documentar.
+- [ ] TSK-F113-10: actualizar la tabla de fases de `AGENTS.md`.
