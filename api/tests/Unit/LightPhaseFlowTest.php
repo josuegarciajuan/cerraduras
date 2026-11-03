@@ -73,8 +73,8 @@ truthy('clave incluye ciclo', str_contains($controller, "'f112|' . \$runId . '|'
 truthy('orden de luz reutiliza idempotencia', str_contains($controller, '$this->executeSwitchOrder($roomId, $action, $origin, $actor, $operationId)'));
 
 // validacion usa la evidencia persistida
-truthy('check une humano persistido', str_contains($controller, '$human = array_merge($persisted, $human);'));
-truthy('check usa telemetria persistida', str_contains($controller, "\$human['telemetry_on'] = \$telemetry['on']"));
+truthy('check une humano persistido', str_contains($controller, '$human = array_merge($persisted, $provided);'));
+truthy('check usa telemetria persistida', str_contains($controller, "\$human['telemetry_on'] = \$telemetry['on'] ?? null"));
 
 // ── panel ────────────────────────────────────────────────────────────
 truthy('panel lee fase del servidor', str_contains($js, 'function lightPhaseOf()'));
@@ -85,6 +85,11 @@ truthy('panel no confirma apagando', str_contains($js, 'Encendido confirmado. Ah
 truthy('panel anti doble clic', str_contains($js, 'lightBusy') && str_contains($js, 'lightCooldownUntil'));
 truthy('panel muestra envio', str_contains($js, 'Enviando orden a la luz'));
 truthy('panel explica fallo reintentable', str_contains($js, 'la orden no se repetirá'));
+truthy('validar usa confirmaciones del servidor', str_contains($js, 'function lightHumanFromServer'));
+truthy('guard de luz usa el servidor', str_contains($js, 'lightHuman.prep_off === null'));
+truthy('payload de validacion usa el servidor', str_contains($js, 'body.human = lightHuman'));
+truthy('servidor ignora nulls del cliente', str_contains($controller, 'array_filter($human, static fn ($v): bool => $v !== null)'));
+truthy('telemetria no se borra con null', str_contains($controller, "if ((\$human['telemetry_on'] ?? null) === null)"));
 truthy('panel ya no usa switch/test en luz', !str_contains($js, "V2 + '/switch/test'"));
 truthy('texto de apagado previo', str_contains($js, 'deja la lámpara <strong>apagada</strong>'));
 truthy('aviso de encendido automatico', str_contains($js, 'se encenderá automáticamente'));
