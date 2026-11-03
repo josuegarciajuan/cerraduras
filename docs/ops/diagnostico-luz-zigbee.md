@@ -69,6 +69,12 @@ curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/switch/diagnostics/expo
   -o /root/cerraduras-backups/luz-$(date -u +%Y%m%dT%H%M%SZ).json
 ```
 
+### Fechas de la evidencia
+
+Las fechas de telemetría llegan en ISO 8601 (`2026-11-03T15:32:01.197Z`) y las
+columnas son `DATETIME(3)`. El repositorio normaliza **todas** las escrituras a
+UTC `Y-m-d H:i:s.v`; un valor inválido lanza excepción en vez de guardarse mal.
+
 ### Fuentes y sus límites
 
 La respuesta incluye `sources[]` con `status` ∈ `ok | partial | unavailable`:
@@ -189,6 +195,7 @@ Añade una fila por incidente nuevo:
 | Fecha/hora UTC | Operación | `verdict` | Síntoma | Acción tomada | Conclusión |
 |---|---|---|---|---|---|
 | 2026-11-03 11:54 | — | — | sin respuesta a `OFF`; luego `ON` espontáneo | corte de alimentación | recuperado, causa desconocida |
+| 2026-11-03 15:32 | `ON` | `confirmed` | panel bloqueado tras encender; 500 al guardar | corregido: fecha ISO rechazada por MariaDB | causa raíz confirmada en software |
 
 ## 7. Referencias
 
