@@ -5270,6 +5270,8 @@ F85-01 (migración) ─> F85-02 (motor) ─┬─> F85-03 (servicio/evidencia) �
 - [x] Volcado HEX/ASCII y `ALIVE`; runbook con respaldo/restauración.
 - [x] Compilación `esp32:esp32:esp32s3usbotg`.
 - [x] Unit estático: 14 checks.
+- [x] Salvaguarda documentada de los binarios exactos `CERRADURA` e `IMAN` y
+  restauración posterior a la prueba.
 - [ ] Prueba física pendiente: QR de control + llavero EM (dispositivo apagado).
 
 ---

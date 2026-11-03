@@ -20,6 +20,8 @@ un QR: vuelca cualquier byte recibido.
 3. El sketch **no usa WiFi, no escribe NVS y no llama a la API**.
 4. No tocar la ESP-CAM: su puerto es el FTDI `/dev/ttyUSB0`. El lector es el
    CH343 `/dev/ttyACM0`.
+5. Guardar antes de flashear los binarios exactos de las dos variantes
+   productivas (`CERRADURA` e `IMAN`) con `firmware/snapshot-variants.sh`.
 
 ### Respaldar la flash
 
@@ -29,17 +31,27 @@ Con el lector conectado por USB y sin ningún monitor serie abierto:
 esptool.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 flash_id
 ```
 
-Anotar el tamaño detectado (`Detected flash size: 8MB` o `16MB`) y leer esa
-cantidad completa:
+Anotar el tamaño detectado y leer esa cantidad completa. La placa validada tiene
+**16 MB**:
 
 ```bash
-# ejemplo para 8 MB; cambiar 0x800000 por 0x1000000 si es de 16 MB
+# placa validada: 16 MB = 0x1000000
 esptool.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 \
-  --baud 921600 read_flash 0x0 0x800000 /tmp/r35d-pre-probe-$(date +%Y%m%d-%H%M%S).bin
+  --no-stub --baud 230400 read_flash 0x0 0x1000000 /tmp/r35d-pre-probe-$(date +%Y%m%d-%H%M%S).bin
 ```
 
 Verificar que el fichero existe y tiene el tamaño esperado. Sin este respaldo
 **no continuar**.
+
+### Guardar las dos variantes productivas
+
+```bash
+./firmware/snapshot-variants.sh \
+  --out-dir=/home/oficina/esp-backups/r35d-variants-$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+Conservar el directorio completo y su `manifest.tsv` hasta finalizar la
+prueba. Contiene los binarios exactos y sus SHA-256.
 
 ## Compilar y cargar el diagnóstico
 
@@ -100,7 +112,8 @@ Salida esperada:
    1–3 cm y 3–6 cm. Retirarlo entre intentos. Repetir al menos tres veces.
 4. **Comparar**: el mismo llavero debe producir el mismo `content` en todas
    las lecturas. Anotar longitud, HEX y si el terminador es CRLF.
-5. **Cerrar**: parar el monitor y restaurar el firmware anterior.
+5. **Cerrar**: parar el monitor y restaurar la variante productiva que estaba
+   instalada antes de la prueba.
 
 ## Interpretación
 
@@ -118,17 +131,24 @@ variante del R35D-B y el tipo exacto de llavero (`EM4100`, `EM4102`, `T5577`).
 
 ## Restaurar producción
 
-Preferente, restaurar el respaldo completo:
+Para volver exactamente al estado anterior, restaurar el respaldo completo:
 
 ```bash
 esptool.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90126830-if00 \
-  --baud 921600 write_flash 0x0 /tmp/r35d-pre-probe-XXXX.bin
+  --no-stub --baud 230400 write_flash 0x0 /tmp/r35d-pre-probe-XXXX.bin
 ```
 
-Alternativa: compilar y cargar `firmware/scanner-relay-prod-r35d/`. Atención:
-el firmware productivo borra las claves WiFi cuando detecta un build nuevo, por
-lo que puede exigir repetir el provisioning. El respaldo completo evita ese
-efecto.
+Para restaurar solo una variante conservando NVS/WiFi, usar el binario exacto
+del manifiesto con el procedimiento de `firmware/flash-variant.sh`:
+
+```text
+ESP-cerradura → CERRADURA
+ESP-imán      → IMAN
+```
+
+En `IMAN`, restaurar con la puerta cerrada: el reinicio libera el electroimán
+unos segundos. No sustituir estas variantes por el firmware genérico
+`scanner-relay-prod-r35d`.
 
 ## Trazabilidad
 
