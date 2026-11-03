@@ -15988,3 +15988,134 @@ La implementación software F111 añade la evaluación determinista de reportes 
 `detected` para cualquier `PRESENT` nuevo, `clear` solo con al menos dos `ABSENT`
 reales y último `ABSENT`, e `inconclusive` ante silencio o evidencia incompatible.
 La aceptación física no forma parte de este contrato de entrega.
+
+## §F112 Diagnóstico de luz y prueba de luz reanudable
+
+### `POST /dashboard-api/sensores/v2/switch/test` (aditivo)
+
+Cuerpo: se conserva `{ room_id, action }` y se añade opcionalmente:
+
+```json
+{ "room_id": 14, "action": "ON", "operation_id": "<uuid>", "origin": "sensores_light" }
+```
+
+- `operation_id` es la clave de idempotencia. Repetir la misma pareja
+  `operation_id` + `action` devuelve el resultado previo con `200` y
+  `idempotent: true`, sin publicar de nuevo.
+- Si el `operation_id` ya existe con otra acción: `409 operation_conflict`.
+- `origin` es una etiqueta corta; por defecto `manual`.
+
+Respuesta: se conservan todos los campos actuales y se añade:
+
+```json
+{
+  "ok": true,
+  "operation_id": "<uuid>",
+  "verdict": "confirmed|unconfirmed|discrepant|publish_failed|indeterminate",
+  "published": true,
+  "report": {
+    "state": "ON",
+    "at": "2026-11-03T11:28:27.265Z",
+    "fresh": true,
+    "source": "command|probe|none",
+    "age_seconds": 0
+  },
+  "evidence": { "recorded": true, "error": null }
+}
+```
+
+Compatibilidad: `reachable`, `reachability_source`, `action`, `error`,
+`command_at`, `pending_confirmation`, `reported_state`, `state_at` y `fresh`
+mantienen su significado actual.
+
+### `GET /dashboard-api/sensores/v2/switch/diagnostics`
+
+Parámetros:
+
+- `room_id` (obligatorio)
+- `window_minutes` (opcional, 5…1440, por defecto 60)
+- `limit` (opcional, 1…200, por defecto 50)
+
+Respuesta:
+
+```json
+{
+  "ok": true,
+  "room_id": 14,
+  "device": { "id": 439, "kind": "SWITCH", "external_id": "0xf044d3fffecd9e8e" },
+  "window": { "from": "...", "to": "...", "minutes": 60 },
+  "last_operation": {
+    "operation_id": "<uuid>", "action": "OFF", "requested_at": "...",
+    "published": true, "publish_error": null,
+    "reported_state": "OFF", "reported_at": "...", "fresh": true,
+    "human_state": null, "verdict": "confirmed", "diagnosis": null
+  },
+  "state": {
+    "last_reported": "OFF",
+    "reported_at": "...",
+    "age_seconds": 12,
+    "last_seen_at": "...",
+    "online_state": null
+  },
+  "operations": [ { "...": "hasta limit" } ],
+  "sources": [
+    { "name": "device_telemetry", "status": "ok" },
+    { "name": "zigbee2mqtt_log", "status": "unavailable", "reason": "sin acceso de lectura" },
+    { "name": "zigbee_services", "status": "ok" }
+  ],
+  "notes": ["..."]
+}
+```
+
+- `sources[].status` ∈ `ok | partial | unavailable`; el motivo es obligatorio
+  cuando no es `ok`.
+- No se expone ninguna credencial, topic completo ni clave de red.
+- Un fallo de una fuente no invalida la respuesta.
+
+### `GET /dashboard-api/sensores/v2/switch/diagnostics/export`
+
+Mismos parámetros más `format=json|md` (por defecto `md`).
+
+- Genera un documento descargable con la misma información.
+- `Content-Type: application/json` o `text/markdown`.
+- Sin datos sensibles; se aplica el mismo filtro que la consulta.
+
+### Fases del paso `light`
+
+Se exponen de forma aditiva dentro de la corrida (`GET .../run/state` o el
+listado de pasos ya existente):
+
+```json
+"light": {
+  "phase": "PREPARE_OFF|READY_TO_START|ON_PENDING|CONFIRM_ON|OFF_PENDING|CONFIRM_OFF|READY_TO_VALIDATE|DONE|INDETERMINATE",
+  "operations": { "on": "<uuid>", "off": "<uuid>" },
+  "human": { "prep_off": null, "on": null, "off": null },
+  "telemetry": { "on": null, "off": null },
+  "updated_at": "..."
+}
+```
+
+Transiciones:
+
+- `attempt/start` de `light` prepara el paso en `PREPARE_OFF`; **no** envía
+  ninguna orden.
+- Una acción explícita `light/phase` (o el endpoint aditivo equivalente que se
+  fije en el Bloque 3) avanza de fase; validar el orden es responsabilidad del
+  servidor.
+- Transición no permitida: `409 light_phase_invalid` con `phase` vigente.
+- Repetición idempotente: `200` con el estado actual y `idempotent: true`.
+
+### Errores nuevos
+
+`operation_conflict`, `light_phase_invalid`, `light_not_prepared`,
+`evidence_unavailable`.
+
+Se conservan `switch_unreachable`, `switch_not_found` y los códigos actuales.
+
+### Sin migración de contrato
+
+- Ningún campo existente se renombra, elimina ni cambia de tipo.
+- Las corridas antiguas sin fases persistidas siguen siendo legibles; el panel
+  ofrece cancelar y repetir solo la luz.
+- Migración de datos: `0140_switch_command_evidence.sql` (solo crea tabla e
+  índices).

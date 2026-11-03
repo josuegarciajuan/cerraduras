@@ -11447,3 +11447,40 @@ tests/Unit/KeyDeskAccessTest.php` y regresión completa con 0 fallos.
 - [x] TSK-F111-10: UI, validador final y textos.
 - [x] TSK-F111-11: BLOCK 83 y regresión completa.
 - [ ] TSK-F111-12: despliegue y prueba física de aceptación.
+
+## F112 — Diagnóstico de luz Zigbee y prueba de luz reanudable
+
+Trazabilidad: RF-261…RF-269. Sin polling Tuya. Sin cambios en puerta/radar.
+
+### Bloque 1 — Base
+- [x] TSK-F112-01: evidencia de la corrida de referencia y copia verificable.
+  - Verificación: `docs/ops/f112-bloque1-base.md` + `SHA256SUMS`.
+- [x] TSK-F112-02: congelar alcance y contratos en las specs.
+
+### Bloque 2 — Evidencia persistente
+- [ ] TSK-F112-03: migración `0140_switch_command_evidence.sql`.
+  - Verificación: tabla e índices en BD; migración idempotente.
+- [ ] TSK-F112-04: registro de operaciones en `ZigbeeSwitchGateway` y
+  `switch/test`, con `operation_id` idempotente y veredicto.
+  - Verificación: unitarios con publicador y reloj simulados.
+- [ ] TSK-F112-05: contexto de infraestructura con fuentes `unavailable`.
+- [ ] TSK-F112-06: `switch/diagnostics` y `switch/diagnostics/export`.
+- [ ] TSK-F112-07: retención con script y timer.
+  - Verificación: purga respeta días configurados y `0` conserva.
+
+### Bloque 3 — Calibrador
+- [ ] TSK-F112-08: fases persistidas de `light` y transiciones validadas.
+- [ ] TSK-F112-09: panel `/sensores` con preparación, aviso de encendido
+  automático, confirmaciones y reanudación.
+- [ ] TSK-F112-10: compatibilidad con intentos antiguos de luz.
+
+### Bloque 4 — Documentación
+- [ ] TSK-F112-11: `docs/ops/diagnostico-luz-zigbee.md` y referencias en
+  `AGENTS.md`, `docs/ops-sensores.md` y `docs/ops-zigbee.md`.
+
+### Bloque 5 — Regresión
+- [ ] TSK-F112-12: volcado previo, BLOCK nuevo y regresión completa con 0
+  fallos.
+
+### Bloque 6 — Cierre
+- [ ] TSK-F112-13: publicación final y corrida completa del usuario.

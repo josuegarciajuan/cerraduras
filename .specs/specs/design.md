@@ -25742,3 +25742,126 @@ El evaluador exterior/reentrada es determinista y recibe el reloj por inyección
 silencio devuelve `inconclusive`, no `clear`. La corrida se bloquea si ya existe otra
 activa y BLOCK 83 verifica la evidencia DP1, la invalidación por configuración y la
 ausencia de polling. La instalación y prueba física de aceptación siguen diferidas.
+
+## F112 — Diagnóstico de luz Zigbee y prueba de luz reanudable
+
+### Problema
+
+1. Dos incidentes del `ZBMINIL2` (`delivery failed` en Zigbee2MQTT) se
+   recuperaron con un corte de alimentación, sin evidencia suficiente para
+   determinar el tramo que falló.
+2. La prueba de luz del calibrador enviaba un apagado al pulsar «Empezar
+   prueba», lo que resultaba contradictorio, y sus confirmaciones vivían en
+   memoria del navegador: una recarga obligaba a cancelar y repetir.
+
+### Alcance
+
+Solo se añade diagnóstico y se rehace la fase de luz. Puerta, radar interior,
+radar exterior, reentrada, `preflight` y base F110 quedan intactos.
+
+### Arquitectura del diagnóstico
+
+```text
+ZigbeeSwitchGateway
+  -> publica ON/OFF o GET (PUBACK != actuación)
+  -> registra switch_command_evidence (intención + publicación)
+  -> espera telemetría por push (ingreso/spool -> devices.meta_json)
+  -> cierra veredicto: confirmed | unconfirmed | discrepant
+                      | publish_failed | indeterminate
+  -> contexto: último estado, edad, anuncios, salud de servicios
+  -> consulta/exportación
+```
+
+Separación de conceptos:
+
+| Concepto | Significado | No significa |
+|---|---|---|
+| `published` | el broker aceptó la publicación | que el dispositivo actuó |
+| `reachable` | hubo respuesta en la ventana o sonda puntual | que el estado sea el pedido |
+| `fresh` | el reporte es posterior a la orden | que coincida con la orden |
+| `confirmed` | reporte fresco coherente o confirmación humana explícita | garantía física del relé |
+| `discrepant` | telemetría fresca contraria a la orden | fallo definitivo del hardware |
+| `indeterminate` | no hay evidencia suficiente | éxito |
+
+### Modelo de datos
+
+Tabla aditiva `switch_command_evidence` (migración `0140`). No se reutiliza
+`device_commands`, que pertenece a la cola de los ESP
+(`pending/picked_up/done/timeout`) y no modela confirmación por telemetría.
+
+```text
+id, operation_id (UNIQUE), room_id, device_id, external_id, provider,
+origin, action, actor, requested_at,
+publish_ok, publish_error, published_at,
+prior_state, prior_state_at,
+reported_state, reported_at, fresh, report_source,
+human_state, human_at,
+verdict, diagnosis,
+created_at, updated_at
+```
+
+- `operation_id` es la clave de idempotencia.
+- `reported_*` y `human_*` se guardan separados para no confundir fuentes.
+- Índices: `UNIQUE(operation_id)`, `(room_id, requested_at)`,
+  `(device_id, requested_at)`.
+- Retención con `bin/switch-evidence-retention.php` y timer diario;
+  `SWITCH_EVIDENCE_RETENTION_DAYS` (`0` = conservar).
+- Sin payloads completos ni credenciales.
+
+### Contexto de infraestructura
+
+Fuentes, por orden de disponibilidad:
+
+1. `devices.meta_json` (último estado, instante) y `last_seen_at`.
+2. Eventos ya recibidos por el ingreso (`bridge/event`, `device_announce`,
+   reinicios) cuando estén accesibles en almacenamiento consultable.
+3. Salud local de `cerraduras-zigbee-tunnel`, `ingress` y `spool`.
+4. Logs de Zigbee2MQTT solo si son legibles sin intervención destructiva.
+
+Cada fuente ausente se devuelve como `unavailable` con motivo. La cercanía
+temporal de un `Delivery failed` no se presenta como causa atribuida salvo
+correlación fiable; el diseño no promete una correlación que la versión
+instalada no ofrezca.
+
+### Máquina de estados de la prueba de luz
+
+Persistida en la corrida (`steps.light`), con `operation_id` por transición:
+
+```text
+PREPARE_OFF -> READY_TO_START -> ON_PENDING -> CONFIRM_ON
+            -> OFF_PENDING -> CONFIRM_OFF -> READY_TO_VALIDATE
+            -> DONE | INDETERMINATE
+```
+
+Reglas duras:
+
+- `PREPARE_OFF` y `READY_TO_START` no envían órdenes.
+- El envío de `ON` ocurre solo con la acción explícita del operador.
+- Recargar reconstruye desde el servidor y nunca reenvía.
+- `operation_id` repetido devuelve el resultado previo sin actuar.
+- Transición fuera de orden o concurrente: `409` con el estado vigente.
+- Resultado desconocido: `INDETERMINATE`; no se asume éxito.
+
+### Compatibilidad
+
+- Campos nuevos aditivos en `switch/test`; se conservan todos los actuales.
+- El flujo de luz anterior se migra en lectura: si el paso tiene un intento
+  abierto sin fases persistidas, se ofrece cancelarlo y repetir solo la luz.
+- Los pasos `door`, `radar_inside` y `radar_outside` no entran en el código
+  nuevo.
+
+### Fases de implementación
+
+1. Bloque 1: evidencia, alcance y contratos. **Completado.**
+2. Bloque 2: tabla, registro, contexto, consulta y exportación.
+3. Bloque 3: máquina de estados y panel.
+4. Bloque 4: runbook y documentación permanente.
+5. Bloque 5: regresión completa en producción.
+6. Bloque 6: publicación final y prueba física del usuario.
+
+### Invariantes
+
+- Sin polling REST de Tuya ni al radar.
+- Sin cambios en la lógica de puerta/radar/base F110.
+- Sin `configure` ni `dataQuery` en el conversor.
+- Una recarga no genera órdenes.
