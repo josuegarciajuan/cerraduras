@@ -884,6 +884,243 @@
     }
   }
 
+  function renderFinishCta(host) {
+    host.innerHTML = '<div class="card"><div class="eyebrow">Fin</div><h1>Pasos finalizados</h1>'
+      + '<p class="hint">Genera el veredicto con los resultados disponibles.</p>'
+      + '<div class="actions"><button class="primary" data-action="finish">Ver veredicto</button></div></div>';
+  }
+
+  function renderVerdict(host) {
+    var v = S.run.verdict || {};
+    var labels = { door: 'Puerta', presence: 'Presencia', light: 'Luz' };
+    var icons = { PASS: '✓', FAIL: '✕', UNVERIFIED: '?', SKIP: '—', NOT_INSTALLED: '—' };
+    var cls = { PASS: 'ok', FAIL: 'bad', UNVERIFIED: 'warnc', SKIP: 'warnc', NOT_INSTALLED: 'muted' };
+    var stLabel = STATUS_LABEL;
+    var title = S.run.status === 'abandoned' ? 'Verificación interrumpida' : ({
+      CORRECT: 'Verificación correcta', WITH_RESERVES: 'Correcta con reservas',
+      REVIEW: 'Revisar instalación', INCOMPLETE: 'Verificación incompleta', NOT_EVALUABLE: 'No evaluable'
+    }[v.verdict || 'INCOMPLETE'] || 'Verificación');
+    var html = '<div class="card">';
+    html += '<div class="eyebrow">Veredicto</div><h1 class="' + (v.verdict === 'CORRECT' ? 'ok' : v.verdict === 'REVIEW' ? 'bad' : 'warnc') + '">'
+      + esc(title) + '</h1>';
+    html += '<div class="techgrid">';
+    Object.keys(labels).forEach(function (k) {
+      var st = (v.devices || {})[k] || 'PENDING';
+      html += '<div class="techrow"><span>' + labels[k] + '</span><span class="' + (cls[st] || '') + '">'
+        + (icons[st] || '·') + ' ' + esc(stLabel[st] || st) + '</span></div>';
+    });
+    var soakLabel = { PASS: 'Correcto', FAIL: 'Revisar', PENDING: 'Pendiente' }[v.soak || 'PENDING'] || 'Pendiente';
+    html += '<div class="techrow"><span>Reposo</span><span>' + esc(soakLabel) + '</span></div>';
+    html += '</div>';
+    var settings = (S.run.calibration && S.run.calibration.initial_settings) || {};
+    if (settings.maximum_range != null) {
+      html += '<p class="hint">Configuración inicial: sensibilidad ' + settings.radar_sensitivity
+        + '/9 · alcance ' + settings.maximum_range + ' m · fading ' + settings.fading_time + ' s</p>';
+    }
+    if (v.soak !== 'PASS') {
+      html += '<p class="hint">El reposo revisa los últimos 30 minutos con la sala vacía. Puedes comprobarlo ahora o al volver a abrir la sala.</p>';
+    }
+    html += '<div class="actions">';
+    if (v.verdict === 'REVIEW' || v.verdict === 'INCOMPLETE') {
+      html += '<button class="primary" data-action="new">Repetir verificación</button>';
+    }
+    if (v.soak !== 'PASS') html += '<button data-action="soak">Comprobar reposo</button>';
+    html += '<button class="' + (v.verdict === 'CORRECT' ? 'primary' : '') + '" data-action="export">Descargar informe</button>';
+    html += '<button class="ghost" data-action="new">Nueva verificación</button>';
+    html += '</div></div>';
+    host.innerHTML = html;
+  }
+
+  function renderTech() {
+    var body = $('techBody');
+    if (!body) return;
+    var p = S.preflight || {};
+    var d = (p.devices) || {};
+    var rows = [];
+    rows.push(['Sala', (p.room && p.room.code) || '—']);
+    rows.push(['Actor', (p.room && p.room.room_type_code) || '—']);
+    rows.push(['Run', (S.run && S.run.run_id) || '—']);
+    rows.push(['Versión', 'F104']);
+    rows.push(['Técnico', (S.run && S.run.operator) || operator() || '—']);
+    ['proximity', 'presence', 'switch'].forEach(function (k) {
+      var dev = d[k];
+      if (!dev) return;
+      rows.push([dev.label || k, (dev.model || '') + ' · ' + (dev.transport || '') + ' · '
+        + (dev.battery_pct != null ? 'pila ' + dev.battery_pct + '%' : '—')
+        + ' · ' + healthLine(dev)]);
+    });
+    var settings = p.settings || {};
+    if (settings.maximum_range != null) {
+      rows.push(['Radar', 'sens ' + settings.radar_sensitivity + '/9 · alcance ' + settings.maximum_range
+        + ' m · mín ' + settings.minimum_range + ' m · delay ' + settings.detection_delay
+        + ' s · fading ' + settings.fading_time + ' s']);
+    }
+    if (p.settings_age_seconds != null) rows.push(['Config recibida', age(p.settings_age_seconds)]);
+    if (p.radar_settings_valid === false) rows.push(['Config radar', 'INVÁLIDA — restaurar']);
+    if (S.run && S.run.door_polarity) rows.push(['Polaridad puerta', S.run.door_polarity.value]);
+    body.innerHTML = rows.map(function (r) {
+      return '<div class="techrow"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>';
+    }).join('');
+  }
+
+  // ── acciones ─────────────────────────────────────────────────────────
+  async function startRun() {
+    if (!operator()) { toast('Escribe el nombre del técnico'); $('operator').focus(); return; }
+    localStorage.setItem(LS_OP, operator());
+    busy(true);
+    try {
+      var data = await api(V2 + '/run/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId(), operator: operator() })
+      });
+      S.run = data.run;
+      S.stepId = currentStep();
+      S.attempt = null;
+      S.attemptData = null;
+      S.lightPhase = 'idle';
+      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
+      saveRunLocal();
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function startAttempt(stepId) {
+    busy(true);
+    stopPolling();
+    try {
+      var data = await api(V2 + '/attempt/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId })
+      });
+      S.attempt = data.attempt;
+      S.attemptData = null;
+      S.human = { prep_off: null, on: null, off: null, telemetry_on: null, telemetry_off: null };
+      S.lightPhase = 'idle';
+      S.radarKey = null;
+      S.doorKey = null;
+      S.radarPhaseKey = null;
+      S.radarState = null;
+      S.radarStateKey = null;
+      S.lastRadarState = null;
+      // F112: no se envia ninguna orden al crear el intento. La fase
+      // persistida (PREPARE_OFF) indica al operador el siguiente paso.
+      await reloadRun();
+      render();
+    } catch (e) {
+      banner(e.message, 'bad');
+      if (e.data && e.data.active) {
+        toast('Hay una prueba en curso en esta sala');
+      }
+    } finally { busy(false); }
+  }
+
+  async function checkAttempt(stepId) {
+    var att = activeAttemptFor(stepId);
+    if (!att) { toast('Primero empieza la prueba'); return; }
+    if (stepId === 'light' && (S.human.prep_off === null || S.human.on === null || S.human.off === null)) {
+      toast('Completa la preparación, el encendido y el apagado');
+      return;
+    }
+    stopPolling();
+    busy(true);
+    try {
+      var body = {
+        run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id,
+        check_id: 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)
+      };
+      if (stepId === 'light') body.human = S.human;
+      await api(V2 + '/attempt/check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      await reloadRun();
+      await loadPreflight();
+      S.attemptData = null;
+      render();
+      var res = document.querySelector('.result');
+      if (res) res.focus();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function cancelAttempt(stepId) {
+    var att = activeAttemptFor(stepId);
+    if (!att) return;
+    if (!confirm('¿Cancelar esta prueba? La ventana se cerrará sin veredicto.')) return;
+    stopPolling();
+    busy(true);
+    try {
+      await api(V2 + '/attempt/cancel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id })
+      });
+      await reloadRun();
+      S.attemptData = null;
+      S.lightPhase = 'idle';
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function invertPolarity() {
+    var current = (S.run && S.run.door_polarity && S.run.door_polarity.value) || 'normal';
+    var force = current === 'inverted' ? 'normal' : 'inverted';
+    busy(true);
+    try {
+      var data = await api(V2 + '/door/polarity', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId(), run_id: S.run.run_id,
+          physical: 'CLOSED', force: force })
+      });
+      toast(data.message || 'Polaridad invertida. Repite los ciclos.');
+      await reloadRun();
+      await loadPreflight();
+      var step = S.run.steps && S.run.steps.door;
+      if (step) step.status = 'PENDING';
+      S.stepId = 'door';
+      S.attempt = null;
+      S.attemptData = null;
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
+  async function polarity() {
+    busy(true);
+    try {
+      var data = await api(V2 + '/door/polarity', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId(), run_id: S.run.run_id, physical: 'CLOSED' })
+      });
+      await reloadRun();
+      await loadPreflight();
+      toast(data.message || 'Polaridad comprobada');
+      render();
+    } catch (e) {
+      if (e.status === 422) toast(e.message);
+      else banner(e.message, 'bad');
+    } finally { busy(false); }
+  }
+
+  async function tune(phase) {
+    var stepId = phase === 'inside' ? 'radar_inside' : 'radar_outside';
+    var att = activeAttemptFor(stepId);
+    if (!att) { toast('Primero empieza la prueba'); return; }
+    busy(true);
+    try {
+      var data = await api(V2 + '/radar/tune', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: S.run.run_id, step_id: stepId, attempt_id: att.attempt_id, phase: phase })
+      });
+      toast(data.message || (data.applied ? 'Ajuste aplicado' : 'Ajuste no confirmado'));
+      await refreshEvents();
+      await loadPreflight();
+      render();
+    } catch (e) { banner(e.message, 'bad'); }
+    finally { busy(false); }
+  }
+
   async function calibrateCall(action) {
     var att = activeAttemptFor(S.stepId);
     if (!att && action !== 'restore') throw new Error('Primero empieza la prueba');
