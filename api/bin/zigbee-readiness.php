@@ -109,12 +109,13 @@ try {
         $d = $pdo->prepare(
             "SELECT d.kind, d.external_id, d.transport FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
-             WHERE r.code = 'almacenZigbee' ORDER BY d.kind"
+             WHERE r.code = 'almacenZigbee' AND d.transport = 'ZIGBEE2MQTT'
+             ORDER BY d.kind"
         );
         $d->execute();
         $devices = $d->fetchAll(PDO::FETCH_ASSOC);
         if (count($devices) !== 3) {
-            line('FAIL', 'se esperaban 3 dispositivos en almacenZigbee, hay ' . count($devices));
+            line('FAIL', 'se esperaban 3 dispositivos Zigbee2MQTT en almacenZigbee, hay ' . count($devices));
             $ok = false;
         } else {
             foreach ($devices as $dev) {
