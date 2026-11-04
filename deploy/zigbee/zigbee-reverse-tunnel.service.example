@@ -1,0 +1,39 @@
+# Túnel SSH inverso desde el servidor del hotel hacia el VPS.
+#
+# El servidor del hotel inicia la conexión saliente: no necesita IP fija,
+# apertura de puertos en el router ni Tailscale. En el VPS, el usuario
+# `zigbee-tunnel` debe tener una authorized_keys restringida:
+#
+#   restrict,port-forwarding,permitlisten="127.0.0.1:1884",permitlisten="127.0.0.1:2222",permitlisten="127.0.0.1:8082" ssh-ed25519 AAAA... zigbee-tunnel
+#
+# Puertos:
+#   1884 -> Mosquitto local (lo consume cerraduras-zigbee-ingress en el VPS)
+#   2222 -> sshd del hotel (acceso remoto)
+#   8082 -> UI de Zigbee2MQTT (opcional)
+#
+# Sustituye VPS_IP y la ruta de la clave antes de instalar.
+
+[Unit]
+Description=Reverse SSH tunnel to VPS (MQTT + SSH + UI Z2M)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=lock
+Group=lock
+ExecStart=/usr/bin/ssh -N -T \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=accept-new \
+  -i /home/lock/.ssh/id_ed25519_zigbee_tunnel \
+  -R 127.0.0.1:1884:127.0.0.1:1883 \
+  -R 127.0.0.1:2222:127.0.0.1:22 \
+  -R 127.0.0.1:8082:127.0.0.1:8080 \
+  zigbee-tunnel@VPS_IP
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

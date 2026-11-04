@@ -1,3 +1,6 @@
+# DEPRECATED (F113+): el túnel ya no se inicia desde el VPS. El servidor del
+# hotel inicia `zigbee-reverse-tunnel.service` y publica 127.0.0.1:1884.
+# Se conserva solo como referencia/rollback.
 [Unit]
 Description=Cerraduras — túnel SSH al broker MQTT de oficina (F91)
 Documentation=file:///root/cerraduras/.specs/specs/design.md

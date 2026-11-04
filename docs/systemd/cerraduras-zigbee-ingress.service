@@ -1,8 +1,9 @@
 [Unit]
 Description=Cerraduras — ingreso MQTT Zigbee con ACK tras persistencia (F91)
 Documentation=file:///root/cerraduras/.specs/specs/design.md
-After=network-online.target cerraduras-api.service cerraduras-zigbee-tunnel.service
-Wants=network-online.target cerraduras-api.service cerraduras-zigbee-tunnel.service
+# El túnel SSH inverso lo inicia el servidor del hotel (zigbee-reverse-tunnel).
+After=network-online.target cerraduras-api.service
+Wants=network-online.target cerraduras-api.service
 
 [Service]
 Type=simple
