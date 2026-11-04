@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Domain\Sensors\RadarCalibrationDrift;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Warehouse\Go2rtcClient;
 use App\Http\Request;
 use App\Http\Response;
@@ -178,6 +180,10 @@ final class WarehouseStateController
             // croquis anime el monigote por fases en vivo (mismo enfoque que el
             // dashboard operativo). Aditivo: no cambia la forma de los campos previos.
             'recent_presence' => [],
+            // F114+: evidencia cruda del DP1 y calibración efectiva.
+            'radar_report' => null,
+            'radar_frame_age_seconds' => null,
+            'calibration' => null,
         ];
         $ls = $this->pdo->prepare(
             'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
@@ -267,15 +273,65 @@ final class WarehouseStateController
         // F91/RF-149.2: última decisión del radar Zigbee (incluye candidatos y
         // descartes) tal como quedó auditada en presence_events.meta_json.
         $pdStmt = $this->pdo->prepare(
-            "SELECT meta_json FROM presence_events
+            "SELECT meta_json, received_at FROM presence_events
              WHERE room_id = :r AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
              ORDER BY id DESC LIMIT 1"
         );
         $pdStmt->execute([':r' => $roomId]);
-        $pdMeta = json_decode((string) ($pdStmt->fetchColumn() ?: ''), true) ?: [];
+        $pdRow = $pdStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $pdMeta = json_decode((string) ($pdRow['meta_json'] ?? ''), true) ?: [];
         $live['presence_decision'] = is_array($pdMeta['radar_decision'] ?? null)
             ? $pdMeta['radar_decision']
             : null;
+        if (isset($pdRow['received_at']) && $pdRow['received_at'] !== null) {
+            $frameTs = strtotime((string) $pdRow['received_at'] . ' UTC');
+            $live['radar_frame_age_seconds'] = $frameTs !== false ? max(0, $nowTs - $frameTs) : null;
+        }
+
+        // F114+: evidencia del DP1 (valor real, no el campo cacheado) y deriva
+        // de calibración (lo guardado vs lo que el dispositivo reporta por push).
+        $report = (new RadarPresenceReportRepository($this->pdo))->latestForRoom($roomId);
+        if ($report !== null) {
+            $reportTs = strtotime((string) $report['received_at'] . ' UTC');
+            $live['radar_report'] = [
+                'value' => (string) $report['value'],
+                'marker' => (string) $report['marker'],
+                'report_counter' => (int) $report['report_counter'],
+                'received_at' => (string) $report['received_at'],
+                'age_seconds' => $reportTs !== false ? max(0, $nowTs - $reportTs) : null,
+            ];
+        }
+
+        $rdStmt = $this->pdo->prepare(
+            "SELECT d.id, d.meta_json FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+             WHERE r.id = :r AND d.kind = 'PRESENCE' AND d.transport = 'ZIGBEE2MQTT'
+             ORDER BY d.id ASC LIMIT 1"
+        );
+        $rdStmt->execute([':r' => $roomId]);
+        $rdRow = $rdStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $rdMeta = json_decode((string) ($rdRow['meta_json'] ?? ''), true);
+        $rdMeta = is_array($rdMeta) ? $rdMeta : [];
+        $savedSource = null;
+        $savedCalibration = null;
+        if (is_array($rdMeta['calibration'] ?? null)) {
+            $savedCalibration = $rdMeta['calibration'];
+            $savedSource = 'current';
+        } elseif (is_array($rdMeta['calibration_previous'] ?? null)) {
+            // Tras un corte/reconfiguración el radar puede volver a su base y
+            // quedarse sin `calibration`; la última conocida sigue siendo la
+            // referencia útil para avisar de la deriva.
+            $savedCalibration = $rdMeta['calibration_previous'];
+            $savedSource = 'previous';
+        }
+        $reportedSettings = is_array($pdMeta['settings'] ?? null) ? $pdMeta['settings'] : [];
+        $calibration = RadarCalibrationDrift::evaluate($savedCalibration, $reportedSettings);
+        $calibration['device_id'] = isset($rdRow['id']) ? (int) $rdRow['id'] : null;
+        $calibration['saved_source'] = $savedSource;
+        $calibration['previous'] = is_array($rdMeta['calibration_previous'] ?? null)
+            ? $rdMeta['calibration_previous'] : null;
+        $calibration['reported_at'] = $pdRow['received_at'] ?? null;
+        $calibration['saved_at'] = $savedCalibration['calibrated_at'] ?? null;
+        $live['calibration'] = $calibration;
 
         // F80/RF-103.3: últimos eventos de presencia aplicados (auditoría F41/F44
         // marca `applied=1`). Alimenta las fases del monigote en el croquis.

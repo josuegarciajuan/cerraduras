@@ -251,9 +251,14 @@ final class ZigbeeRadarCalibrationService
      * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
      * @return array<string,mixed>
      */
-    public function resetToBaseline(int $roomId, array $device): array
+    /**
+     * @param array<string,mixed> $overrides Perfil operativo de la sala (p. ej.
+     *        `fading_time=5.0` en el almacén). No altera `BASELINE`.
+     */
+    public function resetToBaseline(int $roomId, array $device, array $overrides = []): array
     {
-        return $this->apply($roomId, $device, self::BASELINE, false, 45);
+        $settings = $overrides === [] ? self::BASELINE : array_merge(self::BASELINE, $overrides);
+        return $this->apply($roomId, $device, $settings, false, 45);
     }
 
     public function apply(int $roomId, array $device, array $input, bool $persist, int $waitAttempts = 12): array

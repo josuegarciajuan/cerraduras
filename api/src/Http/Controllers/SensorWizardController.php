@@ -4970,7 +4970,7 @@ final class SensorWizardController
             'id' => (int) $device->id,
             'external_id' => (string) $device->externalId,
             'meta' => is_array($device->meta) ? $device->meta : [],
-        ]);
+        ], $this->warehouseFadingOverride($roomId));
         if (($result['applied'] ?? false) !== true) {
             return ['ok' => false, 'settings' => [], 'error' => (string) ($result['error'] ?? 'baseline_not_confirmed')];
         }
@@ -4982,6 +4982,28 @@ final class SensorWizardController
         }
         $settings = (array) ($result['status']['settings'] ?? ZigbeeRadarCalibrationService::BASELINE);
         return ['ok' => true, 'settings' => $settings, 'error' => null];
+    }
+
+    /**
+     * F114+: el almacén necesita una salida <10 s. El perfil de calibración
+     * arranca con `fading_time` corto; el resto de salas conserva la base F110.
+     *
+     * @return array<string,mixed>
+     */
+    private function warehouseFadingOverride(int $roomId): array
+    {
+        $stmt = $this->pdo()->prepare(
+            'SELECT rt.code FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id WHERE r.id = :id LIMIT 1'
+        );
+        $stmt->execute([':id' => $roomId]);
+        if ((string) ($stmt->fetchColumn() ?: '') !== 'ALMACEN_BEBIDAS') {
+            return [];
+        }
+        $raw = \App\Support\Config::get('RADAR_WAREHOUSE_FADING_TIME', '5.0') ?? '5.0';
+        if (!is_numeric($raw)) {
+            $raw = '5.0';
+        }
+        return ['fading_time' => max(0.5, min(1500.0, (float) $raw))];
     }
 
     private function radarDeviceIdForRoom(int $roomId): ?int
