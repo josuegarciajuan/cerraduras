@@ -13354,3 +13354,61 @@ sesión futura no puede analizar un fallo equivalente.
 - **RF-275.5**: se ejecuta la regresión completa con 0 fallos.
 
 **Estado F113:** planificado. Implementación por fases; ver `tasks.md`.
+
+---
+
+# Fase 114 — Salida con puerta abierta y reentrada por radar en el almacén (RF-280…RF-285)
+
+## RF-280: Autoridad de presencia con la puerta abierta
+- **RF-280.1**: la sala `almacenZigbee` (14) usa
+  `rooms.presence_mode_override='mixed'`; el resto de salas no cambia.
+- **RF-280.2**: con `door_state=OPEN`, el modo operativo es `radar_only`: el
+  radar decide presencia sin exigir cámara ni evento de puerta nuevo.
+- **RF-280.3**: con `door_state=CLOSED`, el modo operativo es `radar_door`
+  (comportamiento actual de puerta cerrada).
+
+## RF-281: Salida con la puerta abierta
+- **RF-281.1**: si el radar confirma ausencia (`ABSENT_CONFIRMED`) mientras la
+  puerta sigue abierta, la sesión pasa a `presence_state=ABSENT` y la visita
+  del almacén se cierra con `exited_at`, sin requerir `CLOSED`.
+- **RF-281.2**: la ausencia confirmada se aplica con
+  `presence_absent_reports` reportes distintos dentro de
+  `presence_absent_window_seconds`; no se exige evidencia de cámara.
+- **RF-281.3**: un silencio del radar (`stale`) no cierra la visita por sí
+  solo; solo la ausencia confirmada lo hace.
+
+## RF-282: Reentrada con la puerta preabierta
+- **RF-282.1**: tras una salida confirmada, un `PRESENT_CONFIRMED` del radar
+  estando en `IDLE` crea una visita nueva con `entry_trigger='PRESENCE'`.
+- **RF-282.2**: la reentrada no exige un evento `OPEN` nuevo, movimiento de
+  cámara ni QR, porque la puerta ya estaba abierta.
+- **RF-282.3**: si la visita anterior seguía abierta, el sistema no duplica la
+  visita; primero debe confirmarse la salida (RF-281).
+
+## RF-283: Croquis honesto con la puerta abierta
+- **RF-283.1**: con `ABSENT_CONFIRMED`, `presence_state=ABSENT` o
+  `presence_stale`, la fase del monigote es `outside` aunque la puerta esté
+  `OPEN`.
+- **RF-283.2**: `near` se reserva para una aproximación real: puerta recién
+  abierta o presencia candidata (`CANDIDATE_PRESENT`).
+- **RF-283.3**: con presencia confirmada, la fase sigue siendo `inside`.
+
+## RF-284: Sin tocar el radar ni añadir polling
+- **RF-284.1**: no se modifican `maximum_range`, `minimum_range`,
+  `radar_sensitivity`, `detection_delay` ni `fading_time`.
+- **RF-284.2**: no se introduce polling a Tuya, al radar ni a sensores; todo
+  sigue por push y por lectura local de BD.
+- **RF-284.3**: no se añaden rutas ni campos obligatorios a los contratos
+  existentes.
+
+## RF-285: Verificación, aceptación y rollback
+- **RF-285.1**: tests unitarios de `RadarPresenceDecision` (salida y reentrada
+  con puerta abierta) y de `croquis-logic` (fases).
+- **RF-285.2**: regresión completa con 0 fallos.
+- **RF-285.3**: prueba física: (A) entrar, salir dejando la puerta abierta →
+  visita cerrada y monigote fuera; (B) volver con la puerta ya abierta →
+  visita `PRESENCE` nueva.
+- **RF-285.4**: rollback inmediato dejando `presence_mode_override=NULL`
+  (vuelve a `camera_fusion`) sin tocar el radar.
+
+**Estado F114:** implementado; prueba física pendiente.

@@ -26001,3 +26001,89 @@ regla de salida.
 4. Fase 3: pruebas HTTP y regresión.
 5. Fase 4: prueba física y evidencia.
 6. Fase 5: restauración/verificación del firmware y cierre documental.
+
+---
+
+# F114 — Salida con puerta abierta y reentrada por radar (RF-280…RF-285)
+
+## 114.1 Problema observado
+
+Dos escenarios del almacén Zigbee:
+
+1. Se abre la puerta, se entra y se sale dejando la puerta abierta. El sistema
+   no registra la salida y el monigote queda dentro.
+2. Se vuelve con la puerta ya preabierta. El radar detecta a la persona, pero
+   no se crea una visita nueva.
+
+## 114.2 Causa
+
+- La sala 14 tenía `rooms.presence_mode_override=NULL`, por lo que heredaba
+  `room_types.presence_mode='camera_fusion'`. En ese modo un `PRESENT` exige
+  evidencia física (puerta ≤90 s o movimiento de cámara INTERIOR ≤20 s). Con
+  la puerta ya abierta no hay `OPEN` nuevo y el radar aislado queda
+  `CANDIDATE_PRESENT`.
+- El motor de visitas solo abandona `RECORDING_INSIDE` con `ABSENT` o
+  `DOOR_CLOSE_ABSENT`. Al dejar la puerta abierta desaparece el segundo y la
+  salida depende solo del `ABSENT` del radar.
+- Si el `PRESENT` anterior nunca se cerró, el nuevo `PRESENT` es `NOOP` y no
+  hay transición para crear otra visita.
+- `deriveCroquis` forzaba `phase='near'` con `door_state=OPEN`, por lo que el
+  monigote no salía de la puerta aunque la presencia fuera `ABSENT`.
+
+## 114.3 Decisión
+
+1. **Modo**: fijar `rooms.presence_mode_override='mixed'` en la sala 14. El
+   modo ya existe y está validado por `RoomType::presenceModes()`; no hay
+   migración. Con la puerta abierta → `radar_only`; con la puerta cerrada →
+   `radar_door`.
+2. **Croquis**: la ausencia confirmada manda sobre la puerta. Nueva prioridad:
+   `inside` (presencia) → `outside` (ausencia confirmada / stale) → `near`
+   (candidato o apertura reciente) → `outside`.
+3. **Sin cambios de radar**: la calibración (alcance hasta la puerta,
+   sensibilidad, `fading_time`) se mantiene. La decisión de presencia usa solo
+   los reportes push y la BD local.
+
+## 114.4 Traza de los escenarios
+
+### Salida dejando la puerta abierta
+
+```text
+OPEN (visita DOOR/QR) → PRESENT_CONFIRMED → RECORDING_INSIDE
+salida física → radar ABSENT ×3 en ≥30 s → ABSENT_CONFIRMED (apply=true)
+→ presence_state=ABSENT → EV_ABSENT → EXIT_PENDING → MARK_EXIT → M → IDLE
+croquis: ABSENT_CONFIRMED + door OPEN → outside
+```
+
+### Reentrada con la puerta ya abierta
+
+```text
+IDLE + door OPEN → mixed opera radar_only
+PRESENT ×3 en ≥6 s (ventana 12 s, hueco ≤20 s) → PRESENT_CONFIRMED
+→ apply=true → IDLE + EV_PRESENT → visita nueva PRESENCE + CONFIRM_ENTRY
+```
+
+## 114.5 Umbrales
+
+No se cambian los valores por defecto: `confirm_reports=3`,
+`confirm_window_seconds=12`, `min_span_seconds=6`, `hold_seconds=20`,
+`absent_reports=3`, `absent_window_seconds=30`. Si la salida resultase lenta
+en campo, se ajustará `presence_absent_window_seconds` como fase posterior,
+nunca la calibración del radar.
+
+## 114.6 Riesgos
+
+- **Falso positivo en el umbral**: con la puerta abierta el radar puede ver a
+  alguien justo en el paso. `PresenceEvidence` sigue marcando como `NOISE` las
+  visitas por presencia con poca evidencia y descarta sus clips.
+- **Silencio del radar**: `stale` no cierra la visita (RF-281.3); solo mueve el
+  monigote a `outside` y deja el chip en “sin datos”.
+- **Puerta cerrada**: se conserva `radar_door`; una reentrada normal trae su
+  propio `OPEN`.
+
+## 114.7 Fases
+
+1. Fase 0: especificación (este documento).
+2. Fase 1: modo `mixed` en la sala 14 y verificación en `/almacen-api/state`.
+3. Fase 2: prioridad de fases del croquis.
+4. Fase 3: tests unitarios y regresión.
+5. Fase 4: aceptación física A/B y cierre documental.
