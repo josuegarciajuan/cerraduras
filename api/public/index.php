@@ -2920,7 +2920,8 @@ $iotSessionService = IotSessionServiceFactory::create(
     $anomalyService,
     $workerSessionRepo,
     $warehouseRecordingService,
-    new RoomSensorStateRepository($pdo)
+    new RoomSensorStateRepository($pdo),
+    new \App\Domain\Sensors\RadarPresenceReportRepository($pdo)
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
 // room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.

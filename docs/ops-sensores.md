@@ -364,3 +364,30 @@ Después de cada cambio o despliegue:
 4. hacer la prueba física.
 
 Así no se reutilizan calibraciones, corridas ni intentos de pruebas anteriores.
+
+## 6. Salida del radar del almacén (F114+)
+
+El ZY-M100-S_2 solo publica el DP 1 (`presence`) cuando cambia. La trama
+combinada de Zigbee2MQTT repite el último valor cacheado, así que esperar
+`3 reportes / 30 s` solo añade latencia. La salida se decide ahora por el
+**borde DP 1**:
+
+- nuevo `ABSENT` estable durante `RADAR_ABSENT_EDGE_GRACE_SECONDS` (def. 5 s)
+  → se aplica ausencia y se cierra la visita;
+- un `PRESENT` nuevo dentro de la gracia cancela la ausencia (evita rebotes);
+- el panel muestra el último DP1, la edad de la última trama y si la
+  calibración guardada coincide con la reportada por el dispositivo.
+
+El perfil de calibración del almacén usa `RADAR_WAREHOUSE_FADING_TIME=5.0`
+para que el radar emita `ABSENT` antes de 10 s. Si el panel muestra
+**CALIBRACIÓN NO APLICADA** (por ejemplo tras un corte de alimentación),
+re-aplica el perfil guardado una sola vez:
+
+```bash
+cd /root/cerraduras/api
+php bin/radar-apply-profile.php --room=14 --dry-run
+php bin/radar-apply-profile.php --room=14
+```
+
+El script publica por MQTT y espera la confirmación por push. No consulta
+Tuya ni crea temporizadores.

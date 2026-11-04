@@ -90,7 +90,8 @@ final class ZigbeeMqttRuntimeFactory
             $anomalies,
             $workerSessions,
             new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', new RoomAutomationPauseRepository($pdo)),
-            new RoomSensorStateRepository($pdo)
+            new RoomSensorStateRepository($pdo),
+            new RadarPresenceReportRepository($pdo)
         );
 
         return new ZigbeeMqttEventProcessor(

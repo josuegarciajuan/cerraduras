@@ -93,8 +93,34 @@
         : 'Relee el estado real de los sensores (1 consulta puntual a Tuya)';
     }
     renderEvidence();
+    renderCalibration();
     renderBuffer();
     renderLightControls();
+  }
+
+  // F114+: avisa si la calibración guardada no coincide con lo que el radar
+  // reporta por push (p. ej. tras un corte de alimentación).
+  function renderCalibration() {
+    var el = $('croquis-calibration');
+    if (!el) { return; }
+    if (!state || !isZigbeeRoom()) { el.hidden = true; el.textContent = ''; return; }
+    var c = state.live && state.live.calibration;
+    if (!c) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    el.className = 'croquis-evidence';
+    if (c.status === 'mismatch') {
+      var parts = (c.differences || []).map(function (d) {
+        return d.key + ': ' + d.reported + ' vs ' + d.saved;
+      });
+      el.innerHTML = '<span class="warn">CALIBRACIÓN NO APLICADA</span> · ' + esc(parts.join(' · '));
+    } else if (c.status === 'missing') {
+      el.innerHTML = '<span class="warn">SIN CALIBRACIÓN APLICADA</span> · re-aplica desde /sensores';
+    } else if (c.status === 'unknown') {
+      el.textContent = 'Calibración: sin datos del radar';
+    } else {
+      var max = c.saved && c.saved.maximum_range != null ? c.saved.maximum_range + ' m' : '—';
+      el.textContent = 'Calibración aplicada · ' + max;
+    }
   }
 
   // F91/RF-149.2: evidencia y motivo de la última decisión del radar.
@@ -109,13 +135,17 @@
       el.textContent = 'Modo ' + mode + ' · sin decisión de radar todavía';
       return;
     }
+    var rr = live.radar_report || null;
     var bits = [
       'Modo ' + mode,
       String(pd.state || '—'),
+      (pd.source === 'dp1_edge' ? 'DP1' : null),
       (pd.reports != null ? pd.reports + ' reportes' : null),
       (pd.span_seconds != null ? pd.span_seconds + ' s' : null),
       (pd.door_corroborated ? 'puerta reciente' : null),
-      (pd.discard_reason ? 'motivo: ' + pd.discard_reason : null)
+      (pd.discard_reason ? 'motivo: ' + pd.discard_reason : null),
+      (rr ? 'último DP1 ' + rr.value + (rr.age_seconds != null ? ' hace ' + rr.age_seconds + ' s' : '') : null),
+      (live.radar_frame_age_seconds != null ? 'trama hace ' + live.radar_frame_age_seconds + ' s' : null)
     ].filter(Boolean);
     el.innerHTML = bits.map(function (b, i) {
       return i === 0 ? b : '<b>' + esc(b) + '</b>';

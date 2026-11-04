@@ -13,6 +13,7 @@ use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Workers\WorkerSessionRepositoryInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
 use App\Domain\Anomalies\AnomalyService;
@@ -61,6 +62,7 @@ final class IotSessionService
     private ?WorkerSessionRepositoryInterface $workerSessionRepo;
     private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
     private ?RoomSensorStateRepository $sensorStates;
+    private ?RadarPresenceReportRepository $presenceReports;
 
     public function __construct(
         PresenceEventRepositoryInterface $presenceEvents,
@@ -76,7 +78,8 @@ final class IotSessionService
         ?AnomalyService                  $anomalyService = null,
         ?WorkerSessionRepositoryInterface $workerSessionRepo = null,
         ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null,
-        ?RoomSensorStateRepository $sensorStates = null
+        ?RoomSensorStateRepository $sensorStates = null,
+        ?RadarPresenceReportRepository $presenceReports = null
     ) {
         $this->presenceEvents = $presenceEvents;
         $this->iotSessions    = $iotSessions;
@@ -92,6 +95,7 @@ final class IotSessionService
         $this->workerSessionRepo = $workerSessionRepo;
         $this->warehouseRecorder = $warehouseRecorder;
         $this->sensorStates = $sensorStates;
+        $this->presenceReports = $presenceReports;
     }
 
     /**
@@ -165,9 +169,19 @@ final class IotSessionService
                     && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                 ) {
-                    $radarDecision = $this->computeRadarDecision(
+                    // F114+: el DP 1 del radar es la transición autoritativa.
+                    // Un `ABSENT` estable durante la gracia cierra la presencia
+                    // sin esperar a los 3 reportes / 30 s del estado cacheado.
+                    $edgeDecision = $this->computeAbsenceEdgeDecision($room, $meta, $now);
+                    $radarDecision = $edgeDecision ?? $this->computeRadarDecision(
                         $room, $roomType, $radarMode, $session, $now
                     );
+                    if ($edgeDecision !== null) {
+                        // La decisión se toma sobre el valor del DP 1, no sobre
+                        // el campo `presence` cacheado de la trama combinada.
+                        $event['value'] = PresenceEvent::VALUE_ABSENT;
+                        $value = PresenceEvent::VALUE_ABSENT;
+                    }
                     if ($radarDecision !== null) {
                         $this->presenceEvents->updateMetaJson(
                             $rawEvent->id,
@@ -696,6 +710,47 @@ final class IotSessionService
             return null;
         }
         return (string) $mode;
+    }
+
+    /**
+     * F114+: ausencia por el borde DP 1 del radar.
+     *
+     * El radar solo publica DP 1 cuando cambia. La trama combinada repite el
+     * último valor; exigir 3 reportes/30 s solo añade latencia. Esta ruta usa
+     * el reporte DP 1 persistido y su antigüedad para confirmar `ABSENT` tras
+     * una gracia corta y configurable.
+     *
+     * @param array<string,mixed>|null $meta
+     * @return array<string,mixed>|null
+     */
+    private function computeAbsenceEdgeDecision(
+        Room $room,
+        ?array $meta,
+        \DateTimeImmutable $now
+    ): ?array {
+        if ($this->presenceReports === null || !$this->isWarehouseRoom($room)) {
+            return null;
+        }
+        $report = is_array($meta) && is_array($meta['presence_report'] ?? null)
+            ? $meta['presence_report']
+            : null;
+        if ($report === null) {
+            return null;
+        }
+        $frameMarker = (string) ($report['marker'] ?? '');
+        if ($frameMarker === '') {
+            return null;
+        }
+        $latest = $this->presenceReports->latestForRoom($room->id);
+        if ($latest === null || (string) ($latest['marker'] ?? '') !== $frameMarker) {
+            return null;
+        }
+        $grace = (int) (Config::getInt(
+            'RADAR_ABSENT_EDGE_GRACE_SECONDS',
+            RadarAbsenceEdgeDecision::DEFAULT_GRACE_SECONDS
+        ) ?? RadarAbsenceEdgeDecision::DEFAULT_GRACE_SECONDS);
+
+        return RadarAbsenceEdgeDecision::evaluate($latest, $now, max(1, min(60, $grace)));
     }
 
     /**

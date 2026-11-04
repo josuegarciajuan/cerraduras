@@ -8,6 +8,7 @@ use App\Domain\Devices\SwitchService;
 use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
 use App\Domain\Warehouse\WarehouseRecordingServiceInterface;
@@ -28,7 +29,8 @@ final class IotSessionServiceFactory
         AnomalyService $anomalies,
         WorkerSessionRepositoryInterface $workerSessions,
         WarehouseRecordingServiceInterface $warehouseRecorder,
-        ?RoomSensorStateRepository $sensorStates = null
+        ?RoomSensorStateRepository $sensorStates = null,
+        ?RadarPresenceReportRepository $presenceReports = null
     ): IotSessionService {
         $exitEvaluator = new ExitRuleEvaluator($iotSessions, $rooms, $roomTypes, $stays);
         $exitActions = new ExitActionService(
@@ -58,7 +60,8 @@ final class IotSessionServiceFactory
             $anomalies,
             $workerSessions,
             $warehouseRecorder,
-            $sensorStates
+            $sensorStates,
+            $presenceReports
         );
     }
 }
