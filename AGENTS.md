@@ -212,6 +212,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F100 Actualización remota de firmware (OTA)** | **Unit `FirmwareOtaTest` + `EspVariantTest`** | **Completado: OTA IMAN↔CERRADURA verificada 2026-10-30, sin reinicio manual** |
 | **F101 Edición fiable de dispositivos en el panel** | **Unit `PanelDeviceEditTest`** | **Completado** |
 | **F113 Lector R35D-B como lector de fichas NFC** | **BLOCK 69 + `CredentialFormatTest`** | **Completado (código); prueba física 2026-11-03 OK con `00EFA5BB`; regresión global pendiente de corrida sin sesión concurrente** |
+| **F114 Salida con puerta abierta + reentrada por radar (`mixed`)** | **`croquis-logic.test.js` + `RadarPresenceDecisionTest.php`** | **Implementado (código); prueba física A/B pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1083,6 +1084,30 @@ para Tuya cloud.
 - **Evidencia DP9**: `radar_distance_reports` guarda solo distancias positivas;
   retención 30 días con `bin/radar-distance-retention.php` y timer systemd.
 - **Verificación**: units F110 + BLOCK 82; pendiente regresión final y prueba física.
+
+### F114 — Salida con puerta abierta y reentrada por radar (RF-280…RF-285)
+
+- **Motivo**: al salir dejando la puerta abierta el sistema no cerraba la visita
+  y el monigote quedaba dentro; al volver con la puerta preabierta el radar no
+  creaba visita nueva.
+- **Causa**: la sala 14 heredaba `camera_fusion` (override `NULL`) aunque el
+  provisionado F91 la crea con `presence_mode_override='mixed'`, y
+  `deriveCroquis` forzaba `near` con la puerta abierta.
+- **Modo**: `rooms.presence_mode_override='mixed'` en `almacenZigbee`. Puerta
+  abierta → `radar_only`; puerta cerrada → `radar_door`. Sin migración: el
+  modo ya existe y está validado por `RoomType::presenceModes()`.
+- **Salida**: `ABSENT_CONFIRMED` con la puerta abierta aplica igual que hoy y
+  cierra la visita (`EV_ABSENT` → `EXIT_PENDING` → `M` → `IDLE`). No exige
+  `CLOSED`.
+- **Reentrada**: `IDLE + PRESENT_CONFIRMED` con la puerta abierta crea visita
+  nueva `PRESENCE`; no exige cámara ni un `OPEN` nuevo.
+- **Croquis**: `ABSENT_CONFIRMED`/`stale`/`ABSENT` estable → `outside` aunque la
+  puerta esté abierta; `near` solo para `CANDIDATE_PRESENT` o apertura reciente.
+- **Sin tocar**: calibración del radar (`maximum_range`, sensibilidad,
+  `fading_time`), Tuya, polling ni contratos existentes.
+- **Rollback**: `presence_mode_override=NULL` vuelve a `camera_fusion`.
+- **Verificación**: `croquis-logic.test.js` (73 checks) +
+  `RadarPresenceDecisionTest.php` (48 checks) + prueba física A/B pendiente.
 
 ## Operaciones
 

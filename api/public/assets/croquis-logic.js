@@ -151,9 +151,20 @@
     var recentPresentMs = lastPresenceEventMs(live.recent_presence, 'PRESENT');
     var recentOpen = lastOpenMs > 0 && (nowMs - lastOpenMs) <= DOOR_NEAR_WINDOW_MS;
     var recentPresent = recentPresentMs > 0 && (nowMs - recentPresentMs) <= LIVE_PRESENCE_WINDOW_MS;
+    var presenceCandidate = presenceDecisionState === 'CANDIDATE_PRESENT';
+    // F114/RF-282: la ausencia confirmada (o una presencia sin datos) manda
+    // sobre la puerta abierta. Antes, con `door_state=OPEN` la fase quedaba
+    // siempre en `near` y el monigote no salía nunca al dejar la puerta abierta.
+    // `near` se conserva solo para una aproximación real: puerta recién abierta
+    // o presencia candidata/pendiente de confirmar.
+    var absenceSettled = presenceStale
+      || presenceDecisionState === 'ABSENT_CONFIRMED'
+      || (presence === 'ABSENT' && !recentOpen && !presenceCandidate);
     var phase;
     if (personInside) {
       phase = 'inside';
+    } else if (absenceSettled) {
+      phase = 'outside';
     } else if (doorOpen || recentOpen) {
       phase = 'near';
     } else {

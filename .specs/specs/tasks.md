@@ -11551,3 +11551,47 @@ Trazabilidad: RF-270…RF-275. Sin cambios de firmware ni polling Tuya.
   - Verificación: device 23 declara `CERRADURA 2.6-ota`; respaldo completo y
     binarios con SHA-256 en el runbook de evidencia.
 - [x] TSK-F113-10: actualizar la tabla de fases de `AGENTS.md`.
+
+---
+
+# F114 — Salida con puerta abierta y reentrada por radar
+
+Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
+
+## Fase 0 — Especificación
+- [x] TSK-F114-01: requisitos, diseño, contratos y tareas congelados.
+  - Verificación: `requirements.md`, `design.md`, `contracts.md`, `tasks.md`.
+
+## Fase 1 — Modo de presencia
+- [ ] TSK-F114-02: `rooms.presence_mode_override='mixed'` en la sala 14.
+  - Verificación: `/almacen-api/state?room_id=14` muestra
+    `live.presence_mode=mixed`; con puerta abierta
+    `presence_decision.operational_mode=radar_only`.
+- [ ] TSK-F114-03: comprobar rollback con `presence_mode_override=NULL`.
+  - Verificación: vuelve a `camera_fusion` sin reiniciar workers.
+
+## Fase 2 — Croquis
+- [x] TSK-F114-04: prioridad `inside → outside (ausencia) → near` en
+  `croquis-logic.js`.
+  - Verificación: `node tests/Unit/croquis-logic.test.js` 73/73.
+- [x] TSK-F114-05: conservar `near` para `CANDIDATE_PRESENT` y apertura reciente.
+  - Verificación: casos F114 en el mismo test.
+
+## Fase 3 — Tests
+- [x] TSK-F114-06: salida y reentrada con puerta abierta en
+  `RadarPresenceDecisionTest.php`.
+  - Verificación: 48/48 checks.
+- [ ] TSK-F114-07: regresión completa (`bash bin/run-tests.sh`) con 0 fallos.
+  - Verificación: log en `api/logs/test-results.log`.
+- [ ] TSK-F114-08: prueba HTTP de `/almacen-api/state` con la sala 14.
+
+## Fase 4 — Aceptación física
+- [ ] TSK-F114-09: caso A (entrar, salir dejando la puerta abierta) con visita
+  cerrada y monigote fuera.
+- [ ] TSK-F114-10: caso B (volver con la puerta ya abierta) con visita
+  `PRESENCE` nueva.
+- [ ] TSK-F114-11: verificar que la puerta cerrada conserva `radar_door`.
+
+## Fase 5 — Cierre
+- [ ] TSK-F114-12: actualizar la tabla de fases de `AGENTS.md`.
+- [ ] TSK-F114-13: desplegar, pushear y documentar la evidencia física.

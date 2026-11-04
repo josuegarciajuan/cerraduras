@@ -16233,3 +16233,63 @@ Un token corrupto con `.` conserva `qr_invalid_signature`.
 - El firmware sigue enviando solo `qr_text`; no hay cambios de sketch.
 - La ficha se guarda y compara por SHA-256 del texto normalizado; nunca se
   devuelve el código en claro.
+
+---
+
+# F114 — Salida con puerta abierta y reentrada por radar
+
+## Sin cambios de rutas ni de esquema
+
+- No se añaden rutas.
+- No se añaden columnas ni migraciones: `rooms.presence_mode_override` ya
+  existe y admite `mixed` (`RoomType::presenceModes()`), y
+  `room_types.presence_mode` no se modifica.
+- La calibración del radar no forma parte de este contrato.
+
+## Configuración de sala
+
+`PATCH /api/v1/rooms/{id}` (con `rooms:write`) acepta el campo existente:
+
+```json
+{"presence_mode_override":"mixed"}
+```
+
+- `mixed`: puerta abierta → `radar_only`; puerta cerrada → `radar_door`.
+- `null` o `""`: vuelve a heredar `room_types.presence_mode`
+  (`camera_fusion`), que es el rollback.
+- Un valor no soportado responde `422 invalid_presence_mode`.
+
+## Estado expuesto por el panel
+
+`GET /almacen-api/state?room_id=14` ya expone, sin cambios de forma:
+
+- `live.presence_mode`: modo efectivo de la sala (`mixed`).
+- `live.presence_decision.mode`: modo configurado.
+- `live.presence_decision.operational_mode`: modo operativo efectivo
+  (`radar_only` con puerta abierta, `radar_door` con puerta cerrada).
+- `live.presence_decision.state`: `PRESENT_CONFIRMED`, `CANDIDATE_PRESENT`,
+  `ABSENT_CONFIRMED`, `CANDIDATE_ABSENT` o `UNKNOWN`.
+- `live.presence_decision.apply`: `true` solo cuando la decisión se aplica.
+
+## Croquis (contrato de fases)
+
+`deriveCroquis(snapshot, now).phase` mantiene los valores
+`inside | near | outside`, con nueva precedencia:
+
+1. `inside` si hay presencia confirmada.
+2. `outside` si `presence_stale` o `ABSENT_CONFIRMED` (o `ABSENT` estable sin
+   apertura reciente), aunque `door_state=OPEN`.
+3. `near` si hay puerta abierta/reciente o `CANDIDATE_PRESENT`.
+4. `outside` en el resto.
+
+No cambian los chips ni el resto de campos (`personInside`, `doorOpen`,
+`classes`, `desc`).
+
+## Motor de visitas
+
+Sin cambios de eventos ni de estados:
+
+- Salida con puerta abierta = `ABSENT_CONFIRMED` → `EV_ABSENT` (mismo camino
+  que hoy).
+- Reentrada = `IDLE + EV_PRESENT` → visita `PRESENCE` (mismo camino que hoy).
+- El filtro de ruido `PresenceEvidence` se mantiene intacto.

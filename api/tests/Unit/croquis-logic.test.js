@@ -239,16 +239,45 @@ check('F77.5 OPEN fresco → PUERTA ABIERTA', freshOpen.doorOpen === true && fre
 
 // ─── 14. F80 (RF-103.4): fases en vivo del monigote ────────────────────
 check('F80 vacío → phase outside', empty.phase === 'outside');
-check('F80 puerta abierta sin presencia → phase near', open.phase === 'near');
+// F114/RF-282: la ausencia confirmada manda sobre la puerta abierta.
+check('F114 puerta abierta sin presencia → phase outside', open.phase === 'outside');
 
-// F81 (RF-104.5): puerta abierta, sin presencia y sin eventos recientes → sigue "near".
+// F114/RF-282: puerta abierta, ausencia estable y sin eventos recientes →
+// el monigote sale de la habitación (antes se quedaba en `near`).
 const openAbsent = deriveCroquis(snap({
   door_state: 'OPEN',
   presence_state: 'ABSENT',
   last_open_at: '2026-10-01 07:00:00.000',
   recent_presence: [],
 }), BASE);
-check('F81 puerta abierta + presencia ABSENT sin eventos recientes → phase near', openAbsent.phase === 'near');
+check('F114 puerta abierta + presencia ABSENT sin eventos recientes → phase outside', openAbsent.phase === 'outside');
+
+// F114/RF-282: la ausencia confirmada por el radar también manda con la puerta abierta.
+const openAbsentConfirmed = deriveCroquis(snap({
+  door_state: 'OPEN',
+  presence_state: 'ABSENT',
+  presence_decision: { state: 'ABSENT_CONFIRMED' },
+  last_open_at: '2026-10-01 07:00:00.000',
+}), BASE);
+check('F114 puerta abierta + ABSENT_CONFIRMED → phase outside', openAbsentConfirmed.phase === 'outside');
+
+// F114/RF-282: si el radar deja de reportar, tampoco se pinta dentro.
+const openStale = deriveCroquis(snap({
+  door_state: 'OPEN',
+  presence_state: 'PRESENT',
+  presence_stale: true,
+  last_open_at: '2026-10-01 07:00:00.000',
+}), BASE);
+check('F114 puerta abierta + presencia stale → phase outside', openStale.phase === 'outside');
+
+// F114/RF-282: una presencia candidata (aproximación) sí queda en el umbral.
+const openCandidate = deriveCroquis(snap({
+  door_state: 'OPEN',
+  presence_state: 'ABSENT',
+  presence_decision: { state: 'CANDIDATE_PRESENT', discard_reason: 'candidate' },
+  last_open_at: '2026-10-01 07:00:00.000',
+}), BASE);
+check('F114 puerta abierta + CANDIDATE_PRESENT → phase near', openCandidate.phase === 'near');
 
 // F81 (RF-104.5): presencia detectada ⇒ monigote dentro aunque la puerta esté abierta
 // (ya no se queda "medio afuera" en la línea de puerta).
@@ -288,16 +317,16 @@ check('F83 PRESENT posterior a ABSENT → phase outside', presentAfterAbsent.pha
 check('F83 PRESENT posterior a ABSENT → chip VACÍO',
   presentAfterAbsent.chips.presence.text === 'VACÍO');
 
-// F83/RF-106.2: puerta abierta + radar ABSENT → 'near' aunque haya un PRESENT
-// reciente; el muñeco no salta a 'inside'.
+// F83/RF-106.2 + F114/RF-282: puerta abierta + radar ABSENT → fuera aunque
+// haya un PRESENT reciente; el muñeco no salta a 'inside' ni se queda en el umbral.
 const openAbsentRecent = deriveCroquis(snap({
   door_state: 'OPEN',
   presence_state: 'ABSENT',
   last_open_at: '2026-10-01 07:00:00.000',
   recent_presence: [{ sensor: 'PRESENCE', value: 'PRESENT', occurred_at: '2026-10-01 07:59:56.000' }],
 }), BASE);
-check('F83 puerta abierta + ABSENT + PRESENT reciente → phase near',
-  openAbsentRecent.phase === 'near');
+check('F114 puerta abierta + ABSENT + PRESENT reciente → phase outside',
+  openAbsentRecent.phase === 'outside');
 
 const staleEvt = deriveCroquis(snap({
   door_state: 'CLOSED',
