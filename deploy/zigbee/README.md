@@ -246,3 +246,23 @@ sigue sin decidirse en esta fase.
 - BLOCK 63 de `api/bin/run-tests.sh`: guardia de no interferencia sin Docker, red ni hardware.
 
 Ninguno de estos tests levanta el proyecto ni contacta con el adaptador real.
+
+## Servidor definitivo en hotel y túnel inverso
+
+El servidor definitivo puede quedar detrás de NAT sin IP fija ni acceso al
+router. En ese caso:
+
+1. Instala el proyecto en el host del hotel con `./deploy.sh` y `./verify.sh`.
+2. Restaura el backup del banco (`./restore.sh`) y ajusta los propietarios de
+   `data/` antes de arrancar.
+3. Copia `zigbee-reverse-tunnel.service.example` a
+   `/etc/systemd/system/zigbee-reverse-tunnel.service`, sustituye `VPS_IP` y la
+   ruta de la clave, y actívalo con `systemctl enable --now`.
+4. En el VPS, crea el usuario `zigbee-tunnel` con una `authorized_keys`
+   restringida a `permitlisten` de los puertos `127.0.0.1:1884`,
+   `127.0.0.1:2222` y `127.0.0.1:8082`.
+5. En el VPS, el ingress consume `127.0.0.1:1884`; no se abre ningún puerto en
+   el hotel.
+
+El túnel inverso no sustituye a TLS ni a las ACLs de MQTT: el broker sigue
+publicado solo en loopback y el tráfico del túnel va cifrado por SSH.

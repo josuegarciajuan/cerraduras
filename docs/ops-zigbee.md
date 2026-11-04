@@ -1,28 +1,33 @@
 # Zigbee local — operación y puesta en marcha (F91)
 
-## Estado del banco
+## Topología actual (servidor definitivo en el hotel)
 
-- Zigbee2MQTT y Mosquitto viven en el host `oficina` y ya tienen los tres
-  dispositivos emparejados.
-- El broker escucha solo en `127.0.0.1:1883` en `oficina`.
-- Este servidor consume ese broker por un túnel SSH:
-  `127.0.0.1:1884` → `oficina:127.0.0.1:1883`.
-- No se re-emparejan dispositivos. Renombrar un dispositivo en Zigbee2MQTT no
-  rompe el emparejamiento.
+- El servidor definitivo es el nodo `cerraduras` (Ubuntu 24.04) que se instala
+  en el hotel. Allí corren Zigbee2MQTT y Mosquitto en Docker
+  (`/opt/cerraduras-zigbee`).
+- El coordinador es un **Dongle-M por Ethernet** (no USB), accesible por TCP en
+  `ZIGBEE_ADAPTER_HOST:6638` (en el banco, `172.16.51.215`).
+- Los tres dispositivos siguen emparejados. No se re-emparejan al mover el
+  servidor: se restaura el backup de `data/zigbee2mqtt` (incluye la red y la
+  `database.db`).
+- El broker escucha solo en `127.0.0.1:1883` dentro del servidor del hotel.
+- La app y el dominio siguen en el VPS `liveyourdre2` (`92.113.151.136`). El VPS
+  consume el broker por un **túnel SSH inverso** iniciado por el hotel:
+  `VPS:127.0.0.1:1884` → `hotel:127.0.0.1:1883`.
+- No se abre ningún puerto en el router del hotel. El hotel solo necesita salida
+  SSH (22; si se bloquea, ver "Contingencia de red").
 
-## Servicios
+## Servicios en el VPS
 
-Instalar las unidades una vez:
+Instalar la unidad del ingress (el túnel ya no se instala en el VPS):
 
 ```bash
-install -m0644 docs/systemd/cerraduras-zigbee-tunnel.service /etc/systemd/system/
 install -m0644 docs/systemd/cerraduras-zigbee-ingress.service /etc/systemd/system/
 install -m0644 docs/systemd/cerraduras-zigbee-spool.service /etc/systemd/system/
 systemctl daemon-reload
 ```
 
-No se habilitan por defecto. `start-all.sh` los arranca solo si en `api/.env`
-están activos:
+`start-all.sh` arranca solo el ingress y el spool si en `api/.env` están activos:
 
 ```text
 ZIGBEE_INGRESS_ENABLED=true
@@ -34,6 +39,74 @@ ZIGBEE_MQTT_PASSWORD_FILE=run/zigbee-mqtt.pass
 ```
 
 El fichero de contraseña debe ser `0600` y estar fuera de Git.
+
+## Servidor del hotel (nodo `cerraduras`)
+
+- Proyecto: `/opt/cerraduras-zigbee` (Docker Compose aislado).
+- `.env`: copiado del banco, con `ZIGBEE_ADAPTER_HOST` apuntando al Dongle-M y la
+  misma credencial MQTT que el VPS.
+- `docker-compose.override.yml` fija
+  `ZIGBEE2MQTT_CONFIG_SERIAL_PORT=tcp://${ZIGBEE_ADAPTER_HOST}:${ZIGBEE_ADAPTER_PORT}`
+  para que cambiar la IP del Dongle sea solo editar `.env`.
+- Datos: `data/zigbee2mqtt` (1000:1000, 0700) y `data/mosquitto` (1883:1883,
+  0700; `passwd` 0400). No se versionan.
+- Túnel inverso: `zigbee-reverse-tunnel.service` (systemd, usuario `lock`) con:
+  - `127.0.0.1:1884` → Mosquitto
+  - `127.0.0.1:2222` → sshd del hotel
+  - `127.0.0.1:8082` → UI de Zigbee2MQTT
+- En el VPS, el usuario `zigbee-tunnel` solo acepta esa clave y solo puede
+  escuchar esos tres puertos loopback.
+
+## Acceso remoto (sin IP fija ni puertos en el hotel)
+
+Desde un portátil con la clave `admin-cerraduras`:
+
+```bash
+ssh -J root@92.113.151.136 -p 2222 lock@127.0.0.1
+```
+
+O en `~/.ssh/config`:
+
+```sshconfig
+Host cerraduras-hotel
+    HostName 127.0.0.1
+    Port 2222
+    User lock
+    ProxyJump root@92.113.151.136
+    IdentityFile ~/.ssh/id_ed25519_cerraduras
+    ServerAliveInterval 30
+```
+
+UI de Zigbee2MQTT:
+
+```bash
+ssh -J root@92.113.151.136 -p 2222 \
+  -L 8080:127.0.0.1:8080 lock@127.0.0.1 -N
+# http://127.0.0.1:8080
+```
+
+## Puesta en marcha en el hotel
+
+1. Conectar el servidor y el Dongle-M a la red del hotel por Ethernet.
+2. El servidor coge DHCP; el túnel funciona con cualquier IP.
+3. Localizar el Dongle-M (MAC `20:e7:c8:d1:ad:eb`) y su IP:
+   ```bash
+   ip neigh | grep -i '20:e7:c8:d1:ad:eb'
+   # o escanear el puerto 6638 en la LAN
+   sudo nmap -p 6638 192.168.X.0/24
+   ```
+4. Fijar IP estática al Dongle (recomendado) o actualizar
+   `ZIGBEE_ADAPTER_HOST` en `/opt/cerraduras-zigbee/.env` y reiniciar:
+   ```bash
+   sudo docker compose up -d --force-recreate zigbee2mqtt
+   ```
+5. Verificar `3 devices joined` y el flujo en la app.
+
+## Contingencia de red
+
+Si el hotel bloquea la salida al puerto 22 del VPS, usar un VPS con el puerto
+443 libre para el túnel o `wstunnel` sobre 443. El túnel inverso no necesita
+ningún puerto entrante en el hotel.
 
 ## Dependencias
 
@@ -163,6 +236,10 @@ Los logs de Zigbee2MQTT están en CET (UTC+1); la API y la BD en UTC.
 
 ## Rollback
 
+- Corte de Zigbee: parar el proyecto nuevo en el hotel, arrancar el antiguo en
+  `oficina` (`docker compose up -d`) y reactivar el túnel antiguo en el VPS
+  (`systemctl enable --now cerraduras-zigbee-tunnel.service`). Después reiniciar
+  `cerraduras-zigbee-ingress`.
 - Poner los flags a `false` y ejecutar `bash stop-all.sh`.
 - Para desactivar un dispositivo, retirar su entrada del mapa y reiniciar ingress/spool.
 - No se borran el spool ni la auditoría.
