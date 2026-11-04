@@ -220,6 +220,36 @@ $mixedOpenOne = RadarPresenceDecision::decide(
 );
 same('mixed puerta abierta con 1 reporte → candidate', $mixedOpenOne['state'], 'CANDIDATE_PRESENT');
 
+// F114/RF-280: con la puerta abierta, `mixed` opera `radar_only` y la
+// ausencia confirmada del radar cierra la presencia (aunque no haya CLOSED).
+$mixedOpenAbsent = RadarPresenceDecision::decide(
+    [ev('ABSENT', 0, id: 'a1'), ev('ABSENT', 15, id: 'a2'), ev('ABSENT', 35, id: 'a3')],
+    now(40),
+    cfg('mixed'),
+    false,
+    PresenceEvent::VALUE_OPEN
+);
+same('F114 mixed puerta abierta + 3 ABSENT → ABSENT_CONFIRMED', $mixedOpenAbsent['state'], 'ABSENT_CONFIRMED');
+same('F114 ausencia con puerta abierta aplica', $mixedOpenAbsent['apply'], true);
+same('F114 ausencia con puerta abierta opera radar_only', $mixedOpenAbsent['operational_mode'], 'radar_only');
+same('F114 ausencia con puerta abierta no exige puerta corroborada', $mixedOpenAbsent['door_corroborated'], false);
+
+// F114/RF-281: reentrada con la puerta ya abierta. El radar por sí solo
+// confirma el PRESENT y `mixed` opera `radar_only` (sin cámara ni OPEN nuevo).
+$mixedOpenReentry = RadarPresenceDecision::decide(
+    [
+        ev('ABSENT', 0, id: 'r0'), ev('ABSENT', 15, id: 'r1'), ev('ABSENT', 35, id: 'r2'),
+        ev('PRESENT', 60, id: 'p1'), ev('PRESENT', 63, id: 'p2'), ev('PRESENT', 67, id: 'p3'),
+    ],
+    now(70),
+    cfg('mixed'),
+    false,
+    PresenceEvent::VALUE_OPEN
+);
+same('F114 reentrada con puerta abierta → PRESENT_CONFIRMED', $mixedOpenReentry['state'], 'PRESENT_CONFIRMED');
+same('F114 reentrada con puerta abierta aplica', $mixedOpenReentry['apply'], true);
+same('F114 reentrada con puerta abierta opera radar_only', $mixedOpenReentry['operational_mode'], 'radar_only');
+
 $unknown = RadarPresenceDecision::decide([], now(), cfg('radar_only'));
 same('no events → UNKNOWN', $unknown['state'], 'UNKNOWN');
 same('no events does not apply', $unknown['apply'], false);
