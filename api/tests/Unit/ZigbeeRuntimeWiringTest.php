@@ -36,10 +36,10 @@ check('start-all arranca ingress condicionalmente',
     str_contains($start, 'ZIGBEE_INGRESS_ENABLED') && str_contains($start, 'cerraduras-zigbee-ingress'));
 check('start-all arranca spool condicionalmente',
     str_contains($start, 'ZIGBEE_SPOOL_ENABLED') && str_contains($start, 'cerraduras-zigbee-spool'));
-check('stop-all detiene ingress/spool/túnel',
+check('stop-all detiene ingress/spool (el túnel vive en el hotel)',
     str_contains($stop, 'cerraduras-zigbee-ingress')
     && str_contains($stop, 'cerraduras-zigbee-spool')
-    && str_contains($stop, 'cerraduras-zigbee-tunnel'));
+    && !str_contains($stop, 'cerraduras-zigbee-tunnel'));
 check('flags apagados por defecto', str_contains($env, 'ZIGBEE_INGRESS_ENABLED=false')
     && str_contains($env, 'ZIGBEE_SPOOL_ENABLED=false'));
 check('worker spool respeta el flag', str_contains($worker, "Config::getBool('ZIGBEE_SPOOL_ENABLED'"));
