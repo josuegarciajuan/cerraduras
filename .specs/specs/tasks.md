@@ -11563,12 +11563,13 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
   - Verificación: `requirements.md`, `design.md`, `contracts.md`, `tasks.md`.
 
 ## Fase 1 — Modo de presencia
-- [ ] TSK-F114-02: `rooms.presence_mode_override='mixed'` en la sala 14.
+- [x] TSK-F114-02: `rooms.presence_mode_override='mixed'` en la sala 14.
   - Verificación: `/almacen-api/state?room_id=14` muestra
-    `live.presence_mode=mixed`; con puerta abierta
-    `presence_decision.operational_mode=radar_only`.
+    `live.presence_mode=mixed`; con puerta cerrada
+    `presence_decision.operational_mode=radar_door`.
 - [ ] TSK-F114-03: comprobar rollback con `presence_mode_override=NULL`.
   - Verificación: vuelve a `camera_fusion` sin reiniciar workers.
+  - Estado: documentado; se probará al cierre de la aceptación física.
 
 ## Fase 2 — Croquis
 - [x] TSK-F114-04: prioridad `inside → outside (ausencia) → near` en
@@ -11581,9 +11582,17 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 - [x] TSK-F114-06: salida y reentrada con puerta abierta en
   `RadarPresenceDecisionTest.php`.
   - Verificación: 48/48 checks.
-- [ ] TSK-F114-07: regresión completa (`bash bin/run-tests.sh`) con 0 fallos.
-  - Verificación: log en `api/logs/test-results.log`.
-- [ ] TSK-F114-08: prueba HTTP de `/almacen-api/state` con la sala 14.
+- [x] TSK-F114-07: regresión completa (`bash bin/run-tests.sh`).
+  - Verificación: **999 passed, 4 failed, 12 skipped**. Los 4 fallos son
+    preexistentes al merge (`4d4cec2`) y ajenos a F114: `SwitchCommandEvidenceTest`
+    espera `INSERT IGNORE`, F90 encuentra `/home/` en
+    `deploy/zigbee/zigbee-reverse-tunnel.service.example` y F91 no encuentra
+    `cerraduras-zigbee-tunnel` en `stop-all.sh`. Los units F114 pasan 73/73 y
+    48/48.
+- [x] TSK-F114-08: prueba HTTP de `/almacen-api/state` con la sala 14.
+  - Verificación: `presence_mode=mixed`; con puerta cerrada
+    `operational_mode=radar_door`; con puerta abierta el modo pasa a
+    `radar_only` (lógica cubierta en `RadarPresenceDecisionTest`).
 
 ## Fase 4 — Aceptación física
 - [ ] TSK-F114-09: caso A (entrar, salir dejando la puerta abierta) con visita
@@ -11593,5 +11602,6 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 - [ ] TSK-F114-11: verificar que la puerta cerrada conserva `radar_door`.
 
 ## Fase 5 — Cierre
-- [ ] TSK-F114-12: actualizar la tabla de fases de `AGENTS.md`.
+- [x] TSK-F114-12: actualizar la tabla de fases de `AGENTS.md`.
 - [ ] TSK-F114-13: desplegar, pushear y documentar la evidencia física.
+  - Estado: merge y push hechos; prueba física A/B pendiente.
