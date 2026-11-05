@@ -80,6 +80,49 @@ final class TimbreMovementRules
         return self::STATUS_COMPLETED;
     }
 
+    /**
+     * Presencia creíble "justo antes" de la apertura. Descarta un reporte de
+     * radar posterior al instante de la puerta (p. ej. al ver entrar a alguien
+     * por la puerta abierta) y aplica la ventana configurada.
+     *
+     * @return array{0:bool,1:?string}
+     */
+    public static function presenceBefore(
+        ?string $presenceState,
+        ?string $lastPresenceAt,
+        \DateTimeImmutable $now,
+        int $preOpenSeconds,
+        ?string $eventAt = null
+    ): array {
+        if (strtoupper(trim((string) $presenceState)) !== 'PRESENT'
+            || $lastPresenceAt === null || $lastPresenceAt === ''
+        ) {
+            return [false, null];
+        }
+        $ts = strtotime($lastPresenceAt . ' UTC');
+        if ($ts === false) {
+            return [false, null];
+        }
+        $reference = $now->getTimestamp();
+        if ($eventAt !== null && $eventAt !== '') {
+            $parsed = strtotime($eventAt);
+            if ($parsed === false) {
+                $parsed = strtotime($eventAt . ' UTC');
+            }
+            if ($parsed !== false) {
+                $reference = $parsed;
+            }
+        }
+        // Tolerancia de 1 s para ordenar eventos casi simultáneos.
+        if ($ts > $reference + 1) {
+            return [false, null];
+        }
+        if (($reference - $ts) > max(0, $preOpenSeconds)) {
+            return [false, null];
+        }
+        return [true, $lastPresenceAt];
+    }
+
     /** ¿La parada depende de la ausencia de presencia? */
     public static function stopsOnPresenceEnd(string $direction): bool
     {

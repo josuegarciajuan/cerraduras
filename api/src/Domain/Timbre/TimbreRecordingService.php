@@ -103,7 +103,7 @@ final class TimbreRecordingService
                 : null;
 
             if ($event === 'QR_OK') {
-                [$before, $beforeAt] = $this->presenceBefore($iot, $config, $now);
+                [$before, $beforeAt] = $this->presenceBefore($iot, $config, $now, $meta['occurred_at'] ?? null);
                 if ($state['state'] === 'IDLE') {
                     $direction = $doorOpen
                         ? TimbreMovementRules::directionFromPresence($before)
@@ -136,7 +136,7 @@ final class TimbreRecordingService
                     }
                 }
             } elseif ($event === WarehouseRecordingDecision::EV_DOOR_OPEN) {
-                [$before, $beforeAt] = $this->presenceBefore($iot, $config, $now);
+                [$before, $beforeAt] = $this->presenceBefore($iot, $config, $now, $meta['occurred_at'] ?? null);
                 if ($state['state'] === 'SCAN_WAIT_DOOR' && $movement !== null) {
                     $direction = TimbreMovementRules::directionFromPresence($before);
                     $this->updateMovement((int) $movement['id'], [
@@ -348,20 +348,15 @@ final class TimbreRecordingService
     }
 
     /** @return array{0:bool,1:?string} */
-    private function presenceBefore(array $iot, array $config, \DateTimeImmutable $now): array
+    private function presenceBefore(array $iot, array $config, \DateTimeImmutable $now, ?string $eventAt = null): array
     {
-        if ((string) ($iot['presence_state'] ?? '') !== 'PRESENT') {
-            return [false, null];
-        }
-        $at = $iot['last_presence_event_at'] ?? null;
-        if ($at === null || $at === '') {
-            return [false, null];
-        }
-        $ts = strtotime((string) $at . ' UTC');
-        if ($ts === false || ($now->getTimestamp() - $ts) > $config['pre_open']) {
-            return [false, null];
-        }
-        return [true, (string) $at];
+        return TimbreMovementRules::presenceBefore(
+            $iot['presence_state'] !== null ? (string) $iot['presence_state'] : null,
+            $iot['last_presence_event_at'] !== null ? (string) $iot['last_presence_event_at'] : null,
+            $now,
+            (int) $config['pre_open'],
+            $eventAt
+        );
     }
 
     /** @param array<string,mixed> $data */

@@ -399,6 +399,7 @@ final class IotSessionService
                         $this->warehouseRecorder->onSignal($roomId, $warehouseEvent, [
                             'provider' => $provider,
                             'source'   => is_array($meta) ? (string) ($meta['source'] ?? 'real') : 'real',
+                            'occurred_at' => $occurredAt,
                         ]);
                     } catch (\Throwable $e) {
                         error_log('[IotSessionService] Warehouse recording failed (best-effort): ' . $e->getMessage());

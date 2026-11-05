@@ -58,5 +58,18 @@ R::stopsOnPresenceEnd(R::DIRECTION_EXIT) === false ? pass('salida no para por pr
 R::stopsOnDoorClose(R::DIRECTION_EXIT) === true ? pass('salida para por cierre') : fail('salida para por cierre');
 R::stopsOnDoorClose(R::DIRECTION_ENTRY) === false ? pass('entrada no para por cierre') : fail('entrada no para por cierre');
 
+// ── Presencia "justo antes" de la apertura ───────────────────────────
+$now = new DateTimeImmutable('2026-11-05T10:00:10Z');
+$p = R::presenceBefore('PRESENT', '2026-11-05 10:00:05.000', $now, 10, '2026-11-05T10:00:10Z');
+$p[0] === true ? pass('presencia 5 s antes → cuenta') : fail('presencia 5 s antes → cuenta');
+$p = R::presenceBefore('PRESENT', '2026-11-05 10:00:12.000', $now, 10, '2026-11-05T10:00:10Z');
+$p[0] === false ? pass('presencia posterior a la apertura → no cuenta') : fail('presencia posterior a la apertura → no cuenta');
+$p = R::presenceBefore('PRESENT', '2026-11-05 09:59:58.000', $now, 10, '2026-11-05T10:00:10Z');
+$p[0] === false ? pass('presencia fuera de la ventana → no cuenta') : fail('presencia fuera de la ventana → no cuenta');
+$p = R::presenceBefore('ABSENT', '2026-11-05 10:00:05.000', $now, 10, '2026-11-05T10:00:10Z');
+$p[0] === false ? pass('sin presencia → no cuenta') : fail('sin presencia → no cuenta');
+$p = R::presenceBefore('PRESENT', '2026-11-05 10:00:05.000', $now, 10, null);
+$p[0] === true ? pass('sin instante de evento usa now') : fail('sin instante de evento usa now');
+
 echo "\n" . ($failed === 0 ? '✅' : '❌') . " TimbreMovementRules: {$passed} passed, {$failed} failed\n";
 exit($failed > 0 ? 1 : 0);
