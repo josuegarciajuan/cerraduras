@@ -505,12 +505,12 @@ final class IotSessionService
                 $session->presenceState,
                 $current
             );
-            if ($target === null) {
-                return;
+            if ($target === WarehouseLightDecision::ON) {
+                $this->switchService->turnOn($roomId);
             }
-            $target === WarehouseLightDecision::ON
-                ? $this->switchService->turnOn($roomId)
-                : $this->switchService->turnOff($roomId);
+            // OFF no se ejecuta aquí: WarehouseRecordingService programa
+            // `warehouse_state.light_off_at` y exit-scan apaga tras el retardo
+            // cancelable. Así el estado/croquis es inmediato y la luz no parpadea.
         } catch (\Throwable $e) {
             error_log('[IotSessionService] Warehouse light automation failed (best-effort): ' . $e->getMessage());
         }
@@ -811,8 +811,8 @@ final class IotSessionService
             return null;
         }
 
-        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '0.5') ?? '0.5';
-        $graceMs = (int) round(max(0.5, min(10.0, (float) $graceRaw)) * 1000);
+        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '0.0') ?? '0.0';
+        $graceMs = (int) round(max(0.0, min(10.0, (float) $graceRaw)) * 1000);
         $presentMaxAge = (int) (Config::getInt('RADAR_PRESENT_EDGE_MAX_AGE_SECONDS', 120) ?? 120);
         $presentMaxAgeMs = max(1000, min(600000, $presentMaxAge * 1000));
 

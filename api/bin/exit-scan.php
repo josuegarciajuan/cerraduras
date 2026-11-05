@@ -105,6 +105,38 @@ while ($running) {
         echo "[exit-scan] [$ts] FATAL: " . $e->getMessage() . "\n";
     }
 
+    // F114+: apagado diferido de la luz del almacén. Solo BD local; el
+    // comando de luz se envía una vez vencido el plazo y si la sesión sigue
+    // en ABSENT. Un PRESENT/OPEN cancela el plazo antes de que venza.
+    try {
+        if (\App\Support\Config::getBool('WAREHOUSE_LIGHT_AUTOMATION', true)) {
+            $due = $pdo->query(
+                "SELECT ws.room_id, s.presence_state
+                   FROM warehouse_state ws
+                   LEFT JOIN iot_sessions s ON s.room_id = ws.room_id
+                  WHERE ws.light_off_at IS NOT NULL
+                    AND ws.light_off_at <= UTC_TIMESTAMP(3)"
+            )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+            foreach ($due as $lightRow) {
+                $lightRoom = (int) $lightRow['room_id'];
+                $presence = (string) ($lightRow['presence_state'] ?? '');
+                if ($presence === 'ABSENT') {
+                    $result = $switchSvc->turnOff($lightRoom);
+                    echo "[exit-scan] [$ts] LIGHT OFF room={$lightRoom} ok=" . (($result['ok'] ?? false) ? '1' : '0') . "\n";
+                } else {
+                    echo "[exit-scan] [$ts] LIGHT OFF cancelado room={$lightRoom} presence={$presence}\n";
+                }
+                $pdo->prepare('UPDATE warehouse_state SET light_off_at=NULL WHERE room_id=:r')
+                    ->execute([':r' => $lightRoom]);
+            }
+        } else {
+            // Rollback: sin automatización, no debe quedar ningún plazo vivo.
+            $pdo->exec('UPDATE warehouse_state SET light_off_at=NULL WHERE light_off_at IS NOT NULL');
+        }
+    } catch (\Throwable $e) {
+        echo "[exit-scan] [$ts] LIGHT ERROR: " . $e->getMessage() . "\n";
+    }
+
     if ($scanned > 0) {
         echo "[exit-scan] [$ts] Scanned {$scanned} room(s), {$exited} exit(s) confirmed\n";
     }
