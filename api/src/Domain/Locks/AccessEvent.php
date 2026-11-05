@@ -29,6 +29,7 @@ final class AccessEvent
     public const RESULT_FAIL = 'FAIL';
 
     public const PROVIDER_TUYA      = 'TUYA';
+    public const PROVIDER_ESP32     = 'ESP32';
     public const PROVIDER_SIMULATED = 'SIMULATED';
 
     public int $id;
