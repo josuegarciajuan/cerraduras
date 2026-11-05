@@ -11648,7 +11648,7 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 ## Fase 1 — Datos
 - [x] TSK-F116-01: migración `0143_timbrado.sql` (tipo, tablas, enlace, retención).
 - [x] TSK-F116-02: `bin/setup-timbrado-oficina.php` (sala `oficina` + pack Zigbee).
-- [ ] TSK-F116-03: ejecutar migración y montaje en producción.
+- [x] TSK-F116-03: ejecutar migración y montaje en producción (sala `oficina`, id 107).
 
 ## Fase 2 — Motor
 - [x] TSK-F116-04: `TimbreMovementRules`.
@@ -11666,11 +11666,11 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 ## Fase 4 — Pruebas
 - [x] TSK-F116-13: units `TimbreMovementRulesTest` y `timbre-logic.test.js`.
 - [x] TSK-F116-14: BLOCK 86 y resolución dinámica de la sala Zigbee.
-- [ ] TSK-F116-15: regresión completa.
+- [x] TSK-F116-15: regresión completa (1056 passed, 0 failed, 18 skipped).
 - [ ] TSK-F116-16: prueba física (entrada, salida, cruce, llave QR, vídeo, luz).
 
 ## Fase 5 — Cierre
-- [ ] TSK-F116-17: desplegar, migrar, montar la sala y pushear.
+- [ ] TSK-F116-17: desplegar código, instalar unit de cámaras y pushear.
 - [ ] TSK-F116-18: actualizar `AGENTS.md` con el estado final.
 
-**Estado F116:** implementado (código); migración y prueba física pendientes.
+**Estado F116:** implementado; migración y montaje aplicados; prueba física pendiente.

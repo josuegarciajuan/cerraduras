@@ -13540,4 +13540,4 @@ sesión futura no puede analizar un fallo equivalente.
 - **RF-298.3**: la retención de vídeos del timbrado se configura con
   `timbre.retention_days` (def. 30).
 
-**Estado F116:** implementado (código); migración y prueba física pendientes.
+**Estado F116:** implementado; migración y montaje aplicados; prueba física pendiente.
