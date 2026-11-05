@@ -13,6 +13,7 @@ use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
+use App\Domain\Warehouse\WarehouseLightDecision;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Workers\WorkerSessionRepositoryInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
@@ -322,12 +323,23 @@ final class IotSessionService
             if ($sensor === PresenceEvent::SENSOR_PROXIMITY
                 && $value === PresenceEvent::VALUE_OPEN
                 && $this->switchService !== null
+                && !$this->isWarehouseRoom($room)
             ) {
                 try {
                     $this->switchService->turnOn($roomId);
                 } catch (\Throwable $e) {
                     error_log('[IotSessionService] Switch turnOn on door open failed (best-effort): ' . $e->getMessage());
                 }
+            }
+
+            // F114+: el almacén no tiene stays, así que ExitActionService nunca
+            // apaga su luz. La luz sigue a la sesión: ON con PRESENT/OPEN y OFF
+            // con ABSENT/CLOSED sin presencia.
+            if ($this->isWarehouseRoom($room)
+                && $this->switchService !== null
+                && Config::getBool('WAREHOUSE_LIGHT_AUTOMATION', true)
+            ) {
+                $this->applyWarehouseLight($roomId, $sensor, $value, $applied, $session);
             }
 
             // F71 (RF-81.4): el almacén no tiene estancia de huésped; detectar
@@ -461,6 +473,47 @@ final class IotSessionService
             $rawEvent->receivedAt,
             $externalId
         );
+    }
+
+    /**
+     * F114+: luz del almacén ligada a la sesión, no a una estancia hotelera.
+     * Best-effort y con guarda de estado para no repetir comandos.
+     */
+    private function applyWarehouseLight(
+        int $roomId,
+        string $sensor,
+        string $value,
+        bool $applied,
+        IotSession $session
+    ): void {
+        if ($this->switchService === null) {
+            return;
+        }
+        try {
+            $current = null;
+            $device = $this->switchService->getSwitchForRoom($roomId);
+            if ($device !== null && is_array($device->meta)) {
+                $state = strtoupper(trim((string) ($device->meta['switch_state'] ?? '')));
+                if (in_array($state, ['ON', 'OFF'], true)) {
+                    $current = $state;
+                }
+            }
+            $target = WarehouseLightDecision::decide(
+                $sensor,
+                $value,
+                $applied,
+                $session->presenceState,
+                $current
+            );
+            if ($target === null) {
+                return;
+            }
+            $target === WarehouseLightDecision::ON
+                ? $this->switchService->turnOn($roomId)
+                : $this->switchService->turnOff($roomId);
+        } catch (\Throwable $e) {
+            error_log('[IotSessionService] Warehouse light automation failed (best-effort): ' . $e->getMessage());
+        }
     }
 
     /**
@@ -758,7 +811,7 @@ final class IotSessionService
             return null;
         }
 
-        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '1.5') ?? '1.5';
+        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '0.5') ?? '0.5';
         $graceMs = (int) round(max(0.5, min(10.0, (float) $graceRaw)) * 1000);
         $presentMaxAge = (int) (Config::getInt('RADAR_PRESENT_EDGE_MAX_AGE_SECONDS', 120) ?? 120);
         $presentMaxAgeMs = max(1000, min(600000, $presentMaxAge * 1000));
