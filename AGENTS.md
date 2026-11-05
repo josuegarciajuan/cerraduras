@@ -215,6 +215,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F114 Salida con puerta abierta + reentrada por radar (`mixed`)** | **`croquis-logic.test.js` + `RadarPresenceDecisionTest.php`** | **Implementado (código); prueba física A/B pendiente** |
 | **F115 Video portero del almacén (`/timbre`)** | **BLOCK 85 + `timbre-logic.test.js`** | **Implementado (código); prueba manual pendiente** |
 | **F117 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 87 + units F117** | **Implementado; migración aplicada; prueba física pendiente** |
+| **F116 Apertura remota real desde `/timbre`** | **BLOCK 86 + units F116** | **Implementado (código); OTA `CERRADURA 2.7-ota` y prueba física pendientes** |
 
 ### F100 — Actualización remota de firmware (OTA)
 

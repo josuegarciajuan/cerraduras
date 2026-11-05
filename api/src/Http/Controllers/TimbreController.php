@@ -4,10 +4,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Domain\AccessKeys\AccessKeyService;
-use App\Domain\Locks\LockService;
 use App\Domain\Timbre\TimbreMovementRules;
-use App\Domain\Warehouse\WarehouseRecordingDecision;
-use App\Domain\Warehouse\WarehouseRecordingServiceInterface;
+use App\Domain\Warehouse\WarehouseDoorOpenService;
 use App\Http\Request;
 use App\Http\Response;
 use PDO;
@@ -24,9 +22,8 @@ final class TimbreController
 {
     public function __construct(
         private PDO $pdo,
-        private LockService $lockService,
-        private AccessKeyService $accessKeys,
-        private WarehouseRecordingServiceInterface $recorder
+        private WarehouseDoorOpenService $doorOpen,
+        private AccessKeyService $accessKeys
     ) {
     }
 
@@ -109,16 +106,13 @@ final class TimbreController
         }
 
         $correlationId = (string) ($request->attr('correlation_id', '') ?? '');
-        $before = $this->lastMovementId($roomId);
         try {
-            $result = $this->lockService->open($roomId, 'manual_timbre', true, $correlationId);
-            $this->recorder->onSignal($roomId, WarehouseRecordingDecision::EV_DOOR_OPEN, [
-                'provider' => 'PANEL',
-                'source' => 'panel',
-            ]);
-            $after = $this->lastMovementId($roomId);
+            // F117: misma ruta remota que el almacén (cola del ESP32). La
+            // grabación NO arranca con la orden: la arranca el push físico del
+            // sensor de puerta, evitando movimientos fantasma si el relé falla.
+            $result = $this->doorOpen->request($roomId, $correlationId, 'timbre');
             return Response::json(200, array_merge(
-                ['ok' => true, 'movement_started' => $after !== null && ($before === null || $after > $before)],
+                ['ok' => true, 'mode' => 'remote'],
                 is_array($result) ? $result : []
             ));
         } catch (\Throwable $e) {

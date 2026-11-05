@@ -11674,3 +11674,34 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 - [ ] TSK-F117-18: actualizar `AGENTS.md` con el estado final.
 
 **Estado F117:** implementado; migración y montaje aplicados; prueba física pendiente.
+# F116 — Apertura remota real desde `/timbre`
+
+## Fase 0 — Especificación
+- [x] TSK-F116-00: requirements, design y contracts de F116.
+
+## Fase 1 — Backend
+- [x] TSK-F116-01: `RemoteDoorOpenPolicy` (capacidad, versión, payload).
+- [x] TSK-F116-02: `CommandQueueRepository::enqueue(..., ?array $payload)` y
+  `findRecent()`.
+- [x] TSK-F116-03: `WarehouseDoorOpenService` (encolar, deduplicar, auditar sin
+  `EV_DOOR_OPEN`).
+- [x] TSK-F116-04: ruta `door/open` y heartbeat `remote_open_capable`.
+- [x] TSK-F116-05: provider `ESP32` en `AccessEvent`.
+
+## Fase 2 — Firmware
+- [x] TSK-F116-06: comando `open` + resultado diferido en `esp-cerradura.ino`.
+- [x] TSK-F116-07: poll de comandos cada 2 s con backoff y prioridad del QR.
+- [x] TSK-F116-08: heartbeat `remote_open_capable` y versión `2.7-ota`.
+- [x] TSK-F116-09: paridad en `scanner-relay-prod-r35d.ino` y copias canónicas.
+
+## Fase 3 — Pruebas y documentación
+- [x] TSK-F116-10: `RemoteDoorOpenPolicyTest` (9 checks).
+- [x] TSK-F116-11: `F116RemoteOpenTest` (17 checks).
+- [x] TSK-F116-12: BLOCK 86 del runner.
+- [x] TSK-F116-13: `docs/ops.md` (apertura remota, versión y publicación).
+- [ ] TSK-F116-14: regresión completa `bash bin/run-tests.sh`.
+- [ ] TSK-F116-15: compilar `CERRADURA 2.7-ota`, publicar y aplicar OTA.
+- [ ] TSK-F116-16: prueba física de apertura desde `/timbre`.
+
+**Estado F116:** implementación de código completada; OTA y prueba física
+pendientes.

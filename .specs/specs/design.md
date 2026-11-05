@@ -26221,3 +26221,75 @@ aplica al timbrado. `cameras-live.js` descubre salas `ALMACEN_BEBIDAS` y
 
 Units de reglas puras, JS de panel/listado/formulario, BLOCK 87 y resolución
 dinámica de la sala Zigbee por pack en el runner.
+# F116 — Apertura remota real desde `/timbre`
+
+## 116.1 Motivo
+
+`/timbre` reutilizaba `POST /almacen-api/door/open`, que con
+`LOCK_PROVIDER=LOCAL` resolvía a `LocalLockGateway` (no-op). La API devolvía
+`result=ok` y el sensor nunca veía `OPEN`; a los 8 s la UI mostraba “sin
+confirmación del sensor”. El ESP32 solo abría por QR (`startLockSequence()` en
+la validación), sin canal reverso desde el panel.
+
+## 116.2 Arquitectura
+
+```
+/timbre ──POST /almacen-api/door/open──► WarehouseDoorOpenService
+                                             │  (capability + dedupe)
+                                             ▼
+                                   device_commands (open)
+                                             ▲
+                                             │ GET pending-command (2 s)
+ESP32 CERRADURA 2.7-ota ── startLockSequence() ┘
+        │
+        └── POST command-result (tras el relé)
+
+SNZB-04P ──push OPEN──► IotSessionService ──► motor del almacén ──► visita real
+```
+
+- **Backend**: `WarehouseDoorOpenService` decide, encola y audita. No llama al
+  motor de grabación. `RemoteDoorOpenPolicy` es puro (capacidad + versión).
+- **Firmware**: `pollFastCommand()` consulta la cola cada 2 s si no hay QR,
+  relé activo ni resultado pendiente. `executeDeviceCommand()` atiende `check`
+  y `open`; el resultado de `open` se difiere con `commandResultPending` hasta
+  que `relayPulsing` vuelve a `false`.
+- **Heartbeat**: anuncia `remote_open_capable:true` (solo 2.7+). La API lo
+  persiste en `devices.meta_json`; si un heartbeat con versión no lo anuncia, lo
+  pone a `false` (rollback seguro).
+
+## 116.3 Compatibilidad y errores
+
+- `2.6-ota` → `409 remote_open_unavailable`; no se encola nada.
+- Puerta ya `OPEN` → `already_open`, sin comando.
+- Comando reciente (<5 s) → `deduplicated`, mismo `command_id`.
+- Sin LOCK o sin RPI → `409 lock_not_configured` / `409 rpi_not_configured`.
+- El QR sigue teniendo prioridad; el poll se salta con `hasPending` o
+  `relayPulsing`.
+
+## 116.4 Cuota y efectos
+
+- Solo API local autenticada; **cero** llamadas a Tuya, cero pollers de nube.
+- No se emite `EV_DOOR_OPEN` artificial: el sensor es la autoridad. Esto elimina
+  las visitas `NO_SHOW` fantasma observadas el 2026-11-05 (1693/1694).
+- Ventana visual de 8 s sin cambios.
+
+## 116.5 Archivos
+
+| Archivo | Responsabilidad |
+|---|---|
+| `api/src/Domain/Warehouse/RemoteDoorOpenPolicy.php` | capacidad/versión/payload puros |
+| `api/src/Domain/Warehouse/WarehouseDoorOpenService.php` | encolar, deduplicar, auditar |
+| `api/src/Domain/Devices/CommandQueueRepository.php` | payload + `findRecent()` |
+| `api/public/index.php` | ruta `door/open` + heartbeat `remote_open_capable` |
+| `firmware/{esp-cerradura,scanner-relay-prod-r35d}/*.ino` | poll 2 s + comando `open` |
+| `docs/esp32-qr-reader/*.ino` | copias canónicas sincronizadas |
+| `api/tests/Unit/RemoteDoorOpenPolicyTest.php` | unit puro |
+| `api/tests/Unit/F116RemoteOpenTest.php` | contrato estático |
+| `api/bin/run-tests.sh` | BLOCK 86 |
+
+## 116.6 Despliegue
+
+1. Publicar la API (segura con firmware 2.6: responde 409).
+2. Compilar y publicar `CERRADURA 2.7-ota`.
+3. Solicitar la OTA del device 23; el ESP32 la recoge en su heartbeat.
+4. Probar físicamente: pulsar Abrir → relé → `OPEN` del SNZB-04P en <8 s.

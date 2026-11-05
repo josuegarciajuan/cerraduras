@@ -113,7 +113,7 @@
 
 // ── F100: variante/version para OTA ───────────────────────────────────────
 #define OTA_FW_VARIANT               "CERRADURA"
-#define OTA_FW_VERSION               "2.6-ota"
+#define OTA_FW_VERSION               "2.7-ota"
 
 // ── Configuración de la API (hardcodeada, no depende de WiFi) ───────────────
 const char* API_BASE_URL = "https://cerraduras.josue.ink";
@@ -1235,6 +1235,141 @@ static void otaBootCheck() {
   otaMarkRunningValid();
 }
 
+
+// ── F116: comandos remotos (check/open) ───────────────────────────────────
+// El panel encola `open`; el ESP32 lo recoge en este poll para que el timbre
+// pueda abrir en menos de 8 s. El QR siempre tiene prioridad. Si la API falla,
+// el intervalo crece con backoff para no martillear el servidor.
+#define FAST_CMD_POLL_MS       2000UL
+#define FAST_CMD_POLL_MAX_MS  30000UL
+
+static unsigned long lastFastCmdPollAt = 0;
+static unsigned long fastCmdPollInterval = FAST_CMD_POLL_MS;
+static bool commandResultPending = false;
+static int commandResultId = 0;
+static bool commandResultOpenOk = false;
+static char commandResultAction[12] = "";
+
+static void sendCommandResult(int cmdId, bool lockOk, const char *action) {
+  String resultBody;
+  resultBody.reserve(380);
+  resultBody = "{\"command_id\":" + String(cmdId) +
+               ",\"external_id\":\"" + chipId() + "\"" +
+               ",\"results\":{" +
+               "\"RPI\":true," +
+               "\"SCANNER\":" + String(scannerConnected ? "true" : "false") + "," +
+               "\"LOCK\":" + String(lockOk ? "true" : "false") + "," +
+               "\"action\":\"" + String(action) + "\"," +
+               "\"accepted\":" + String(lockOk ? "true" : "false") +
+               "}}";
+
+  HTTPClient &cmdResult = apiHttpSession();
+  beginApiRequest(cmdResult, String(API_BASE_URL) + "/dashboard-api/command-result");
+  cmdResult.addHeader("Content-Type", "application/json");
+  addDeviceAuth(cmdResult);
+  cmdResult.setTimeout(3000);
+  int resCode = cmdResult.POST(resultBody);
+  String resResp = cmdResult.getString();
+  cmdResult.end();
+  esp_task_wdt_reset();
+  yield();
+  Serial.printf("[F116] Command result #%d (%s) → HTTP %d %s\n",
+                cmdId, action, resCode, resResp.c_str());
+}
+
+static bool executeDeviceCommand(int cmdId, const String &cmdName) {
+  if (cmdName == "check") {
+    bool scannerOk = scannerConnected;
+    bool lockOk = checkLock();
+    Serial.printf("[F33] SCANNER=%s LOCK=%s RPI=true\n",
+                  scannerOk ? "ok" : "offline", lockOk ? "ok" : "offline");
+    sendCommandResult(cmdId, lockOk, "check");
+    return true;
+  }
+  if (cmdName == "open") {
+    // La secuencia corre en su tarea; el resultado se difiere hasta que el
+    // relé vuelva a reposo para no solapar TLS con la bobina.
+    bool accepted = startLockSequence();
+    commandResultPending = true;
+    commandResultId = cmdId;
+    commandResultOpenOk = accepted;
+    strncpy(commandResultAction, "open", sizeof(commandResultAction) - 1);
+    commandResultAction[sizeof(commandResultAction) - 1] = '\0';
+    Serial.printf("[F116] open cmd #%d accepted=%d\n", cmdId, accepted ? 1 : 0);
+    return true;
+  }
+  Serial.printf("[F33] Unknown command: %s — skipping\n", cmdName.c_str());
+  return false;
+}
+
+// Una sola consulta a la cola. Devuelve true si la petición HTTP fue válida
+// (aunque no hubiera comando) y false si hay que aplicar backoff.
+static bool pollPendingCommandOnce() {
+  if (!ensureWiFi()) return false;
+  esp_task_wdt_reset();
+  delay(HTTP_GAP_MS);
+  HTTPClient &cmdPoll = apiHttpSession();
+  beginApiRequest(cmdPoll, String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
+  cmdPoll.setTimeout(3000);
+  addDeviceAuth(cmdPoll);
+  int cmdCode = cmdPoll.GET();
+  String cmdResp = cmdPoll.getString();
+  cmdPoll.end();
+  esp_task_wdt_reset();
+  yield();
+  if (cmdCode != 200) {
+    Serial.printf("[F33] Poll failed (HTTP %d)\n", cmdCode);
+    return false;
+  }
+
+  int cmdNameStart = cmdResp.indexOf("\"command_name\":");
+  if (cmdNameStart < 0) {
+    return true;  // no hay comando pendiente
+  }
+  int cmdIdStart = cmdResp.indexOf("\"id\":");
+  if (cmdIdStart < 0) {
+    return true;
+  }
+  int cmdIdValStart = cmdResp.indexOf(":", cmdIdStart) + 1;
+  int cmdIdEnd = cmdResp.indexOf(",", cmdIdValStart);
+  if (cmdIdEnd < 0) cmdIdEnd = cmdResp.indexOf("}", cmdIdValStart);
+  String cmdIdStr = cmdResp.substring(cmdIdValStart, cmdIdEnd);
+  cmdIdStr.trim();
+  int cmdId = cmdIdStr.toInt();
+
+  int cmdValStart = cmdNameStart + 16;
+  int cmdValEnd = cmdResp.indexOf("\"", cmdValStart);
+  String cmdName = (cmdValEnd > cmdValStart) ? cmdResp.substring(cmdValStart, cmdValEnd) : String("");
+
+  Serial.printf("[F33] Executing command #%d: %s\n", cmdId, cmdName.c_str());
+  return executeDeviceCommand(cmdId, cmdName);
+}
+
+static void flushCommandResultIfIdle() {
+  if (!commandResultPending || relayPulsing || hasPending) return;
+  commandResultPending = false;
+  sendCommandResult(commandResultId, commandResultOpenOk, commandResultAction);
+}
+
+static void pollFastCommand() {
+  if (WiFi.status() != WL_CONNECTED) return;
+#ifdef OTA_FW_VARIANT
+  if (otaInProgress) return;
+#endif
+  if (relayPulsing || hasPending || commandResultPending) return;
+  unsigned long now = millis();
+  if (lastFastCmdPollAt != 0 && (now - lastFastCmdPollAt) < fastCmdPollInterval) return;
+  lastFastCmdPollAt = now;
+  bool ok = pollPendingCommandOnce();
+  if (ok) {
+    fastCmdPollInterval = FAST_CMD_POLL_MS;
+  } else {
+    fastCmdPollInterval *= 2;
+    if (fastCmdPollInterval > FAST_CMD_POLL_MAX_MS) fastCmdPollInterval = FAST_CMD_POLL_MAX_MS;
+    apiTlsClient().stop();
+  }
+}
+
 void setup() {
   // Cerradura en reposo desde el PRIMER instante: GPIO15 activo-alto, LOW = off.
   // Los LEDs también se fijan de inmediato (rojo ON = cerrado).
@@ -1621,7 +1756,8 @@ void loop() {
       hbBody.reserve(250);  // Fase 1: pre-allocate
       hbBody = "{\"external_id\":\"" + chipId() + "\",\"sub_kinds\":[\"RPI\",\"SCANNER\",\"LOCK\"]"
                  ",\"firmware_variant\":\"" OTA_FW_VARIANT "\",\"firmware_version\":\"" OTA_FW_VERSION "\""
-                 ",\"ota_capable\":true,\"ota_protocol\":\"" OTA_PROTOCOL "\",\"ota_state\":\"idle\"}";
+                 ",\"ota_capable\":true,\"ota_protocol\":\"" OTA_PROTOCOL "\",\"ota_state\":\"idle\""
+                 ",\"remote_open_capable\":true}";
       HTTPClient &hb = apiHttpSession();
       beginApiRequest(hb, String(API_BASE_URL) + "/dashboard-api/device-heartbeat");
       hb.addHeader("Content-Type", "application/json");
@@ -1644,94 +1780,19 @@ void loop() {
         Serial.println("[HB] ⚠ heartbeat 200 NO-JSON → el latido NO llegó a la API");
       }
 
-      // F33: If API reports pending commands, poll and execute them
+      // F33/F116: poll de comandos (check/open). El `open` ejecuta la
+      // secuencia de la cerradura y difiere el resultado hasta que el relé
+      // vuelve a reposo.
       if (hbCode == 200 && hbResp.indexOf("\"has_pending_commands\":true") > 0) {
-        Serial.println("[F33] Polling pending commands...");
-        if (hasPending) return;   // F47 (RF-56.2): cede el turno al QR pendiente
-        esp_task_wdt_reset();  // defensa: feed antes de HTTP bloqueante
-        delay(HTTP_GAP_MS);    // LOW-POWER: respiro de rail antes del poll
-        HTTPClient &cmdPoll = apiHttpSession();
-        beginApiRequest(cmdPoll, String(API_BASE_URL) + "/dashboard-api/pending-command?external_id=" + chipId());
-        cmdPoll.setTimeout(3000);
-        addDeviceAuth(cmdPoll);
-        int cmdCode = cmdPoll.GET();
-        String cmdResp = cmdPoll.getString();
-        cmdPoll.end();
-        esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
-        yield();
-        Serial.printf("[F33] Poll → HTTP %d %s\n", cmdCode, cmdResp.c_str());
-
-        if (cmdCode == 200) {
-          // Simple JSON parse to find command_id and command type
-          // (no ArduinoJSON — string search is lightweight enough for this)
-          int cmdIdStart = cmdResp.indexOf("\"id\":");
-          // El nombre del comando viene en el campo de nivel superior
-          // "command_name":"..." (único, no anidado) que la API siempre
-          // incluye junto al comando. Buscar "command": rompe porque también
-          // aparece dentro del objeto anidado "command":{...,"command":...}.
-          int cmdNameStart = cmdResp.indexOf("\"command_name\":");
-          if (cmdIdStart >= 0 && cmdNameStart >= 0) {
-            // Extract command id
-            int cmdIdValStart = cmdResp.indexOf(":", cmdIdStart) + 1;
-            int cmdIdEnd = cmdResp.indexOf(",", cmdIdValStart);
-            if (cmdIdEnd < 0) cmdIdEnd = cmdResp.indexOf("}", cmdIdValStart);
-            String cmdIdStr = cmdResp.substring(cmdIdValStart, cmdIdEnd);
-            cmdIdStr.trim();
-            int cmdId = cmdIdStr.toInt();
-
-            // Extract command name from the top-level "command_name":"..." field
-            // "command_name": = 15 chars + comilla de apertura = valor en +16
-            int cmdValStart = cmdNameStart + 16;                 // saltar "command_name":"
-            int cmdValEnd = cmdResp.indexOf("\"", cmdValStart);  // comilla de cierre
-            String cmdName = (cmdValEnd > cmdValStart) ? cmdResp.substring(cmdValStart, cmdValEnd) : String("");
-
-            Serial.printf("[F33] Executing command #%d: %s\n", cmdId, cmdName.c_str());
-
-            if (cmdName == "check") {
-              // SCANNER = UART1 del R35D-B inicializada.
-              bool scannerOk = scannerConnected;
-
-              // LOCK = pulso de 5 ms en GPIO15 (no acciona el solenoide).
-              bool lockOk = checkLock();
-
-              // RPI is always online if we're executing this
-              Serial.printf("[F33] SCANNER=%s LOCK=%s RPI=true\n",
-                            scannerOk ? "ok" : "offline", lockOk ? "ok" : "offline");
-
-              // Report results
-              String resultBody;
-              resultBody.reserve(350);  // Fase 1: pre-allocate
-              resultBody = "{\"command_id\":" + String(cmdId) +
-                                   ",\"external_id\":\"" + chipId() + "\"" +
-                                   ",\"results\":{" +
-                                   "\"RPI\":true," +
-                                   "\"SCANNER\":" + String(scannerOk ? "true" : "false") + "," +
-                                   "\"LOCK\":" + String(lockOk ? "true" : "false") +
-                                   "}}";
-
-              HTTPClient &cmdResult = apiHttpSession();
-              beginApiRequest(cmdResult, String(API_BASE_URL) + "/dashboard-api/command-result");
-              cmdResult.addHeader("Content-Type", "application/json");
-              addDeviceAuth(cmdResult);
-              cmdResult.setTimeout(3000);
-              int resCode = cmdResult.POST(resultBody);
-              String resResp = cmdResult.getString();
-              cmdResult.end();
-              esp_task_wdt_reset();  // defensa: feed tras HTTP bloqueante
-              yield();
-              Serial.printf("[F33] Command result POST → HTTP %d %s\n", resCode, resResp.c_str());
-            } else {
-              Serial.printf("[F33] Unknown command: %s — skipping\n", cmdName.c_str());
-            }
-          } else {
-            Serial.println("[F33] No command data in response");
-          }
-        } else {
-          Serial.printf("[F33] Poll failed (HTTP %d)\n", cmdCode);
-        }
+        if (hasPending) return;
+        pollPendingCommandOnce();
       }
     }
   }
+
+  // F116: resultado diferido de la cerradura + poll de baja latencia.
+  flushCommandResultIfIdle();
+  pollFastCommand();
 
   // ── Identify button ─────────────────────────────────────────────────
   bool raw = digitalRead(IDENTIFY_PIN);

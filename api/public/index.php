@@ -2269,6 +2269,16 @@ $router->post(
         $otaVersion = isset($body['ota_version']) && is_string($body['ota_version'])
             ? substr(trim($body['ota_version']), 0, 48) : null;
 
+        // F116/RF-293: el firmware nuevo anuncia que entiende el comando `open`.
+        // Si un heartbeat con versión NO lo anuncia (p. ej. tras un rollback),
+        // se desactiva para no encolar comandos que el ESP32 ignoraría.
+        $remoteOpenCapable = null;
+        if (array_key_exists('remote_open_capable', $body)) {
+            $rawRemoteOpen = $body['remote_open_capable'];
+            $remoteOpenCapable = is_bool($rawRemoteOpen) ? $rawRemoteOpen
+                : (is_string($rawRemoteOpen) ? filter_var($rawRemoteOpen, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null);
+        }
+
         $doorLink = null;
         if (array_key_exists('door_link', $body)) {
             $rawLink = $body['door_link'];
@@ -2291,6 +2301,7 @@ $router->post(
             if ($actuatorState !== null || $actuatorReason !== null || $reportedDoorState !== null
                 || $outputOn !== null || $doorLink !== null || $otaCapable !== null
                 || $otaProtocol !== null || $otaState !== null || $otaVersion !== null
+                || $remoteOpenCapable !== null || $firmwareVersion !== null
             ) {
                 $meta = is_array($rpi->meta) ? $rpi->meta : [];
                 if ($actuatorState !== null) $meta['actuator_state'] = $actuatorState;
@@ -2302,6 +2313,11 @@ $router->post(
                 if ($otaProtocol !== null) $meta['ota_protocol'] = $otaProtocol;
                 if ($otaState !== null) $meta['ota_state'] = $otaState;
                 if ($otaVersion !== null) $meta['ota_version'] = $otaVersion;
+                if ($remoteOpenCapable !== null) {
+                    $meta['remote_open_capable'] = $remoteOpenCapable;
+                } elseif ($firmwareVersion !== null) {
+                    $meta['remote_open_capable'] = false;
+                }
                 $meta['actuator_updated_at'] = gmdate('Y-m-d\TH:i:s\Z');
                 $deviceRepo->updateMeta($rpi->id, $meta);
             }
@@ -2343,6 +2359,7 @@ $router->post(
             'ota_capable' => $otaCapable,
             'ota_protocol' => $otaProtocol,
             'ota_state' => $otaState,
+            'remote_open_capable' => $remoteOpenCapable,
         ]);
     }
 );
@@ -2880,6 +2897,16 @@ $qrController = new QrController($qrIssueService, $qrValidateService, $qrCredRep
 
 $lockService    = new LockService($roomRepo, $accessEventRepo);
 $lockController = new LockController($lockService);
+
+// F116/RF-293: apertura remota del almacén por cola de comandos del ESP32.
+$warehouseDoorOpenService = new \App\Domain\Warehouse\WarehouseDoorOpenService(
+    $roomRepo,
+    $deviceRepo,
+    $commandQueueRepo,
+    $accessEventRepo,
+    $iotSessionRepo,
+    $warehouseRecordingService
+);
 
 $presenceEventRepo = new PresenceEventRepository($pdo);
 // $iotSessionRepo already created above (needed by QrValidateService for dashboard)
@@ -3455,9 +3482,8 @@ $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sy
 $timbreStateController = new \App\Http\Controllers\TimbreStateController($pdo);
 $timbreController = new \App\Http\Controllers\TimbreController(
     $pdo,
-    $lockService,
-    $accessKeyService,
-    $warehouseRecordingService
+    $warehouseDoorOpenService,
+    $accessKeyService
 );
 $router->get('/timbre-api/state',      [$timbreStateController, 'show']);
 $router->get('/timbre-api/openings',   [$timbreController, 'openings']);
@@ -3522,50 +3548,23 @@ $warehouseStateController = new WarehouseStateController($pdo, $go2rtcClient);
 $router->get('/almacen-api/state', [$warehouseStateController, 'show']);
 
 // POST /almacen-api/door/open — apertura manual desde el panel (F65/RF-74).
+// F116: en el hardware local (ESP32 + relé) la API encola un comando `open`;
+// el ESP32 lo ejecuta y el sensor Zigbee confirma la apertura física. El motor
+// de grabación NO recibe una señal artificial: la recibe del push del sensor.
 $router->post(
     '/almacen-api/door/open',
-    function (\App\Http\Request $request) use ($lockService, $warehouseRecordingService, $pdo): \App\Http\Response {
+    function (\App\Http\Request $request) use ($warehouseDoorOpenService): \App\Http\Response {
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         $roomId = (int) ($body['room_id'] ?? 0);
         if ($roomId <= 0) {
             return \App\Http\Response::json(400, ['error' => 'room_id_required']);
         }
         $correlationId = (string) ($request->attr('correlation_id', '') ?? '');
-        try {
-            $result = $lockService->open($roomId, 'manual_almacen', true, $correlationId);
-
-            // F85/RF-111.4: la apertura manual alimenta el motor del almacén (no
-            // depende solo del push del sensor). `panel` no es SIMULATED/resync.
-            $visitStarted = false;
-            try {
-                $before = null;
-                if ($warehouseRecordingService->isWarehouseRoom($roomId)) {
-                    $q = $pdo->prepare('SELECT current_visit_id FROM warehouse_state WHERE room_id = :r LIMIT 1');
-                    $q->execute([':r' => $roomId]);
-                    $before = $q->fetchColumn();
-                }
-                $warehouseRecordingService->onSignal(
-                    $roomId,
-                    \App\Domain\Warehouse\WarehouseRecordingDecision::EV_DOOR_OPEN,
-                    ['provider' => 'PANEL', 'source' => 'panel']
-                );
-                if ($before !== null && $before !== false) {
-                    $q2 = $pdo->prepare('SELECT current_visit_id FROM warehouse_state WHERE room_id = :r LIMIT 1');
-                    $q2->execute([':r' => $roomId]);
-                    $after = $q2->fetchColumn();
-                    $visitStarted = ($after !== false && $after !== null && (string) $after !== (string) $before);
-                }
-            } catch (\Throwable $e) {
-                error_log('[almacen door/open] warehouse signal failed: ' . $e->getMessage());
-            }
-
-            return \App\Http\Response::json(200, array_merge(
-                ['ok' => true, 'visit_started' => $visitStarted],
-                is_array($result) ? $result : []
-            ));
-        } catch (\Throwable $e) {
-            return \App\Http\Response::json(409, ['error' => 'door_error', 'message' => $e->getMessage()]);
-        }
+        $result = $warehouseDoorOpenService->request($roomId, $correlationId, 'panel');
+        return \App\Http\Response::json(200, array_merge(
+            ['ok' => true, 'mode' => 'manual', 'visit_started' => false],
+            $result
+        ));
     }
 );
 

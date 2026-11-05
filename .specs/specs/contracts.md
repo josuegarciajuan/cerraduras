@@ -16428,3 +16428,77 @@ El motor recibe `DOOR_OPEN` con `provider=PANEL`. Sin `room_id` → 400.
 - `404 timbre_room_not_found`
 - `422 validation_error` / `owner_room_denied`
 - `409 door_error`
+# F116 — Apertura remota del almacén
+
+## 116.1 `POST /almacen-api/door/open` (forma aditiva)
+
+Request sin cambios:
+```json
+{ "room_id": 14 }
+```
+
+200 en el camino local/ESP32:
+```json
+{
+  "ok": true,
+  "mode": "manual",
+  "result": "ok",
+  "provider": "ESP32",
+  "queued": true,
+  "command_id": 123,
+  "visit_started": false
+}
+```
+
+Variantes aditivas:
+- puerta ya abierta: `{ "queued": false, "already_open": true }`;
+- comando reciente: `{ "queued": true, "command_id": 123, "deduplicated": true }`.
+
+Errores:
+- `400 room_id_required`;
+- `404 not_found` (sala inexistente o no `ALMACEN_BEBIDAS`);
+- `409 lock_not_configured`, `409 rpi_not_configured`;
+- `409 remote_open_unavailable` si el firmware no anuncia capacidad/versión;
+- `409 command_queue_unavailable`.
+
+Ya **no** se emite `EV_DOOR_OPEN` al motor del almacén en esta ruta.
+
+## 116.2 `GET /dashboard-api/pending-command` — comando `open`
+
+Sin cambios de forma. `command_name` puede ser `check` u `open`.
+Payload de `open` en `payload_json`:
+```json
+{
+  "room_id": 14,
+  "requested_by": "panel",
+  "requested_at": "2026-11-05T15:00:00Z",
+  "source": "timbre",
+  "protocol": "remote-open-v1"
+}
+```
+
+`POST /dashboard-api/command-result` recibe, para `open`:
+```json
+{
+  "command_id": 123,
+  "external_id": "d443229fc114",
+  "results": {
+    "RPI": true,
+    "SCANNER": true,
+    "LOCK": true,
+    "action": "open",
+    "accepted": true
+  }
+}
+```
+
+## 116.3 Heartbeat `remote_open_capable`
+
+`POST /dashboard-api/device-heartbeat` acepta y devuelve el campo aditivo
+booleano `remote_open_capable`. Se persiste en `devices.meta_json`. Si llega
+`firmware_version` sin el campo, se persiste `false` (rollback seguro).
+
+## 116.4 Sin cambios de esquema
+
+No hay migración: se usan `device_commands.payload_json`, `devices.meta_json`,
+`access_events` (provider `ESP32`) e `iot_sessions` ya existentes.
