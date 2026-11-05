@@ -27,7 +27,7 @@ use DateTimeZone;
  */
 final class RadarPresenceEdgeDecision
 {
-    public const DEFAULT_ABSENT_GRACE_MS = 1500;
+    public const DEFAULT_ABSENT_GRACE_MS = 500;
     public const DEFAULT_PRESENT_MAX_AGE_MS = 120000;
 
     public const STATE_PRESENT = 'PRESENT_CONFIRMED';

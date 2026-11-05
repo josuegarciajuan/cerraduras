@@ -44,6 +44,19 @@ same('ABSENT pendiente apply', $pending['apply'] ?? null, false);
 same('ABSENT pendiente motivo', $pending['discard_reason'] ?? null, 'absent_pending');
 check('motivo corto cabe en VARCHAR(16)', strlen((string) ($pending['discard_reason'] ?? '')) <= 16);
 
+// F114+: con la gracia por defecto (0,5 s) el frame de 0,365 s sigue
+// pendiente y el de 1,432 s ya confirma.
+$defaultPending = RadarPresenceEdgeDecision::evaluate(
+    ['value' => 'ABSENT', 'marker' => 'p1|s|3b|ABSENT|push', 'received_at' => '2026-11-04 15:16:25.000'],
+    new DateTimeImmutable('2026-11-04T15:16:25.365Z', $utc)
+);
+check('gracia 0,5 · frame 0,365 s → pendiente', $defaultPending !== null && ($defaultPending['apply'] ?? true) === false);
+$defaultConfirmed = RadarPresenceEdgeDecision::evaluate(
+    ['value' => 'ABSENT', 'marker' => 'p1|s|3c|ABSENT|push', 'received_at' => '2026-11-04 15:16:25.000'],
+    new DateTimeImmutable('2026-11-04T15:16:26.432Z', $utc)
+);
+check('gracia 0,5 · frame 1,432 s → confirma', $defaultConfirmed !== null && ($defaultConfirmed['apply'] ?? false) === true);
+
 $confirmed = RadarPresenceEdgeDecision::evaluate(
     ['value' => 'ABSENT', 'marker' => 'p1|s|4|ABSENT|push', 'received_at' => '2026-11-04 15:16:25.000'],
     new DateTimeImmutable('2026-11-04T15:16:26.600Z', $utc),
