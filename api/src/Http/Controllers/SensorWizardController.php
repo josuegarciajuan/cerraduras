@@ -4999,7 +4999,7 @@ final class SensorWizardController
         if ((string) ($stmt->fetchColumn() ?: '') !== 'ALMACEN_BEBIDAS') {
             return [];
         }
-        $raw = \App\Support\Config::get('RADAR_WAREHOUSE_FADING_TIME', '3.0') ?? '3.0';
+        $raw = \App\Support\Config::get('RADAR_WAREHOUSE_FADING_TIME', '2.5') ?? '2.5';
         if (!is_numeric($raw)) {
             $raw = '5.0';
         }

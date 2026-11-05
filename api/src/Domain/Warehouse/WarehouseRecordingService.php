@@ -115,7 +115,8 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                 ->execute([':r' => $roomId]);
 
             $stmt = $this->pdo->prepare(
-                'SELECT state, current_visit_id, entry_trigger, deadline_x, deadline_m, presence_confirmed
+                'SELECT state, current_visit_id, entry_trigger, deadline_x, deadline_m,
+                        presence_confirmed, light_off_at
                  FROM warehouse_state WHERE room_id = :r FOR UPDATE'
             );
             $stmt->execute([':r' => $roomId]);
@@ -126,6 +127,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                 'deadline_x' => null,
                 'deadline_m' => null,
                 'presence_confirmed' => 0,
+                'light_off_at' => null,
             ];
 
             $preState = (string) $row['state'];
@@ -136,6 +138,32 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             ];
             $visitId = $row['current_visit_id'] !== null ? (int) $row['current_visit_id'] : null;
             $now = Clock::nowUtc();
+
+            // F114+: apagado diferido y cancelable de la luz. El estado de
+            // presencia ya cambió; la luz espera un pequeño margen para no
+            // parpadear ante un ABSENT falso. exit-scan ejecuta el OFF.
+            $lightEnabled = \App\Support\Config::getBool('WAREHOUSE_LIGHT_AUTOMATION', true);
+            $lightDelay = (int) (\App\Support\Config::getInt('WAREHOUSE_LIGHT_OFF_DELAY_SECONDS', 1) ?? 1);
+            $lightOffAt = $row['light_off_at'] ?? null;
+            if (!$lightEnabled) {
+                $lightOffAt = null;
+            } elseif (in_array($event, [
+                WarehouseRecordingDecision::EV_ABSENT,
+                WarehouseRecordingDecision::EV_DOOR_CLOSE_ABSENT,
+            ], true)) {
+                $lightOffAt = $now->modify('+' . max(0, min(10, $lightDelay)) . ' seconds')
+                    ->format('Y-m-d H:i:s.v');
+            } elseif (in_array($event, [
+                WarehouseRecordingDecision::EV_QR_OK,
+                WarehouseRecordingDecision::EV_PRESENT,
+                WarehouseRecordingDecision::EV_DOOR_OPEN,
+            ], true)) {
+                $lightOffAt = null;
+            } elseif ($event === WarehouseRecordingDecision::EV_DOOR_CLOSE
+                && (bool) ($state['presence_confirmed'] ?? false)
+            ) {
+                $lightOffAt = null;
+            }
 
             // F84 (RF-107.2/107.3): al cerrar un episodio iniciado SOLO por
             // presencia, se evalúa la evidencia del propio radar para separar una
@@ -281,7 +309,8 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             $this->pdo->prepare(
                 'UPDATE warehouse_state
                  SET state=:st, current_visit_id=:vid, entry_trigger=:tr,
-                     deadline_x=:dx, deadline_m=:dm, presence_confirmed=:pc
+                     deadline_x=:dx, deadline_m=:dm, presence_confirmed=:pc,
+                     light_off_at=:lo
                  WHERE room_id=:r'
             )->execute([
                 ':st' => $result['state'],
@@ -290,6 +319,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                 ':dx' => $deadlineX,
                 ':dm' => $deadlineM,
                 ':pc' => $result['presence_confirmed'] ? 1 : 0,
+                ':lo' => $lightOffAt,
                 ':r' => $roomId,
             ]);
 

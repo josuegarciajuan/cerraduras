@@ -73,9 +73,9 @@ $fadingOpt = isset($opts['fading']) ? (float) $opts['fading'] : null;
 if ($fadingOpt !== null) {
     $commands['fading_time'] = max(0.5, min(1500.0, $fadingOpt));
 } elseif (!isset($commands['fading_time'])) {
-    $fading = Config::get('RADAR_WAREHOUSE_FADING_TIME', '3.0') ?? '3.0';
+    $fading = Config::get('RADAR_WAREHOUSE_FADING_TIME', '2.5') ?? '2.5';
     if (!is_numeric($fading)) {
-        $fading = '3.0';
+        $fading = '2.5';
     }
     $commands['fading_time'] = max(0.5, min(1500.0, (float) $fading));
 }
