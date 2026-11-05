@@ -13412,3 +13412,62 @@ sesión futura no puede analizar un fallo equivalente.
   (vuelve a `camera_fusion`) sin tocar el radar.
 
 **Estado F114:** implementado; prueba física pendiente.
+
+## F115 — Video portero del almacén (`/timbre`)
+
+### RF-286 — Ruta y alcance
+- **RF-286.1**: `GET /timbre` sirve una página pública (LAN, sin login en
+  `cerraduras.duckdns.org`) con apariencia de video portero.
+- **RF-286.2**: la vista solo aplica a salas con `room_types.code =
+  ALMACEN_BEBIDAS`. Si no hay ninguna, muestra “Timbre no asignado” y no
+  permite abrir.
+
+### RF-287 — Selección de almacén
+- **RF-287.1**: desplegable con todas las salas `ALMACEN_BEBIDAS` del proyecto.
+- **RF-287.2**: por defecto `almacenZigbee`; `?room=N` tiene prioridad y se
+  actualiza la URL al cambiar.
+- **RF-287.3**: si el snapshot no corresponde a la sala pedida, no se pinta
+  otra sala: se muestra “Sala no disponible”.
+
+### RF-288 — Cámara interior
+- **RF-288.1**: se muestra en grande la cámara `subtype=INTERIOR` mediante el
+  MJPEG existente (`/almacen-live?id=<device_id>`).
+- **RF-288.2**: estados honestos: sin cámara, apagada, sin URL, sin señal.
+  La cámara apagada se enciende solo con un botón explícito (PATCH existente),
+  nunca al cargar la página.
+- **RF-288.3**: el `<img>` MJPEG no se recrea con cada push SSE; solo cambia
+  si cambia cámara/estado/URL o tras un reintento manual.
+
+### RF-289 — Presencia en el marco
+- **RF-289.1**: el marco de la cámara se pinta verde **solo** con
+  `live.presence_state = PRESENT` y `live.presence_stale = false`.
+- **RF-289.2**: `PRESENT` stale o candidato (`CANDIDATE_PRESENT`) se muestra
+  ámbar; ausente/sin datos, pizarra. Nunca verde por `warehouse.occupied`.
+- **RF-289.3**: el estado se acompaña de texto (`PRESENCIA`, `EN ESPERA`,
+  `SIN DATOS · RADAR`) para no depender solo del color.
+
+### RF-290 — Pulsador de apertura
+- **RF-290.1**: pulsación simple sobre un botón grande llama a
+  `POST /almacen-api/door/open` con el `room_id` visible.
+- **RF-290.2**: cooldown cliente de 3 s y bloqueo mientras hay petición.
+- **RF-290.3**: un HTTP 200 no basta: se exige `result = ok`. La confirmación
+  visual “Puerta abierta” llega por SSE (`door_state = OPEN`); sin confirmación
+  en 8 s se informa “sin confirmación del sensor” en ámbar.
+
+### RF-291 — Estado visual de la puerta
+- **RF-291.1**: una puerta SVG muestra el estado: hoja girada y hueco iluminado
+  para `ABIERTA`; hoja encajada para `CERRADA`; trazo discontinuo y atenuado
+  para `SIN DATOS`.
+- **RF-291.2**: se reutiliza la fidelidad F56/F72/F77.5: un `OPEN` stale no se
+  pinta como abierto; `CLOSED` sigue siendo válido; pulso anti-colapso 1,2 s.
+- **RF-291.3**: el estado también se anuncia en texto y `aria-live`.
+
+### RF-292 — Conexión, cuota y pruebas
+- **RF-292.1**: snapshot inicial + SSE con watchdog y polling de respaldo; sin
+  llamadas a Tuya ni pollers nuevos.
+- **RF-292.2**: unit JS `timbre-logic.test.js`, BLOCK 85 del runner y regresión
+  completa en verde.
+- **RF-292.3**: prueba manual en tablet y móvil de cámara, presencia, puerta y
+  apertura.
+
+**Estado F115:** implementado; prueba manual en dispositivo pendiente.

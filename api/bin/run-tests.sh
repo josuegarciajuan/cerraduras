@@ -8457,6 +8457,87 @@ else
 fi
 
 # =============================================================================
+# BLOCK 85 — F115: video portero del almacén (/timbre)
+# Trazabilidad: RF-286…RF-292, TSK-F115
+# =============================================================================
+block "BLOCK 85 — F115: video portero del almacén"
+
+for F115_ASSET in \
+    public/timbre.html \
+    public/assets/timbre.js \
+    public/assets/timbre-logic.js \
+    tests/Unit/timbre-logic.test.js; do
+    if [ -f "$F115_ASSET" ]; then
+        pass "F115: existe $F115_ASSET"
+    else
+        fail "F115: $F115_ASSET" "no encontrado"
+    fi
+done
+
+if grep -q "'/timbre'" public/index.php && grep -q "timbre.html" public/index.php; then
+    pass "F115: ruta /timbre registrada en index.php"
+else
+    fail "F115: ruta /timbre" "ausente en public/index.php"
+fi
+
+for F115_MARK in \
+    'id="timbre-frame"' \
+    'id="cam-interior"' \
+    'id="btn-open"' \
+    'id="room-select"' \
+    'id="door-visual"' \
+    'id="door-label"' \
+    'aria-live' \
+    'timbre-logic.js' \
+    'timbre.js'; do
+    if grep -qF "$F115_MARK" public/timbre.html 2>/dev/null; then
+        pass "F115: timbre.html incluye $F115_MARK"
+    else
+        fail "F115: timbre.html $F115_MARK" "ausente"
+    fi
+done
+
+for F115_JS in \
+    'dataset.sig' \
+    'camFailed' \
+    'doorOutcome' \
+    'presence_stale' \
+    'almacenZigbee' \
+    'EventSource' \
+    'is-open'; do
+    if grep -qF "$F115_JS" public/assets/timbre.js public/assets/timbre-logic.js 2>/dev/null; then
+        pass "F115: JS incluye $F115_JS"
+    else
+        fail "F115: JS $F115_JS" "ausente"
+    fi
+done
+
+F115_OUT=$(node tests/Unit/timbre-logic.test.js 2>&1)
+if [ $? -eq 0 ]; then
+    F115_SUM=$(printf '%s\n' "$F115_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    pass "F115: timbre-logic (${F115_SUM:-ok})"
+else
+    fail "F115: timbre-logic" "$(printf '%s\n' "$F115_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    http_test GET /timbre 200 "F115: GET /timbre → 200"
+    F115_HTML=$(curl -s --max-time 5 "$API_BASE/timbre")
+    if printf '%s' "$F115_HTML" | grep -q 'id="timbre-frame"' \
+        && printf '%s' "$F115_HTML" | grep -q 'id="door-visual"' \
+        && printf '%s' "$F115_HTML" | grep -q 'timbre-logic.js'; then
+        pass "F115: /timbre sirve la visera, la puerta y la lógica"
+    else
+        fail "F115: contenido /timbre" "faltan marcadores"
+    fi
+    http_test GET /assets/timbre-logic.js 200 "F115: GET /assets/timbre-logic.js → 200"
+    http_test POST /almacen-api/door/open 400 \
+        "F115: door/open sin room_id → 400 (sin efecto físico)" --body '{}'
+else
+    skip "F115 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # RESUMEN
 # =============================================================================
 echo ""

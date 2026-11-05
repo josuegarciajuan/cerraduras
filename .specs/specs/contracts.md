@@ -16293,3 +16293,52 @@ Sin cambios de eventos ni de estados:
   que hoy).
 - Reentrada = `IDLE + EV_PRESENT` → visita `PRESENCE` (mismo camino que hoy).
 - El filtro de ruido `PresenceEvidence` se mantiene intacto.
+
+---
+
+# F115 — Contrato del video portero (`/timbre`)
+
+## 115.1 Ruta nueva
+
+```
+GET /timbre                 → 200 text/html (timbre.html)
+GET /timbre?room=N          → 200 text/html; la selección se resuelve en cliente
+```
+
+Pública como `/almacen` en `cerraduras.duckdns.org`. No crea endpoints de
+datos nuevos ni modifica los existentes.
+
+## 115.2 Datos consumidos (sin cambios de forma)
+
+- `GET /dashboard-api/rooms` → `[{ id, code, room_type_code, ... }]`.
+  Se filtran las filas con `room_type_code = ALMACEN_BEBIDAS`.
+- `GET /almacen-api/state?room_id=N` → snapshot ya existente. Campos usados:
+  - `room.{id,code}`;
+  - `warehouse.{occupied,state,current_visit}` (solo texto secundario);
+  - `live.{presence_state,presence_stale,presence_active,presence_decision,
+    door_state,door_stale,last_open_at}`;
+  - `cameras[].{id,position,label,enabled,mjpeg_url}`.
+- `GET /almacen-api/event-stream?room_id=N` → eventos `connected`, `state`,
+  `ping`, `close` ya existentes.
+- `PATCH /almacen-api/cameras/{id}` `{enabled:true}` → enciende la cámara
+  INTERIOR y sincroniza go2rtc (comportamiento existente).
+- `POST /almacen-api/door/open` `{room_id}` → `{ok, result, provider,
+  visit_started}`. La UI exige `result = ok`; un 200 con `result = error` se
+  trata como fallo.
+
+## 115.3 Reglas de presentación
+
+- Marco verde ⇔ `presence_state = "PRESENT"` **y** `presence_stale = false`.
+- `warehouse.occupied` no pinta verde (puede venir de una visita sin radar).
+- Puerta abierta ⇔ `door_state = "OPEN"` no stale, o pulso de 1,2 s desde
+  `last_open_at`. `CLOSED` stale sigue mostrándose cerrada.
+- El MJPEG no se recarga en cada evento SSE; solo ante cambio de cámara,
+  `enabled`, `mjpeg_url` o reintento manual.
+
+## 115.4 Errores y estados
+
+- Sin almacenes → “Timbre no asignado”; no hay apertura.
+- Snapshot de otra sala → “Sala no disponible”; no se pinta.
+- Cámara apagada/sin señal/sin URL → placeholder honesto y acción manual.
+- `POST door/open` vacío → 400 `room_id_required` (probado sin efecto físico).
+- Sin confirmación de puerta en 8 s → aviso ámbar, no error de hardware.
