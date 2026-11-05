@@ -3753,6 +3753,18 @@ $router->get(
     }
 );
 
+// --- Video portero del almacén (F115/RF-286, público LAN) ---
+$router->get(
+    '/timbre',
+    function (\App\Http\Request $request): \App\Http\Response {
+        $htmlFile = __DIR__ . '/timbre.html';
+        if (!is_file($htmlFile)) {
+            return \App\Http\Response::json(404, ['error' => 'timbre HTML not found']);
+        }
+        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+    }
+);
+
 // Factory firmware announces only its eFuse identity; no room or operational action.
 $router->post('/api/v1/factory-devices/announce', [$factoryDeviceController, 'announce']);
 $router->get('/api/v1/factory-devices', [$factoryDeviceController, 'list'], $authFactory(['audit:read']));

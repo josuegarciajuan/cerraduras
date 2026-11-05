@@ -26087,3 +26087,78 @@ nunca la calibración del radar.
 3. Fase 2: prioridad de fases del croquis.
 4. Fase 3: tests unitarios y regresión.
 5. Fase 4: aceptación física A/B y cierre documental.
+
+---
+
+# F115 — Video portero del almacén (`/timbre`)
+
+## 115.1 Objetivo
+
+Una única pantalla de portero electrónico para salas `ALMACEN_BEBIDAS`:
+cámara INTERIOR grande, marco verde con presencia fresca, estado visual de la
+puerta y un pulsador que abre la cerradura. Sin nuevas APIs de negocio, sin
+Tuya y sin frameworks.
+
+## 115.2 Archivos
+
+| Archivo | Responsabilidad |
+|---|---|
+| `api/public/timbre.html` | Markup + CSS (convención de `almacen.html`/`sensores.html`) |
+| `api/public/assets/timbre-logic.js` | Lógica pura UMD (testeable sin DOM) |
+| `api/public/assets/timbre.js` | SSE, watchdog, polling, cámara, puerta, apertura |
+| `api/public/index.php` | Ruta `GET /timbre` (mismo patrón que `/almacen`) |
+| `api/tests/Unit/timbre-logic.test.js` | 55 checks Node |
+| `api/bin/run-tests.sh` | BLOCK 85 |
+
+## 115.3 Concepto visual «PULSADOR»
+
+- Placa metálica con visera de cámara (bisel superior grueso) y pulsador
+  circular grande en el centro de la placa inferior.
+- El estado de presencia vive en la **junta perimetral** de la visera: verde
+  solo con `PRESENT` fresco; ámbar discontinuo con `presence_stale` o
+  `CANDIDATE_PRESENT`; pizarra en reposo. Nunca se superpone color al vídeo.
+- La puerta se dibuja en SVG: la hoja gira sobre su bisagra y un hueco cálido
+  queda visible cuando está abierta; trazo discontinuo si no hay datos.
+- Sin fuentes ni CDNs externos. `prefers-reduced-motion` desactiva giros y
+  animaciones.
+
+## 115.4 Flujo de datos
+
+1. `GET /dashboard-api/rooms` → filtrar `room_type_code = ALMACEN_BEBIDAS`.
+2. Sala inicial: `?room=` válido → `almacenZigbee` → primera. Al cambiar,
+   `history.replaceState('?room=N')`.
+3. `GET /almacen-api/state?room_id=N` para el primer pintado.
+4. `EventSource /almacen-api/event-stream?room_id=N`:
+   - `connected`/`ping`/`state` → marcan el stream vivo y paran el polling;
+   - `close` → reconexión ~300 ms;
+   - `onerror` o watchdog de 15 s sin eventos → polling 2 s + reintento SSE.
+5. El `<img>` MJPEG se identifica con `cameraSignature(cam)` (id, enabled,
+   mjpeg_url). Un cambio de presencia, `recording` o edades **no** lo recrea.
+
+## 115.5 Estados
+
+| Señal | Verde | Ámbar | Pizarra |
+|---|---|---|---|
+| Presencia | `PRESENT` + `!presence_stale` | stale / candidato | ausente / sin datos |
+| Puerta | `OPEN` fresco | `OPEN` stale / sin datos | `CLOSED` |
+| Cámara | — | sin señal / apagada | sin cámara / sin URL |
+
+La cámara apagada ofrece **Encender cámara** (`PATCH /almacen-api/cameras/{id}`
+con `{enabled:true}`); el PATCH ya sincroniza go2rtc. No hay auto-encendido.
+
+## 115.6 Apertura
+
+`POST /almacen-api/door/open {room_id}` es la ruta existente del almacén;
+`LockService` recibe `manual_almacen` y `overrideCooldown=true`. La UI:
+- bloquea mientras hay petición y 3 s después;
+- interpreta `result` además del HTTP;
+- dice “Apertura solicitada”, no “abierta”, hasta que el SSE confirma;
+- a los 8 s sin confirmación informa en ámbar sin declarar fallo físico.
+
+## 115.7 Pruebas
+
+Unit: filtros de almacén, sala por defecto, cámara INTERIOR, firma MJPEG,
+presencia fresca/stale/candidata, puerta fiel + pulso, cooldown, `result` y
+`roomMismatch`.
+Runner BLOCK 85: assets, marcadores, ruta, unit Node y `GET /timbre`; la
+prueba de `door/open` usa un body vacío (400, sin efecto físico).

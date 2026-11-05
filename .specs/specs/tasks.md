@@ -11605,3 +11605,35 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 - [x] TSK-F114-12: actualizar la tabla de fases de `AGENTS.md`.
 - [ ] TSK-F114-13: desplegar, pushear y documentar la evidencia física.
   - Estado: merge y push hechos; prueba física A/B pendiente.
+
+---
+
+# F115 — Video portero del almacén (`/timbre`)
+
+## Fase 0 — Especificación
+- [x] TSK-F115-00: requisitos, diseño y contrato de `/timbre`.
+
+## Fase 1 — Página y ruta
+- [x] TSK-F115-01: registrar `GET /timbre` en `api/public/index.php`.
+- [x] TSK-F115-02: crear `api/public/timbre.html` con el concepto «PULSADOR»
+  (visera, junta de presencia, puerta SVG y pulsador).
+
+## Fase 2 — Lógica y conexión
+- [x] TSK-F115-03: `timbre-logic.js` puro (sala por defecto, cámara INTERIOR,
+  firma MJPEG, presencia, puerta, cooldown y resultado de apertura).
+- [x] TSK-F115-04: `timbre.js` con desplegable, SSE + watchdog + polling,
+  cámara manual y pulsador de apertura.
+
+## Fase 3 — Pruebas
+- [x] TSK-F115-05: `api/tests/Unit/timbre-logic.test.js` (55 checks).
+- [x] TSK-F115-06: BLOCK 85 del runner (assets, ruta, unit, HTTP y 400 seguro).
+- [x] TSK-F115-07: `node --check`, `php -l` y `bash -n`.
+- [ ] TSK-F115-08: regresión completa `bash bin/run-tests.sh`.
+- [ ] TSK-F115-09: prueba manual en tablet/móvil (cámara apagada, sin señal,
+  presencia real/stale, puerta abierta/cerrada, un toque y confirmación SSE).
+
+## Fase 4 — Cierre
+- [x] TSK-F115-10: actualizar la tabla de fases de `AGENTS.md`.
+- [ ] TSK-F115-11: desplegar, pushear y registrar la prueba manual.
+
+**Estado F115:** implementado; prueba manual en dispositivo pendiente.
