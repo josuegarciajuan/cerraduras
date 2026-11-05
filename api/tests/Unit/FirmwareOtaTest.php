@@ -111,8 +111,8 @@ checkOta(hash('sha256', $iman) === hash('sha256', $imanCanonical),
     'copia canónica de ESP-imán sincronizada');
 
 // ── F100.1: endurecimiento del cliente OTA ───────────────────────────────
-checkOta(str_contains($iman, '"2.6-ota"') && str_contains($cerradura, '"2.6-ota"'),
-    'versión 2.6-ota en ambos sketches');
+checkOta(str_contains($iman, '"2.6-ota"') && str_contains($cerradura, '"2.7-ota"'),
+    'versiones 2.6-ota (IMAN) y 2.7-ota (CERRADURA)');
 checkOta(str_contains($iman, 'code == 200 && isJsonResponse(resp)')
     && str_contains($cerradura, 'code == 200 && isJsonResponse(resp)'),
     'la confirmación solo limpia la operación con respuesta JSON de la API');
@@ -160,8 +160,8 @@ checkOta(str_contains($ops, '/dashboard-api/firmware-update')
     && str_contains($ops, '/dashboard-api/firmware-progress')
     && str_contains($ops, '/dashboard-api/firmware-confirm'),
     'ops.md documenta las cuatro rutas OTA de dispositivo');
-checkOta(str_contains($ops, '2.6-ota') && str_contains($ops, 'flash-variant.sh'),
-    'ops.md documenta versión y flasheo directo');
+checkOta(str_contains($ops, '2.6-ota') && str_contains($ops, '2.7-ota') && str_contains($ops, 'flash-variant.sh'),
+    'ops.md documenta versiones y flasheo directo');
 
 echo "\nTotal: {$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

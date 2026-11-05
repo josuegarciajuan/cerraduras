@@ -13471,3 +13471,48 @@ sesión futura no puede analizar un fallo equivalente.
   apertura.
 
 **Estado F115:** implementado; prueba manual en dispositivo pendiente.
+
+## F116 — Apertura remota real desde `/timbre`
+
+### RF-293 — Capacidad y compatibilidad
+- **RF-293.1**: la variante `CERRADURA` anuncia `remote_open_capable:true` en su
+  heartbeat solo a partir de la versión `2.7-ota`.
+- **RF-293.2**: la API solo encola `open` si el RPI del pack está en una versión
+  compatible (`>= 2.7`) y `devices.meta_json.remote_open_capable = true`.
+- **RF-293.3**: sin capacidad, `POST /almacen-api/door/open` responde
+  `409 remote_open_unavailable` y no encola nada. Un firmware `2.6-ota` o un
+  rollback no recibe comandos que no entiende.
+
+### RF-294 — Comando remoto `open`
+- **RF-294.1**: `POST /almacen-api/door/open` encola un comando `open` en
+  `device_commands` para el RPI propietario del pack, con payload
+  `{room_id, requested_by, requested_at, source:"timbre", protocol:"remote-open-v1"}`.
+- **RF-294.2**: el ESP32 consulta la cola local cada ~2 s (con backoff ante
+  fallos) y ejecuta `startLockSequence()`; el QR mantiene prioridad absoluta.
+- **RF-294.3**: el resultado del comando se reporta a `command-result` cuando el
+  relé vuelve a reposo, no durante la secuencia eléctrica.
+- **RF-294.4**: una apertura duplicada en una ventana de 5 s reutiliza el
+  comando pendiente y no genera una segunda orden.
+
+### RF-295 — Veracidad del evento y visitas
+- **RF-295.1**: la solicitud remota ya **no** emite `EV_DOOR_OPEN` al motor de
+  grabación. La visita la crea el push físico `PROXIMITY OPEN` del SNZB-04P.
+- **RF-295.2**: si el comando no llega o el relé falla, no se crea una visita
+  `NO_SHOW` fantasma.
+- **RF-295.3**: si la puerta ya está `OPEN`, la API responde `already_open` sin
+  encolar un nuevo comando.
+
+### RF-296 — Operación, cuota y pruebas
+- **RF-296.1**: no se consulta Tuya ni se añaden pollers de nube. El poll de
+  comandos es local, autenticado con la credencial del dispositivo y con backoff
+  (2 s → 10 s → 30 s) ante errores.
+- **RF-296.2**: la ventana del timbre se mantiene en 8 s; la confirmación visual
+  sigue llegando por SSE (`door_state = OPEN`).
+- **RF-296.3**: unit de política, test estático de contrato, BLOCK 86 del runner
+  y regresión completa en verde.
+- **RF-296.4**: el despliegue requiere publicar `CERRADURA 2.7-ota` y aplicar la
+  OTA al ESP32 del pack; la API es segura antes del OTA porque la capacidad no
+  está anunciada.
+
+**Estado F116:** implementación de código completada; OTA y prueba física
+pendientes.

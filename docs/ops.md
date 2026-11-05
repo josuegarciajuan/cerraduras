@@ -251,6 +251,10 @@ Después, publicar el binario (desde el servidor, con el mismo fichero):
 ```bash
 php api/bin/firmware-publish.php --variant=IMAN --version=2.6-ota \
   --file=/tmp/fw-esp-iman.XXXX/esp-iman.ino.bin --commit=$(git rev-parse --short HEAD)
+
+# CERRADURA 2.7-ota (incluye el comando remoto `open` de F116)
+php api/bin/firmware-publish.php --variant=CERRADURA --version=2.7-ota \
+  --file=/tmp/fw-esp-cerradura.XXXX/esp-cerradura.ino.bin --commit=$(git rev-parse --short HEAD)
 ```
 
 #### Rutas OTA de dispositivo (Apache)
@@ -269,6 +273,20 @@ deben ir **antes** del catch-all a `127.0.0.1:8099` en el vhost de
 Sin ellas, el panel-gate devuelve HTML 200 y el dispositivo no puede actualizar.
 El firmware valida que la respuesta sea JSON (confirm/manifiesto) y que la
 descarga sea `application/octet-stream` con el tamaño/SHA-256 anunciados.
+
+#### Apertura remota desde `/timbre` (F116)
+
+La variante `CERRADURA` **2.7-ota** incorpora el comando remoto `open`:
+
+- `POST /almacen-api/door/open` encola un comando `open` para el RPI del pack.
+- El ESP32 consulta la cola cada **2 s** (con backoff si la API falla) y ejecuta
+  `startLockSequence()`. El resultado se reporta cuando el relé vuelve a reposo.
+- El firmware anuncia `remote_open_capable:true`; sin ese anuncio (o con versión
+  `2.6-ota`) la API responde `409 remote_open_unavailable` y no encola nada.
+- La apertura **no** emite `EV_DOOR_OPEN` al motor de grabación: la visita la
+  confirma el push del sensor Zigbee. Así no se crean visitas `NO_SHOW`
+  fantasma si el comando no llega o el relé falla.
+- Sin polling a Tuya: solo se consulta la API local.
 
 #### Operación y reinicio
 

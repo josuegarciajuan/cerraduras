@@ -39,7 +39,7 @@ final class CommandQueueRepository
      * Idempotency: if there is already a `pending` command of the same type for
      * the chip, it is not duplicated.
      */
-    public function enqueue(string $externalId, string $command = 'check'): ?int
+    public function enqueue(string $externalId, string $command = 'check', ?array $payload = null): ?int
     {
         if ($command === '') {
             $command = 'check';
@@ -55,10 +55,40 @@ final class CommandQueueRepository
         }
 
         $ins = $this->pdo->prepare(
-            "INSERT INTO device_commands (external_id, command, status) VALUES (:x, :c, 'pending')"
+            "INSERT INTO device_commands (external_id, command, payload_json, status)
+             VALUES (:x, :c, :p, 'pending')"
         );
-        $ins->execute([':x' => $externalId, ':c' => $command]);
+        $ins->execute([
+            ':x' => $externalId,
+            ':c' => $command,
+            ':p' => $payload === null ? null : json_encode($payload, JSON_UNESCAPED_UNICODE),
+        ]);
         return (int) $this->pdo->lastInsertId();
+    }
+
+    /**
+     * F116/RF-293: latest command of a kind that is still pending/picked up.
+     * Used to avoid enqueuing the same remote open twice in a burst.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function findRecent(string $externalId, string $command, int $seconds = 5): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT id, external_id, command, payload_json, status, created_at, updated_at
+             FROM device_commands
+             WHERE external_id = :x AND command = :c
+               AND status IN ('pending','picked_up')
+               AND updated_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL :s SECOND)
+             ORDER BY id DESC LIMIT 1"
+        );
+        $stmt->execute([
+            ':x' => $externalId,
+            ':c' => $command,
+            ':s' => max(1, $seconds),
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
     }
 
     /**

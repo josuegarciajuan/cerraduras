@@ -5335,7 +5335,7 @@ for F85_MARK in \
     "src/Domain/Warehouse/WarehouseRecordingService.php:reentry_seconds" \
     "bin/warehouse-recorder.php:busyDevices" \
     "public/index.php:unresolved_transition" \
-    "public/index.php:source' => 'panel'" \
+    "public/index.php:warehouseDoorOpenService->request" \
     "public/almacen.html:f-discards" \
     "public/assets/almacen.js:doorStaleProbed"; do
     F85_FILE="${F85_MARK%%:*}"
@@ -8535,6 +8535,65 @@ if [ "$SERVER_UP" = true ]; then
         "F115: door/open sin room_id → 400 (sin efecto físico)" --body '{}'
 else
     skip "F115 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
+# BLOCK 86 — F116: apertura remota del almacén desde /timbre
+# Trazabilidad: RF-293…RF-296, TSK-F116
+# =============================================================================
+block "BLOCK 86 — F116: apertura remota del almacén"
+
+for F116_FILE in \
+    src/Domain/Warehouse/RemoteDoorOpenPolicy.php \
+    src/Domain/Warehouse/WarehouseDoorOpenService.php \
+    tests/Unit/RemoteDoorOpenPolicyTest.php \
+    tests/Unit/F116RemoteOpenTest.php; do
+    if [ -f "$F116_FILE" ]; then
+        pass "F116: existe $F116_FILE"
+    else
+        fail "F116: $F116_FILE" "no encontrado"
+    fi
+done
+
+for F116_MARK in \
+    'warehouseDoorOpenService->request' \
+    'remote_open_capable' \
+    'remote_open_unavailable'; do
+    if grep -qF "$F116_MARK" public/index.php src/Domain/Warehouse/WarehouseDoorOpenService.php 2>/dev/null; then
+        pass "F116: backend incluye $F116_MARK"
+    else
+        fail "F116: backend $F116_MARK" "ausente"
+    fi
+done
+
+for F116_FW in \
+    ../firmware/scanner-relay-prod-r35d/scanner-relay-prod-r35d.ino \
+    ../firmware/esp-cerradura/esp-cerradura.ino; do
+    for F116_FW_MARK in 'cmdName == "open"' 'FAST_CMD_POLL_MS' 'remote_open_capable'; do
+        if grep -qF "$F116_FW_MARK" "$F116_FW"; then
+            pass "F116: $(basename "$F116_FW") incluye $F116_FW_MARK"
+        else
+            fail "F116: $(basename "$F116_FW") $F116_FW_MARK" "ausente"
+        fi
+    done
+done
+
+if [ "$SERVER_UP" = true ]; then
+    http_test POST /almacen-api/door/open 400 \
+        "F116: door/open sin room_id → 400 (sin efecto)" --body '{}'
+    http_test POST /almacen-api/door/open 404 \
+        "F116: door/open de una sala inexistente → 404 (sin efecto)" \
+        --body '{"room_id":999999}'
+    F116_HB=$(curl -s --max-time 5 -X POST "$API_BASE/dashboard-api/device-heartbeat" \
+        -H 'Content-Type: application/json' \
+        -d '{"external_id":"F116-NOEXIST","remote_open_capable":true,"firmware_version":"2.7-ota"}')
+    if printf '%s' "$F116_HB" | grep -q '"remote_open_capable":true'; then
+        pass "F116: heartbeat devuelve remote_open_capable"
+    else
+        fail "F116: heartbeat remote_open_capable" "$(printf '%s' "$F116_HB" | head -c 200)"
+    fi
+else
+    skip "F116 HTTP" "servidor no disponible"
 fi
 
 # =============================================================================
