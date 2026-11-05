@@ -1,5 +1,5 @@
 [Unit]
-Description=Cerraduras — servidor MJPEG de cámaras (almacén y timbrado) (F70/F116)
+Description=Cerraduras — servidor MJPEG de cámaras (almacén y timbrado) (F70/F117)
 Documentation=file:///root/cerraduras/.specs/specs/design.md
 After=network-online.target cerraduras-api.service
 Wants=network-online.target
@@ -10,7 +10,7 @@ WorkingDirectory=/root/cerraduras/api
 # Escucha SOLO en loopback; se expone al navegador por Apache (/almacen-live).
 Environment=CAMERAS_LIVE_HOST=127.0.0.1
 Environment=CAMERAS_LIVE_PORT=8086
-# F116: descubre automáticamente las salas ALMACEN_BEBIDAS y TIMBRADO con pack.
+# F117: descubre automáticamente las salas ALMACEN_BEBIDAS y TIMBRADO con pack.
 # Si se define CAMERAS_LIVE_ROOM_ID, se limita a esa sala.
 # Environment=CAMERAS_LIVE_ROOM_ID=14
 Environment=CAMERAS_LIVE_ROOM_TYPES=ALMACEN_BEBIDAS,TIMBRADO

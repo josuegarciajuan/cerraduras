@@ -244,7 +244,7 @@ final class IotSessionService
                     $timbradoPresence = $this->isTimbradoRoom($room);
                     $warehousePresence = $this->isWarehouseRoom($room) || $timbradoPresence;
                     if ($timbradoPresence) {
-                        // F116: en la oficina el radar es la única autoridad de
+                        // F117: en la oficina el radar es la única autoridad de
                         // presencia; no hay estancia hotelera ni fusión de cámara.
                         $entryWindowActive = true;
                         $insideNoExitCycle = true;
@@ -1046,7 +1046,7 @@ final class IotSessionService
     }
 
     /**
-     * F116: la sala es de tipo TIMBRADO (oficina).
+     * F117: la sala es de tipo TIMBRADO (oficina).
      */
     private function isTimbradoRoom(Room $room): bool
     {

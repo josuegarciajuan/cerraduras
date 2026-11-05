@@ -9,7 +9,7 @@ use App\Support\Config;
 use PDO;
 
 /**
- * TimbreStateController — snapshot vivo de la oficina TIMBRADO (F116).
+ * TimbreStateController — snapshot vivo de la oficina TIMBRADO (F117).
  *
  * GET /timbre-api/state?room_id=N
  *

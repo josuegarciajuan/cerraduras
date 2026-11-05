@@ -1,4 +1,4 @@
-/* Timbre — video portero de oficina (F116, revisa F115).
+/* Timbre — video portero de oficina (F117, revisa F115).
  * Sin dependencias. SSE con watchdog y fallback a polling.
  * No llama a Tuya: la presencia llega por push y la apertura es explícita. */
 (function () {

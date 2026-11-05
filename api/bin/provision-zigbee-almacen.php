@@ -117,7 +117,7 @@ $stmt = $pdo->prepare('SELECT id, code, name FROM device_packs WHERE code = :c L
 $stmt->execute([':c' => PACK_CODE]);
 $pack = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
-// F116: el pack Zigbee ya vive en la sala TIMBRADO `oficina`. Este script
+// F117: el pack Zigbee ya vive en la sala TIMBRADO `oficina`. Este script
 // histórico del almacén no debe moverlo de vuelta ni reescribir la sala.
 if ($pack !== null) {
     $assigned = $pdo->prepare(

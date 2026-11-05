@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Domain\Timbre;
 
 /**
- * TimbreMovementRules — reglas puras del timbrado (F116).
+ * TimbreMovementRules — reglas puras del timbrado (F117).
  *
  * No hace I/O. Traduce presencia/estado de puerta a dirección, decide cuándo
  * empieza un cruce y qué estado final tiene un movimiento al parar.

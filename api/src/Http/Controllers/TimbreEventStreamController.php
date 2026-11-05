@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 /**
- * TimbreEventStreamController — SSE del panel /timbre (F116).
+ * TimbreEventStreamController — SSE del panel /timbre (F117).
  *
  * GET /timbre-api/event-stream?room_id=N
  */

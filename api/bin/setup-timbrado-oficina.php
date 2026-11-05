@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * bin/setup-timbrado-oficina.php — F116
+ * bin/setup-timbrado-oficina.php — F117
  *
  * Crea (o reutiliza) la sala `oficina` de tipo TIMBRADO y le asigna el pack
  * `PACK_ZIGBEE`, desasignándolo de la sala donde esté ahora. No borra cámaras

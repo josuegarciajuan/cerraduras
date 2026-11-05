@@ -160,7 +160,7 @@ check('formatAge inválido', formatAge(-1) === '');
 check('DOOR_PULSE_MS = 1200', DOOR_PULSE_MS === 1200);
 check('OPEN_COOLDOWN_MS = 3000', OPEN_COOLDOWN_MS === 3000);
 
-// ─── 10. Aperturas y llaves QR (F116) ─────────────────────────────────
+// ─── 10. Aperturas y llaves QR (F117) ─────────────────────────────────
 check('tipo sinllave', openingTypeLabel('sinllave') === 'Sin llave');
 check('tipo qr', openingTypeLabel('qr') === 'QR');
 check('tipo ficha', openingTypeLabel('ficha') === 'Ficha');

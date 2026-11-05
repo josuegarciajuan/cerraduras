@@ -10,7 +10,7 @@ use App\Support\Clock;
 use PDO;
 
 /**
- * TimbreRecordingService — motor de movimientos y grabación del timbrado (F116).
+ * TimbreRecordingService — motor de movimientos y grabación del timbrado (F117).
  *
  * Una fila `timbre_movements` por apertura/cruce. La grabación usa la cámara
  * INTERIOR del pack y `camera_recordings.timbre_movement_id`.

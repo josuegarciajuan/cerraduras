@@ -3451,7 +3451,7 @@ $router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'up
 $router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
 $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
 
-// --- Routes: video portero de oficina TIMBRADO (F116, público LAN) ---
+// --- Routes: video portero de oficina TIMBRADO (F117, público LAN) ---
 $timbreStateController = new \App\Http\Controllers\TimbreStateController($pdo);
 $timbreController = new \App\Http\Controllers\TimbreController(
     $pdo,

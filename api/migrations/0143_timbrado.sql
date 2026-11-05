@@ -1,6 +1,6 @@
--- 0143_timbrado.sql — F116: sala de tipo TIMBRADO (oficina)
+-- 0143_timbrado.sql — F117: sala de tipo TIMBRADO (oficina)
 --
--- Trazabilidad: F116 · RF-293…RF-298 · design.md §F116 · contracts.md §F116
+-- Trazabilidad: F117 · RF-297…RF-302 · design.md §F117 · contracts.md §F117
 --
 -- Añade:
 --   - columnas de temporización del timbrado en room_types;

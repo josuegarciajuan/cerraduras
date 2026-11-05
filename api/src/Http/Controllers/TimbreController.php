@@ -13,7 +13,7 @@ use App\Http\Response;
 use PDO;
 
 /**
- * TimbreController — API del video portero de oficina (F116).
+ * TimbreController — API del video portero de oficina (F117).
  *
  * Rutas públicas LAN:
  *   GET  /timbre-api/openings?room_id=N&limit=50

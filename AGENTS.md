@@ -214,7 +214,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F113 Lector R35D-B como lector de fichas NFC** | **BLOCK 69 + `CredentialFormatTest`** | **Completado (código); prueba física 2026-11-03 OK con `00EFA5BB`; regresión global pendiente de corrida sin sesión concurrente** |
 | **F114 Salida con puerta abierta + reentrada por radar (`mixed`)** | **`croquis-logic.test.js` + `RadarPresenceDecisionTest.php`** | **Implementado (código); prueba física A/B pendiente** |
 | **F115 Video portero del almacén (`/timbre`)** | **BLOCK 85 + `timbre-logic.test.js`** | **Implementado (código); prueba manual pendiente** |
-| **F116 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 86 + units F116** | **Implementado; migración aplicada; prueba física pendiente** |
+| **F117 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 87 + units F117** | **Implementado; migración aplicada; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 

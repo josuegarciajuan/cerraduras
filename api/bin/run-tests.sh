@@ -78,7 +78,7 @@ done
 # Alias corto para queries con -sN (skip headers, numeric)
 MYSQL="$MYSQL_BIN -u$DB_USER -p$DB_PASS -h$DB_HOST -P$DB_PORT $DB_NAME"
 
-# F116: la sala Zigbee vive ahora en el pack PACK_ZIGBEE (TIMBRADO/oficina).
+# F117: la sala Zigbee vive ahora en el pack PACK_ZIGBEE (TIMBRADO/oficina).
 # Se resuelve dinámicamente para no depender de ids fijos tras mover el pack.
 ZIGBEE_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
 [ -z "$ZIGBEE_ROOM_ID" ] && ZIGBEE_ROOM_ID=14
@@ -8550,127 +8550,127 @@ fi
 
 
 # =============================================================================
-# BLOCK 86 — F116: oficina TIMBRADO, movimientos y llaves QR
-# Trazabilidad: RF-293…RF-298, TSK-F116
+# BLOCK 87 — F117: oficina TIMBRADO, movimientos y llaves QR
+# Trazabilidad: RF-297…RF-302, TSK-F117
 # =============================================================================
-block "BLOCK 86 — F116: oficina TIMBRADO y aperturas"
+block "BLOCK 87 — F117: oficina TIMBRADO y aperturas"
 
-for F116_ASSET in \
+for F117_ASSET in \
     public/assets/timbre.js \
     public/assets/timbre-logic.js \
     tests/Unit/timbre-logic.test.js \
     tests/Unit/TimbreMovementRulesTest.php \
     src/Domain/Timbre/TimbreMovementRules.php \
     src/Domain/Timbre/TimbreRecordingService.php; do
-    if [ -f "$F116_ASSET" ]; then
-        pass "F116: existe $F116_ASSET"
+    if [ -f "$F117_ASSET" ]; then
+        pass "F117: existe $F117_ASSET"
     else
-        fail "F116: $F116_ASSET" "no encontrado"
+        fail "F117: $F117_ASSET" "no encontrado"
     fi
 done
 
-F116_TYPE_ID=$($MYSQL -sN -e "SELECT id FROM room_types WHERE code='TIMBRADO' LIMIT 1" 2>/dev/null)
-[ -n "$F116_TYPE_ID" ] && pass "F116: room_type TIMBRADO existe (id=$F116_TYPE_ID)" || fail "F116: room_type TIMBRADO" "no existe — ejecuta: php bin/migrate.php"
+F117_TYPE_ID=$($MYSQL -sN -e "SELECT id FROM room_types WHERE code='TIMBRADO' LIMIT 1" 2>/dev/null)
+[ -n "$F117_TYPE_ID" ] && pass "F117: room_type TIMBRADO existe (id=$F117_TYPE_ID)" || fail "F117: room_type TIMBRADO" "no existe — ejecuta: php bin/migrate.php"
 
-F116_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
-if [ -n "$F116_ROOM" ]; then
-    pass "F116: PACK_ZIGBEE asignado a la sala $F116_ROOM"
+F117_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
+if [ -n "$F117_ROOM" ]; then
+    pass "F117: PACK_ZIGBEE asignado a la sala $F117_ROOM"
 else
-    fail "F116: pack Zigbee" "sin sala asignada — ejecuta: php bin/setup-timbrado-oficina.php --apply"
+    fail "F117: pack Zigbee" "sin sala asignada — ejecuta: php bin/setup-timbrado-oficina.php --apply"
 fi
 
-F116_TABLES=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('timbre_movements','timbre_state')" 2>/dev/null)
-[ "$F116_TABLES" = "2" ] && pass "F116: tablas timbre_movements y timbre_state" || fail "F116: esquema timbre" "faltan tablas (php bin/migrate.php)"
+F117_TABLES=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('timbre_movements','timbre_state')" 2>/dev/null)
+[ "$F117_TABLES" = "2" ] && pass "F117: tablas timbre_movements y timbre_state" || fail "F117: esquema timbre" "faltan tablas (php bin/migrate.php)"
 
 if grep -q "'/timbre-api/state'" public/index.php \
     && grep -q "'/timbre-api/openings'" public/index.php \
     && grep -q "'/timbre-api/keys'" public/index.php; then
-    pass "F116: rutas /timbre-api registradas"
+    pass "F117: rutas /timbre-api registradas"
 else
-    fail "F116: rutas /timbre-api" "ausentes en index.php"
+    fail "F117: rutas /timbre-api" "ausentes en index.php"
 fi
 
-for F116_MARK in \
+for F117_MARK in \
     'id="openings-list"' \
     'id="btn-create-key"' \
     'id="modal-backdrop"' \
     'qrcode.min.js' \
     'Oficina' \
     'timbre-logic.js'; do
-    if grep -qF "$F116_MARK" public/timbre.html 2>/dev/null; then
-        pass "F116: timbre.html incluye $F116_MARK"
+    if grep -qF "$F117_MARK" public/timbre.html 2>/dev/null; then
+        pass "F117: timbre.html incluye $F117_MARK"
     else
-        fail "F116: timbre.html $F116_MARK" "ausente"
+        fail "F117: timbre.html $F117_MARK" "ausente"
     fi
 done
 
-for F116_JS in \
+for F117_JS in \
     '/timbre-api/state' \
     '/timbre-api/event-stream' \
     '/timbre-api/openings' \
     '/timbre-api/keys' \
     '/timbre-api/door/open' \
     'openKeyModal'; do
-    if grep -qF "$F116_JS" public/assets/timbre.js 2>/dev/null; then
-        pass "F116: timbre.js incluye $F116_JS"
+    if grep -qF "$F117_JS" public/assets/timbre.js 2>/dev/null; then
+        pass "F117: timbre.js incluye $F117_JS"
     else
-        fail "F116: timbre.js $F116_JS" "ausente"
+        fail "F117: timbre.js $F117_JS" "ausente"
     fi
 done
 if grep -q "TIMBRADO" public/assets/timbre-logic.js && grep -q "oficina" public/assets/timbre-logic.js; then
-    pass "F116: timbre-logic usa TIMBRADO/oficina"
+    pass "F117: timbre-logic usa TIMBRADO/oficina"
 else
-    fail "F116: timbre-logic" "no apunta a TIMBRADO/oficina"
+    fail "F117: timbre-logic" "no apunta a TIMBRADO/oficina"
 fi
 
 if php tests/Unit/TimbreMovementRulesTest.php >/tmp/f116-rules.log 2>&1; then
-    F116_SUM=$(grep -oE '[0-9]+ passed, [0-9]+ failed' /tmp/f116-rules.log | tail -1)
-    pass "F116: TimbreMovementRules (${F116_SUM:-ok})"
+    F117_SUM=$(grep -oE '[0-9]+ passed, [0-9]+ failed' /tmp/f116-rules.log | tail -1)
+    pass "F117: TimbreMovementRules (${F117_SUM:-ok})"
 else
-    fail "F116: TimbreMovementRules" "$(grep -iE 'FAIL|error|❌' /tmp/f116-rules.log | head -3 | tr '\n' ' ')"
+    fail "F117: TimbreMovementRules" "$(grep -iE 'FAIL|error|❌' /tmp/f116-rules.log | head -3 | tr '\n' ' ')"
 fi
 
-F116_OUT=$(node tests/Unit/timbre-logic.test.js 2>&1)
+F117_OUT=$(node tests/Unit/timbre-logic.test.js 2>&1)
 if [ $? -eq 0 ]; then
-    F116_SUM=$(printf '%s\n' "$F116_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
-    pass "F116: timbre-logic (${F116_SUM:-ok})"
+    F117_SUM=$(printf '%s\n' "$F117_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    pass "F117: timbre-logic (${F117_SUM:-ok})"
 else
-    fail "F116: timbre-logic" "$(printf '%s\n' "$F116_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+    fail "F117: timbre-logic" "$(printf '%s\n' "$F117_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
 fi
 
-if [ "$SERVER_UP" = true ] && [ -n "$F116_ROOM" ]; then
-    http_test GET "/timbre-api/state?room_id=$F116_ROOM" 200 "F116: GET /timbre-api/state → 200"
-    http_test GET "/timbre-api/openings?room_id=$F116_ROOM" 200 "F116: GET /timbre-api/openings → 200"
-    F116_OPEN=$(curl -s --max-time 5 "$API_BASE/timbre-api/openings?room_id=$F116_ROOM")
-    if printf '%s' "$F116_OPEN" | grep -q '"openings"'; then
-        pass "F116: openings devuelve el listado"
+if [ "$SERVER_UP" = true ] && [ -n "$F117_ROOM" ]; then
+    http_test GET "/timbre-api/state?room_id=$F117_ROOM" 200 "F117: GET /timbre-api/state → 200"
+    http_test GET "/timbre-api/openings?room_id=$F117_ROOM" 200 "F117: GET /timbre-api/openings → 200"
+    F117_OPEN=$(curl -s --max-time 5 "$API_BASE/timbre-api/openings?room_id=$F117_ROOM")
+    if printf '%s' "$F117_OPEN" | grep -q '"openings"'; then
+        pass "F117: openings devuelve el listado"
     else
-        fail "F116: openings" "respuesta sin openings"
+        fail "F117: openings" "respuesta sin openings"
     fi
-    http_test POST /timbre-api/door/open 400 "F116: door/open sin room_id → 400" --body '{}'
-    http_test POST /timbre-api/keys 400 "F116: keys sin room_id → 400" --body '{}'
+    http_test POST /timbre-api/door/open 400 "F117: door/open sin room_id → 400" --body '{}'
+    http_test POST /timbre-api/keys 400 "F117: keys sin room_id → 400" --body '{}'
 
-    F116_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)
-    F116_KEY_RESP=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"room_id\":$F116_ROOM,\"owner_type\":\"FREE\",\"owner_name\":\"F116 Runner\",\"valid_until\":\"$F116_VALID\"}" \
+    F117_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)
+    F117_KEY_RESP=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"room_id\":$F117_ROOM,\"owner_type\":\"FREE\",\"owner_name\":\"F117 Runner\",\"valid_until\":\"$F117_VALID\"}" \
         "$API_BASE/timbre-api/keys" 2>/dev/null)
-    F116_KEY_ID=$(echo "$F116_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
-    F116_TOKEN=$(echo "$F116_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
-    if [ -n "$F116_KEY_ID" ] && [ -n "$F116_TOKEN" ]; then
-        pass "F116: crear llave QR libre y devolver token una vez"
+    F117_KEY_ID=$(echo "$F117_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+    F117_TOKEN=$(echo "$F117_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+    if [ -n "$F117_KEY_ID" ] && [ -n "$F117_TOKEN" ]; then
+        pass "F117: crear llave QR libre y devolver token una vez"
     else
-        fail "F116: crear llave QR libre" "$(echo "$F116_KEY_RESP" | tr -d '\n' | head -c 300)"
+        fail "F117: crear llave QR libre" "$(echo "$F117_KEY_RESP" | tr -d '\n' | head -c 300)"
     fi
-    if echo "$F116_KEY_RESP" | grep -q 'token_hash'; then
-        fail "F116: la API no expone token_hash" "campo presente"
+    if echo "$F117_KEY_RESP" | grep -q 'token_hash'; then
+        fail "F117: la API no expone token_hash" "campo presente"
     else
-        pass "F116: la API no expone token_hash"
+        pass "F117: la API no expone token_hash"
     fi
-    if [ -n "$F116_KEY_ID" ]; then
-        $MYSQL -sN -e "DELETE FROM access_keys WHERE id=$F116_KEY_ID" 2>/dev/null || true
+    if [ -n "$F117_KEY_ID" ]; then
+        $MYSQL -sN -e "DELETE FROM access_keys WHERE id=$F117_KEY_ID" 2>/dev/null || true
     fi
 else
-    skip "F116 HTTP" "servidor no disponible o sin sala TIMBRADO"
+    skip "F117 HTTP" "servidor no disponible o sin sala TIMBRADO"
 fi
 
 # =============================================================================

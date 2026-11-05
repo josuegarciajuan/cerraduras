@@ -254,7 +254,7 @@ final class AccessKeyService
 
 
     /**
-     * F116: crea una llave QR con titular libre (sin worker ni rol).
+     * F117: crea una llave QR con titular libre (sin worker ni rol).
      * Se guarda como ROLE sin role_id y con permiso explícito para un tipo de
      * sala. Pensada para el modal de /timbre.
      *

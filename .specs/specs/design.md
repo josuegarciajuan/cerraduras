@@ -26165,7 +26165,7 @@ prueba de `door/open` usa un body vacío (400, sin efecto físico).
 
 ---
 
-# F116 — Oficina TIMBRADO (`/timbre`)
+# F117 — Oficina TIMBRADO (`/timbre`)
 
 ## 116.1 Alcance
 
@@ -26219,5 +26219,5 @@ aplica al timbrado. `cameras-live.js` descubre salas `ALMACEN_BEBIDAS` y
 
 ## 116.6 Pruebas
 
-Units de reglas puras, JS de panel/listado/formulario, BLOCK 86 y resolución
+Units de reglas puras, JS de panel/listado/formulario, BLOCK 87 y resolución
 dinámica de la sala Zigbee por pack en el runner.
