@@ -26,6 +26,8 @@ use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Stays\StayRepository;
 use App\Domain\Stays\StayStateMachine;
+use App\Domain\Timbre\RoomRecordingCoordinator;
+use App\Domain\Timbre\TimbreRecordingService;
 use App\Domain\Warehouse\WarehouseRecordingService;
 use App\Domain\Workers\WorkerSessionRepository;
 use PDO;
@@ -78,6 +80,13 @@ final class ZigbeeMqttRuntimeFactory
         }
         $anomalies = new AnomalyService(new AnomalyPipeline($detectors), $anomalyRepository, $exitWithoutDoor, new RoomAutomationPauseRepository($pdo));
 
+        $pauseRepo = new RoomAutomationPauseRepository($pdo);
+        $recording = new RoomRecordingCoordinator(
+            $pdo,
+            new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', $pauseRepo),
+            new TimbreRecordingService($pdo, $switchService, 'TIMBRADO', $pauseRepo)
+        );
+
         $iotService = IotSessionServiceFactory::create(
             $presenceEvents,
             $iotSessions,
@@ -89,7 +98,7 @@ final class ZigbeeMqttRuntimeFactory
             $switchService,
             $anomalies,
             $workerSessions,
-            new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', new RoomAutomationPauseRepository($pdo)),
+            $recording,
             new RoomSensorStateRepository($pdo),
             new RadarPresenceReportRepository($pdo)
         );

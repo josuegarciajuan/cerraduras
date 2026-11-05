@@ -4996,10 +4996,12 @@ final class SensorWizardController
             'SELECT rt.code FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id WHERE r.id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $roomId]);
-        if ((string) ($stmt->fetchColumn() ?: '') !== 'ALMACEN_BEBIDAS') {
+        $code = (string) ($stmt->fetchColumn() ?: '');
+        if (!in_array($code, ['ALMACEN_BEBIDAS', 'TIMBRADO'], true)) {
             return [];
         }
-        $raw = \App\Support\Config::get('RADAR_WAREHOUSE_FADING_TIME', '2.5') ?? '2.5';
+        $key = $code === 'TIMBRADO' ? 'RADAR_TIMBRE_FADING_TIME' : 'RADAR_WAREHOUSE_FADING_TIME';
+        $raw = \App\Support\Config::get($key, '2.5') ?? '2.5';
         if (!is_numeric($raw)) {
             $raw = '5.0';
         }

@@ -78,6 +78,14 @@ done
 # Alias corto para queries con -sN (skip headers, numeric)
 MYSQL="$MYSQL_BIN -u$DB_USER -p$DB_PASS -h$DB_HOST -P$DB_PORT $DB_NAME"
 
+# F117: la sala Zigbee vive ahora en el pack PACK_ZIGBEE (TIMBRADO/oficina).
+# Se resuelve dinámicamente para no depender de ids fijos tras mover el pack.
+ZIGBEE_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
+[ -z "$ZIGBEE_ROOM_ID" ] && ZIGBEE_ROOM_ID=14
+WA_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' AND r.pack_id IS NOT NULL ORDER BY r.id LIMIT 1" 2>/dev/null)
+[ -z "$WA_ROOM_ID" ] && WA_ROOM_ID=12
+export ZIGBEE_ROOM_ID WA_ROOM_ID
+
 db_exec() {
     local sql="$1"
 
@@ -6019,7 +6027,8 @@ else
 fi
 if grep -qF "cerraduras-zigbee-ingress" ../start-all.sh \
     && grep -qF "cerraduras-zigbee-spool" ../start-all.sh \
-    && grep -qF "cerraduras-zigbee-tunnel" ../stop-all.sh; then
+    && grep -qF "cerraduras-zigbee-ingress" ../stop-all.sh \
+    && grep -qF "cerraduras-zigbee-spool" ../stop-all.sh; then
     pass "F91: wiring condicional de arranque/parada y units"
 else
     fail "F91: wiring condicional de arranque/parada"
@@ -6088,9 +6097,9 @@ fi
 # =============================================================================
 block "BLOCK 65 — F92: conectividad por transporte"
 
-F92_ROOM=$($MYSQL -sN -e "SELECT id FROM rooms WHERE code='almacenZigbee' LIMIT 1" 2>/dev/null)
+F92_ROOM="$ZIGBEE_ROOM_ID"
 if [ -z "$F92_ROOM" ]; then
-    skip "F92 sala almacenZigbee" "No existe la sala almacenZigbee"
+    skip "F92 sala Zigbee" "No existe la sala con pack PACK_ZIGBEE"
 else
     F92_DS=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=$F92_ROOM")
     F92_RESULT=$(echo "$F92_DS" | python3 -c "
@@ -6354,22 +6363,23 @@ fi
 # HTTP condicional: corrida completa y determinista (paso D9 sin eventos).
 F94_UI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/sensores" 2>/dev/null || echo 000)
 if [ "$SERVER_UP" = true ] && [ "$F94_UI_CODE" = "200" ]; then
-    F94_CONTEXT=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/context?room_id=14" 2>/dev/null)
+    F94_CONTEXT=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/context?room_id=${ZIGBEE_ROOM_ID}" 2>/dev/null)
     F94_CTX_OK=$(printf '%s' "$F94_CONTEXT" | python3 -c "
-import sys,json
+import os,sys,json
 try: d=json.load(sys.stdin)
 except Exception: print('bad'); sys.exit(0)
-ok = d.get('room',{}).get('id')==14 and 'live' in d and 'devices' in d and 'settings' in d
+want = int(os.environ.get('ZIGBEE_ROOM_ID','14'))
+ok = d.get('room',{}).get('id')==want and 'live' in d and 'devices' in d and 'settings' in d
 print('ok' if ok else 'bad')
 " 2>/dev/null)
     if [ "$F94_CTX_OK" = "ok" ]; then
         pass "F94: context devuelve sala, dispositivos y estado"
     else
-        skip "F94 context" "sala 14 o API no disponible"
+        skip "F94 context" "sala Zigbee o API no disponible"
     fi
 
     F94_RUN=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/run/start" \
-        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner"}')
+        -H 'Content-Type: application/json' -d "{\"room_id\":${ZIGBEE_ROOM_ID},\"operator\":\"runner\"}")
     F94_RUN_ID=$(printf '%s' "$F94_RUN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
     if [ -n "$F94_RUN_ID" ]; then
         pass "F94: run/start crea corrida ($F94_RUN_ID)"
@@ -6491,7 +6501,7 @@ fi
 
 # HTTP condicional (solo con el despliegue v2).
 F95_UI=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/sensores" 2>/dev/null || echo 000)
-F95_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" 2>/dev/null || echo 000)
+F95_PING=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=${ZIGBEE_ROOM_ID}" 2>/dev/null || echo 000)
 if [ "$SERVER_UP" = true ] && [ "$F95_UI" = "200" ] && [ "$F95_PING" = "200" ]; then
     # Limpia corridas de test colgadas (solo operador runner*), sin tocar pruebas reales.
     F95_RUNNER_IDS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/runs" | python3 -c "
@@ -6506,7 +6516,7 @@ print(' '.join(str(r.get('run_id','')) for r in rows if r.get('status')=='runnin
         [ -n "$F95_NEWID" ] && rm -f "run/sensores/${F95_NEWID}.json" "run/sensores/${F95_NEWID}.jsonl" "run/sensores/locks/${F95_NEWID}.lock"
         rm -f "run/sensores/${RID}.json" "run/sensores/${RID}.jsonl" "run/sensores/locks/${RID}.lock"
     done
-    F95_ACTIVE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" | python3 -c "
+    F95_ACTIVE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=${ZIGBEE_ROOM_ID}" | python3 -c "
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: print(''); raise SystemExit
@@ -6518,12 +6528,12 @@ if a.get('attempt_id'): print(a.get('run_id','')+':'+a.get('attempt_id',''))
     else
 
     F95_ROOMS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/rooms")
-    if printf '%s' "$F95_ROOMS" | grep -q '"id":14'; then
+    if printf '%s' "$F95_ROOMS" | grep -q "\"id\":$ZIGBEE_ROOM_ID"; then
         pass "F95: rooms incluye la sala del piloto"
     else
-        skip "F95 rooms" "sala 14 no disponible"
+        skip "F95 rooms" "sala Zigbee no disponible"
     fi
-    F95_PRE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14")
+    F95_PRE=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=${ZIGBEE_ROOM_ID}")
     F95_PRE_OK=$(printf '%s' "$F95_PRE" | python3 -c "
 import sys,json
 try: d=json.load(sys.stdin)
@@ -6571,7 +6581,7 @@ print('ok' if v is True else ('pending' if v is None else 'bad'))
     fi
 
     F95_RUN=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
-        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner"}')
+        -H 'Content-Type: application/json' -d "{\"room_id\":${ZIGBEE_ROOM_ID},\"operator\":\"runner\"}")
     F95_RID=$(printf '%s' "$F95_RUN" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
     if [ -n "$F95_RID" ]; then
         pass "F95: run/start crea la corrida ($F95_RID)"
@@ -6654,7 +6664,7 @@ print('ok' if ok else 'bad')
 
         # Reinicio global: archiva el intento activo y crea una corrida limpia en la puerta.
         F95_RUN2=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
-            -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-reset"}')
+            -H 'Content-Type: application/json' -d "{\"room_id\":${ZIGBEE_ROOM_ID},\"operator\":\"runner-reset\"}")
         F95_RID2=$(printf '%s' "$F95_RUN2" | python3 -c "import sys,json; print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
         if [ -n "$F95_RID2" ]; then
             curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
@@ -6755,7 +6765,7 @@ F102_DEPLOYED=no
 if printf '%s' "$F102_PING_BODY" | grep -q "run_not_found"; then F102_DEPLOYED=yes; fi
 if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
     F102_RUN=$(curl -s --max-time 20 -X POST "${API_BASE}/dashboard-api/sensores/v2/run/start" \
-        -H 'Content-Type: application/json' -d '{"room_id":14,"operator":"runner-f102"}')
+        -H 'Content-Type: application/json' -d "{\"room_id\":${ZIGBEE_ROOM_ID},\"operator\":\"runner-f102\"}")
     F102_RID=$(printf '%s' "$F102_RUN" | python3 -c "import sys,json;print((json.load(sys.stdin).get('run') or {}).get('run_id',''))" 2>/dev/null)
     if [ -n "$F102_RID" ]; then
         F102_ATT=$(curl -s --max-time 5 -X POST "${API_BASE}/dashboard-api/sensores/v2/attempt/start" \
@@ -6805,10 +6815,10 @@ fi
 if [ "$SERVER_UP" = true ]; then
     F102_FIX="run/sensores/f102-state-fixture.json"
     python3 - "$F102_FIX" <<'PYFIX'
-import json, sys
+import json, os, sys
 base = {
     "run_id": "f102-state-fixture", "catalog": "sensores", "catalog_version": 2,
-    "room_id": 14, "status": "running", "operator": "runner",
+    "room_id": int(os.environ.get("ZIGBEE_ROOM_ID", "14")), "status": "running", "operator": "runner",
     "plan": ["radar_inside", "radar_outside"],
     "calibration": {"initial_settings": {"maximum_range": 6, "radar_sensitivity": 7}},
     "calibration_session": {
@@ -6936,10 +6946,10 @@ fi
 if [ "$SERVER_UP" = true ]; then
     F104_FIX="run/sensores/f104-state-fixture.json"
     python3 - "$F104_FIX" <<'PYFIX'
-import json, sys
+import json, os, sys
 base = {
     "run_id": "f104-state-fixture", "catalog": "sensores", "catalog_version": 3,
-    "room_id": 14, "status": "running", "operator": "runner",
+    "room_id": int(os.environ.get("ZIGBEE_ROOM_ID", "14")), "status": "running", "operator": "runner",
     "plan": ["radar_inside", "radar_outside"],
     "calibration": {"initial_settings": {"maximum_range": 6, "radar_sensitivity": 7}},
     "calibration_session": {
@@ -8166,14 +8176,14 @@ fi
 block "BLOCK 81 — F109: pausa manual de automatizaciones"
 
 F109_PAUSE=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
-  -d '{"room_id":14,"action":"pause"}' "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
+  -d "{\"room_id\":${WA_ROOM_ID},\"action\":\"pause\"}" "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
 if printf '%s' "$F109_PAUSE" | grep -q '"paused":true'; then
   pass "F109: pausa manual activada"
 else
   fail "F109: pausa manual" "$(printf '%s' "$F109_PAUSE" | head -c 300)"
 fi
 
-F109_PRE=$(curl -s --max-time 10 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=14" 2>/dev/null || echo '')
+F109_PRE=$(curl -s --max-time 10 "${API_BASE}/dashboard-api/sensores/v2/preflight?room_id=${WA_ROOM_ID}" 2>/dev/null || echo '')
 if printf '%s' "$F109_PRE" | grep -q '"automation_pause".*"paused":true'; then
   pass "F109: preflight refleja pausa"
 else
@@ -8186,9 +8196,10 @@ App\Support\Config::load(".env");
 $pdo = App\Infrastructure\Db\PdoFactory::make();
 $pause = new App\Domain\Presence\RoomAutomationPauseRepository($pdo);
 $svc = new App\Domain\Warehouse\WarehouseRecordingService($pdo, "ALMACEN_BEBIDAS", $pause);
-$before = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=14")->fetchColumn();
-$svc->onSignal(14, "DOOR_OPEN", ["provider" => "ZIGBEE2MQTT", "source" => "zigbee2mqtt"]);
-$after = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=14")->fetchColumn();
+$rid = (int) getenv("WA_ROOM_ID");
+$before = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=$rid")->fetchColumn();
+$svc->onSignal($rid, "DOOR_OPEN", ["provider" => "ZIGBEE2MQTT", "source" => "zigbee2mqtt"]);
+$after = (int) $pdo->query("SELECT COUNT(*) FROM warehouse_visits WHERE room_id=$rid")->fetchColumn();
 echo $before === $after ? "paused_no_effect" : "effect_created";
 ' 2>/dev/null || echo 'error')
 if [ "$F109_EFFECT" = "paused_no_effect" ]; then
@@ -8198,7 +8209,7 @@ else
 fi
 
 F109_RESUME=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
-  -d '{"room_id":14,"action":"resume"}' "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
+  -d "{\"room_id\":${WA_ROOM_ID},\"action\":\"resume\"}" "${API_BASE}/dashboard-api/sensores/v2/automation/pause" 2>/dev/null || echo '')
 if printf '%s' "$F109_RESUME" | grep -q '"paused":false'; then
   pass "F109: reanudación manual"
 else
@@ -8419,7 +8430,7 @@ else
 fi
 
 if [ "$SERVER_UP" = true ]; then
-  F112_DIAG=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics?room_id=14&window_minutes=60")
+  F112_DIAG=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics?room_id=${ZIGBEE_ROOM_ID}&window_minutes=60")
   F112_DIAG_OK=$(printf '%s' "$F112_DIAG" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -8432,7 +8443,7 @@ print('ok' if d.get('ok') is True and isinstance(s,list) and s and all(x.get('na
     fail "F112: diagnostics" "$(printf '%s' "$F112_DIAG" | head -c 200)"
   fi
 
-  F112_MD=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics/export?room_id=14&format=md")
+  F112_MD=$(curl -s --max-time 8 "${API_BASE}/dashboard-api/sensores/v2/switch/diagnostics/export?room_id=${ZIGBEE_ROOM_ID}&format=md")
   if printf '%s' "$F112_MD" | grep -q "Diagnostico de luz Zigbee"; then
     pass "F112: exportación markdown"
   else
@@ -8502,7 +8513,7 @@ for F115_JS in \
     'camFailed' \
     'doorOutcome' \
     'presence_stale' \
-    'almacenZigbee' \
+    'oficina' \
     'EventSource' \
     'is-open'; do
     if grep -qF "$F115_JS" public/assets/timbre.js public/assets/timbre-logic.js 2>/dev/null; then
@@ -8535,6 +8546,131 @@ if [ "$SERVER_UP" = true ]; then
         "F115: door/open sin room_id → 400 (sin efecto físico)" --body '{}'
 else
     skip "F115 HTTP" "servidor no disponible"
+fi
+
+
+# =============================================================================
+# BLOCK 87 — F117: oficina TIMBRADO, movimientos y llaves QR
+# Trazabilidad: RF-297…RF-302, TSK-F117
+# =============================================================================
+block "BLOCK 87 — F117: oficina TIMBRADO y aperturas"
+
+for F117_ASSET in \
+    public/assets/timbre.js \
+    public/assets/timbre-logic.js \
+    tests/Unit/timbre-logic.test.js \
+    tests/Unit/TimbreMovementRulesTest.php \
+    src/Domain/Timbre/TimbreMovementRules.php \
+    src/Domain/Timbre/TimbreRecordingService.php; do
+    if [ -f "$F117_ASSET" ]; then
+        pass "F117: existe $F117_ASSET"
+    else
+        fail "F117: $F117_ASSET" "no encontrado"
+    fi
+done
+
+F117_TYPE_ID=$($MYSQL -sN -e "SELECT id FROM room_types WHERE code='TIMBRADO' LIMIT 1" 2>/dev/null)
+[ -n "$F117_TYPE_ID" ] && pass "F117: room_type TIMBRADO existe (id=$F117_TYPE_ID)" || fail "F117: room_type TIMBRADO" "no existe — ejecuta: php bin/migrate.php"
+
+F117_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
+if [ -n "$F117_ROOM" ]; then
+    pass "F117: PACK_ZIGBEE asignado a la sala $F117_ROOM"
+else
+    fail "F117: pack Zigbee" "sin sala asignada — ejecuta: php bin/setup-timbrado-oficina.php --apply"
+fi
+
+F117_TABLES=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('timbre_movements','timbre_state')" 2>/dev/null)
+[ "$F117_TABLES" = "2" ] && pass "F117: tablas timbre_movements y timbre_state" || fail "F117: esquema timbre" "faltan tablas (php bin/migrate.php)"
+
+if grep -q "'/timbre-api/state'" public/index.php \
+    && grep -q "'/timbre-api/openings'" public/index.php \
+    && grep -q "'/timbre-api/keys'" public/index.php; then
+    pass "F117: rutas /timbre-api registradas"
+else
+    fail "F117: rutas /timbre-api" "ausentes en index.php"
+fi
+
+for F117_MARK in \
+    'id="openings-list"' \
+    'id="btn-create-key"' \
+    'id="modal-backdrop"' \
+    'qrcode.min.js' \
+    'Oficina' \
+    'timbre-logic.js'; do
+    if grep -qF "$F117_MARK" public/timbre.html 2>/dev/null; then
+        pass "F117: timbre.html incluye $F117_MARK"
+    else
+        fail "F117: timbre.html $F117_MARK" "ausente"
+    fi
+done
+
+for F117_JS in \
+    '/timbre-api/state' \
+    '/timbre-api/event-stream' \
+    '/timbre-api/openings' \
+    '/timbre-api/keys' \
+    '/timbre-api/door/open' \
+    'openKeyModal'; do
+    if grep -qF "$F117_JS" public/assets/timbre.js 2>/dev/null; then
+        pass "F117: timbre.js incluye $F117_JS"
+    else
+        fail "F117: timbre.js $F117_JS" "ausente"
+    fi
+done
+if grep -q "TIMBRADO" public/assets/timbre-logic.js && grep -q "oficina" public/assets/timbre-logic.js; then
+    pass "F117: timbre-logic usa TIMBRADO/oficina"
+else
+    fail "F117: timbre-logic" "no apunta a TIMBRADO/oficina"
+fi
+
+if php tests/Unit/TimbreMovementRulesTest.php >/tmp/f116-rules.log 2>&1; then
+    F117_SUM=$(grep -oE '[0-9]+ passed, [0-9]+ failed' /tmp/f116-rules.log | tail -1)
+    pass "F117: TimbreMovementRules (${F117_SUM:-ok})"
+else
+    fail "F117: TimbreMovementRules" "$(grep -iE 'FAIL|error|❌' /tmp/f116-rules.log | head -3 | tr '\n' ' ')"
+fi
+
+F117_OUT=$(node tests/Unit/timbre-logic.test.js 2>&1)
+if [ $? -eq 0 ]; then
+    F117_SUM=$(printf '%s\n' "$F117_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
+    pass "F117: timbre-logic (${F117_SUM:-ok})"
+else
+    fail "F117: timbre-logic" "$(printf '%s\n' "$F117_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ] && [ -n "$F117_ROOM" ]; then
+    http_test GET "/timbre-api/state?room_id=$F117_ROOM" 200 "F117: GET /timbre-api/state → 200"
+    http_test GET "/timbre-api/openings?room_id=$F117_ROOM" 200 "F117: GET /timbre-api/openings → 200"
+    F117_OPEN=$(curl -s --max-time 5 "$API_BASE/timbre-api/openings?room_id=$F117_ROOM")
+    if printf '%s' "$F117_OPEN" | grep -q '"openings"'; then
+        pass "F117: openings devuelve el listado"
+    else
+        fail "F117: openings" "respuesta sin openings"
+    fi
+    http_test POST /timbre-api/door/open 400 "F117: door/open sin room_id → 400" --body '{}'
+    http_test POST /timbre-api/keys 400 "F117: keys sin room_id → 400" --body '{}'
+
+    F117_VALID=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)
+    F117_KEY_RESP=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"room_id\":$F117_ROOM,\"owner_type\":\"FREE\",\"owner_name\":\"F117 Runner\",\"valid_until\":\"$F117_VALID\"}" \
+        "$API_BASE/timbre-api/keys" 2>/dev/null)
+    F117_KEY_ID=$(echo "$F117_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+    F117_TOKEN=$(echo "$F117_KEY_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+    if [ -n "$F117_KEY_ID" ] && [ -n "$F117_TOKEN" ]; then
+        pass "F117: crear llave QR libre y devolver token una vez"
+    else
+        fail "F117: crear llave QR libre" "$(echo "$F117_KEY_RESP" | tr -d '\n' | head -c 300)"
+    fi
+    if echo "$F117_KEY_RESP" | grep -q 'token_hash'; then
+        fail "F117: la API no expone token_hash" "campo presente"
+    else
+        pass "F117: la API no expone token_hash"
+    fi
+    if [ -n "$F117_KEY_ID" ]; then
+        $MYSQL -sN -e "DELETE FROM access_keys WHERE id=$F117_KEY_ID" 2>/dev/null || true
+    fi
+else
+    skip "F117 HTTP" "servidor no disponible o sin sala TIMBRADO"
 fi
 
 # =============================================================================

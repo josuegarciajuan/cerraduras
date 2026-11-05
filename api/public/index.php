@@ -2841,6 +2841,12 @@ $accessEventRepo  = new AccessEventRepository($pdo);
 $workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
 $warehouseAccessPolicy  = new WarehouseAccessPolicy($workerRoomOverrideRepo, $workerRoleRepo);
 $warehouseRecordingService = new \App\Domain\Warehouse\WarehouseRecordingService($pdo);
+$timbreRecordingService = new \App\Domain\Timbre\TimbreRecordingService($pdo, $switchService);
+$warehouseRecordingService = new \App\Domain\Timbre\RoomRecordingCoordinator(
+    $pdo,
+    $warehouseRecordingService,
+    $timbreRecordingService
+);
 $accessKeyRepo       = new \App\Domain\AccessKeys\AccessKeyRepository($pdo);
 $nfcCardRepo         = new \App\Domain\AccessKeys\NfcCardRepository($pdo);
 $nfcCardService      = new \App\Domain\AccessKeys\NfcCardService($nfcCardRepo);
@@ -3471,6 +3477,18 @@ $router->post('/almacen-api/cameras',           [$warehouseCameraController, 'cr
 $router->patch('/almacen-api/cameras/{id}',     [$warehouseCameraController, 'update']);
 $router->delete('/almacen-api/cameras/{id}',    [$warehouseCameraController, 'delete']);
 $router->post('/almacen-api/cameras/sync',      [$warehouseCameraController, 'sync']);
+
+// --- Routes: video portero de oficina TIMBRADO (F117, público LAN) ---
+$timbreStateController = new \App\Http\Controllers\TimbreStateController($pdo);
+$timbreController = new \App\Http\Controllers\TimbreController(
+    $pdo,
+    $warehouseDoorOpenService,
+    $accessKeyService
+);
+$router->get('/timbre-api/state',      [$timbreStateController, 'show']);
+$router->get('/timbre-api/openings',   [$timbreController, 'openings']);
+$router->post('/timbre-api/door/open', [$timbreController, 'openDoor']);
+$router->post('/timbre-api/keys',      [$timbreController, 'createKey']);
 
 // POST /almacen-api/motion — F88/RF-123.2: el worker de movimiento de cámaras
 // publica que una cámara del almacén ha detectado movimiento. Uso interno
@@ -4239,6 +4257,12 @@ if ($requestPath === '/dashboard-api/door-events' && ($_SERVER['REQUEST_METHOD']
 if ($requestPath === '/almacen-api/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
     $roomId = (int) ($_GET['room_id'] ?? 0);
     (new AlmacenEventStreamController($warehouseStateController))->stream($roomId);
+    // stream() calls exit()
+}
+
+if ($requestPath === '/timbre-api/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    $roomId = (int) ($_GET['room_id'] ?? 0);
+    (new \App\Http\Controllers\TimbreEventStreamController($timbreStateController))->stream($roomId);
     // stream() calls exit()
 }
 

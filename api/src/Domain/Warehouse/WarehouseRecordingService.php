@@ -375,6 +375,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         $stmt = $this->pdo->prepare(
             "UPDATE camera_recordings SET stop_requested=1
              WHERE status='RECORDING' AND stop_requested=0
+               AND visit_id IS NOT NULL
                AND started_at IS NOT NULL
                AND started_at <= (UTC_TIMESTAMP(3) - INTERVAL :s SECOND)"
         );

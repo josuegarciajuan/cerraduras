@@ -33,7 +33,7 @@ final class WarehouseDoorOpenService
         private CommandQueueRepository $queue,
         private AccessEventRepositoryInterface $accessEvents,
         private IotSessionRepositoryInterface $iotSessions,
-        private WarehouseRecordingService $warehouse
+        private WarehouseRecordingServiceInterface $warehouse
     ) {
     }
 

@@ -27,7 +27,7 @@ ExecStart=/usr/bin/ssh -N -T \
   -o ServerAliveInterval=15 \
   -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=accept-new \
-  -i /home/lock/.ssh/id_ed25519_zigbee_tunnel \
+  -i %h/.ssh/id_ed25519_zigbee_tunnel \
   -R 127.0.0.1:1884:127.0.0.1:1883 \
   -R 127.0.0.1:2222:127.0.0.1:22 \
   -R 127.0.0.1:8082:127.0.0.1:8080 \

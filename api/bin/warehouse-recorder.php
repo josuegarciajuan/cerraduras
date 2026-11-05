@@ -19,7 +19,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/Support/Autoload.php';
 
+use App\Domain\Devices\DeviceRepository;
+use App\Domain\Devices\SwitchService;
 use App\Domain\Presence\RoomAutomationPauseRepository;
+use App\Domain\Rooms\RoomRepository;
+use App\Domain\Timbre\TimbreRecordingService;
 use App\Domain\Warehouse\WarehouseRecordingService;
 use App\Infrastructure\Db\PdoFactory;
 use App\Support\Config;
@@ -39,6 +43,12 @@ if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0775, true) && !is_dir($stora
 $pdo = PdoFactory::make();
 $pauseRepo = new RoomAutomationPauseRepository($pdo);
 $service = new WarehouseRecordingService($pdo, 'ALMACEN_BEBIDAS', $pauseRepo);
+$timbreService = new TimbreRecordingService(
+    $pdo,
+    new SwitchService(new DeviceRepository($pdo), new RoomRepository($pdo), $pauseRepo),
+    'TIMBRADO',
+    $pauseRepo
+);
 
 // F73/RF-85: tope de duración de grabaciones (0 = sin límite).
 $maxRecordingSeconds = Config::getInt('WAREHOUSE_MAX_RECORDING_SECONDS', 0) ?? 0;
@@ -64,6 +74,7 @@ $log('started');
 while ($running) {
     try {
         $service->tickDeadlines();
+        $timbreService->tickDeadlines();
         // F73/RF-85: marca para parar los clips que superan el tope; el propio
         // tick los finaliza como SAVED al procesar stop_requested.
         $service->enforceRecordingCap($maxRecordingSeconds);
@@ -87,7 +98,7 @@ while ($running) {
             $busyDevices[(int) $busyId] = true;
         }
         foreach ($pdo->query(
-            "SELECT id, room_id, device_id, position, episode, visit_id
+            "SELECT id, room_id, device_id, position, episode, visit_id, timbre_movement_id
              FROM camera_recordings
              WHERE status='PENDING' AND discard_requested=0 AND stop_requested=0
              ORDER BY id ASC LIMIT 20"
@@ -206,7 +217,10 @@ function startRecording(\PDO $pdo, array &$procs, callable $log, string $ffmpeg,
         return;
     }
 
-    $base = ($r['visit_id'] !== null ? (int) $r['visit_id'] : 'x') . '_' . $r['position'] . '_' . $r['episode'] . '_' . time();
+    $base = (($r['timbre_movement_id'] ?? null) !== null
+            ? 'm' . (int) $r['timbre_movement_id']
+            : (($r['visit_id'] !== null && $r['visit_id'] !== '') ? (int) $r['visit_id'] : 'x'))
+        . '_' . $r['position'] . '_' . $r['episode'] . '_' . time();
     $tmp  = $dir . '/' . $base . '.tmp.mp4';
 
     $cmd = [

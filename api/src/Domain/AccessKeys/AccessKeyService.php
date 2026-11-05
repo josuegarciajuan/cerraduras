@@ -252,6 +252,78 @@ final class AccessKeyService
         return $created;
     }
 
+
+    /**
+     * F117: crea una llave QR con titular libre (sin worker ni rol).
+     * Se guarda como ROLE sin role_id y con permiso explícito para un tipo de
+     * sala. Pensada para el modal de /timbre.
+     *
+     * @return array<string,mixed>
+     */
+    public function createNamedQrKey(
+        string $label,
+        int $roomTypeId,
+        string $validUntil,
+        ?string $notes = null
+    ): array {
+        $label = trim($label);
+        if ($label === '') {
+            throw new UnprocessableException('validation_error', 'label is required');
+        }
+        if (mb_strlen($label) > 120) {
+            throw new UnprocessableException('validation_error', 'label must be <= 120 chars');
+        }
+        if ($roomTypeId <= 0) {
+            throw new UnprocessableException('validation_error', 'room_type_id is required');
+        }
+
+        $validUntil = $this->normaliseValidUntil($validUntil);
+        $exp = strtotime($validUntil . ' UTC');
+        if ($exp === false) {
+            throw new UnprocessableException('validation_error', 'valid_until is invalid');
+        }
+        if ($exp < time()) {
+            throw new UnprocessableException('validation_error', 'valid_until must be in the future');
+        }
+        $this->assertRoomTypesExist([$roomTypeId]);
+
+        $jti = self::uuidV4();
+        $iat = time();
+        $token = null;
+        $this->pdo->beginTransaction();
+        try {
+            $keyId = $this->keys->insert([
+                'label'          => $label,
+                'owner_type'     => 'ROLE',
+                'worker_id'      => null,
+                'role_id'        => null,
+                'key_type'       => 'QR',
+                'token_hash'     => 'pending-' . self::uuidV4(),
+                'token_jti'      => $jti,
+                'all_room_types' => false,
+                'nfc_card_id'    => null,
+                'valid_until'    => $validUntil,
+                'notes'          => $notes,
+            ]);
+            $token = $this->tokenizer->issueKey($keyId, $jti, $iat, $exp);
+            $tokenHash = QrTokenizer::hashForStorage($token);
+            $this->pdo->prepare(
+                'UPDATE access_keys SET token_hash = :h, token_jti = :j WHERE id = :id'
+            )->execute([':h' => $tokenHash, ':j' => $jti, ':id' => $keyId]);
+            $this->keys->setRoomTypes($keyId, [$roomTypeId]);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        $created = $this->getKey($keyId);
+        $created['qr_token'] = $token;
+        return $created;
+    }
+
     /**
      * @param array<string,mixed> $data
      */
@@ -689,7 +761,10 @@ final class AccessKeyService
 
         if ($this->warehouseRecorder !== null) {
             try {
-                $signal = ['key_id' => (int) $key['id']];
+                $signal = [
+                    'key_id' => (int) $key['id'],
+                    'credential_type' => $credentialType,
+                ];
                 if ($key['worker_id'] !== null) {
                     $signal['worker_id'] = (int) $key['worker_id'];
                     $signal['worker_session_id'] = $workerSessionId;

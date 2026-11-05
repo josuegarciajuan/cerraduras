@@ -116,6 +116,23 @@ $log('room_type ' . ROOM_TYPE_CODE . ' = id ' . $roomTypeId);
 $stmt = $pdo->prepare('SELECT id, code, name FROM device_packs WHERE code = :c LIMIT 1');
 $stmt->execute([':c' => PACK_CODE]);
 $pack = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+// F117: el pack Zigbee ya vive en la sala TIMBRADO `oficina`. Este script
+// histórico del almacén no debe moverlo de vuelta ni reescribir la sala.
+if ($pack !== null) {
+    $assigned = $pdo->prepare(
+        'SELECT r.code, rt.code AS type_code
+           FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+          WHERE r.pack_id = :pid LIMIT 1'
+    );
+    $assigned->execute([':pid' => (int) $pack['id']]);
+    $assignedRoom = $assigned->fetch(PDO::FETCH_ASSOC) ?: null;
+    if ($assignedRoom !== null && (string) $assignedRoom['type_code'] === 'TIMBRADO') {
+        $log('pack ' . PACK_CODE . ' ya provisionado en la sala ' . $assignedRoom['code'] . ' (TIMBRADO); dry-run: no se escribe nada');
+        exit(0);
+    }
+}
+
 if ($pack !== null) {
     if ((string) $pack['name'] !== PACK_NAME) {
         $fail('el pack ' . PACK_CODE . ' existe con otro nombre: ' . $pack['name']);

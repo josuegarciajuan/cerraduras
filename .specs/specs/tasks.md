@@ -11638,6 +11638,42 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 
 **Estado F115:** implementado; prueba manual en dispositivo pendiente.
 
+---
+
+# F117 — Oficina TIMBRADO (`/timbre`)
+
+## Fase 0 — Especificación
+- [x] TSK-F117-00: requisitos, diseño y contrato F117.
+
+## Fase 1 — Datos
+- [x] TSK-F117-01: migración `0143_timbrado.sql` (tipo, tablas, enlace, retención).
+- [x] TSK-F117-02: `bin/setup-timbrado-oficina.php` (sala `oficina` + pack Zigbee).
+- [x] TSK-F117-03: ejecutar migración y montaje en producción (sala `oficina`, id 107).
+
+## Fase 2 — Motor
+- [x] TSK-F117-04: `TimbreMovementRules`.
+- [x] TSK-F117-05: `TimbreRecordingService` (movimientos, grabación, luz, deadlines).
+- [x] TSK-F117-06: `RoomRecordingCoordinator` y coordinación con el almacén.
+- [x] TSK-F117-07: `IotSessionService` en modo TIMBRADO (`radar_only`, DP1, sin hotelería).
+- [x] TSK-F117-08: recorder, retención y descubrimiento de cámaras.
+
+## Fase 3 — API y panel
+- [x] TSK-F117-09: `/timbre-api/{state,event-stream,openings,door/open,keys}`.
+- [x] TSK-F117-10: panel a dos columnas, una cámara, listado y vídeo.
+- [x] TSK-F117-11: modal de creación de llave QR y descarga PNG.
+- [x] TSK-F117-12: textos “Oficina” y retirada de “Almacén de bebidas”.
+
+## Fase 4 — Pruebas
+- [x] TSK-F117-13: units `TimbreMovementRulesTest` y `timbre-logic.test.js`.
+- [x] TSK-F117-14: BLOCK 87 y resolución dinámica de la sala Zigbee.
+- [x] TSK-F117-15: regresión completa (1056 passed, 0 failed, 18 skipped).
+- [ ] TSK-F117-16: prueba física (entrada, salida, cruce, llave QR, vídeo, luz).
+
+## Fase 5 — Cierre
+- [ ] TSK-F117-17: desplegar código, instalar unit de cámaras y pushear.
+- [ ] TSK-F117-18: actualizar `AGENTS.md` con el estado final.
+
+**Estado F117:** implementado; migración y montaje aplicados; prueba física pendiente.
 # F116 — Apertura remota real desde `/timbre`
 
 ## Fase 0 — Especificación

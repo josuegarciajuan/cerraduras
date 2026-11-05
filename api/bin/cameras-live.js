@@ -40,6 +40,8 @@ const HOST = process.env.CAMERAS_LIVE_HOST || '127.0.0.1';
 const PORT = parseInt(process.env.CAMERAS_LIVE_PORT || '8086', 10);
 const API = (process.env.CAMERAS_LIVE_API || 'http://127.0.0.1:8080').replace(/\/+$/, '');
 const ROOM_ID_ENV = parseInt(process.env.CAMERAS_LIVE_ROOM_ID || '0', 10) || 0;
+const ROOM_TYPES = String(process.env.CAMERAS_LIVE_ROOM_TYPES || 'ALMACEN_BEBIDAS,TIMBRADO')
+  .split(',').map((v) => v.trim().toUpperCase()).filter(Boolean);
 const FFMPEG = process.env.CAMERAS_LIVE_FFMPEG || 'ffmpeg';
 const FPS = parseInt(process.env.CAMERAS_LIVE_FPS || '5', 10);
 const SCALE = process.env.CAMERAS_LIVE_SCALE || '640:-2';
@@ -106,30 +108,39 @@ function getJson(path) {
   });
 }
 
-async function resolveRoomId() {
-  if (ROOM_ID_ENV > 0) return ROOM_ID_ENV;
-  const state = await getJson('/almacen-api/state');
-  return state && state.room ? parseInt(state.room.id, 10) : 0;
+async function resolveRoomIds() {
+  if (ROOM_ID_ENV > 0) return [ROOM_ID_ENV];
+  const rooms = await getJson('/dashboard-api/rooms');
+  if (!Array.isArray(rooms)) return [];
+  return rooms
+    .filter((r) => r && r.pack_id !== null && r.pack_id !== undefined
+      && ROOM_TYPES.includes(String(r.room_type_code || '').toUpperCase()))
+    .map((r) => parseInt(r.id, 10))
+    .filter((id) => id > 0);
 }
 
 async function refreshCameras() {
   try {
-    const roomId = await resolveRoomId();
-    if (!roomId) {
-      log('sin sala ALMACEN_BEBIDAS todavía');
+    const roomIds = await resolveRoomIds();
+    if (!roomIds.length) {
+      log(`sin salas ${ROOM_TYPES.join('/')} con pack todavía`);
       return;
     }
-    const data = await getJson(`/almacen-api/cameras?room_id=${roomId}`);
-    const list = (data && data.cameras) || [];
-    cameras.clear();
-    for (const c of list) {
-      const url = String(c.rtsp_url || '').trim();
-      if (c.enabled === true && url !== '') {
-        cameras.set(String(c.id), { id: c.id, position: c.position, url });
+    const next = new Map();
+    for (const roomId of roomIds) {
+      const data = await getJson(`/almacen-api/cameras?room_id=${roomId}`);
+      const list = (data && data.cameras) || [];
+      for (const c of list) {
+        const url = String(c.rtsp_url || '').trim();
+        if (c.enabled === true && url !== '') {
+          next.set(String(c.id), { id: c.id, position: c.position, url });
+        }
       }
     }
+    cameras.clear();
+    for (const [id, cam] of next) cameras.set(id, cam);
     lastRefresh = new Date();
-    log(`caché de cámaras: ${cameras.size} habilitadas`);
+    log(`caché de cámaras: ${cameras.size} habilitadas (${roomIds.length} sala/s)`);
   } catch (e) {
     log(`error refrescando cámaras: ${e.message}`);
   }

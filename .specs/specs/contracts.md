@@ -16343,6 +16343,91 @@ datos nuevos ni modifica los existentes.
 - `POST door/open` vacío → 400 `room_id_required` (probado sin efecto físico).
 - Sin confirmación de puerta en 8 s → aviso ámbar, no error de hardware.
 
+---
+
+# F117 — Contrato del timbrado de oficina
+
+## 116.1 Rutas
+
+```
+GET  /timbre-api/state?room_id=N
+GET  /timbre-api/event-stream?room_id=N
+GET  /timbre-api/openings?room_id=N&limit=50
+POST /timbre-api/door/open            { room_id }
+POST /timbre-api/keys                 { room_id, owner_type, worker_id|role_id|owner_name, valid_until, label?, notes? }
+```
+
+Públicas LAN, igual que `/almacen-api`.
+
+## 116.2 `GET /timbre-api/state`
+
+```json
+{
+  "room": { "id": 15, "code": "oficina", "room_type_id": 7 },
+  "live": {
+    "door_state": "CLOSED|OPEN|UNKNOWN",
+    "presence_state": "PRESENT|ABSENT|UNKNOWN",
+    "presence_stale": false,
+    "last_open_at": null,
+    "last_close_at": null,
+    "switch_state": "ON|OFF|null"
+  },
+  "camera": {
+    "id": 325, "label": "tests", "enabled": true,
+    "recording": false, "mjpeg_url": "/almacen-live?id=325"
+  },
+  "movement": { "id": 12, "direction": "ENTRY", "status": "RECORDING" },
+  "last_movement_id": 12
+}
+```
+
+`camera` es solo la `INTERIOR`; puede ser `null`.
+
+## 116.3 `GET /timbre-api/openings`
+
+```json
+{
+  "room_id": 15,
+  "openings": [{
+    "id": 12,
+    "occurred_at": "2026-11-05 10:00:00.000",
+    "type": "sinllave|qr|ficha",
+    "trigger": "scan|door|radar",
+    "direction": "entry|exit|crossing|unknown",
+    "status": "recording|completed|no_door|no_presence|left_open|max_reached|cancelled",
+    "owner": "Josue",
+    "presence_before": true,
+    "door_left_open": false,
+    "door_open_seconds": null,
+    "recordings": [{
+      "id": 44, "status": "SAVED", "duration_s": 33,
+      "video_url": "/almacen-api/recordings/44/video",
+      "poster_url": "/almacen-api/recordings/44/poster"
+    }]
+  }]
+}
+```
+
+## 116.4 `POST /timbre-api/door/open`
+
+`{ room_id }` → `{ ok, result, provider, movement_started }`.
+El motor recibe `DOOR_OPEN` con `provider=PANEL`. Sin `room_id` → 400.
+
+## 116.5 `POST /timbre-api/keys`
+
+- `owner_type`: `WORKER` | `ROLE` | `FREE`.
+- `valid_until`: obligatorio y futuro (ISO/UTC).
+- `FREE` guarda una llave de rol sin rol (`owner_type=ROLE`, `role_id=null`)
+  con permiso explícito al tipo `TIMBRADO`.
+- 201 `{ data: { id, label, key_type:"QR", valid_until, qr_token, ... } }`.
+- Nunca devuelve `token_hash`.
+
+## 116.6 Errores
+
+- `400 room_id_required`
+- `404 timbre_room_not_found`
+- `422 validation_error` / `owner_room_denied`
+- `409 door_error`
 # F116 — Apertura remota del almacén
 
 ## 116.1 `POST /almacen-api/door/open` (forma aditiva)
