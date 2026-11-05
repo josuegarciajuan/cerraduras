@@ -126,7 +126,7 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
         ), 'is_new' => true];
     }
 
-    public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
+    public function markAudit(int $id, bool $applied, ?string $discardReason, ?string $effectiveValue = null): void {}
 
     public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array { return []; }
     public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array { return []; }

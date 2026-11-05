@@ -44,6 +44,7 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
 {
     public array $events   = [];
     public bool  $nextDuplicate = false;   // simulate duplicate source_event_id
+    public bool  $nextPending   = false;   // duplicate row still unaudited (applied IS NULL)
 
     public function insert(int $roomId, string $sensor, string $value, string $provider,
                            string $occurredAt, ?string $sourceEventId, ?array $meta): ?int
@@ -58,17 +59,23 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
                                 string $occurredAt, ?string $sourceEventId, ?array $meta): array
     {
         $isNew = true;
-        if ($this->nextDuplicate) { $this->nextDuplicate = false; $isNew = false; }
+        $pending = false;
+        if ($this->nextDuplicate) {
+            $this->nextDuplicate = false;
+            $isNew = false;
+            $pending = $this->nextPending;
+            $this->nextPending = false;
+        }
         $id = count($this->events) + 1;
         $this->events[] = compact('roomId','sensor','value','provider','occurredAt','sourceEventId');
         return ['event' => new \App\Domain\Presence\PresenceEvent(
             $id, $roomId, $sensor, $value, $provider, $occurredAt, $occurredAt,
             $sourceEventId, $meta,
             \App\Domain\Presence\SensorEventDecision::fingerprint($roomId, $sensor, $value, $occurredAt)
-        ), 'is_new' => $isNew];
+        ), 'is_new' => $isNew, 'pending' => $pending];
     }
 
-    public function markAudit(int $id, bool $applied, ?string $discardReason): void {}
+    public function markAudit(int $id, bool $applied, ?string $discardReason, ?string $effectiveValue = null): void {}
 
     public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array { return []; }
     public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array { return []; }
@@ -328,6 +335,17 @@ if ($r5['accepted'] === true) ok('T5: duplicate accepted=true');
 else bad('T5: duplicate accepted=true');
 if ($iotRepo->sessions[1]->doorState === $doorBefore) ok('T5: state not mutated on duplicate');
 else bad('T5: state not mutated on duplicate');
+
+// ============================================================================
+// T5a (F114+): duplicado con applied IS NULL → evento PENDIENTE, se procesa
+// ============================================================================
+$presRepo->nextDuplicate = true;
+$presRepo->nextPending = true;
+$r5a = $svc->processEvent(makeEvent(1, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T10:00:04.500Z', 'evt-pending'), 'corr-pending');
+if ($r5a['accepted'] === true) ok('T5a: pending accepted=true');
+else bad('T5a: pending accepted=true');
+if ($iotRepo->sessions[1]->doorState === IotSession::DOOR_OPEN) ok('T5a: pending se procesa y muta el estado');
+else bad('T5a: pending se procesa y muta el estado', "got {$iotRepo->sessions[1]->doorState}");
 
 // ============================================================================
 // T5b (F86/RF-115): reporte REAL de puerta con el MISMO valor → REFRESH

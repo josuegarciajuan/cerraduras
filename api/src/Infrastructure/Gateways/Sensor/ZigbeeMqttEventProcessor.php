@@ -140,7 +140,15 @@ final class ZigbeeMqttEventProcessor
         if ($this->presenceReports !== null
             && is_array($meta['presence_report'] ?? null)
             && !$isBootstrap) {
-            $this->presenceReports->record($device->id, $externalId, $roomId, $meta['presence_report']);
+            $isNewPresenceReport = $this->presenceReports->record(
+                $device->id,
+                $externalId,
+                $roomId,
+                $meta['presence_report']
+            );
+            // El borde no depende de `is_new` (un reintento devuelve false),
+            // pero es evidencia útil para el panel y el diagnóstico.
+            $meta['presence_report']['is_new'] = $isNewPresenceReport;
         }
 
         if ($isBootstrap && $sensor === 'PROXIMITY') {

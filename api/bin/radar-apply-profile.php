@@ -21,7 +21,7 @@ use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use App\Support\Config;
 
-$opts = getopt('', ['room:', 'dry-run']);
+$opts = getopt('', ['room:', 'dry-run', 'fading:']);
 $roomId = isset($opts['room']) ? (int) $opts['room'] : 0;
 $dryRun = array_key_exists('dry-run', $opts);
 
@@ -67,11 +67,18 @@ foreach (['maximum_range', 'minimum_range', 'radar_sensitivity', 'detection_dela
         $commands[$key] = (float) $profile[$key];
     }
 }
-$fading = Config::get('RADAR_WAREHOUSE_FADING_TIME', '5.0') ?? '5.0';
-if (!is_numeric($fading)) {
-    $fading = '5.0';
+// Por defecto se respeta el fading_time del perfil guardado. `--fading=`
+// permite un override explícito para el A/B físico.
+$fadingOpt = isset($opts['fading']) ? (float) $opts['fading'] : null;
+if ($fadingOpt !== null) {
+    $commands['fading_time'] = max(0.5, min(1500.0, $fadingOpt));
+} elseif (!isset($commands['fading_time'])) {
+    $fading = Config::get('RADAR_WAREHOUSE_FADING_TIME', '5.5') ?? '5.5';
+    if (!is_numeric($fading)) {
+        $fading = '5.5';
+    }
+    $commands['fading_time'] = max(0.5, min(1500.0, (float) $fading));
 }
-$commands['fading_time'] = max(0.5, min(1500.0, (float) $fading));
 
 if ($commands === []) {
     fwrite(STDERR, "La calibración guardada no tiene parámetros utilizables\n");

@@ -73,7 +73,7 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
 
     /**
      * @param array<string,mixed>|null $meta
-     * @return array{event: PresenceEvent, is_new: bool}
+     * @return array{event: PresenceEvent, is_new: bool, pending?: bool}
      */
     public function insertOrGet(
         int     $roomId,
@@ -107,13 +107,13 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
             ]);
             $existing = $this->findById((int) $this->pdo->lastInsertId());
             if ($existing !== null) {
-                return ['event' => $existing, 'is_new' => true];
+                return ['event' => $existing, 'is_new' => true, 'pending' => false];
             }
             // Should not happen; build a minimal in-memory representation.
             return ['event' => new PresenceEvent(
                 0, $roomId, $sensor, $value, $provider, $occurredUtc, $occurredUtc,
                 $sourceEventId, $meta, $fingerprint, null, null
-            ), 'is_new' => true];
+            ), 'is_new' => true, 'pending' => false];
         } catch (PDOException $e) {
             if (!$this->isDuplicate($e)) {
                 throw $e;
@@ -125,20 +125,29 @@ final class PresenceEventRepository implements PresenceEventRepositoryInterface
             // Race: the conflicting row vanished; rethrow as a hard error by retrying once.
             throw new PDOException('Duplicate key detected but existing presence_event row not found');
         }
-        return ['event' => $existing, 'is_new' => false];
+        return ['event' => $existing, 'is_new' => false, 'pending' => ($existing->applied === null && $existing->discardReason === null)];
     }
 
-    public function markAudit(int $id, bool $applied, ?string $discardReason): void
-    {
-        // Only fill unaudited rows: a re-send must not overwrite the original decision.
+    public function markAudit(
+        int $id,
+        bool $applied,
+        ?string $discardReason,
+        ?string $effectiveValue = null
+    ): void {
+        // Only fill unaudited rows: a re-send must not overwrite the original
+        // decision. `effectiveValue` corrige el valor cacheado de la trama con
+        // el valor real del DP1 usado por la decisión.
         $this->pdo->prepare(
             'UPDATE presence_events
-                SET applied = :applied, discard_reason = :reason
+                SET applied = :applied,
+                    discard_reason = :reason,
+                    value = COALESCE(:effective, value)
               WHERE id = :id AND applied IS NULL'
         )->execute([
-            ':applied' => $applied ? 1 : 0,
-            ':reason'  => $applied ? null : $discardReason,
-            ':id'      => $id,
+            ':applied'   => $applied ? 1 : 0,
+            ':reason'    => $applied ? null : $discardReason,
+            ':effective' => $effectiveValue,
+            ':id'        => $id,
         ]);
     }
 

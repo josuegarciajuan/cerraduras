@@ -75,6 +75,13 @@ final class WarehouseRecordingDecision
     public const A_SET_DEADLINE_X = 'SET_DEADLINE_X';
     public const A_SET_DEADLINE_M = 'SET_DEADLINE_M';
     public const A_CLEAR_DEADLINES = 'CLEAR_DEADLINES';
+    /**
+     * F114+: un ABSENT corto sin transición de puerta puede ser un falso
+     * negativo del radar. En vez de partir la visita, se deshace la salida y
+     * se reanuda la misma estancia.
+     */
+    public const A_UNDO_EXIT = 'UNDO_EXIT';
+    public const A_RESUME_INTERIOR = 'RESUME_INTERIOR';
 
     /**
      * @param array{state:string,entry_trigger:?string,presence_confirmed:bool} $state
@@ -84,8 +91,12 @@ final class WarehouseRecordingDecision
      *        no cierra el episodio) → comportamiento previo.
      * @return array{state:string,entry_trigger:?string,presence_confirmed:bool,actions:list<string>}
      */
-    public static function decide(array $state, string $event, ?bool $presenceEvidenceOk = null): array
-    {
+    public static function decide(
+        array $state,
+        string $event,
+        ?bool $presenceEvidenceOk = null,
+        bool $resumeShortAbsence = false
+    ): array {
         $s = $state['state'] ?? self::STATE_IDLE;
         $trigger = $state['entry_trigger'] ?? null;
         $confirmed = (bool) ($state['presence_confirmed'] ?? false);
@@ -179,6 +190,14 @@ final class WarehouseRecordingDecision
                     return self::out(self::STATE_IDLE, null, false, [self::A_STOP_EXT, self::A_CLOSE_VISIT]);
                 }
                 if ($event === self::EV_PRESENT) {
+                    // F114+: ausencia corta sin puerta = probable falso negativo
+                    // del radar. Se deshace la salida y se reanuda la misma visita
+                    // (el clip EXTERIOR sigue; se reinicia el INTERIOR).
+                    if ($resumeShortAbsence) {
+                        return self::out(self::STATE_RECORDING_INSIDE, $trigger, true, [
+                            self::A_UNDO_EXIT, self::A_RESUME_INTERIOR, self::A_CLEAR_DEADLINES,
+                        ]);
+                    }
                     // F85/RF-109.4: reaparición tras un ABSENT acreditado = RE-ENTRADA.
                     // La visita anterior ya quedó cerrada en su `exited_at` al pasar a
                     // EXIT_PENDING; aquí se para su clip EXTERIOR y se crea una visita

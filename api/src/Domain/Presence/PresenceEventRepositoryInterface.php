@@ -33,7 +33,7 @@ interface PresenceEventRepositoryInterface
      * The raw event is always available for auditing, new or not (RF-44.3).
      *
      * @param array<string,mixed>|null $meta
-     * @return array{event: PresenceEvent, is_new: bool}
+     * @return array{event: PresenceEvent, is_new: bool, pending?: bool}
      */
     public function insertOrGet(
         int     $roomId,
@@ -50,7 +50,7 @@ interface PresenceEventRepositoryInterface
      * Idempotent: only fills rows that are still unaudited (applied IS NULL)
      * so a transport re-send never rewrites the original decision.
      */
-    public function markAudit(int $id, bool $applied, ?string $discardReason): void;
+    public function markAudit(int $id, bool $applied, ?string $discardReason, ?string $effectiveValue = null): void;
 
     /**
      * Return the latest N events for a room, newest first.

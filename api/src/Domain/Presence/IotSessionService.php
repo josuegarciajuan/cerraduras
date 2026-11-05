@@ -143,7 +143,14 @@ final class IotSessionService
         );
         $rawEvent  = $raw['event'];
         $isNewFact = $raw['is_new'];
+        // F114+: una fila insertada pero no auditada (transacción abortada,
+        // worker reiniciado) es un evento PENDIENTE, no un duplicado. El spool
+        // la reintenta y debe procesarse.
+        $isPending   = (bool) ($raw['pending'] ?? false);
+        $processable = $isNewFact || $isPending;
+        $effectiveValue = null;
         $now    = Clock::nowUtc();
+        $frameTime = $this->frameTime($occurredAt, $now);
         $evtUtc = $this->isoToMysqlUtc($occurredAt);
 
         $session = null;
@@ -164,23 +171,27 @@ final class IotSessionService
                 // concurrentes no construyan su evidencia sobre una fotografía
                 // inconsistente. El histórico está acotado por tiempo, no por un
                 // número arbitrario de filas.
-                if ($isNewFact
+                if ($processable
                     && $radarMode !== null
                     && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                 ) {
-                    // F114+: el DP 1 del radar es la transición autoritativa.
-                    // Un `ABSENT` estable durante la gracia cierra la presencia
-                    // sin esperar a los 3 reportes / 30 s del estado cacheado.
-                    $edgeDecision = $this->computeAbsenceEdgeDecision($room, $meta, $now);
+                    // F114+: el DP 1 es la transición autoritativa. PRESENT
+                    // aplica en el primer frame con ese borde; ABSENT espera
+                    // una gracia corta. No se cuentan frames cacheados.
+                    $edgeDecision = $this->computePresenceEdgeDecision($room, $session, $meta, $frameTime);
                     $radarDecision = $edgeDecision ?? $this->computeRadarDecision(
                         $room, $roomType, $radarMode, $session, $now
                     );
                     if ($edgeDecision !== null) {
-                        // La decisión se toma sobre el valor del DP 1, no sobre
-                        // el campo `presence` cacheado de la trama combinada.
-                        $event['value'] = PresenceEvent::VALUE_ABSENT;
-                        $value = PresenceEvent::VALUE_ABSENT;
+                        $edgeValue = (string) ($edgeDecision['value'] ?? '');
+                        if (in_array($edgeValue, [PresenceEvent::VALUE_PRESENT, PresenceEvent::VALUE_ABSENT], true)) {
+                            $effectiveValue = $edgeValue;
+                            // La decisión y la auditoría usan el valor del DP1,
+                            // no el campo `presence` cacheado de la trama.
+                            $event['value'] = $edgeValue;
+                            $value = $edgeValue;
+                        }
                     }
                     if ($radarDecision !== null) {
                         $this->presenceEvents->updateMetaJson(
@@ -208,7 +219,8 @@ final class IotSessionService
                             $this->presenceEvents->markAudit(
                                 $rawEvent->id,
                                 false,
-                                (string) ($radarDecision['discard_reason'] ?? 'candidate')
+                                (string) ($radarDecision['discard_reason'] ?? 'candidate'),
+                                $effectiveValue
                             );
                             $this->iotSessions->commit();
                             break;
@@ -242,7 +254,7 @@ final class IotSessionService
                 }
 
                 $decision = SensorEventDecision::decide(
-                    $event, $session, !$isNewFact, $entryWindowActive, $insideNoExitCycle,
+                    $event, $session, !$processable, $entryWindowActive, $insideNoExitCycle,
                     $warehousePresence, $physicalEvidence
                 );
 
@@ -287,7 +299,7 @@ final class IotSessionService
 
                 $this->iotSessions->updateState($session);
                 $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
-                $this->presenceEvents->markAudit($rawEvent->id, true, null);
+                $this->presenceEvents->markAudit($rawEvent->id, true, null, $effectiveValue);
                 $this->iotSessions->commit();
                 $applied = true;
                 break;
@@ -713,20 +725,20 @@ final class IotSessionService
     }
 
     /**
-     * F114+: ausencia por el borde DP 1 del radar.
+     * F114+: borde DP1 del radar (PRESENT inmediato, ABSENT con gracia).
      *
-     * El radar solo publica DP 1 cuando cambia. La trama combinada repite el
-     * último valor; exigir 3 reportes/30 s solo añade latencia. Esta ruta usa
-     * el reporte DP 1 persistido y su antigüedad para confirmar `ABSENT` tras
-     * una gracia corta y configurable.
+     * Solo se usa para el radar Zigbee de una sala de almacén. El marcador del
+     * frame debe coincidir con el último reporte persistido: evita aplicar una
+     * decisión de un frame anterior o de otro dispositivo.
      *
      * @param array<string,mixed>|null $meta
      * @return array<string,mixed>|null
      */
-    private function computeAbsenceEdgeDecision(
+    private function computePresenceEdgeDecision(
         Room $room,
+        IotSession $session,
         ?array $meta,
-        \DateTimeImmutable $now
+        \DateTimeImmutable $frameTime
     ): ?array {
         if ($this->presenceReports === null || !$this->isWarehouseRoom($room)) {
             return null;
@@ -745,12 +757,33 @@ final class IotSessionService
         if ($latest === null || (string) ($latest['marker'] ?? '') !== $frameMarker) {
             return null;
         }
-        $grace = (int) (Config::getInt(
-            'RADAR_ABSENT_EDGE_GRACE_SECONDS',
-            RadarAbsenceEdgeDecision::DEFAULT_GRACE_SECONDS
-        ) ?? RadarAbsenceEdgeDecision::DEFAULT_GRACE_SECONDS);
 
-        return RadarAbsenceEdgeDecision::evaluate($latest, $now, max(1, min(60, $grace)));
+        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '1.5') ?? '1.5';
+        $graceMs = (int) round(max(0.5, min(10.0, (float) $graceRaw)) * 1000);
+        $presentMaxAge = (int) (Config::getInt('RADAR_PRESENT_EDGE_MAX_AGE_SECONDS', 120) ?? 120);
+        $presentMaxAgeMs = max(1000, min(600000, $presentMaxAge * 1000));
+
+        return RadarPresenceEdgeDecision::evaluate(
+            $latest,
+            $frameTime,
+            $graceMs,
+            $presentMaxAgeMs,
+            $session->presenceState
+        );
+    }
+
+    /**
+     * Instante del frame en UTC. El mapper entrega ISO con ms; si llega algo
+     * inesperado se usa el reloj del proceso como fallback.
+     */
+    private function frameTime(string $occurredAt, \DateTimeImmutable $fallback): \DateTimeImmutable
+    {
+        try {
+            $dt = new \DateTimeImmutable($occurredAt, new \DateTimeZone('UTC'));
+            return $dt->setTimezone(new \DateTimeZone('UTC'));
+        } catch (\Throwable $e) {
+            return $fallback;
+        }
     }
 
     /**
@@ -781,6 +814,7 @@ final class IotSessionService
             'absent_reports' => $roomType->presenceAbsentReports,
             'absent_window_seconds' => $roomType->presenceAbsentWindowSeconds,
             'door_window_seconds' => $roomType->presenceDoorWindowSeconds,
+            'door_recent_open_seconds' => (int) (Config::getInt('RADAR_MIXED_RECENT_OPEN_SECONDS', 10) ?? 10),
             'stale_seconds' => $roomType->presenceStaleSeconds,
         ];
 
@@ -816,7 +850,8 @@ final class IotSessionService
             $now,
             $config,
             $physical,
-            $session->doorState
+            $session->doorState,
+            $session->lastOpenAt
         );
     }
 
