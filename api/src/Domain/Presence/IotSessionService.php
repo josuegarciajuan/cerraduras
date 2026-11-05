@@ -241,8 +241,15 @@ final class IotSessionService
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                     && $value === PresenceEvent::VALUE_PRESENT
                 ) {
-                    $warehousePresence = $this->isWarehouseRoom($room);
-                    if ($warehousePresence) {
+                    $timbradoPresence = $this->isTimbradoRoom($room);
+                    $warehousePresence = $this->isWarehouseRoom($room) || $timbradoPresence;
+                    if ($timbradoPresence) {
+                        // F116: en la oficina el radar es la única autoridad de
+                        // presencia; no hay estancia hotelera ni fusión de cámara.
+                        $entryWindowActive = true;
+                        $insideNoExitCycle = true;
+                        $physicalEvidence = true;
+                    } elseif ($warehousePresence) {
                         // F76 (RF-91/92): contexto por ciclo de puerta / visita real.
                         [$entryWindowActive, $insideNoExitCycle] =
                             $this->warehousePresenceContext($room, $session, $now);
@@ -324,6 +331,7 @@ final class IotSessionService
                 && $value === PresenceEvent::VALUE_OPEN
                 && $this->switchService !== null
                 && !$this->isWarehouseRoom($room)
+                && !$this->isTimbradoRoom($room)
             ) {
                 try {
                     $this->switchService->turnOn($roomId);
@@ -344,7 +352,10 @@ final class IotSessionService
 
             // F71 (RF-81.4): el almacén no tiene estancia de huésped; detectar
             // anomalías como A2 (presencia sin stay) generaría ruido constante.
-            if ($this->anomalyService !== null && !$this->isWarehouseRoom($room)) {
+            if ($this->anomalyService !== null
+                && !$this->isWarehouseRoom($room)
+                && !$this->isTimbradoRoom($room)
+            ) {
                 try {
                     $triggerEvent = new PresenceEvent(
                         0, $roomId, $sensor, $value, $provider,
@@ -764,7 +775,7 @@ final class IotSessionService
     {
         $mode = $room->presenceModeOverride;
         if ($mode === null || $mode === '') {
-            if (!$this->isWarehouseRoom($room)) {
+            if (!$this->isWarehouseRoom($room) && !$this->isTimbradoRoom($room)) {
                 return null;
             }
             $mode = $roomType?->presenceMode;
@@ -793,7 +804,9 @@ final class IotSessionService
         ?array $meta,
         \DateTimeImmutable $frameTime
     ): ?array {
-        if ($this->presenceReports === null || !$this->isWarehouseRoom($room)) {
+        if ($this->presenceReports === null
+            || (!$this->isWarehouseRoom($room) && !$this->isTimbradoRoom($room))
+        ) {
             return null;
         }
         $report = is_array($meta) && is_array($meta['presence_report'] ?? null)
@@ -1030,6 +1043,16 @@ final class IotSessionService
         $roomType = $this->roomTypes->findById($room->roomTypeId);
         return $roomType instanceof RoomType
             && $roomType->code === self::WAREHOUSE_TYPE_CODE;
+    }
+
+    /**
+     * F116: la sala es de tipo TIMBRADO (oficina).
+     */
+    private function isTimbradoRoom(Room $room): bool
+    {
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        return $roomType instanceof RoomType
+            && $roomType->code === 'TIMBRADO';
     }
 
     private function resolveEntryWindowSeconds(Room $room): int

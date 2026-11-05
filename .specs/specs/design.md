@@ -26162,3 +26162,62 @@ presencia fresca/stale/candidata, puerta fiel + pulso, cooldown, `result` y
 `roomMismatch`.
 Runner BLOCK 85: assets, marcadores, ruta, unit Node y `GET /timbre`; la
 prueba de `door/open` usa un body vacío (400, sin efecto físico).
+
+---
+
+# F116 — Oficina TIMBRADO (`/timbre`)
+
+## 116.1 Alcance
+
+`/timbre` pasa a ser el video portero de una oficina con puerta, radar y una
+cámara INTERIOR. El tipo de sala es `TIMBRADO`; el pack `PACK_ZIGBEE` se mueve
+desde `almacenZigbee` a la nueva sala `oficina`.
+
+## 116.2 Datos
+
+| Tabla | Uso |
+|---|---|
+| `timbre_movements` | una fila por apertura/cruce (dirección, titular, puerta, estado) |
+| `timbre_state` | estado vivo por sala y deadlines |
+| `camera_recordings.timbre_movement_id` | vídeo de la apertura |
+| `room_types.timbre_*` | tiempos del motor |
+
+`camera_recordings` sigue sirviendo al almacén con `visit_id`; las filas del
+timbrado usan `timbre_movement_id` y posición `INTERIOR`.
+
+## 116.3 Motor
+
+Eventos: `QR_OK` (escaneo), `DOOR_OPEN`, `DOOR_CLOSE`, `DOOR_CLOSE_ABSENT`,
+`PRESENT`, `ABSENT`, `SCAN_TIMEOUT`, `STOP_DEADLINE`, `MAX_DEADLINE`.
+
+Reglas:
+- `SCAN` empieza a grabar; si no abre la puerta en X → `NO_DOOR`.
+- `DOOR_OPEN` sin escaneo crea movimiento; con escaneo pendiente lo enlaza.
+- La dirección se calcula al abrir la puerta con la presencia de los X s
+  previos.
+- `PRESENT` con puerta abierta y sin movimiento crea `CROSSING`.
+- `ENTRY` para 3 s tras ausencia; `EXIT` para 3 s tras cierre.
+- Topes: 120 s generales y 60 s con puerta abierta.
+- `LEFT_OPEN` si termina con la puerta abierta.
+
+`RoomRecordingCoordinator` enruta `ALMACEN_BEBIDAS` al motor existente y
+`TIMBRADO` al nuevo. `IotSessionService` aplica el radar `radar_only` y DP1
+para TIMBRADO, sin lógica hotelera ni anomalías de huésped.
+
+## 116.4 Recorder y cámaras
+
+`warehouse-recorder.php` ejecuta también `TimbreRecordingService` y usa
+`timbre_movement_id` en el nombre del fichero. El tope global del almacén no se
+aplica al timbrado. `cameras-live.js` descubre salas `ALMACEN_BEBIDAS` y
+`TIMBRADO`; la EXTERIOR sigue en el pack pero no se muestra.
+
+## 116.5 API
+
+`GET /timbre-api/state`, `GET /timbre-api/event-stream`,
+`GET /timbre-api/openings`, `POST /timbre-api/door/open`,
+`POST /timbre-api/keys`.
+
+## 116.6 Pruebas
+
+Units de reglas puras, JS de panel/listado/formulario, BLOCK 86 y resolución
+dinámica de la sala Zigbee por pack en el runner.

@@ -186,6 +186,7 @@ final class WorkerQrService
                 $this->warehouseRecorder->onSignal($roomId, \App\Domain\Warehouse\WarehouseRecordingDecision::EV_QR_OK, [
                     'worker_id' => $workerId,
                     'worker_session_id' => $workerSessionId,
+                    'credential_type' => 'QR',
                 ]);
             } catch (\Throwable $e) {
                 error_log('[WorkerQrService] Warehouse recording failed (best-effort): ' . $e->getMessage());

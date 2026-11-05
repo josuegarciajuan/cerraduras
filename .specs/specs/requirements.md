@@ -13471,3 +13471,73 @@ sesión futura no puede analizar un fallo equivalente.
   apertura.
 
 **Estado F115:** implementado; prueba manual en dispositivo pendiente.
+
+---
+
+## F116 — Oficina TIMBRADO: aperturas, vídeo y llaves QR
+
+> **Revisa F115.** `/timbre` deja de usar salas `ALMACEN_BEBIDAS` y pasa a
+> trabajar con salas `TIMBRADO`.
+
+### RF-293 — Tipo TIMBRADO y sala de oficina
+- **RF-293.1**: existe `room_types.code = TIMBRADO` con `presence_mode =
+  radar_only` y ventanas propias.
+- **RF-293.2**: la sala `oficina` recibe el pack `PACK_ZIGBEE`; la sala
+  `almacenZigbee` queda sin pack. No se borran dispositivos ni cámaras.
+- **RF-293.3**: `/timbre` filtra solo salas `TIMBRADO`; por defecto `oficina`.
+- **RF-293.4**: el montaje es idempotente con
+  `bin/setup-timbrado-oficina.php --apply`.
+
+### RF-294 — Una sola cámara
+- **RF-294.1**: el panel solo muestra la cámara `INTERIOR`.
+- **RF-294.2**: la cámara visible se llama “Cámara”; no se etiqueta como
+  “Interior”.
+- **RF-294.3**: la cámara `EXTERIOR` permanece en el pack pero no se muestra ni
+  se graba desde este panel.
+
+### RF-295 — Movimientos y grabación
+- **RF-295.1**: se graba desde un escaneo de llave o desde una apertura
+  directa de puerta.
+- **RF-295.2**: la dirección se decide por la presencia del radar en los
+  `timbre_pre_open_presence_seconds` previos a la apertura: con presencia →
+  `EXIT`; sin presencia → `ENTRY`.
+- **RF-295.3**: puerta ya abierta + radar sin movimiento previo → `CROSSING`
+  (entrada/salida desconocida).
+- **RF-295.4**: un escaneo sin apertura en `timbre_scan_open_timeout_seconds`
+  termina como `NO_DOOR`, conservando el vídeo y con fila visible.
+- **RF-295.5**: `ENTRY` para `timbre_presence_end_grace_seconds` después de
+  que desaparezca la presencia.
+- **RF-295.6**: `EXIT` para `timbre_door_close_grace_seconds` después de
+  cerrar la puerta. Si no cierra, tope `timbre_door_open_max_seconds`.
+- **RF-295.7**: tope general `timbre_max_recording_seconds` (def. 120 s).
+- **RF-295.8**: si la puerta queda abierta al terminar, se marca
+  `door_left_open` y se calcula `door_open_seconds`.
+- **RF-295.9**: `ENTRY`/presencia encienden la luz; la ausencia sostenida la
+  apaga. Todo local, sin Tuya.
+
+### RF-296 — Listado de aperturas
+- **RF-296.1**: panel derecho con las últimas aperturas.
+- **RF-296.2**: cada fila muestra hora, tipo (`sinllave`/`qr`/`ficha`),
+  titular, dirección y estado.
+- **RF-296.3**: se muestran avisos de “Sin apertura”, “Sin presencia”,
+  “Puerta abierta N s” y “Tope alcanzado”.
+- **RF-296.4**: cada fila con vídeo guardado ofrece **Ver vídeo** en modal.
+- **RF-296.5**: el listado se refresca al abrir, al cambiar de sala, tras una
+  apertura, por SSE y con respaldo periódico.
+
+### RF-297 — Llaves QR desde el panel
+- **RF-297.1**: botón **Crear llave QR** con modal.
+- **RF-297.2**: titular empleado, rol o nombre libre.
+- **RF-297.3**: caducidad elegible; solo llaves QR y solo para `TIMBRADO`.
+- **RF-297.4**: el QR se muestra una vez y se puede descargar en PNG.
+- **RF-297.5**: endpoint público LAN `/timbre-api/keys`, sin `token_hash` en la
+  respuesta.
+
+### RF-298 — Operación, pruebas y cuota
+- **RF-298.1**: sin polling a Tuya; solo push, BD local y grabación local.
+- **RF-298.2**: units `TimbreMovementRulesTest`, `timbre-logic.test.js`,
+  BLOCK 86 del runner y regresión completa.
+- **RF-298.3**: la retención de vídeos del timbrado se configura con
+  `timbre.retention_days` (def. 30).
+
+**Estado F116:** implementado (código); migración y prueba física pendientes.

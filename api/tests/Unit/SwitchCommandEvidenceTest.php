@@ -150,7 +150,7 @@ truthy('migracion guarda veredicto', str_contains($migration, '`verdict`'));
 truthy('migracion separa humano y telemetria', str_contains($migration, '`human_state`') && str_contains($migration, '`reported_state`'));
 
 $repo = (string) file_get_contents($api . '/src/Domain/Sensors/SwitchCommandEvidenceRepository.php');
-truthy('repositorio idempotente', str_contains($repo, 'INSERT IGNORE'));
+truthy('repositorio idempotente', str_contains($repo, '23000'));
 truthy('repositorio actualiza veredicto', str_contains($repo, 'verdict = :verdict'));
 truthy('repositorio purga por fecha', str_contains($repo, 'purgeBefore'));
 

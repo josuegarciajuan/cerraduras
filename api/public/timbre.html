@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-<title>Timbre · Almacén</title>
+<title>Timbre · Oficina</title>
 <style>
   :root{
     --bg:#07090d;
@@ -370,6 +370,77 @@
     .door-leaf-group,.door-glow,.presence-edge,.visor,.signal-dot,#toast{transition:none!important}
     .bell-btn.is-busy .bell-ring{animation:none!important;border-top-color:var(--accent);border-color:var(--accent)}
   }
+
+  /* ── F116: oficina, aperturas y modales ─────────────────────────── */
+  .intercom{width:min(1500px,100%)}
+  .intercom-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,390px);gap:clamp(10px,1.1vw,16px);align-items:start}
+  .intercom-main{display:grid;gap:clamp(8px,1.2vw,14px);min-width:0}
+  .intercom-main .visor{max-width:100%}
+  .openings-panel{
+    display:flex;flex-direction:column;gap:10px;min-width:0;
+    border:1px solid var(--line);border-radius:18px;
+    background:linear-gradient(180deg,rgba(255,255,255,.05),transparent 35%),linear-gradient(180deg,#171c25,#0d1117);
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 24px 50px -40px #000;
+    padding:12px;
+  }
+  .openings-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .openings-head h2{margin:0;font-size:15px;letter-spacing:.04em}
+  .openings-head p{margin:2px 0 0;font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+  .openings-list{display:flex;flex-direction:column;gap:8px;max-height:calc(100dvh - 230px);overflow:auto;padding-right:2px}
+  .openings-empty{margin:12px 4px;color:var(--muted);font-size:13px}
+  .opening{
+    display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;
+    padding:9px 10px;border:1px solid var(--line);border-radius:12px;
+    background:linear-gradient(180deg,#11161e,#0c1016);
+  }
+  .opening-type{
+    width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid var(--line2);background:#141a23;color:#b9c6d9;
+  }
+  .opening-type[data-type="qr"]{color:#9db9ff;border-color:rgba(79,140,255,.45)}
+  .opening-type[data-type="ficha"]{color:#f1c40f;border-color:rgba(241,196,15,.45)}
+  .opening-type[data-type="sinllave"]{color:#c7cfdb}
+  .opening-main{min-width:0;display:flex;flex-direction:column;gap:3px}
+  .opening-main strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .opening-meta{font-size:11px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .opening-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+  .badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line2);border-radius:999px;padding:2px 6px;color:var(--muted)}
+  .badge[data-tone="ok"]{color:var(--ok);border-color:rgba(46,204,113,.4)}
+  .badge[data-tone="warn"]{color:var(--warn);border-color:rgba(241,196,15,.4)}
+  .badge[data-tone="bad"]{color:var(--bad);border-color:rgba(231,76,60,.4)}
+  .opening-video{
+    appearance:none;border:1px solid var(--line2);border-radius:9px;background:#1b222d;color:#dbe6f7;
+    padding:7px 9px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;
+  }
+  .opening-video:disabled{opacity:.45;cursor:not-allowed}
+  .opening-video:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .modal-backdrop{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:16px;background:rgba(2,4,8,.72);backdrop-filter:blur(3px)}
+  .modal-backdrop[hidden]{display:none}
+  .modal{width:min(560px,100%);max-height:90dvh;overflow:auto;border:1px solid var(--line2);border-radius:16px;background:linear-gradient(180deg,#1a202a,#0d1117);box-shadow:0 40px 90px -30px #000}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .modal-head h2{margin:0;font-size:16px}
+  .modal-close{appearance:none;border:0;background:transparent;color:var(--muted);font-size:25px;line-height:1;cursor:pointer;padding:2px 6px}
+  .modal-body{padding:14px;display:grid;gap:12px}
+  .form-row{display:grid;gap:5px}
+  .form-row label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .form-row input,.form-row select{width:100%;background:#0a0d12;color:var(--fg);border:1px solid var(--line2);border-radius:9px;padding:9px 10px;font:inherit}
+  .form-row input:focus-visible,.form-row select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .form-hint{margin:0;font-size:12px;color:var(--muted)}
+  .form-error{margin:0;font-size:12px;color:var(--bad)}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+  .btn-primary{appearance:none;border:1px solid var(--accent2);border-radius:10px;background:linear-gradient(180deg,#4f8cff,#2f6fe0);color:#fff;padding:9px 14px;font:inherit;font-weight:700;cursor:pointer}
+  .btn-primary:disabled{opacity:.6;cursor:progress}
+  .btn-secondary{appearance:none;border:1px solid var(--line2);border-radius:10px;background:#171d27;color:var(--fg);padding:9px 14px;font:inherit;font-weight:600;cursor:pointer}
+  .qr-box{display:grid;place-items:center;background:#fff;border-radius:12px;padding:14px;min-height:240px}
+  .qr-box canvas,.qr-box img{max-width:100%;height:auto}
+  .video-box{display:grid;gap:8px}
+  .video-box video{width:100%;border-radius:10px;background:#000}
+  .video-empty{color:var(--muted);font-size:13px;padding:14px;border:1px dashed var(--line2);border-radius:10px;text-align:center}
+  @media (max-width:1080px){
+    .intercom-body{grid-template-columns:1fr}
+    .openings-list{max-height:none}
+  }
 </style>
 </head>
 <body>
@@ -379,24 +450,25 @@
       <span class="brand-mark" aria-hidden="true">&#9672;</span>
       <span>
         <span class="brand-name">TIMBRE</span><br>
-        <span class="brand-sub">Almacén de bebidas</span>
+        <span class="brand-sub">Oficina</span>
       </span>
     </div>
     <label class="room-pick">
-      <span>Almacén</span>
-      <select id="room-select" aria-label="Seleccionar almacén"></select>
+      <span>Oficina</span>
+      <select id="room-select" aria-label="Seleccionar oficina"></select>
     </label>
     <span id="net-status" class="net" data-tone="warn" role="status">Conectando</span>
   </header>
 
-  <section id="timbre-frame" class="visor" aria-label="Cámara interior del almacén">
+  <div class="intercom-body">
+    <div class="intercom-main">
+  <section id="timbre-frame" class="visor" aria-label="Cámara de la oficina">
     <div class="visor-bezel">
       <div class="visor-top">
-        <span class="visor-tag">Interior</span>
-        <span id="cam-label" class="visor-cam">cámara interior</span>
+        <span id="cam-label" class="visor-cam">Cámara</span>
       </div>
       <div id="stage" class="stage">
-        <img id="cam-interior" class="cam-stream" alt="Cámara interior del almacén" hidden>
+        <img id="cam-interior" class="cam-stream" alt="Cámara de la oficina" hidden>
         <div id="cam-fallback" class="cam-fallback">
           <div class="fallback-icon" aria-hidden="true">&#9635;</div>
           <p id="cam-message">Conectando cámara…</p>
@@ -458,9 +530,36 @@
       <span id="action-status" class="action-status" role="status" aria-live="assertive"></span>
     </div>
   </section>
+    </div>
+
+  <aside class="openings-panel" aria-label="Últimas aperturas">
+    <div class="openings-head">
+      <div>
+        <h2>Últimas aperturas</h2>
+        <p>Entradas, salidas y cruces</p>
+      </div>
+      <button id="btn-create-key" class="chip-btn" type="button">Crear llave QR</button>
+    </div>
+    <div id="openings-list" class="openings-list" aria-live="polite">
+      <p class="openings-empty">Cargando aperturas…</p>
+    </div>
+  </aside>
+  </div>
+
+
+  <div id="modal-backdrop" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button id="modal-close" class="modal-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
 </main>
+<script src="/assets/qrcode.min.js"></script>
 <script src="assets/timbre-logic.js"></script>
 <script src="assets/timbre.js"></script>
 </body>

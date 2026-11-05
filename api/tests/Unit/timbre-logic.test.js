@@ -25,6 +25,15 @@ const {
   doorOutcome,
   roomMismatch,
   formatAge,
+  openingTypeLabel,
+  directionLabel,
+  openingStatusLabel,
+  openingStatusTone,
+  openingTime,
+  firstVideo,
+  hasRecording,
+  qrDownloadName,
+  buildKeyPayload,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'timbre-logic.js'));
 
 let passed = 0;
@@ -48,15 +57,16 @@ console.log('\n\u2500\u2500 timbre-logic (F115) \u2500\u2500');
 const ROOMS = [
   { id: 1, code: '101', room_type_code: 'DOUBLE' },
   { id: 12, code: 'almacen', room_type_code: 'ALMACEN_BEBIDAS' },
-  { id: 14, code: 'almacenZigbee', room_type_code: 'ALMACEN_BEBIDAS' },
+  { id: 15, code: 'oficina', room_type_code: 'TIMBRADO' },
+  { id: 16, code: 'oficina2', room_type_code: 'TIMBRADO' },
 ];
 const WH = filterWarehouses(ROOMS);
-check('solo salas ALMACEN_BEBIDAS', WH.length === 2 && WH[0].id === 12 && WH[1].id === 14);
-check('pickDefaultRoom(?room=12) respeta la petición', pickDefaultRoom(WH, 12).id === 12);
-check('pickDefaultRoom sin petición → almacenZigbee', pickDefaultRoom(WH, 0, 'almacenZigbee').id === 14);
-check('pickDefaultRoom con petición inválida → preferida', pickDefaultRoom(WH, 999, 'almacenZigbee').id === 14);
-check('pickDefaultRoom sin preferida → primera', pickDefaultRoom(WH, 0, 'no-existe').id === 12);
-check('pickDefaultRoom sin almacenes → null', pickDefaultRoom([], 0, 'almacenZigbee') === null);
+check('solo salas TIMBRADO', WH.length === 2 && WH[0].id === 15 && WH[1].id === 16);
+check('pickDefaultRoom(?room=15) respeta la petición', pickDefaultRoom(WH, 15).id === 15);
+check('pickDefaultRoom sin petición → oficina', pickDefaultRoom(WH, 0, 'oficina').id === 15);
+check('pickDefaultRoom con petición inválida → preferida', pickDefaultRoom(WH, 999, 'oficina').id === 15);
+check('pickDefaultRoom sin preferida → primera', pickDefaultRoom(WH, 0, 'no-existe').id === 15);
+check('pickDefaultRoom sin oficinas → null', pickDefaultRoom([], 0, 'oficina') === null);
 
 // ─── 2. Cámara INTERIOR ───────────────────────────────────────────────
 const CAMS = [
@@ -149,6 +159,41 @@ check('formatAge minutos', formatAge(120) === 'hace 2 min');
 check('formatAge inválido', formatAge(-1) === '');
 check('DOOR_PULSE_MS = 1200', DOOR_PULSE_MS === 1200);
 check('OPEN_COOLDOWN_MS = 3000', OPEN_COOLDOWN_MS === 3000);
+
+// ─── 10. Aperturas y llaves QR (F116) ─────────────────────────────────
+check('tipo sinllave', openingTypeLabel('sinllave') === 'Sin llave');
+check('tipo qr', openingTypeLabel('qr') === 'QR');
+check('tipo ficha', openingTypeLabel('ficha') === 'Ficha');
+check('dirección entrada', directionLabel('entry') === 'Entrada');
+check('dirección salida', directionLabel('exit') === 'Salida');
+check('dirección cruce', directionLabel('crossing') === 'Cruce');
+check('estado sin apertura', openingStatusLabel('no_door') === 'Sin apertura');
+check('tono completada', openingStatusTone('completed') === 'ok');
+check('tono puerta abierta', openingStatusTone('left_open') === 'warn');
+check('hora de apertura válida', openingTime('2026-11-05 10:00:00') !== '—');
+const RECORDINGS = [
+  { id: 2, status: 'RECORDING', video_url: null },
+  { id: 1, status: 'SAVED', video_url: '/v/1', poster_url: '/p/1' },
+];
+check('primer vídeo guardado', firstVideo(RECORDINGS).id === 1);
+check('hay grabación en curso', hasRecording(RECORDINGS) === true);
+check('sin grabación', hasRecording([{ status: 'SAVED' }]) === false);
+check('PENDING parado no se anuncia como grabando', hasRecording([{ status: 'PENDING', stop_requested: true }]) === false);
+check('nombre de descarga QR', qrDownloadName('Llave de José') === 'llave-de-jose.png');
+
+const validFuture = new Date(Date.now() + 86400000);
+const pad = (n) => String(n).padStart(2, '0');
+const localFuture = validFuture.getFullYear() + '-' + pad(validFuture.getMonth() + 1) + '-'
+  + pad(validFuture.getDate()) + 'T' + pad(validFuture.getHours()) + ':' + pad(validFuture.getMinutes());
+const free = buildKeyPayload({ roomId: 15, ownerType: 'FREE', ownerName: 'José', validUntilLocal: localFuture });
+check('payload libre válido', free.ok === true && free.payload.owner_type === 'FREE');
+check('payload libre usa nombre como etiqueta', free.payload.label === 'José');
+check('payload trabajador exige empleado',
+  buildKeyPayload({ roomId: 15, ownerType: 'WORKER', validUntilLocal: localFuture }).ok === false);
+check('payload rol exige rol',
+  buildKeyPayload({ roomId: 15, ownerType: 'ROLE', validUntilLocal: localFuture }).ok === false);
+check('payload rechaza caducidad pasada',
+  buildKeyPayload({ roomId: 15, ownerType: 'FREE', ownerName: 'X', validUntilLocal: '2020-01-01T00:00' }).ok === false);
 
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' timbre-logic: ' + passed + ' passed, ' + failed + ' failed\n');
 process.exit(failed > 0 ? 1 : 0);
