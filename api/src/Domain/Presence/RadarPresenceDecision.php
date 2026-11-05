@@ -51,8 +51,10 @@ final class RadarPresenceDecision
      * @param list<array{sensor?:string,value?:string,provider?:string,occurred_at?:string,source_event_id?:?string}> $events
      *        Event history in any order; Zigbee presence/door events are used.
      * @param DateTimeImmutable $now
-     * @param array{mode?:string,confirm_reports?:int,confirm_window_seconds?:int,min_span_seconds?:int,hold_seconds?:int,absent_reports?:int,absent_window_seconds?:int,door_window_seconds?:int,stale_seconds?:int} $config
+     * @param array{mode?:string,confirm_reports?:int,confirm_window_seconds?:int,min_span_seconds?:int,hold_seconds?:int,absent_reports?:int,absent_window_seconds?:int,door_window_seconds?:int,door_recent_open_seconds?:int,stale_seconds?:int} $config
      * @param bool $physicalEvidence Camera/door evidence for camera_fusion.
+     * @param string|null $lastOpenAt Último OPEN aplicado (sesión), para distinguir
+     *        una puerta recién abierta de una preabierta en el modo `mixed`.
      * @return array<string,mixed>
      */
     public static function decide(
@@ -60,7 +62,8 @@ final class RadarPresenceDecision
         DateTimeImmutable $now,
         array $config = [],
         bool $physicalEvidence = false,
-        ?string $currentDoorState = null
+        ?string $currentDoorState = null,
+        ?string $lastOpenAt = null
     ): array {
         $mode = (string) ($config['mode'] ?? self::MODE_RADAR_DOOR);
         if (!in_array($mode, self::modes(), true)) {
@@ -192,10 +195,19 @@ final class RadarPresenceDecision
         $doorOpenForMode = $currentDoorState !== null
             ? $currentDoorState === PresenceEvent::VALUE_OPEN
             : $latestDoorValue === PresenceEvent::VALUE_OPEN;
+        $lastOpenMs = self::toMs($lastOpenAt);
+        $lastOpenForMode = max($latestDoorOpen ?? 0, $lastOpenMs ?? 0);
+        $recentOpenMs = $cfg['door_recent_open_seconds'] * 1000;
+        $recentOpen = $doorOpenForMode
+            && $lastOpenForMode > 0
+            && ($nowUtc->getTimestamp() * 1000 - $lastOpenForMode) <= $recentOpenMs;
         $operationalMode = match ($mode) {
             self::MODE_RADAR_ONLY_SHADOW => self::MODE_RADAR_DOOR,
+            // F114+: con la puerta abierta, un OPEN reciente es corroboración
+            // física (entrada normal). Solo una puerta preabierta sin OPEN
+            // reciente usa radar_only.
             self::MODE_MIXED => $doorOpenForMode
-                ? self::MODE_RADAR_ONLY
+                ? ($recentOpen ? self::MODE_RADAR_DOOR : self::MODE_RADAR_ONLY)
                 : self::MODE_RADAR_DOOR,
             default => $mode,
         };
@@ -235,6 +247,7 @@ final class RadarPresenceDecision
         );
         $decision['apply'] = $confirmed;
         $decision['operational_mode'] = $operationalMode;
+        $decision['door_recent_open'] = $recentOpen;
         $decision['window_reports'] = $windowReports;
         $decision['evidence_score'] = $score;
         if ($mode === self::MODE_RADAR_ONLY_SHADOW) {
@@ -317,6 +330,7 @@ final class RadarPresenceDecision
             'absent_reports' => $int($config, 'absent_reports', 3, 1, 20),
             'absent_window_seconds' => $int($config, 'absent_window_seconds', 30, 1, 600),
             'door_window_seconds' => $int($config, 'door_window_seconds', 90, 0, 600),
+            'door_recent_open_seconds' => $int($config, 'door_recent_open_seconds', 10, 0, 600),
             'stale_seconds' => $int($config, 'stale_seconds', 180, 30, 86400),
         ];
     }

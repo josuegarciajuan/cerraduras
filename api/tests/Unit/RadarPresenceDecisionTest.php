@@ -174,6 +174,20 @@ $mixedClosedDoor = RadarPresenceDecision::decide(
 same('mixed puerta reciente → confirmed', $mixedClosedDoor['state'], 'PRESENT_CONFIRMED');
 same('mixed puerta reciente opera radar_only (puerta abierta)', $mixedClosedDoor['operational_mode'], 'radar_only');
 
+// F114+: con OPEN reciente (<=10 s) la puerta corrobora y no se espera al
+// span de radar_only. La puerta preabierta sigue en radar_only.
+$mixedRecentOpen = RadarPresenceDecision::decide(
+    [
+        ev('OPEN', 15, PresenceEvent::SENSOR_PROXIMITY),
+        ev('PRESENT', 18), ev('PRESENT', 19), ev('PRESENT', 20),
+    ],
+    now(20),
+    cfg('mixed')
+);
+same('mixed OPEN reciente → confirmed por puerta', $mixedRecentOpen['state'], 'PRESENT_CONFIRMED');
+same('mixed OPEN reciente opera radar_door', $mixedRecentOpen['operational_mode'], 'radar_door');
+same('mixed OPEN reciente marca door_recent_open', $mixedRecentOpen['door_recent_open'] ?? null, true);
+
 $mixedDoorClosed = RadarPresenceDecision::decide(
     [
         ev('OPEN', -12, PresenceEvent::SENSOR_PROXIMITY),

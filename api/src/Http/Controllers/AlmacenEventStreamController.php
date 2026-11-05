@@ -69,7 +69,34 @@ final class AlmacenEventStreamController
                 // el umbral).
                 $fpLive = $snapshot['live'] ?? null;
                 if (is_array($fpLive)) {
-                    unset($fpLive['door_age_seconds'], $fpLive['presence_age_seconds']);
+                    // F114+: las edades cambian en cada snapshot; no deben
+                    // disparar un evento `state` cada segundo. La edad se
+                    // calcula en el cliente desde los timestamps.
+                    unset(
+                        $fpLive['door_age_seconds'],
+                        $fpLive['presence_age_seconds'],
+                        $fpLive['radar_frame_age_seconds'],
+                        $fpLive['switch_pending_age_seconds']
+                    );
+                    if (isset($fpLive['radar_report']['age_seconds'])) {
+                        unset($fpLive['radar_report']['age_seconds']);
+                    }
+                    // La calibración reportada se refresca en cada trama; solo
+                    // interesa el estado (applied/mismatch) y los valores.
+                    if (isset($fpLive['calibration']['reported_at'])) {
+                        unset($fpLive['calibration']['reported_at']);
+                    }
+                    // La decisión DP1 se recalcula en cada trama; `decided_at`
+                    // y las edades no deben empujar un state por frame.
+                    if (isset($fpLive['presence_decision']) && is_array($fpLive['presence_decision'])) {
+                        foreach ([
+                            'decided_at', 'report_age_seconds', 'span_seconds',
+                            'max_gap_seconds', 'window_reports', 'reports',
+                            'evidence_score',
+                        ] as $volatile) {
+                            unset($fpLive['presence_decision'][$volatile]);
+                        }
+                    }
                 }
                 $fp = md5(json_encode([
                     $snapshot['warehouse'],

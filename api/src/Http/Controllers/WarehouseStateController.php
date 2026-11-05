@@ -309,29 +309,31 @@ final class WarehouseStateController
         );
         $rdStmt->execute([':r' => $roomId]);
         $rdRow = $rdStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-        $rdMeta = json_decode((string) ($rdRow['meta_json'] ?? ''), true);
-        $rdMeta = is_array($rdMeta) ? $rdMeta : [];
-        $savedSource = null;
-        $savedCalibration = null;
-        if (is_array($rdMeta['calibration'] ?? null)) {
-            $savedCalibration = $rdMeta['calibration'];
-            $savedSource = 'current';
-        } elseif (is_array($rdMeta['calibration_previous'] ?? null)) {
-            // Tras un corte/reconfiguración el radar puede volver a su base y
-            // quedarse sin `calibration`; la última conocida sigue siendo la
-            // referencia útil para avisar de la deriva.
-            $savedCalibration = $rdMeta['calibration_previous'];
-            $savedSource = 'previous';
+        if ($rdRow !== []) {
+            $rdMeta = json_decode((string) ($rdRow['meta_json'] ?? ''), true);
+            $rdMeta = is_array($rdMeta) ? $rdMeta : [];
+            $savedSource = null;
+            $savedCalibration = null;
+            if (is_array($rdMeta['calibration'] ?? null)) {
+                $savedCalibration = $rdMeta['calibration'];
+                $savedSource = 'current';
+            } elseif (is_array($rdMeta['calibration_previous'] ?? null)) {
+                // Tras un corte/reconfiguración el radar puede volver a su base y
+                // quedarse sin `calibration`; la última conocida sigue siendo la
+                // referencia útil para avisar de la deriva.
+                $savedCalibration = $rdMeta['calibration_previous'];
+                $savedSource = 'previous';
+            }
+            $reportedSettings = is_array($pdMeta['settings'] ?? null) ? $pdMeta['settings'] : [];
+            $calibration = RadarCalibrationDrift::evaluate($savedCalibration, $reportedSettings);
+            $calibration['device_id'] = (int) $rdRow['id'];
+            $calibration['saved_source'] = $savedSource;
+            $calibration['previous'] = is_array($rdMeta['calibration_previous'] ?? null)
+                ? $rdMeta['calibration_previous'] : null;
+            $calibration['reported_at'] = $pdRow['received_at'] ?? null;
+            $calibration['saved_at'] = $savedCalibration['calibrated_at'] ?? null;
+            $live['calibration'] = $calibration;
         }
-        $reportedSettings = is_array($pdMeta['settings'] ?? null) ? $pdMeta['settings'] : [];
-        $calibration = RadarCalibrationDrift::evaluate($savedCalibration, $reportedSettings);
-        $calibration['device_id'] = isset($rdRow['id']) ? (int) $rdRow['id'] : null;
-        $calibration['saved_source'] = $savedSource;
-        $calibration['previous'] = is_array($rdMeta['calibration_previous'] ?? null)
-            ? $rdMeta['calibration_previous'] : null;
-        $calibration['reported_at'] = $pdRow['received_at'] ?? null;
-        $calibration['saved_at'] = $savedCalibration['calibrated_at'] ?? null;
-        $live['calibration'] = $calibration;
 
         // F80/RF-103.3: últimos eventos de presencia aplicados (auditoría F41/F44
         // marca `applied=1`). Alimenta las fases del monigote en el croquis.

@@ -372,14 +372,16 @@ combinada de Zigbee2MQTT repite el último valor cacheado, así que esperar
 `3 reportes / 30 s` solo añade latencia. La salida se decide ahora por el
 **borde DP 1**:
 
-- nuevo `ABSENT` estable durante `RADAR_ABSENT_EDGE_GRACE_SECONDS` (def. 5 s)
+- un `PRESENT` nuevo se aplica **en el primer frame** con ese DP1 (sin contar
+  frames cacheados);
+- un `ABSENT` estable durante `RADAR_ABSENT_EDGE_GRACE_SECONDS` (def. 1,5 s)
   → se aplica ausencia y se cierra la visita;
 - un `PRESENT` nuevo dentro de la gracia cancela la ausencia (evita rebotes);
 - el panel muestra el último DP1, la edad de la última trama y si la
   calibración guardada coincide con la reportada por el dispositivo.
 
-El perfil de calibración del almacén usa `RADAR_WAREHOUSE_FADING_TIME=5.0`
-para que el radar emita `ABSENT` antes de 10 s. Si el panel muestra
+El perfil de calibración del almacén usa `RADAR_WAREHOUSE_FADING_TIME=5.5`
+(valor seguro mientras no se valide uno menor con una persona quieta). Si el panel muestra
 **CALIBRACIÓN NO APLICADA** (por ejemplo tras un corte de alimentación),
 re-aplica el perfil guardado una sola vez:
 
@@ -387,7 +389,10 @@ re-aplica el perfil guardado una sola vez:
 cd /root/cerraduras/api
 php bin/radar-apply-profile.php --room=14 --dry-run
 php bin/radar-apply-profile.php --room=14
+# A/B explícito de fading (solo tras validar persona quieta):
+php bin/radar-apply-profile.php --room=14 --fading=3.5
 ```
 
 El script publica por MQTT y espera la confirmación por push. No consulta
-Tuya ni crea temporizadores.
+Tuya ni crea temporizadores. Por defecto respeta el `fading_time` guardado;
+`--fading=` es un override explícito.

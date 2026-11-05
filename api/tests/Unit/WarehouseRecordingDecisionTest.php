@@ -152,6 +152,17 @@ if ($r['state'] === D::STATE_RECORDING_INSIDE
     fail('F85: EXIT_PENDING + PRESENT inesperado: ' . json_encode($r));
 }
 
+// F114+: una ausencia corta sin puerta reanuda la MISMA visita (anti-corte).
+$r = D::decide(st(D::STATE_EXIT_PENDING, 'PRESENCE', true), D::EV_PRESENT, null, true);
+if ($r['state'] === D::STATE_RECORDING_INSIDE
+    && hasAll($r['actions'], [D::A_UNDO_EXIT, D::A_RESUME_INTERIOR, D::A_CLEAR_DEADLINES])
+    && hasNone($r['actions'], [D::A_CREATE_VISIT])
+) {
+    pass('F114+: EXIT_PENDING + PRESENT corto sin puerta → reanuda la misma visita');
+} else {
+    fail('F114+: reanudación corta inesperada: ' . json_encode($r));
+}
+
 // La re-entrada desde una visita DOOR/QR también crea visita nueva (PRESENCE).
 $r = D::decide(st(D::STATE_EXIT_PENDING, 'DOOR', true), D::EV_PRESENT);
 if ($r['state'] === D::STATE_RECORDING_INSIDE

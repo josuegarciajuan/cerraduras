@@ -150,7 +150,25 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                 $presenceEvidenceOk = $this->presenceEvidenceConfirmed($roomId, $visitId, $config, $now);
             }
 
-            $result = WarehouseRecordingDecision::decide($state, $event, $presenceEvidenceOk);
+            $resumeShortAbsence = false;
+            if ($event === WarehouseRecordingDecision::EV_PRESENT
+                && $preState === WarehouseRecordingDecision::STATE_EXIT_PENDING
+                && $visitId !== null
+            ) {
+                $resumeShortAbsence = $this->shouldResumeShortAbsence(
+                    $roomId,
+                    $visitId,
+                    (int) ($config['absence_blip_seconds'] ?? 0),
+                    $now
+                );
+            }
+
+            $result = WarehouseRecordingDecision::decide(
+                $state,
+                $event,
+                $presenceEvidenceOk,
+                $resumeShortAbsence
+            );
 
             $visitId = $row['current_visit_id'] !== null ? (int) $row['current_visit_id'] : null;
             $deadlineX = $row['deadline_x'] !== null ? (string) $row['deadline_x'] : null;
@@ -179,6 +197,26 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
                         if ($visitId !== null) {
                             $this->pdo->prepare('UPDATE warehouse_visits SET exited_at=:n WHERE id=:id')
                                 ->execute([':n' => $now->format('Y-m-d H:i:s.v'), ':id' => $visitId]);
+                        }
+                        break;
+                    case WarehouseRecordingDecision::A_UNDO_EXIT:
+                        if ($visitId !== null) {
+                            $this->pdo->prepare('UPDATE warehouse_visits SET exited_at=NULL WHERE id=:id')
+                                ->execute([':id' => $visitId]);
+                        }
+                        break;
+                    case WarehouseRecordingDecision::A_RESUME_INTERIOR:
+                        // El EXTERIOR sigue grabando; solo se reinicia el clip
+                        // INTERIOR de la misma visita.
+                        if ($visitId !== null) {
+                            $this->startRecordings(
+                                $roomId,
+                                $visitId,
+                                'INTERIOR',
+                                'ENTRY',
+                                $result['entry_trigger'],
+                                $now
+                            );
                         }
                         break;
                     case WarehouseRecordingDecision::A_VISIT_NO_SHOW:
@@ -343,6 +381,9 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             'static_seconds' => $evidence['static_seconds'],
             // F85/RF-112.3: ventana de contexto de re-entrada (def. 300 s).
             'reentry_seconds' => $this->reentryWindow($roomId),
+            // F114+: una ausencia más corta que esta ventana, sin evento de
+            // puerta posterior, se considera un falso negativo del radar.
+            'absence_blip_seconds' => (int) (\App\Support\Config::getInt('WAREHOUSE_ABSENT_BLIP_SECONDS', 15) ?? 15),
         ];
     }
 
@@ -479,6 +520,48 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
             ':qr' => $trigger === 'QR' ? $now->format('Y-m-d H:i:s.v') : null,
         ]);
         return (int) $this->pdo->lastInsertId();
+    }
+
+    /**
+     * F114+: ¿la reaparición es lo bastante rápida y sin puerta como para
+     * deshacer la salida en la misma visita? Solo BD local.
+     */
+    private function shouldResumeShortAbsence(
+        int $roomId,
+        int $visitId,
+        int $blipSeconds,
+        \DateTimeImmutable $now
+    ): bool {
+        if ($blipSeconds <= 0) {
+            return false;
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT v.exited_at, s.last_door_event_at
+               FROM warehouse_visits v
+               LEFT JOIN iot_sessions s ON s.room_id = v.room_id
+              WHERE v.id = :id LIMIT 1'
+        );
+        $stmt->execute([':id' => $visitId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false || ($row['exited_at'] ?? null) === null) {
+            return false;
+        }
+        $exitTs = strtotime((string) $row['exited_at'] . ' UTC');
+        if ($exitTs === false) {
+            return false;
+        }
+        $absence = $now->getTimestamp() - $exitTs;
+        if ($absence < 0 || $absence > $blipSeconds) {
+            return false;
+        }
+        $doorAt = $row['last_door_event_at'] ?? null;
+        if ($doorAt !== null && $doorAt !== '') {
+            $doorTs = strtotime((string) $doorAt . ' UTC');
+            if ($doorTs !== false && $doorTs > $exitTs) {
+                return false; // hubo transición de puerta: reentrada real
+            }
+        }
+        return true;
     }
 
     private function episodeFor(string $preState): string
