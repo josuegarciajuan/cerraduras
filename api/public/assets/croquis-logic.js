@@ -69,6 +69,12 @@
   var EXIT_MAX_VISUAL_MS = 15000;
 
   /**
+   * F118.4: tras un CLOSED, el monigote se queda en el umbral este tiempo antes
+   * de decidir dentro/fuera. Da margen al radar lento y usa la hora del servidor.
+   */
+  var CLOSE_DECISION_MS = 2300;
+
+  /**
    * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
    * posición semántica del estado: QR junto al lector, limpieza, avería...).
    * La presencia dentro (`phase==='inside'`) NO los sobreescribe. Así un
@@ -373,6 +379,8 @@
     var nowMs = (typeof s.now === 'number' && isFinite(s.now)) ? s.now : Date.now();
     var crossingHold = (typeof s.crossingHoldMs === 'number' && s.crossingHoldMs >= 0)
       ? s.crossingHoldMs : CROSSING_HOLD_MS;
+    var closeDecision = (typeof s.closeDecisionMs === 'number' && s.closeDecisionMs >= 0)
+      ? s.closeDecisionMs : CLOSE_DECISION_MS;
     var absenceHold = (typeof s.absenceHoldMs === 'number' && s.absenceHoldMs >= 0)
       ? s.absenceHoldMs : ABSENCE_HOLD_MS;
 
@@ -389,6 +397,17 @@
     var keyCanStart = keyAccess
       && (stateName === 'QR_DISPONIBLE' || stateName === 'ESPERANDO_HUESPED');
     if (DASHBOARD_STATE_ONLY[stateName] && !keyCanStart) return 'state';
+
+    // F118.4: gate de decisión tras cerrar. Mientras dura, ni INSIDE ni OUTSIDE:
+    // el monigote permanece en el umbral. Excluye estados de salida ya confirmada.
+    var closeHold = !doorOpen && lastCloseAt > 0
+      && (nowMs - lastCloseAt) < closeDecision;
+    if (closeHold) {
+      if (stateName === 'SALIDA_DETECTADA' || stateName === 'HUESPED_HA_SALIDO') {
+        return 'OUTSIDE';
+      }
+      return 'WAITING';
+    }
 
     var recentOpen = doorOpen && lastOpenAt > 0 && (nowMs - lastOpenAt) < crossingHold;
     var presenceAfterOpen = lastPresenceAt > 0 && lastOpenAt > 0
@@ -426,7 +445,10 @@
         return 'WAITING';
       }
       // pending
-      if (doorOpen) return 'CROSSING';
+      if (doorOpen) {
+        if (recentOpen) return 'CROSSING';
+        return insideAfterOpen ? 'INSIDE' : 'CROSSING';
+      }
       return insideAfterOpen ? 'INSIDE' : 'AT_QR';
     }
 
@@ -522,6 +544,7 @@
     CROSSING_HOLD_MS: CROSSING_HOLD_MS,
     ABSENCE_HOLD_MS: ABSENCE_HOLD_MS,
     EXIT_VISUAL_HOLD_MS: EXIT_VISUAL_HOLD_MS,
-    EXIT_MAX_VISUAL_MS: EXIT_MAX_VISUAL_MS
+    EXIT_MAX_VISUAL_MS: EXIT_MAX_VISUAL_MS,
+    CLOSE_DECISION_MS: CLOSE_DECISION_MS
   };
 });

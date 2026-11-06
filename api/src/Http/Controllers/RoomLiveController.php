@@ -8,6 +8,7 @@ use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Anomalies\AnomalyRepositoryInterface;
 use App\Domain\Locks\AccessEvent;
 use App\Domain\Presence\ExitRuleEvaluator;
+use App\Domain\Presence\KeyEpisodePolicy;
 use App\Domain\Presence\IotSessionRepositoryInterface;
 use App\Domain\Presence\PresenceEventRepositoryInterface;
 use App\Domain\Qr\QrWindows;
@@ -311,6 +312,9 @@ final class RoomLiveController
                 'backoff_until' => (int) ($quota['backoffUntil'] ?? 0),
             ],
             'door_open_too_long' => $doorOpenTooLong,
+            // F118.4: hora del servidor con ms para que todos los clientes usen
+            // la misma base temporal en holds y ventanas.
+            'server_ts' => gmdate('Y-m-d\TH:i:s.v\Z'),
         ])
             ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->withHeader('Pragma', 'no-cache')
@@ -318,24 +322,17 @@ final class RoomLiveController
     }
 
     /**
-     * F118.3: último acceso válido con ficha/NFC de la sala.
+     * F118.4: fase del episodio de ficha/NFC (server-authoritative).
      *
-     * `active` = hay acceso de ficha y la presencia sigue en PRESENT, sin un
-     * ABSENT posterior al acceso. Sin caducidad temporal: el episodio se cierra
-     * por ausencia (o por el cierre de salida del dashboard), no por reloj.
+     * La fase se calcula en servidor con KeyEpisodePolicy usando el último
+     * acceso válido y los eventos de puerta/presencia posteriores. Así todos
+     * los dispositivos reciben la misma fase, sin localStorage.
      *
      * @param array<string,mixed> $iotData
-     * @return array{active:bool,key_id:?int,worker_id:?int,credential_type:?string,at:?string}
+     * @return array<string,mixed>
      */
     private function latestKeyEpisode(int $roomId, array $iotData): array
     {
-        $default = [
-            'active' => false,
-            'key_id' => null,
-            'worker_id' => null,
-            'credential_type' => null,
-            'at' => null,
-        ];
         $stmt = $this->pdo->prepare(
             "SELECT key_id, worker_id, credential_type, occurred_at
                FROM key_access_events
@@ -344,31 +341,30 @@ final class RoomLiveController
               LIMIT 1"
         );
         $stmt->execute([':rid' => $roomId]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        if ($row === false) {
-            return $default;
+        $key = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if ($key === false) {
+            return KeyEpisodePolicy::derive(null, [], '', null, time());
         }
 
-        $presence = (string) ($iotData['presence_state'] ?? 'UNKNOWN');
-        $lastAbsent = $this->pdo->prepare(
-            "SELECT MAX(occurred_at) FROM presence_events
-              WHERE room_id = :rid AND sensor = 'PRESENCE' AND value = 'ABSENT'"
+        $eventsStmt = $this->pdo->prepare(
+            "SELECT sensor, value, occurred_at
+               FROM presence_events
+              WHERE room_id = :rid AND occurred_at >= :at AND applied = 1
+                AND sensor IN ('PROXIMITY','PRESENCE')
+              ORDER BY occurred_at ASC, id ASC
+              LIMIT 1000"
         );
-        $lastAbsent->execute([':rid' => $roomId]);
-        $absentAt = $lastAbsent->fetchColumn() ?: null;
-        $keyTs = self::sqlEpoch((string) $row['occurred_at']);
-        $absentTs = $absentAt !== null ? self::sqlEpoch((string) $absentAt) : null;
-        $active = $presence === 'PRESENT'
-            && $keyTs !== null
-            && ($absentTs === null || $keyTs > $absentTs);
+        $eventsStmt->execute([':rid' => $roomId, ':at' => (string) $key['occurred_at']]);
+        $events = $eventsStmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
 
-        return [
-            'active' => $active,
-            'key_id' => $row['key_id'] !== null ? (int) $row['key_id'] : null,
-            'worker_id' => $row['worker_id'] !== null ? (int) $row['worker_id'] : null,
-            'credential_type' => $row['credential_type'] !== null ? (string) $row['credential_type'] : null,
-            'at' => (string) $row['occurred_at'],
-        ];
+        return KeyEpisodePolicy::derive(
+            $key,
+            $events,
+            (string) ($iotData['presence_state'] ?? 'UNKNOWN'),
+            isset($iotData['last_absent_since']) ? (string) $iotData['last_absent_since'] : null,
+            time(),
+            (int) (Config::getInt('EXIT_MAX_VERIFY_SECONDS', 15) ?? 15)
+        );
     }
 
     /**

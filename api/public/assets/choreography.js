@@ -414,8 +414,65 @@
     return out('FREE');
   }
 
+  /**
+   * F118.4: construye los episodios de la máquina de estados SOLO desde el
+   * snapshot del servidor (sin estado acumulado local). Así dos dispositivos con
+   * el mismo `snapshot` y la misma hora de servidor derivan el mismo estado.
+   */
+  function deriveEpisodesFromSnapshot(snapshot, now) {
+    var s = snapshot || {};
+    var nowMs = (typeof now === 'number' && isFinite(now)) ? now : parseTime(now);
+    var ep = emptyEpisodes((s.stayId === undefined) ? null : s.stayId);
+
+    var entryConf = parseTime(s.entryConfirmedAt);
+    var lastOpen = parseTime(s.lastOpenAt);
+    var lastClose = parseTime(s.lastCloseAt);
+    var lastPresence = parseTime(s.lastPresenceAt);
+    var lastAbsent = parseTime(s.lastAbsentSince);
+    var qrBroad = parseTime(s.qrBroadAt);
+    var entryWindow = (typeof s.entryWindowSeconds === 'number' && s.entryWindowSeconds > 0)
+      ? s.entryWindowSeconds : 90;
+    var exitGuard = (typeof s.exitGuardSeconds === 'number' && s.exitGuardSeconds > 0)
+      ? s.exitGuardSeconds : 1;
+    var exitVerify = (typeof s.exitVerifySeconds === 'number' && s.exitVerifySeconds > 0)
+      ? s.exitVerifySeconds : DEFAULT_EXIT_VERIFY_SECONDS;
+    var verifyMs = Math.max(exitVerify, exitGuard + 3) * 1000;
+    var stayStatus = s.stayStatus || null;
+    var presence = s.presence || 'UNKNOWN';
+
+    ep.entryActive = !!(stayStatus === 'OCCUPIED' && !entryConf && qrBroad > 0);
+    ep.entryQrAt = qrBroad || 0;
+    ep.entryDoorOpenedAt = 0;
+    if (lastOpen > 0 && (!qrBroad || lastOpen >= qrBroad - 1000)) {
+      ep.entryDoorOpenedAt = lastOpen;
+    }
+    ep.entryPresenceSeen = presence === 'PRESENT'
+      && lastPresence > 0
+      && ep.entryDoorOpenedAt > 0
+      && lastPresence >= ep.entryDoorOpenedAt;
+    ep.entryConsolidatedAt = entryConf || 0;
+    ep.entryTimedOut = !entryConf
+      && ep.entryDoorOpenedAt > 0
+      && lastClose > 0
+      && lastClose >= ep.entryDoorOpenedAt
+      && (nowMs - lastClose) >= entryWindow * 1000
+      && presence !== 'PRESENT'
+      && !s.freshPresenceAfterClose;
+
+    ep.exitActive = !!(entryConf > 0 && lastOpen > entryConf);
+    ep.exitDoorOpenedAt = ep.exitActive ? lastOpen : 0;
+    ep.exitClosedAt = (ep.exitActive && lastClose >= lastOpen) ? lastClose : 0;
+    ep.exitVerifyUntil = ep.exitClosedAt > 0 ? ep.exitClosedAt + verifyMs : 0;
+    ep.exitPresenceSeen = presence === 'PRESENT';
+    ep.exitAbsentAt = lastAbsent;
+    ep.exitDeadline = parseTime(s.exitDeadline);
+
+    return ep;
+  }
+
   return {
     deriveChoreography: deriveChoreography,
+    deriveEpisodesFromSnapshot: deriveEpisodesFromSnapshot,
     parseTime: parseTime,
     emptyEpisodes: emptyEpisodes,
     resolveDoorOpen: resolveDoorOpen,

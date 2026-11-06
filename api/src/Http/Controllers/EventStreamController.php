@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Support\Clock;
 use App\Support\Config;
 use App\Domain\Presence\ExitRuleEvaluator;
+use App\Domain\Presence\KeyEpisodePolicy;
 use App\Domain\Qr\QrWindows;
 use App\Support\Qr\QrTokenizer;
 
@@ -163,7 +164,7 @@ final class EventStreamController
                     // ── Tier 2: full state query (only on change) ──
                     $state = $this->fetchFullState($roomId);
                     if ($state !== null) {
-                        $state['server_ts'] = gmdate('Y-m-d\TH:i:s\Z'); // Fase A: medir latencia real
+                        $state['server_ts'] = gmdate('Y-m-d\TH:i:s.v\Z'); // Fase A: medir latencia real
                         $this->sendEvent('state', $state);
                         $stateEvents++;
                     }
@@ -656,22 +657,13 @@ final class EventStreamController
     }
 
     /**
-     * F118.3: episodio de ficha/NFC sin estancia (aditivo). Misma semántica que
-     * RoomLiveController::latestKeyEpisode(): activo con presencia PRESENT y
-     * acceso posterior al último ABSENT; sin caducidad temporal.
+     * F118.4: fase del episodio de ficha/NFC (server-authoritative).
      *
      * @param array<string,mixed> $iotData
-     * @return array{active:bool,key_id:?int,worker_id:?int,credential_type:?string,at:?string}
+     * @return array<string,mixed>
      */
     private function latestKeyEpisode(int $roomId, array $iotData): array
     {
-        $default = [
-            'active' => false,
-            'key_id' => null,
-            'worker_id' => null,
-            'credential_type' => null,
-            'at' => null,
-        ];
         $stmt = $this->pdo->prepare(
             "SELECT key_id, worker_id, credential_type, occurred_at
                FROM key_access_events
@@ -680,29 +672,30 @@ final class EventStreamController
               LIMIT 1"
         );
         $stmt->execute([':rid' => $roomId]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        if ($row === false) {
-            return $default;
+        $key = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if ($key === false) {
+            return KeyEpisodePolicy::derive(null, [], '', null, time());
         }
-        $presence = (string) ($iotData['presence_state'] ?? 'UNKNOWN');
-        $lastAbsent = $this->pdo->prepare(
-            "SELECT MAX(occurred_at) FROM presence_events
-              WHERE room_id = :rid AND sensor = 'PRESENCE' AND value = 'ABSENT'"
+
+        $eventsStmt = $this->pdo->prepare(
+            "SELECT sensor, value, occurred_at
+               FROM presence_events
+              WHERE room_id = :rid AND occurred_at >= :at AND applied = 1
+                AND sensor IN ('PROXIMITY','PRESENCE')
+              ORDER BY occurred_at ASC, id ASC
+              LIMIT 1000"
         );
-        $lastAbsent->execute([':rid' => $roomId]);
-        $absentAt = $lastAbsent->fetchColumn() ?: null;
-        $keyTs = self::sqlEpoch((string) $row['occurred_at']);
-        $absentTs = $absentAt !== null ? self::sqlEpoch((string) $absentAt) : null;
-        $active = $presence === 'PRESENT'
-            && $keyTs !== null
-            && ($absentTs === null || $keyTs > $absentTs);
-        return [
-            'active' => $active,
-            'key_id' => $row['key_id'] !== null ? (int) $row['key_id'] : null,
-            'worker_id' => $row['worker_id'] !== null ? (int) $row['worker_id'] : null,
-            'credential_type' => $row['credential_type'] !== null ? (string) $row['credential_type'] : null,
-            'at' => (string) $row['occurred_at'],
-        ];
+        $eventsStmt->execute([':rid' => $roomId, ':at' => (string) $key['occurred_at']]);
+        $events = $eventsStmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+        return KeyEpisodePolicy::derive(
+            $key,
+            $events,
+            (string) ($iotData['presence_state'] ?? 'UNKNOWN'),
+            isset($iotData['last_absent_since']) ? (string) $iotData['last_absent_since'] : null,
+            time(),
+            (int) (Config::getInt('EXIT_MAX_VERIFY_SECONDS', 15) ?? 15)
+        );
     }
 
     /** Parse a DB DATETIME(3) UTC string into an epoch, or null. */

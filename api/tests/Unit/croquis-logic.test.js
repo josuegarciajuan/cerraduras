@@ -22,6 +22,7 @@ const {
   CROSSING_HOLD_MS,
   ABSENCE_HOLD_MS,
   EXIT_VISUAL_HOLD_MS,
+  CLOSE_DECISION_MS,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'croquis-logic.js'));
 
 let passed = 0;
@@ -381,6 +382,31 @@ const t = (offsetMs) => new Date(BASE + offsetMs).toISOString();
 check('F118 hold de cruce 1,8 s', CROSSING_HOLD_MS === 1800);
 check('F118 hold de ausencia 3 s', ABSENCE_HOLD_MS === 3000);
 check('F118.2 hold de salida visual 3 s', EXIT_VISUAL_HOLD_MS === 3000);
+check('F118.4 hold de decisión tras cierre 2,3 s', CLOSE_DECISION_MS === 2300);
+
+const posCloseHold = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', entryConfirmed: true, lastCloseAt: t(-1000), now: BASE,
+});
+check('F118.4 cierre + 1 s → WAITING (no decide aún)', posCloseHold === 'WAITING');
+
+const posCloseDecided = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', entryConfirmed: true, lastCloseAt: t(-2400), now: BASE,
+});
+check('F118.4 cierre + 2,4 s con entrada → INSIDE', posCloseDecided === 'INSIDE');
+
+const posCloseExitHold = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'ABSENT', lastCloseAt: t(-1000), lastAbsentSince: t(-5000), now: BASE,
+});
+check('F118.4 salida: cierre + 1 s → WAITING', posCloseExitHold === 'WAITING');
+
+const posCloseExitAfter = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'ABSENT', lastCloseAt: t(-2400), lastAbsentSince: t(-5000), now: BASE,
+});
+check('F118.4 salida: cierre + 2,4 s + ausencia → OUTSIDE', posCloseExitAfter === 'OUTSIDE');
 
 // Pre-entrada: la presencia no puede sacar el monigote de QR/lector.
 const posQrPre = resolveDashboardMonigote({

@@ -26503,3 +26503,50 @@ posterior.
 `ExitRuleEvaluator::evaluate(..., $maxVerifySeconds)` devuelve salida si el ciclo
 acreditado está cerrado y `now - last_close >= 15 s`, aunque `presence=PRESENT`.
 `EXIT_MAX_VERIFY_SECONDS=0` desactiva el máximo.
+
+## 118.10 F118.4 — Cierre con decisión a 2,3 s y estado 100% sincronizado
+
+### Gate de decisión tras cierre
+
+`CLOSE_DECISION_MS = 2300`. Cuando llega un `CLOSED` (puerta cerrada), el
+monigote permanece en el umbral (`WAITING`) durante 2,3 s. Al terminar:
+
+- entrada con presencia/`entry_confirmed_at` → `INSIDE`;
+- entrada sin presencia → se mantiene en el umbral hasta la ventana de entrada
+  o la confirmación (opción conservadora), no salta a `OUTSIDE`;
+- salida → aplica después el heurístico de 3 s / máximo 15 s.
+
+### Hora del servidor
+
+`/live` y SSE incluyen `server_ts` con milisegundos. El dashboard calcula
+`serverNow = Date.now() + skew` y lo usa en `deriveState`,
+`updateMonigoteFromSensors`, `deriveCroquis` y los holds. Los relojes de los
+dispositivos dejan de influir.
+
+### Ficha server-authoritative
+
+`KeyEpisodePolicy` deriva la fase a partir del último acceso `key_access_events`
+OK y de los eventos de puerta/presencia posteriores:
+
+- `pending`: acceso sin cierre de entrada.
+- `outside`: cierre de entrada sin presencia.
+- `inside`: entrada confirmada; **sin caducidad temporal**.
+- `exit`: apertura posterior; se cierra por ausencia o máximo 15 s.
+
+El dashboard consume `key_episode.phase`; se elimina `localStorage` y la fase
+local. `/live` y SSE incluyen `entry_open_at`, `entry_closed_at`,
+`entry_confirmed`, `exit_open_at`, `exit_closed_at`.
+
+### Badge determinista
+
+`deriveEpisodesFromSnapshot(snapshot, now)` reconstruye los episodios desde los
+timestamps del servidor (`entry_confirmed_at`, `last_open/close/presence`,
+`qrBroadAt`, ventanas) en cada tick. `deriveChoreography` recibe siempre ese
+episodio derivado, no el acumulado local. Dos dispositivos con el mismo snapshot
+y `serverNow` producen el mismo badge y monigote.
+
+### Verificación
+
+`KeyEpisodePolicyTest` (9), `choreography.test.js` (82), `croquis-logic.test.js`
+(119), `ExitRuleEvaluatorTest` (31), BLOCK 33 y regresión. Prueba física con dos
+dispositivos pendiente.

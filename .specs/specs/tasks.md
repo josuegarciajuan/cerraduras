@@ -11754,3 +11754,11 @@ pendientes.
 - [x] TSK-F118-29: máximo de salida 15 s en backend y monigote.
 - [x] TSK-F118-30: tests de resolver, ExitRuleEvaluator y runner.
 - [ ] TSK-F118-31: reiniciar API PHP y prueba física completa.
+
+## F118.4 — Cierre a 2,3 s y sincronización total
+- [x] TSK-F118-32: `CLOSE_DECISION_MS=2300` en el monigote; entrada conservadora.
+- [x] TSK-F118-33: `server_ts` ms en /live y SSE + `serverNow`.
+- [x] TSK-F118-34: `KeyEpisodePolicy` server-authoritative y eliminación de localStorage.
+- [x] TSK-F118-35: `deriveEpisodesFromSnapshot` para badge determinista.
+- [x] TSK-F118-36: tests de política, snapshot, hold y runner.
+- [ ] TSK-F118-37: reiniciar API/worker y prueba física con dos dispositivos.

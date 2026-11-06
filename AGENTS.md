@@ -1133,7 +1133,7 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Frescura**: `/live` y SSE añaden `door_stale`/`presence_stale` + edades y
   umbrales; el fingerprint del SSE los incluye.
 - **Sin tocar**: `deriveChoreography`, F42/F57, `/almacen`, Tuya/polling.
-- **Verificación**: `croquis-logic.test.js` (114 checks), BLOCK 33 y regresión.
+- **Verificación**: `croquis-logic.test.js` (119 checks), BLOCK 33 y regresión.
 - **F118.1**: el hold de cruce (1,8 s) y la presencia posterior a la apertura
   evitan el salto al centro al abrir; la ausencia sostenida (3 s) evita parpadeos.
   Zigbee standard respeta el contexto F48. `run-tests.sh` guarda/restaura el
@@ -1168,4 +1168,17 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   monigote pasan a fuera aunque el radar siga en PRESENT.
 - **Verificación**: `ExitRuleEvaluatorTest` (31), `croquis-logic.test.js` (114),
   BLOCK 33 y regresión.
+
+### F118.4 — Cierre a 2,3 s y sincronización total
+
+- **Cierre**: `CLOSE_DECISION_MS=2300`; el monigote espera en el umbral antes de
+  decidir. En entrada sin presencia se queda en el umbral hasta la ventana de
+  entrada, no salta fuera→dentro.
+- **Hora**: `server_ts` con ms en /live y SSE; `serverNow` en todos los holds.
+- **Ficha**: `KeyEpisodePolicy` calcula `key_episode.phase` en servidor
+  (pending/inside/exit/outside), sin caducidad temporal; se elimina localStorage.
+- **Badge**: `deriveEpisodesFromSnapshot` reconstruye el estado desde el snapshot
+  del servidor; dos dispositivos con el mismo snapshot muestran lo mismo.
+- **Verificación**: `KeyEpisodePolicyTest` (9), `choreography.test.js` (82),
+  `croquis-logic.test.js` (119) y regresión.
 
