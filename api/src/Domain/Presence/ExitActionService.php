@@ -104,7 +104,8 @@ final class ExitActionService
                     $stay,
                     $this->exitEvaluator->resolveGapSeconds($room),
                     $now->getTimestamp(),
-                    $this->exitEvaluator->resolveNoPresenceAfterCloseSecondsValue()
+                    $this->exitEvaluator->resolveNoPresenceAfterCloseSecondsValue(),
+                    $this->exitEvaluator->resolveMaxVerifySecondsValue()
                 );
 
                 if (!$fired) {

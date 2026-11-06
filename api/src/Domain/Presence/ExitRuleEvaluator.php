@@ -68,6 +68,13 @@ final class ExitRuleEvaluator
      */
     public const DEFAULT_NO_PRESENCE_AFTER_CLOSE_SECONDS = 3;
 
+    /**
+     * F118.3: máximo de verificación de salida desde el cierre. Si el radar
+     * sigue en PRESENT (target del pasillo), la salida se confirma igualmente.
+     * 0 desactiva el máximo. El usuario fijó 15 s.
+     */
+    public const DEFAULT_MAX_VERIFY_SECONDS = 15;
+
     private IotSessionRepositoryInterface $iotSessions;
     private RoomRepositoryInterface       $rooms;
     private RoomTypeRepositoryInterface   $roomTypes;
@@ -110,7 +117,8 @@ final class ExitRuleEvaluator
             $stay,
             $this->resolveGapSeconds($room),
             $nowTs,
-            $this->resolveNoPresenceAfterCloseSecondsValue()
+            $this->resolveNoPresenceAfterCloseSecondsValue(),
+            $this->resolveMaxVerifySecondsValue()
         );
     }
 
@@ -170,6 +178,24 @@ final class ExitRuleEvaluator
     }
 
     /**
+     * F118.3: máximo de verificación de salida (segundos). 0 desactiva.
+     */
+    public static function resolveMaxVerifySeconds(?int $globalOverride): int
+    {
+        if ($globalOverride !== null && $globalOverride >= 0) {
+            return $globalOverride;
+        }
+        return self::DEFAULT_MAX_VERIFY_SECONDS;
+    }
+
+    public function resolveMaxVerifySecondsValue(): int
+    {
+        return self::resolveMaxVerifySeconds(
+            Config::getInt('EXIT_MAX_VERIFY_SECONDS', null)
+        );
+    }
+
+    /**
      * Pure evaluation: no repository calls.
      *
      * @param Stay|null $stay Active stay (null when none; rule never fires).
@@ -182,7 +208,8 @@ final class ExitRuleEvaluator
         ?Stay      $stay,
         int        $exitGuardSeconds,
         int        $nowTs,
-        int        $noPresenceAfterCloseSeconds = 0
+        int        $noPresenceAfterCloseSeconds = 0,
+        int        $maxVerifySeconds = 0
     ): bool {
         // (a) Entry must have been confirmed by the backend.
         if ($stay === null || $stay->entryConfirmedAt === null) {
@@ -214,6 +241,12 @@ final class ExitRuleEvaluator
         // (c) Safety bound: the cycle is not arbitrarily old.
         if (($nowTs - $closeTs) > self::DOOR_CYCLE_MAX_S) {
             return false;
+        }
+
+        // (c2) F118.3 — máximo de verificación desde el cierre. Si el radar
+        // sigue viendo el pasillo, no se puede esperar indefinidamente.
+        if ($maxVerifySeconds > 0 && ($nowTs - $closeTs) >= $maxVerifySeconds) {
+            return true;
         }
 
         // (d) F118.2 — salida sin reportes de presencia posteriores al cierre.

@@ -63,6 +63,12 @@
   var EXIT_VISUAL_HOLD_MS = 3000;
 
   /**
+   * F118.3: máximo visual de verificación de salida desde el cierre. Al
+   * agotarse, el monigote pasa a OUTSIDE aunque el radar siga en PRESENT.
+   */
+  var EXIT_MAX_VISUAL_MS = 15000;
+
+  /**
    * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
    * posición semántica del estado: QR junto al lector, limpieza, avería...).
    * La presencia dentro (`phase==='inside'`) NO los sobreescribe. Así un
@@ -349,7 +355,8 @@
    * 'state' significa: usa `STATES[stateName].moni` en dashboard.html.
    *
    * @param {object} input {stateName, phase, doorOpen, keyAccessActive,
-   *                        entryConfirmed, presenceState,
+   *                        entryConfirmed, hasEntryContext, hasKeyEpisode,
+   *                        keyEpisodePhase, presenceState,
    *                        lastOpenAt, lastCloseAt, lastPresenceAt,
    *                        lastAbsentSince, now,
    *                        crossingHoldMs, absenceHoldMs}
@@ -386,74 +393,92 @@
     var recentOpen = doorOpen && lastOpenAt > 0 && (nowMs - lastOpenAt) < crossingHold;
     var presenceAfterOpen = lastPresenceAt > 0 && lastOpenAt > 0
       && lastPresenceAt >= lastOpenAt;
-    // Para pasar a INSIDE hace falta presencia posterior a la apertura (o una
-    // entrada ya confirmada). Un PRESENT previo a abrir no cuenta.
-    var insideEvidence = (phase === 'inside')
-      && (presenceAfterOpen || entryConfirmed);
+    var insideAfterOpen = (phase === 'inside') && presenceAfterOpen;
     var presenceAfterClose = lastPresenceAt > 0 && lastCloseAt > 0
       && lastPresenceAt > lastCloseAt;
     var visualExit = lastCloseAt > 0
       && (nowMs - lastCloseAt) >= EXIT_VISUAL_HOLD_MS
       && !presenceAfterClose;
+    var maxExit = lastCloseAt > 0
+      && (nowMs - lastCloseAt) >= EXIT_MAX_VISUAL_MS;
     var absenceSettled = presenceState === 'ABSENT'
       && lastAbsentSince > 0 && (nowMs - lastAbsentSince) >= absenceHold;
 
-    // Acceso con ficha/NFC sin estancia de huésped.
+    var hasEntryContext = !!s.hasEntryContext;
+    var hasKeyEpisode = !!s.hasKeyEpisode;
+    var keyPhase = String(s.keyEpisodePhase || '');
+
+    // F118.3 — ficha/NFC persistente (sin caducidad): se comporta como una
+    // estancia en su fase pending/inside/exit.
+    if (hasKeyEpisode) {
+      if (keyPhase === 'inside') {
+        if (!doorOpen) return 'INSIDE';
+        if (recentOpen) return 'WAITING';
+        if (insideAfterOpen) return 'INSIDE';
+        return 'WAITING';
+      }
+      if (keyPhase === 'exit') {
+        if (doorOpen) return 'WAITING';
+        if (maxExit) return 'OUTSIDE';
+        if (absenceSettled) return 'OUTSIDE';
+        if (insideAfterOpen) return 'INSIDE';
+        if (visualExit) return 'OUTSIDE';
+        return 'WAITING';
+      }
+      // pending
+      if (doorOpen) return 'CROSSING';
+      return insideAfterOpen ? 'INSIDE' : 'AT_QR';
+    }
+
+    // Acceso con ficha/NFC reciente (ventana corta, solo inicio).
     if (keyAccess) {
       if (doorOpen) {
         if (recentOpen) return 'CROSSING';
-        if (insideEvidence) return 'INSIDE';
-        if (absenceSettled) return 'OUTSIDE';
-        return 'CROSSING';
+        return insideAfterOpen ? 'INSIDE' : 'CROSSING';
       }
-      return insideEvidence ? 'INSIDE' : 'AT_QR';
+      return insideAfterOpen ? 'INSIDE' : 'AT_QR';
     }
 
-    if (stateName === 'HUESPED_EN_PUERTA') {
-      if (doorOpen) {
+    // F118.3 — entrada/salida con puerta abierta: NUNCA OUTSIDE.
+    if (doorOpen) {
+      if (stateName === 'HUESPED_EN_PUERTA') {
         if (recentOpen) return 'CROSSING';
-        if (insideEvidence) return 'INSIDE';
-        // Entrada en curso: nunca saltar a OUTSIDE con la puerta abierta.
-        return 'CROSSING';
+        return insideAfterOpen ? 'INSIDE' : 'CROSSING';
       }
-      if (insideEvidence || entryConfirmed) return 'INSIDE';
+      if (stateName === 'PUERTA_ABIERTA' || stateName === 'OCUPADA'
+          || stateName === 'VERIFICANDO_PRESENCIA'
+          || stateName === 'VERIFICANDO_ENTRADA') {
+        if (recentOpen) return 'WAITING';
+        return insideAfterOpen ? 'INSIDE' : 'WAITING';
+      }
+      if (stateName === 'SALIDA_DETECTADA' || stateName === 'HUESPED_HA_SALIDO') {
+        return 'OUTSIDE';
+      }
+      // ESPERANDO / ANOMALIA / estados FREE: umbral mientras la puerta esté abierta.
+      return 'CROSSING';
+    }
+
+    // Puerta cerrada.
+    if (stateName === 'HUESPED_EN_PUERTA') {
+      if (insideAfterOpen || entryConfirmed) return 'INSIDE';
       return 'WAITING';
     }
 
-    if (stateName === 'PUERTA_ABIERTA') {
-      if (doorOpen) {
-        if (recentOpen) return 'WAITING';
-        if (insideEvidence) return 'INSIDE';
-        if (absenceSettled) return 'OUTSIDE';
-        return 'WAITING';
-      }
+    if (stateName === 'PUERTA_ABIERTA' || stateName === 'VERIFICANDO_PRESENCIA') {
+      if (maxExit) return 'OUTSIDE';
       if (absenceSettled) return 'OUTSIDE';
-      if (phase === 'inside' && presenceAfterClose) return 'INSIDE';
+      if (phase === 'inside' && (presenceAfterClose || insideAfterOpen)) return 'INSIDE';
       if (visualExit) return 'OUTSIDE';
       return 'WAITING';
     }
 
     if (stateName === 'VERIFICANDO_ENTRADA') {
-      if (insideEvidence || entryConfirmed) return 'INSIDE';
-      return 'WAITING';
-    }
-
-    if (stateName === 'VERIFICANDO_PRESENCIA') {
-      if (absenceSettled) return 'OUTSIDE';
-      if (phase === 'inside' && presenceAfterClose) return 'INSIDE';
-      if (visualExit) return 'OUTSIDE';
+      if (insideAfterOpen || entryConfirmed) return 'INSIDE';
       return 'WAITING';
     }
 
     if (stateName === 'OCUPADA' || stateName === 'ANTI_REENTRADA'
         || stateName === 'EXCESO_TIEMPO') {
-      if (doorOpen) {
-        if (recentOpen) return 'WAITING';
-        if (absenceSettled) return 'OUTSIDE';
-        if (phase === 'inside') return 'INSIDE';
-        return 'WAITING';
-      }
-      // Huésped confirmado dentro: un ABSENT puntual del radar no lo saca.
       return 'INSIDE';
     }
 
@@ -461,26 +486,28 @@
       return 'OUTSIDE';
     }
 
-    if (stateName === 'ANOMALIA_RP' || stateName === 'ANOMALIA_PA') {
-      if (phase === 'inside') return 'INSIDE';
-      if (doorOpen) {
-        if (recentOpen) return 'CROSSING';
-        if (absenceSettled) return 'OUTSIDE';
-        return 'CROSSING';
-      }
-      return absenceSettled ? 'OUTSIDE' : 'state';
+    if (stateName === 'ESPERANDO') {
+      // Sin estancia ni ficha: la presencia sola NO acredita huésped dentro.
+      if (!hasEntryContext) return 'OUTSIDE';
+      if (maxExit) return 'OUTSIDE';
+      if (absenceSettled) return 'OUTSIDE';
+      if (insideAfterOpen) return 'INSIDE';
+      if (visualExit) return 'OUTSIDE';
+      return 'INSIDE';
     }
 
-    if (stateName === 'ESPERANDO') {
-      if (phase === 'inside') return 'INSIDE';
+    if (stateName === 'ANOMALIA_RP' || stateName === 'ANOMALIA_PA') {
+      if (!hasEntryContext) return 'OUTSIDE';
+      if (maxExit) return 'OUTSIDE';
       if (absenceSettled) return 'OUTSIDE';
-      if (doorOpen) return 'CROSSING';
-      return 'OUTSIDE';
+      if (insideAfterOpen) return 'INSIDE';
+      if (visualExit) return 'OUTSIDE';
+      return 'WAITING';
     }
 
     // Fallback para estados no contemplados.
-    if (phase === 'inside') return 'INSIDE';
-    if (phase === 'near') return doorOpen ? 'CROSSING' : 'WAITING';
+    if (phase === 'inside' && hasEntryContext) return 'INSIDE';
+    if (phase === 'near') return 'CROSSING';
     return 'state';
   }
 
@@ -494,6 +521,7 @@
     KEY_ACCESS_WINDOW_MS: KEY_ACCESS_WINDOW_MS,
     CROSSING_HOLD_MS: CROSSING_HOLD_MS,
     ABSENCE_HOLD_MS: ABSENCE_HOLD_MS,
-    EXIT_VISUAL_HOLD_MS: EXIT_VISUAL_HOLD_MS
+    EXIT_VISUAL_HOLD_MS: EXIT_VISUAL_HOLD_MS,
+    EXIT_MAX_VISUAL_MS: EXIT_MAX_VISUAL_MS
   };
 });

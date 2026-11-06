@@ -310,6 +310,40 @@ if (ExitRuleEvaluator::resolveNoPresenceAfterCloseSeconds(null) === 3
 ) {
     ok('T20: ventana sin presencia posterior al cierre = 3 s');
 } else { bad('T20: ventana sin presencia posterior al cierre por defecto'); }
+
+// T21 (F118.3): máximo de verificación de salida (15 s).
+if (ExitRuleEvaluator::resolveMaxVerifySeconds(null) === 15
+    && ExitRuleEvaluator::DEFAULT_MAX_VERIFY_SECONDS === 15
+) {
+    ok('T21: máximo de verificación de salida = 15 s');
+} else { bad('T21: máximo de verificación de salida por defecto'); }
+
+$close15 = gmdate('Y-m-d H:i:s', $t0 - 16) . '.000';
+$presenceOld = gmdate('Y-m-d H:i:s', $t0 - 120) . '.000';
+if ($eval->evaluate(
+    makeSession($open30, $close15, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceOld),
+    $stayOk, 1, $t0, 0, 15
+) === true) {
+    ok('F118.3: máximo 15 s con PRESENT → salida');
+} else { bad('F118.3: máximo 15 s con PRESENT debería salir'); }
+
+$close14 = gmdate('Y-m-d H:i:s', $t0 - 14) . '.000';
+if ($eval->evaluate(
+    makeSession($open30, $close14, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceOld),
+    $stayOk, 1, $t0, 0, 15
+) === false) {
+    ok('F118.3: antes de 15 s no fuerza la salida');
+} else { bad('F118.3: antes de 15 s no debería forzar la salida'); }
+
+// Una nueva apertura después del cierre invalida el ciclo (no hay cierre posterior).
+$closeOld = gmdate('Y-m-d H:i:s', $t0 - 20) . '.000';
+$openAfter = gmdate('Y-m-d H:i:s', $t0 - 10) . '.000';
+if ($eval->evaluate(
+    makeSession($openAfter, $closeOld, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceOld),
+    $stayOk, 1, $t0, 3, 15
+) === false) {
+    ok('F118.3: nueva apertura posterior cancela el máximo');
+} else { bad('F118.3: nueva apertura posterior no debería salir'); }
 if (ExitRuleEvaluator::resolveGuardSeconds(-1, 5) === 5) {
     ok('T19b: resolveGuardSeconds sala negativa se ignora → global 5');
 } else { bad('T19b: resolveGuardSeconds sala negativa se ignora'); }

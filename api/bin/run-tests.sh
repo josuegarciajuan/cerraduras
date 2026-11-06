@@ -2838,6 +2838,12 @@ if grep -q 'resolveDashboardMonigote' public/assets/croquis-logic.js 2>/dev/null
 else
     fail "F118: helpers puros" "faltan en croquis-logic.js"
 fi
+if grep -q 'updateKeyEpisode' public/dashboard.html 2>/dev/null && \
+   grep -q 'key_episode' public/dashboard.html 2>/dev/null; then
+    pass "F118.3: dashboard mantiene el episodio de ficha sin límite"
+else
+    fail "F118.3: episodio de ficha" "faltan updateKeyEpisode/key_episode"
+fi
 
 # ── 33.1 system-status: esquema ampliado de 5 workers (contrato §5, F78) ────
 if [ "$SERVER_UP" != true ]; then
@@ -2958,10 +2964,12 @@ need = ['last_door_event_at','last_presence_event_at','last_door_value','last_pr
 missing = [k for k in need if k not in iot]
 stay = d.get('active_stay')
 stay_ok = (stay is not None) and ('entry_confirmed_at' in stay)
-print('OK' if not missing and stay_ok else 'FAIL missing=' + str(missing) + ' entry_confirmed_key=' + str(stay_ok))
+key_ep = d.get('key_episode')
+key_ok = isinstance(key_ep, dict) and ('active' in key_ep)
+print('OK' if not missing and stay_ok and key_ok else 'FAIL missing=' + str(missing) + ' entry_confirmed_key=' + str(stay_ok) + ' key_episode=' + str(key_ok))
 " 2>/dev/null)
         case "$F41_LIVE_CHECK" in
-            OK*)   pass "F41 /live: 4 marcas nuevas en iot_session + active_stay.entry_confirmed_at" ;;
+            OK*)   pass "F41 /live: marcas de iot_session + active_stay + key_episode" ;;
             FAIL*) fail "F41 /live: campos en /live" "${F41_LIVE_CHECK#FAIL }" ;;
             *)     fail "F41 /live: parse" "${F41_LIVE_CHECK:-respuesta vacía}" ;;
         esac
@@ -3643,6 +3651,9 @@ grep -q '^EXIT_ABSENCE_GUARD_SECONDS=1' .env.example 2>/dev/null \
 grep -q '^EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS=3' .env.example 2>/dev/null \
     && pass "F118.2: .env.example documenta EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS=3" \
     || fail "F118.2: falta EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS en .env.example" ""
+grep -q '^EXIT_MAX_VERIFY_SECONDS=15' .env.example 2>/dev/null \
+    && pass "F118.3: .env.example documenta EXIT_MAX_VERIFY_SECONDS=15" \
+    || fail "F118.3: falta EXIT_MAX_VERIFY_SECONDS en .env.example" ""
 
 # =============================================================================
 # BLOCK 39 — F50: estado real del SWITCH por push y robustez del consumer

@@ -16527,3 +16527,16 @@ La corrección del monigote y la protección de la calibración no añaden rutas
 campos nuevos. `radar-apply-profile.php` gana la opción CLI `--profile-file`
 (herramienta operativa, no contrato HTTP). Los campos `door_stale`/
 `presence_stale` de §118.1 se mantienen.
+
+## 118.3 Campo aditivo `key_episode`
+
+`GET /api/v1/rooms/{id}/live` y los eventos `state` del SSE añaden el objeto
+`key_episode`:
+
+```json
+{ "active": true, "key_id": 468, "worker_id": 172,
+  "credential_type": "NFC", "at": "2026-11-06 15:01:49.439" }
+```
+
+Es aditivo; sin rutas nuevas ni migración. El fingerprint del SSE incluye el
+`MAX(id)` de `key_access_events` para empujar el cambio al escanear una ficha.

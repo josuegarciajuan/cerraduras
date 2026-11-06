@@ -11745,3 +11745,12 @@ pendientes.
 - [x] TSK-F118-22: tests de `ExitRuleEvaluator` y `croquis-logic`.
 - [ ] TSK-F118-23: prueba física de salida.
 - [ ] TSK-F118-24: regresión completa.
+
+## F118.3 — Entrada/salida estable y ficha sin caducidad
+- [x] TSK-F118-25: puerta abierta nunca OUTSIDE; umbral estable.
+- [x] TSK-F118-26: salida al abrir exige presencia posterior; no entryConfirmed.
+- [x] TSK-F118-27: FREE sin estancia/ficha no pinta INSIDE por presencia.
+- [x] TSK-F118-28: `key_episode` en /live y SSE + estado local persistente.
+- [x] TSK-F118-29: máximo de salida 15 s en backend y monigote.
+- [x] TSK-F118-30: tests de resolver, ExitRuleEvaluator y runner.
+- [ ] TSK-F118-31: reiniciar API PHP y prueba física completa.

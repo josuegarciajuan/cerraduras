@@ -1133,7 +1133,7 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Frescura**: `/live` y SSE añaden `door_stale`/`presence_stale` + edades y
   umbrales; el fingerprint del SSE los incluye.
 - **Sin tocar**: `deriveChoreography`, F42/F57, `/almacen`, Tuya/polling.
-- **Verificación**: `croquis-logic.test.js` (107 checks), BLOCK 33 y regresión.
+- **Verificación**: `croquis-logic.test.js` (114 checks), BLOCK 33 y regresión.
 - **F118.1**: el hold de cruce (1,8 s) y la presencia posterior a la apertura
   evitan el salto al centro al abrir; la ausencia sostenida (3 s) evita parpadeos.
   Zigbee standard respeta el contexto F48. `run-tests.sh` guarda/restaura el
@@ -1153,5 +1153,19 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   posterior pasa a `OUTSIDE`, y vuelve a `INSIDE` si llega un `PRESENT`.
 - **Sin tocar**: entrada, QR, ficha, calibración y reglas de anomalías.
 - **Verificación**: `ExitRuleEvaluatorTest` (27), `croquis-logic.test.js` (107),
+  BLOCK 33 y regresión.
+
+### F118.3 — Entrada/salida estable y ficha sin caducidad
+
+- **Puerta abierta**: el monigote nunca se va a `OUTSIDE`; se queda en el
+  umbral o pasa a `INSIDE` con presencia posterior a la apertura.
+- **Salida al abrir**: `PUERTA_ABIERTA` exige presencia posterior; deja de usar
+  `entry_confirmed_at` como prueba de dentro.
+- **FREE sin estancia**: la presencia sola no pinta `INSIDE`.
+- **Ficha**: `key_episode` persistente (pending/inside/exit) en /live y SSE, sin
+  caducidad temporal; se cierra por ausencia o salida.
+- **Máximo de salida**: 15 s (`EXIT_MAX_VERIFY_SECONDS`); la estancia y el
+  monigote pasan a fuera aunque el radar siga en PRESENT.
+- **Verificación**: `ExitRuleEvaluatorTest` (31), `croquis-logic.test.js` (114),
   BLOCK 33 y regresión.
 

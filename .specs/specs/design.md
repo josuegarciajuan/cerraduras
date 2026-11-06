@@ -26459,3 +26459,47 @@ posterior.
 ### Guarda de salida
 
 `DEFAULT_GUARD_SECONDS` y `.env.example` pasan de 3 s a 1 s.
+
+## 118.9 F118.3 — Entrada/salida estables y ficha sin caducidad
+
+### Reglas del monigote
+
+- **Puerta abierta = umbral**. Mientras `door_status=OPEN`, los estados físicos
+  no devuelven `OUTSIDE`: `CROSSING`/`WAITING`, o `INSIDE` si hay un `PRESENT`
+  posterior a la apertura y se superó el hold de 1,8 s.
+- **Entrada**: presencia previa a la apertura no cuenta. Si el radar aún no ha
+  detectado, el monigote se queda en el umbral.
+- **Salida**: al abrir la puerta, el monigote va al umbral con `?`.
+  `entry_confirmed_at` no acredita estar dentro en `PUERTA_ABIERTA`; se exige
+  presencia posterior a la apertura.
+- **FREE sin estancia**: la presencia sola no pinta al monigote dentro. Solo se
+  pinta `INSIDE` con estancia activa o episodio de ficha.
+- **Máximo de salida**: 15 s desde el cierre (`EXIT_MAX_VERIFY_SECONDS`). Si el
+  radar sigue afirmando `PRESENT`, la salida se confirma igualmente.
+
+### Episodio de ficha (`key_episode`)
+
+`/api/v1/rooms/{id}/live` y el SSE añaden:
+
+```json
+"key_episode": {
+  "active": true,
+  "key_id": 468,
+  "worker_id": 172,
+  "credential_type": "NFC",
+  "at": "2026-11-06 15:01:49.439"
+}
+```
+
+- Fuente: último `key_access_events` OK de la sala.
+- `active` = presencia `PRESENT` y acceso posterior al último `ABSENT`.
+- El dashboard mantiene un estado local persistente (`pending`/`inside`/`exit`)
+  sin caducidad temporal. Se cierra por ausencia o por el máximo de salida; no
+  por reloj. Si hay una estancia de huésped activa, la ficha se ignora.
+- Se guarda en `localStorage` por sala para sobrevivir a recargas.
+
+### Máximo de salida backend
+
+`ExitRuleEvaluator::evaluate(..., $maxVerifySeconds)` devuelve salida si el ciclo
+acreditado está cerrado y `now - last_close >= 15 s`, aunque `presence=PRESENT`.
+`EXIT_MAX_VERIFY_SECONDS=0` desactiva el máximo.
