@@ -64,6 +64,8 @@ $checks = [
     ['rollback ante fallo', '$pdo->rollBack()'],
     ['guarda de migración', 'ejecuta php bin/migrate.php'],
     ['falla si el pack está en otra sala', 'ya está asignado a la sala'],
+    ['dry-run no escribe si el pack está en otra sala', 'dry-run: no se escribe nada'],
+    ['--apply no mueve el pack', 'no se mueve automáticamente'],
     ['falla ante dispositivos ajenos', 'contiene un dispositivo ajeno'],
     ['falla si hay otro dispositivo del mismo tipo', 'ya tiene otro dispositivo de tipo'],
 ];
