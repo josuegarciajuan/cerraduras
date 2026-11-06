@@ -164,7 +164,7 @@ final class EventStreamController
                     // ── Tier 2: full state query (only on change) ──
                     $state = $this->fetchFullState($roomId);
                     if ($state !== null) {
-                        $state['server_ts'] = gmdate('Y-m-d\TH:i:s.v\Z'); // Fase A: medir latencia real
+                        $state['server_ts'] = Clock::nowIsoUtcMillis(); // Fase A: medir latencia real
                         $this->sendEvent('state', $state);
                         $stateEvents++;
                     }

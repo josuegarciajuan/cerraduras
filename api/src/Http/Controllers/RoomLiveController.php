@@ -314,7 +314,7 @@ final class RoomLiveController
             'door_open_too_long' => $doorOpenTooLong,
             // F118.4: hora del servidor con ms para que todos los clientes usen
             // la misma base temporal en holds y ventanas.
-            'server_ts' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            'server_ts' => Clock::nowIsoUtcMillis(),
         ])
             ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->withHeader('Pragma', 'no-cache')
