@@ -13710,5 +13710,5 @@ solo con datos locales.
 - **RF-310 (Datos):** ocupación histórica aproximada con `stays`; no se añade
   histórico de estados. Migración `0144` solo añade índices de rango.
 
-**Estado F119:** implementado (código); regresión **1127 passed, 0 failed,
-18 skipped**; validación visual desktop/móvil con Playwright.
+**Estado F119:** implementado (código); regresión **1129 passed, 0 failed,
+16 skipped**; validación visual desktop/móvil con Playwright.
