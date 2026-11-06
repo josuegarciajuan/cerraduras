@@ -8669,6 +8669,54 @@ if [ "$SERVER_UP" = true ] && [ -n "$F117_ROOM" ]; then
     if [ -n "$F117_KEY_ID" ]; then
         $MYSQL -sN -e "DELETE FROM access_keys WHERE id=$F117_KEY_ID" 2>/dev/null || true
     fi
+
+    # F117/RF-303: en TIMBRADO no se crean ni bloquean sesiones de trabajador.
+    F117S_TS=$(date +%s)
+    F117S_CODE="F117S$F117S_TS"
+    F117S_NFC="F117NFC$F117S_TS"
+    F117S_ROOM=$($MYSQL -sN -e "INSERT INTO rooms (code, room_type_id, status) VALUES ('$F117S_CODE', $F117_TYPE_ID, 'FREE'); SELECT LAST_INSERT_ID();" 2>/dev/null | tail -1)
+    if [ -n "$F117S_ROOM" ] && [ "$F117S_ROOM" != "0" ]; then
+        F117S_W=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"F117S Worker $F117S_TS\",\"role_id\":1}" "$API_BASE/api/v1/workers" 2>/dev/null \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+        F117S_CARD=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+            -d "{\"number\":\"F117S-$F117S_TS\",\"code\":\"$F117S_NFC\"}" "$API_BASE/api/v1/nfc-cards" 2>/dev/null \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+        F117S_KEY=""
+        if [ -n "$F117S_W" ] && [ -n "$F117S_CARD" ]; then
+            F117S_KEY=$(curl -s -X POST -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+                -d "{\"label\":\"F117S-$F117S_TS\",\"owner_type\":\"WORKER\",\"worker_id\":$F117S_W,\"key_type\":\"NFC\",\"nfc_card_id\":$F117S_CARD,\"valid_until\":\"$F117_VALID\",\"all_room_types\":true}" \
+                "$API_BASE/api/v1/keys" 2>/dev/null \
+                | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null)
+        fi
+        if [ -n "$F117S_KEY" ]; then
+            F117S_R1=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $RPI_KEY" -H 'Content-Type: application/json' \
+                -d "{\"qr_text\":\"$F117S_NFC\",\"room_id\":$F117S_ROOM,\"device_id\":\"ESP32-TEST\"}" "$API_BASE/api/v1/qr/validate")
+            F117S_C1=$(printf '%s' "$F117S_R1" | tail -1)
+            F117S_R2=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $RPI_KEY" -H 'Content-Type: application/json' \
+                -d "{\"qr_text\":\"$F117S_NFC\",\"room_id\":$F117S_ROOM,\"device_id\":\"ESP32-TEST\"}" "$API_BASE/api/v1/qr/validate")
+            F117S_C2=$(printf '%s' "$F117S_R2" | tail -1)
+            if [ "$F117S_C1" = "200" ] && [ "$F117S_C2" = "200" ]; then
+                pass "F117: TIMBRADO permite reescanear (2×200)"
+            else
+                fail "F117: TIMBRADO reescaneo" "HTTP $F117S_C1 / $F117S_C2"
+            fi
+            F117S_SESS=$($MYSQL -sN -e "SELECT COUNT(*) FROM worker_sessions WHERE worker_id=$F117S_W AND room_id=$F117S_ROOM" 2>/dev/null)
+            if [ "${F117S_SESS:-1}" = "0" ]; then
+                pass "F117: TIMBRADO no crea worker_sessions"
+            else
+                fail "F117: TIMBRADO worker_sessions" "esperadas 0, got ${F117S_SESS:-?}"
+            fi
+        else
+            fail "F117: TIMBRADO setup" "worker=$F117S_W card=$F117S_CARD key=$F117S_KEY"
+        fi
+        [ -n "$F117S_KEY" ] && $MYSQL -sN -e "DELETE FROM key_access_events WHERE key_id=$F117S_KEY; DELETE FROM access_key_room_types WHERE key_id=$F117S_KEY; DELETE FROM access_keys WHERE id=$F117S_KEY" 2>/dev/null || true
+        [ -n "$F117S_CARD" ] && $MYSQL -sN -e "DELETE FROM nfc_cards WHERE id=$F117S_CARD" 2>/dev/null || true
+        [ -n "$F117S_W" ] && $MYSQL -sN -e "DELETE FROM worker_sessions WHERE worker_id=$F117S_W; DELETE FROM workers WHERE id=$F117S_W" 2>/dev/null || true
+        $MYSQL -sN -e "DELETE FROM camera_recordings WHERE room_id=$F117S_ROOM; DELETE FROM timbre_movements WHERE room_id=$F117S_ROOM; DELETE FROM timbre_state WHERE room_id=$F117S_ROOM; DELETE FROM access_events WHERE room_id=$F117S_ROOM; DELETE FROM iot_sessions WHERE room_id=$F117S_ROOM; DELETE FROM rooms WHERE id=$F117S_ROOM" 2>/dev/null || true
+    else
+        skip "F117: TIMBRADO sin sesiones" "no se pudo crear la sala temporal"
+    fi
 else
     skip "F117 HTTP" "servidor no disponible o sin sala TIMBRADO"
 fi
