@@ -2766,6 +2766,24 @@ for F41_JS in tests/Unit/choreography.test.js; do
     fi
 done
 
+# ── 33.0b F118: el dashboard mueve el monigote por sensores + ficha ──────────
+if grep -q 'croquis-logic.js' public/dashboard.html 2>/dev/null; then
+    pass "F118: dashboard.html carga croquis-logic.js"
+else
+    fail "F118: dashboard.html carga croquis-logic.js" "ausente"
+fi
+if grep -q 'updateMonigoteFromSensors' public/dashboard.html 2>/dev/null; then
+    pass "F118: dashboard.html actualiza el monigote por sensores"
+else
+    fail "F118: updateMonigoteFromSensors" "ausente en dashboard.html"
+fi
+if grep -q 'resolveDashboardMonigote' public/assets/croquis-logic.js 2>/dev/null && \
+   grep -q 'recentKeyAccess' public/assets/croquis-logic.js 2>/dev/null; then
+    pass "F118: croquis-logic exporta ficha + monigote del dashboard"
+else
+    fail "F118: helpers puros" "faltan en croquis-logic.js"
+fi
+
 # ── 33.1 system-status: esquema ampliado de 5 workers (contrato §5, F78) ────
 if [ "$SERVER_UP" != true ]; then
     skip "F41 system-status" "servidor HTTP no disponible"

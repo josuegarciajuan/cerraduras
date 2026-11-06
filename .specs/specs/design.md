@@ -26302,3 +26302,71 @@ SNZB-04P ──push OPEN──► IotSessionService ──► motor del almacén
 2. Compilar y publicar `CERRADURA 2.7-ota`.
 3. Solicitar la OTA del device 23; el ESP32 la recoge en su heartbeat.
 4. Probar físicamente: pulsar Abrir → relé → `OPEN` del SNZB-04P en <8 s.
+
+# F118 — Monigote del dashboard en tiempo real por sensores y ficha
+
+## 118.1 Motivo
+
+En `/dashboard`, el monigote se movía con `deriveChoreography()`: solo pasaba a
+`INSIDE/OCUPADA` al cerrar la puerta y consolidar `entry_confirmed_at`. En una
+prueba real el QR se validó a las 12:35:30, el radar reportó `PRESENT` a las
+12:35:37 y la puerta cerró a las 12:35:55: el monigote esperó ~18 s de más.
+`/almacen` ya resolvía esto con `CroquisLogic.deriveCroquis()`, que decide la
+fase directamente por presencia.
+
+## 118.2 Regla
+
+`/dashboard` mantiene el badge/estado de acceso (`deriveChoreography`) pero la
+**posición del monigote** se desacopla y sigue a los sensores:
+
+1. `LOADING`/`SIN_CONFIGURAR`/`FUERA_SERVICIO` → posición del estado.
+2. `phase === 'inside'` → `INSIDE` (presencia manda; incluye puerta abierta y
+   ficha sin estancia).
+3. Acceso con ficha reciente (`KEY_ACCESS_WINDOW_MS = 15 s`) → `AT_QR` sin
+   puerta, `CROSSING` con puerta/near.
+4. Estados físicos (`ESPERANDO`, `OCUPADA`, `HUESPED_EN_PUERTA`,
+   `PUERTA_ABIERTA`, `VERIFICANDO_*`, `SALIDA_*`, `ANOMALIA_*`,
+   `ANTI_REENTRADA`, `EXCESO_TIEMPO`) → fase `inside`/`near`/`outside`.
+5. Resto (`QR_DISPONIBLE`, `QR_OK`, `QR_ESPERANDO`, `QR_RECHAZADO`, `LIMPIEZA`,
+   `ESPERANDO_HUESPED`, `SENSORES_DESCONECTADOS`) → posición del estado.
+
+La función pura `resolveDashboardMonigote()` vive en `croquis-logic.js`; el
+dashboard la invoca en cada `processLiveData()` (SSE o polling) y cada 1 s para
+la expiración de la ventana de ficha y el paso a `stale`.
+
+## 118.3 Ficha/NFC
+
+`AccessKeyService::authorise()` ya inserta `QR_VALIDATE` y `OPEN` con
+`meta.key_id`/`owner_type`/`worker_id`. `recentKeyAccess()` detecta esos eventos
+y los distingue del QR de huésped (`meta.jti`). No se crea estancia para una
+ficha y no se cambia el backend de accesos. Un resultado `FAIL`/`DENIED` no
+mueve el monigote.
+
+## 118.4 Frescura
+
+`/api/v1/rooms/{id}/live` y `/dashboard-api/event-stream` añaden de forma
+aditiva a `iot_session`:
+
+- `door_age_seconds`, `presence_age_seconds`
+- `door_stale_seconds`, `presence_stale_seconds`
+- `door_stale`, `presence_stale`
+
+Umbrales: `DOOR_STALE_SECONDS` (300 s) y `PRESENCE_STALE_SECONDS` (180 s). El
+fingerprint del SSE incluye ambos booleanos para empujar el cambio al cruzar el
+umbral sin evento nuevo. Sin migración y sin cambios en el sentido de los
+campos previos.
+
+## 118.5 No objetivos
+
+- No cambia `/almacen` ni su croquis.
+- No cambia `deriveChoreography` ni F42/F57.
+- No hay polling a Tuya.
+- No se crean estancias para fichas.
+
+## 118.6 Verificación
+
+- `tests/Unit/croquis-logic.test.js`: `recentKeyAccess` y
+  `resolveDashboardMonigote`.
+- BLOCK 33 del runner: estáticos de `dashboard.html`/`croquis-logic.js`.
+- Prueba manual: QR de huésped y ficha NFC en una sala STANDARD; el monigote
+  debe pasar a `INSIDE` al llegar `PRESENT`, no al cerrar la puerta.

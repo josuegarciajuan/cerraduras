@@ -34,6 +34,40 @@
   /** F80/RF-103.4: ventana (ms) tras un OPEN para la fase "cerca". */
   var DOOR_NEAR_WINDOW_MS = 6000;
 
+  /**
+   * F118: ventana visual (ms) tras un acceso con ficha/NFC. Sirve para que el
+   * monigote del dashboard reaccione al escaneo aunque aún no haya llegado el
+   * evento OPEN del sensor de puerta. Pasada la ventana manda la presencia.
+   */
+  var KEY_ACCESS_WINDOW_MS = 15000;
+
+  /**
+   * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
+   * posición semántica del estado: QR junto al lector, limpieza, avería...).
+   * La presencia dentro (`phase==='inside'`) sigue ganando salvo en los estados
+   * de indisponibilidad total (LOADING/SIN_CONFIGURAR/FUERA_SERVICIO).
+   */
+  var DASHBOARD_STATE_ONLY = {
+    LOADING: 1, SIN_CONFIGURAR: 1, FUERA_SERVICIO: 1, SENSORES_DESCONECTADOS: 1,
+    LIMPIEZA: 1, QR_DISPONIBLE: 1, ESPERANDO_HUESPED: 1, QR_OK: 1,
+    QR_ESPERANDO: 1, QR_RECHAZADO: 1
+  };
+
+  /**
+   * F118: estados donde la posición física la dictan los sensores
+   * (incluye FREE/ESPERANDO para que un acceso con ficha, que no crea estancia,
+   * también mueva el monigote).
+   */
+  var DASHBOARD_SENSOR_DRIVEN = {
+    ESPERANDO: 1, OCUPADA: 1, HUESPED_EN_PUERTA: 1, PUERTA_ABIERTA: 1,
+    VERIFICANDO_ENTRADA: 1, VERIFICANDO_PRESENCIA: 1, SALIDA_DETECTADA: 1,
+    HUESPED_HA_SALIDO: 1, ANOMALIA_RP: 1, ANOMALIA_PA: 1,
+    ANTI_REENTRADA: 1, EXCESO_TIEMPO: 1
+  };
+
+  /** F118: estados donde nunca se debe mover el monigote por presencia. */
+  var DASHBOARD_NEVER_SENSOR = { LOADING: 1, SIN_CONFIGURAR: 1, FUERA_SERVICIO: 1 };
+
   /** Parseo tolerante (ISO/Z/naive UTC/epoch ms) → ms. 0 si no es válido. */
   function parseTime(v) {
     if (Choreography && typeof Choreography.parseTime === 'function') {
@@ -249,10 +283,91 @@
     };
   }
 
+  /**
+   * F118: detecta un acceso reciente con ficha/NFC en `recent_events`.
+   *
+   * El backend de llaves inserta `QR_VALIDATE` y `OPEN` con `meta.key_id`,
+   * `meta.owner_type` y, si procede, `meta.worker_id` (AccessKeyService). El QR
+   * de huésped lleva `meta.jti` y NO debe tratarse como ficha.
+   *
+   * @param {Array<object>} events eventos `recent_events` del SSE/`/live`.
+   * @param {number} now epoch ms.
+   * @param {number} [windowMs] ventana visual (default KEY_ACCESS_WINDOW_MS).
+   * @returns {{active:boolean, at:number, event:object|null}}
+   */
+  function recentKeyAccess(events, now, windowMs) {
+    var win = (typeof windowMs === 'number' && windowMs > 0)
+      ? windowMs : KEY_ACCESS_WINDOW_MS;
+    var nowMs = (typeof now === 'number' && isFinite(now)) ? now : Date.now();
+    var best = null;
+    var bestAt = 0;
+    if (!events || !events.length) return { active: false, at: 0, event: null };
+
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i] || {};
+      if (e.kind !== 'QR_VALIDATE' && e.kind !== 'OPEN') continue;
+      if (String(e.result) !== 'OK') continue;
+      var meta = e.meta || {};
+      // QR de huésped: token con jti y sin llave. No es una ficha.
+      if (meta.key_id === undefined || meta.key_id === null) {
+        if (meta.jti || !meta.owner_type) continue;
+      }
+      var at = parseTime(e.occurred_at);
+      if (!at || (nowMs - at) > win || (nowMs - at) < -5000) continue;
+      if (at > bestAt) {
+        bestAt = at;
+        best = e;
+      }
+    }
+    return { active: best !== null, at: bestAt, event: best };
+  }
+
+  /**
+   * F118: posición del monigote del dashboard a partir de la fase física.
+   *
+   * Prioridad:
+   *   1. estados de indisponibilidad total → 'state'
+   *   2. presencia dentro → INSIDE
+   *   3. acceso con ficha reciente → AT_QR / CROSSING
+   *   4. estados físicos → phase near/outside
+   *   5. resto → 'state'
+   *
+   * 'state' significa: usa `STATES[stateName].moni` en dashboard.html.
+   *
+   * @param {object} input {stateName, phase, doorOpen, keyAccessActive}
+   * @returns {string} 'INSIDE'|'CROSSING'|'WAITING'|'AT_QR'|'OUTSIDE'|'state'
+   */
+  function resolveDashboardMonigote(input) {
+    var s = input || {};
+    var stateName = String(s.stateName || '');
+    var phase = String(s.phase || 'outside');
+    var doorOpen = !!s.doorOpen;
+    var keyAccess = !!s.keyAccessActive;
+
+    if (DASHBOARD_NEVER_SENSOR[stateName]) return 'state';
+    if (phase === 'inside') return 'INSIDE';
+
+    if (keyAccess) {
+      return (doorOpen || phase === 'near') ? 'CROSSING' : 'AT_QR';
+    }
+
+    if (DASHBOARD_STATE_ONLY[stateName]) return 'state';
+
+    if (DASHBOARD_SENSOR_DRIVEN[stateName]) {
+      if (phase === 'near') return doorOpen ? 'CROSSING' : 'WAITING';
+      return 'OUTSIDE';
+    }
+
+    return 'state';
+  }
+
   return {
     deriveCroquis: deriveCroquis,
     parseTime: parseTime,
     resolveDoor: resolveDoor,
-    DOOR_PULSE_MS: DOOR_PULSE_MS
+    recentKeyAccess: recentKeyAccess,
+    resolveDashboardMonigote: resolveDashboardMonigote,
+    DOOR_PULSE_MS: DOOR_PULSE_MS,
+    KEY_ACCESS_WINDOW_MS: KEY_ACCESS_WINDOW_MS
   };
 });

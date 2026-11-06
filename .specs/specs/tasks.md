@@ -11705,3 +11705,25 @@ Trazabilidad: RF-280…RF-285. Sin cambios de calibración del radar ni polling.
 
 **Estado F116:** implementación de código completada; OTA y prueba física
 pendientes.
+
+# F118 — Monigote del dashboard en tiempo real por sensores y ficha
+
+## Fase 1 — Lógica pura
+- [x] TSK-F118-01: `recentKeyAccess()` en `croquis-logic.js`.
+- [x] TSK-F118-02: `resolveDashboardMonigote()` con prioridad inside > ficha > fase > estado.
+
+## Fase 2 — Dashboard
+- [x] TSK-F118-03: cargar `croquis-logic.js` y actualizar el monigote en cada tick.
+- [x] TSK-F118-04: ventana de ficha (15 s), idle por posición y refresco de 1 s.
+
+## Fase 3 — Frescura
+- [x] TSK-F118-05: campos `*_stale`/edades en `/live` y SSE (aditivos).
+- [x] TSK-F118-06: fingerprint SSE con los booleanos de frescura.
+
+## Fase 4 — Pruebas y aceptación
+- [x] TSK-F118-07: tests de `recentKeyAccess` y `resolveDashboardMonigote`.
+- [x] TSK-F118-08: checks estáticos en BLOCK 33.
+- [ ] TSK-F118-09: regresión completa `bash bin/run-tests.sh`.
+- [ ] TSK-F118-10: prueba física QR de huésped + ficha NFC en STANDARD.
+
+**Estado F118:** implementación de código completada; prueba física pendiente.

@@ -15,7 +15,10 @@ const path = require('path');
 
 const {
   deriveCroquis,
+  recentKeyAccess,
+  resolveDashboardMonigote,
   DOOR_PULSE_MS,
+  KEY_ACCESS_WINDOW_MS,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'croquis-logic.js'));
 
 let passed = 0;
@@ -335,8 +338,95 @@ const staleEvt = deriveCroquis(snap({
 }), BASE);
 check('F80 PRESENT antiguo → phase outside', staleEvt.phase === 'outside');
 
-// ─── 15. Módulo require-safe ───────────────────────────────────────────
+// ─── 16. F118: ficha/NFC y monigote del dashboard ─────────────────────
+console.log('\nF118 · Ficha/NFC y monigote del dashboard\n');
+
+const fichaQr = recentKeyAccess([
+  { kind: 'QR_VALIDATE', result: 'OK', meta: { key_id: 468, owner_type: 'WORKER' },
+    occurred_at: '2026-10-01 07:59:58.000' },
+], BASE);
+check('F118 ficha QR_VALIDATE OK → active', fichaQr.active === true);
+
+const fichaOpen = recentKeyAccess([
+  { kind: 'OPEN', result: 'OK', meta: { owner_type: 'ROLE' },
+    occurred_at: '2026-10-01 07:59:57.000' },
+], BASE);
+check('F118 ficha OPEN OK con owner_type → active', fichaOpen.active === true);
+
+const guestQr = recentKeyAccess([
+  { kind: 'QR_VALIDATE', result: 'OK', meta: { jti: 'abc.def.ghi' },
+    occurred_at: '2026-10-01 07:59:58.000' },
+], BASE);
+check('F118 QR de huésped (jti) no se trata como ficha', guestQr.active === false);
+
+const deniedFicha = recentKeyAccess([
+  { kind: 'QR_VALIDATE', result: 'FAIL', reason: 'key_expired',
+    meta: { key_id: 468, owner_type: 'WORKER' }, occurred_at: '2026-10-01 07:59:58.000' },
+], BASE);
+check('F118 ficha denegada no mueve el monigote', deniedFicha.active === false);
+
+const oldFicha = recentKeyAccess([
+  { kind: 'QR_VALIDATE', result: 'OK', meta: { key_id: 468 },
+    occurred_at: '2026-10-01 07:59:40.000' },
+], BASE);
+check('F118 ficha fuera de ventana no se considera activa', oldFicha.active === false);
+
+check('F118 ventana de ficha por defecto 15 s', KEY_ACCESS_WINDOW_MS === 15000);
+
+const posInsideEntry = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+});
+check('F118 presencia dentro + umbral → INSIDE', posInsideEntry === 'INSIDE');
+
+const posInsideNoStay = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+});
+check('F118 presencia dentro sin estancia (ficha) → INSIDE', posInsideNoStay === 'INSIDE');
+
+const posFichaWait = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'outside', doorOpen: false, keyAccessActive: true,
+});
+check('F118 ficha reciente sin puerta → AT_QR', posFichaWait === 'AT_QR');
+
+const posFichaDoor = resolveDashboardMonigote({
+  stateName: 'ANOMALIA_RP', phase: 'outside', doorOpen: true, keyAccessActive: true,
+});
+check('F118 ficha reciente con puerta abierta → CROSSING', posFichaDoor === 'CROSSING');
+
+const posOpenAbsent = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
+});
+check('F118 puerta abierta sin presencia → OUTSIDE', posOpenAbsent === 'OUTSIDE');
+
+const posNearClosed = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_ENTRADA', phase: 'near', doorOpen: false, keyAccessActive: false,
+});
+check('F118 cerca con puerta cerrada → WAITING', posNearClosed === 'WAITING');
+
+const posQrState = resolveDashboardMonigote({
+  stateName: 'QR_DISPONIBLE', phase: 'outside', doorOpen: false, keyAccessActive: false,
+});
+check('F118 QR disponible conserva posición de estado', posQrState === 'state');
+
+const posCleaning = resolveDashboardMonigote({
+  stateName: 'LIMPIEZA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+});
+check('F118 limpieza conserva posición de estado', posCleaning === 'state');
+
+const posInsideCleaning = resolveDashboardMonigote({
+  stateName: 'LIMPIEZA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+});
+check('F118 limpieza con presencia dentro → INSIDE', posInsideCleaning === 'INSIDE');
+
+const posLoading = resolveDashboardMonigote({
+  stateName: 'LOADING', phase: 'inside', doorOpen: false, keyAccessActive: false,
+});
+check('F118 LOADING nunca se mueve por sensores', posLoading === 'state');
+
+// ─── 17. Módulo require-safe ───────────────────────────────────────────
 check('module exports the pure croquis logic', typeof deriveCroquis === 'function');
+check('module exports F118 helpers',
+  typeof recentKeyAccess === 'function' && typeof resolveDashboardMonigote === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
 
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' croquis-logic: ' + passed + ' passed, ' + failed + ' failed\n');

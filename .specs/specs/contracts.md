@@ -16502,3 +16502,21 @@ booleano `remote_open_capable`. Se persiste en `devices.meta_json`. Si llega
 
 No hay migración: se usan `device_commands.payload_json`, `devices.meta_json`,
 `access_events` (provider `ESP32`) e `iot_sessions` ya existentes.
+
+## 118.1 Campos aditivos de frescura en `/live` y SSE
+
+`GET /api/v1/rooms/{id}/live` y los eventos `state` de
+`/dashboard-api/event-stream` añaden dentro de `iot_session`:
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `door_age_seconds` | int\|null | Segundos desde el último evento de puerta aplicado. |
+| `presence_age_seconds` | int\|null | Segundos desde el último evento de presencia aplicado. |
+| `door_stale_seconds` | int | Umbral efectivo de puerta. |
+| `presence_stale_seconds` | int | Umbral efectivo de presencia. |
+| `door_stale` | bool | `door_state=UNKNOWN` o edad > umbral. |
+| `presence_stale` | bool | `presence_state=PRESENT` y edad > umbral. |
+
+Son campos aditivos: no cambian la forma ni el significado de los existentes.
+No hay rutas nuevas ni migración. El fingerprint del SSE incluye `door_stale` y
+`presence_stale`.
