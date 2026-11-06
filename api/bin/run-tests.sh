@@ -2844,6 +2844,13 @@ if grep -q 'updateKeyEpisode' public/dashboard.html 2>/dev/null && \
 else
     fail "F118.3: episodio de ficha" "faltan updateKeyEpisode/key_episode"
 fi
+if grep -q 'deriveEpisodesFromSnapshot' public/dashboard.html 2>/dev/null && \
+   grep -q 'serverNow' public/dashboard.html 2>/dev/null && \
+   grep -q 'CLOSE_DECISION_MS' public/assets/croquis-logic.js 2>/dev/null; then
+    pass "F118.4: estado determinista, hora de servidor y hold de 2,3 s"
+else
+    fail "F118.4: sincronización" "faltan deriveEpisodesFromSnapshot/serverNow/CLOSE_DECISION_MS"
+fi
 
 # ── 33.1 system-status: esquema ampliado de 5 workers (contrato §5, F78) ────
 if [ "$SERVER_UP" != true ]; then
@@ -2965,7 +2972,7 @@ missing = [k for k in need if k not in iot]
 stay = d.get('active_stay')
 stay_ok = (stay is not None) and ('entry_confirmed_at' in stay)
 key_ep = d.get('key_episode')
-key_ok = isinstance(key_ep, dict) and ('active' in key_ep)
+key_ok = isinstance(key_ep, dict) and ('active' in key_ep) and ('phase' in key_ep)
 print('OK' if not missing and stay_ok and key_ok else 'FAIL missing=' + str(missing) + ' entry_confirmed_key=' + str(stay_ok) + ' key_episode=' + str(key_ok))
 " 2>/dev/null)
         case "$F41_LIVE_CHECK" in

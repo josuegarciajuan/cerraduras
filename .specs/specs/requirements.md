@@ -13655,3 +13655,22 @@ pendientes.
   sin presencia posterior al cierre se mantiene.
 
 **Estado F118.3:** implementado (código); pendiente prueba física y reinicio API.
+
+### RF-301 — Sincronización total y decisión tras cierre
+- **RF-301.1**: tras un `PROXIMITY CLOSED`, el monigote permanece en el umbral
+  **2,3 s** (`CLOSE_DECISION_MS`) antes de decidir dentro/fuera. En una entrada
+  sin presencia a los 2,3 s se mantiene en el umbral hasta la ventana de
+  entrada/confirmación (opción conservadora), evitando el salto fuera→dentro.
+- **RF-301.2**: todos los holds/ventanas usan la hora del servidor
+  (`server_ts` con ms) para que dos dispositivos coincidan aunque sus relojes
+  difieran.
+- **RF-301.3**: la fase de ficha (`key_episode.phase`) se calcula en el servidor
+  (`KeyEpisodePolicy`) y todos los dispositivos la consumen; no hay
+  `localStorage` ni fase local que pueda divergir.
+- **RF-301.4**: el badge de acceso también se deriva de un snapshot
+  determinista del servidor (`deriveEpisodesFromSnapshot`), sin acumular
+  episodios locales. Dos dispositivos con el mismo snapshot/hora muestran el
+  mismo estado y monigote.
+- **RF-301.5**: `server_ts` es aditivo en `/live` y SSE; sin migración.
+
+**Estado F118.4:** implementado (código); pendiente prueba física con dos dispositivos.

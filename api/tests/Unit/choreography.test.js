@@ -486,6 +486,36 @@ check('F57 nueva ventana anclada al nuevo cierre',
   r.episodeUpdates.exitVerifyUntil === (EXIT_CLOSE_MS + 7000) + 20000);
 
 // ============================================================================
+// F118.4: episodios deterministas desde snapshot del servidor
+// ============================================================================
+console.log('\nF118.4 · Episodios desde snapshot (sin estado local)\n');
+
+const { deriveEpisodesFromSnapshot } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'choreography.js'));
+const snapEntry = baseSnap({
+  stayId: 305, stayStatus: 'OCCUPIED', door: 'CLOSED', presence: 'PRESENT',
+  qrBroadAt: T0, lastOpenAt: iso(T0 + 5000), lastCloseAt: iso(T0 + 8000),
+  lastPresenceAt: iso(T0 + 6000), entryWindowSeconds: 90, exitGuardSeconds: 1
+});
+const epEntry = deriveEpisodesFromSnapshot(snapEntry, T0 + 9000);
+check('F118.4 snapshot entrada: apertura acreditada', epEntry.entryDoorOpenedAt === T0 + 5000);
+check('F118.4 snapshot entrada: presencia durante apertura', epEntry.entryPresenceSeen === true);
+check('F118.4 snapshot entrada: no timeout', epEntry.entryTimedOut === false);
+
+const epEntry2 = deriveEpisodesFromSnapshot(snapEntry, T0 + 9000);
+check('F118.4 episodios deterministas (misma entrada, misma salida)',
+  JSON.stringify(epEntry) === JSON.stringify(epEntry2));
+
+const snapExit = baseSnap({
+  stayId: 305, stayStatus: 'OCCUPIED', door: 'CLOSED', presence: 'ABSENT',
+  entryConfirmedAt: iso(T0), lastOpenAt: iso(T0 + 60000), lastCloseAt: iso(T0 + 63000),
+  lastPresenceAt: iso(T0 + 62000), exitGuardSeconds: 1
+});
+const epExit = deriveEpisodesFromSnapshot(snapExit, T0 + 64000);
+check('F118.4 snapshot salida: ciclo activo', epExit.exitActive === true);
+check('F118.4 snapshot salida: cierre registrado', epExit.exitClosedAt === T0 + 63000);
+check('F118.4 snapshot salida: ventana de verificación', epExit.exitVerifyUntil > T0 + 63000);
+
+// ============================================================================
 // Resultado
 // ============================================================================
 console.log('\nTotal: ' + PASS + ' passed, ' + FAIL + ' failed\n');

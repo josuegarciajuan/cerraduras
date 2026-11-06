@@ -16540,3 +16540,15 @@ campos nuevos. `radar-apply-profile.php` gana la opción CLI `--profile-file`
 
 Es aditivo; sin rutas nuevas ni migración. El fingerprint del SSE incluye el
 `MAX(id)` de `key_access_events` para empujar el cambio al escanear una ficha.
+
+## 118.4 `server_ts` y fase de ficha
+
+`GET /api/v1/rooms/{id}/live` y los eventos `state` del SSE añaden:
+
+- `server_ts`: ISO-8601 UTC con milisegundos.
+- `key_episode.phase`: `idle|pending|inside|exit|outside`.
+- `key_episode.entry_open_at`, `entry_closed_at`, `entry_confirmed`,
+  `exit_open_at`, `exit_closed_at`.
+
+Aditivos; sin rutas nuevas ni migración. El fingerprint del SSE incluye el
+`MAX(id)` de `key_access_events` y los eventos de puerta/presencia ya existentes.
