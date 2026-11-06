@@ -217,7 +217,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F117 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 87 + units F117** | **Implementado; migración aplicada; prueba física pendiente** |
 | **F116 Apertura remota real desde `/timbre`** | **BLOCK 86 + units F116** | **Implementado (código); OTA `CERRADURA 2.7-ota` y prueba física pendientes** |
 | **F118 Monigote del dashboard por sensores + ficha** | **BLOCK 33 + `croquis-logic.test.js`** | **Implementado (código); prueba física QR/ficha pendiente** |
-| **F119 Panel CRM v2 + analítica de uso** | **BLOCK 88 + `PanelV2UiTest`** | **Implementado; regresión 1127/0/18; validación visual pendiente del operador** |
+| **F119 Panel CRM v2 + analítica de uso** | **BLOCK 88 + `PanelV2UiTest`** | **Implementado; regresión 1129/0/16; validación visual pendiente del operador** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1202,5 +1202,5 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   format.js}`, `api/src/Http/Controllers/AnalyticsController.php`,
   `api/migrations/0144_analytics_indexes.sql`.
 - **Verificación**: `PanelV2UiTest` (52), BLOCK 88 y regresión
-  **1127 passed, 0 failed, 18 skipped**; Playwright desktop/móvil sin errores.
+  **1129 passed, 0 failed, 16 skipped**; Playwright desktop/móvil sin errores.
 

@@ -26582,4 +26582,4 @@ actual en el día de hoy. Sin pollers ni llamadas a Tuya.
 ### Verificación
 
 `PanelV2UiTest`, BLOCK 88 del runner (estáticos + HTTP), Playwright desktop/móvil
-y regresión completa: **1127 passed, 0 failed, 18 skipped**.
+y regresión completa: **1129 passed, 0 failed, 16 skipped**.

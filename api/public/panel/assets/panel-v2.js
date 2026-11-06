@@ -405,6 +405,7 @@
       return '<div class="ph"><div><h1>Hola, ' + F.escape((this.user && (this.user.display_name || this.user.username)) || '') + '</h1>'
         + '<p>Resumen de los últimos ' + this.analyticsDays + ' días · actualizado ' + F.relative(a.generated_at) + '</p></div>'
         + '<div class="page-actions"><span class="badge badge-live"><i></i>En vivo</span>'
+        + '<button class="btn btn-o btn-sm" title="Exportar gráfica PNG" @click="exportChartPng()">PNG</button>'
         + '<button class="btn btn-o btn-sm" @click="refreshAll()">↻ Actualizar</button></div></div>'
         + alerts
         + '<div class="kpi-grid">' + kpis + '</div>'
@@ -462,7 +463,9 @@
       else body = this.v2AnalyticsOverview();
 
       return '<div class="ph"><div><h1>Analítica</h1><p>Explorador de uso · últimos ' + this.analyticsDays + ' días</p></div>'
-        + '<div class="page-actions"><button class="btn btn-o btn-sm" @click="refreshAll()">↻ Actualizar</button></div></div>'
+        + '<div class="page-actions"><button class="btn btn-o btn-sm" title="Exportar gráfica PNG" @click="exportChartPng()">PNG</button>'
+        + '<button class="btn btn-o btn-sm" title="Exportar tabla CSV" @click="exportCsv()">CSV</button>'
+        + '<button class="btn btn-o btn-sm" @click="refreshAll()">↻ Actualizar</button></div></div>'
         + tabBar + body;
     };
 
@@ -941,6 +944,52 @@
     o.copyText = function (text) {
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { }, function () { });
       this.toastOk('Copiado');
+    };
+
+    o.exportCsv = function () {
+      var table = document.querySelector('.drawer .table-wrap table') || document.querySelector('.main table');
+      if (!table) { this.toastErr('No hay tabla para exportar'); return; }
+      var lines = [];
+      table.querySelectorAll('tr').forEach(function (tr) {
+        var cols = Array.prototype.slice.call(tr.querySelectorAll('th,td')).map(function (c) {
+          return '"' + String(c.innerText || '').replace(/"/g, '""').replace(/\s+/g, ' ').trim() + '"';
+        });
+        if (cols.length) lines.push(cols.join(','));
+      });
+      if (!lines.length) { this.toastErr('La tabla está vacía'); return; }
+      var blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'panel-' + this.p + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+      this.toastOk('CSV exportado');
+    };
+
+    o.exportChartPng = function () {
+      var svg = document.querySelector('.drawer svg.chart') || document.querySelector('.main svg.chart');
+      if (!svg) { this.toastErr('No hay gráfica para exportar'); return; }
+      var xml = new XMLSerializer().serializeToString(svg);
+      var b64 = btoa(unescape(encodeURIComponent(xml)));
+      var img = new Image();
+      var that = this;
+      img.onload = function () {
+        var canvas = document.createElement('canvas');
+        canvas.width = (img.width || 640) * 2;
+        canvas.height = (img.height || 220) * 2;
+        var ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        var a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = 'grafica-' + that.p + '-' + Date.now() + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        that.toastOk('PNG exportado');
+      };
+      img.onerror = function () { that.toastErr('No se pudo generar el PNG'); };
+      img.src = 'data:image/svg+xml;base64,' + b64;
     };
 
     /* ═══════════════════════════════════════════════════════════════

@@ -79,6 +79,7 @@ $jsNeedles = [
     'crmUserPageV2', 'apiClientPageV2', 'anomalyPageV2', 'healthPageV2',
     'settingsPageV2', 'openWorkerDrawer', 'openRoomDrawer',
     'v2Kpi', 'v2Table', 'refreshAll', 'doSearch',
+    'exportCsv', 'exportChartPng',
 ];
 foreach ($jsNeedles as $needle) {
     str_contains($js, $needle) ? passV2("UI v2 implementa {$needle}") : failV2("UI v2 sin {$needle}");

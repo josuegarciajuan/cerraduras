@@ -11777,5 +11777,5 @@ pendientes.
 - [x] TSK-F119-09: búsqueda global, rango de fechas, hash routing y drawer.
 - [x] TSK-F119-10: responsive móvil con backdrop y cierre de menú.
 - [x] TSK-F119-11: `PanelV2UiTest` + BLOCK 88 del runner.
-- [x] TSK-F119-12: regresión completa (1127/0/18) y validación Playwright.
+- [x] TSK-F119-12: regresión completa (1129/0/16) y validación Playwright.
 - [ ] TSK-F119-13: prueba de aceptación visual con el operador.
