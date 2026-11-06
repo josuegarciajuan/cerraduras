@@ -1133,10 +1133,25 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Frescura**: `/live` y SSE añaden `door_stale`/`presence_stale` + edades y
   umbrales; el fingerprint del SSE los incluye.
 - **Sin tocar**: `deriveChoreography`, F42/F57, `/almacen`, Tuya/polling.
-- **Verificación**: `croquis-logic.test.js` (103 checks), BLOCK 33 y regresión.
+- **Verificación**: `croquis-logic.test.js` (107 checks), BLOCK 33 y regresión.
 - **F118.1**: el hold de cruce (1,8 s) y la presencia posterior a la apertura
   evitan el salto al centro al abrir; la ausencia sostenida (3 s) evita parpadeos.
   Zigbee standard respeta el contexto F48. `run-tests.sh` guarda/restaura el
   perfil del radar (trap incluido) y `radar-apply-profile.php --profile-file`
   permite recuperar la calibración archivada.
+
+### F118.2 — Salida en tiempo real
+
+- **Motivo**: el radar seguía detectando el pasillo dentro de 3 m y no emitía
+  `ABSENT` hasta 10,6 s después del cierre; el monigote volvía a `INSIDE` por
+  presencia anterior al cierre y la salida se confirmaba a los 14 s.
+- **Backend**: `ExitRuleEvaluator` confirma la salida si, tras un ciclo
+  acreditado, no llega ningún reporte de presencia posterior al cierre en 3 s
+  (`EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS`). Un `PRESENT` posterior cancela.
+  Guarda de ausencia por defecto 3 s → 1 s.
+- **Monigote**: `lastCloseAt` + `presenceAfterClose`; a los 3 s sin presencia
+  posterior pasa a `OUTSIDE`, y vuelve a `INSIDE` si llega un `PRESENT`.
+- **Sin tocar**: entrada, QR, ficha, calibración y reglas de anomalías.
+- **Verificación**: `ExitRuleEvaluatorTest` (27), `croquis-logic.test.js` (107),
+  BLOCK 33 y regresión.
 

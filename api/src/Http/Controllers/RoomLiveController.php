@@ -205,7 +205,7 @@ final class RoomLiveController
 
         // Bug 1 (RF-47.2.4): la guarda de SALIDA se desacopla de `gap_seconds`.
         // Resolución: override de sala (presence_check_seconds) > global
-        // EXIT_ABSENCE_GUARD_SECONDS > 3 s. `gap_seconds` sigue siendo legacy.
+        // EXIT_ABSENCE_GUARD_SECONDS > 1 s. `gap_seconds` sigue siendo legacy.
         $exitGuardSeconds = ExitRuleEvaluator::resolveGuardSeconds(
             $room->presenceCheckSeconds,
             Config::getInt('EXIT_ABSENCE_GUARD_SECONDS', null)

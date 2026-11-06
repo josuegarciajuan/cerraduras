@@ -103,7 +103,8 @@ final class ExitActionService
                     $session,
                     $stay,
                     $this->exitEvaluator->resolveGapSeconds($room),
-                    $now->getTimestamp()
+                    $now->getTimestamp(),
+                    $this->exitEvaluator->resolveNoPresenceAfterCloseSecondsValue()
                 );
 
                 if (!$fired) {
