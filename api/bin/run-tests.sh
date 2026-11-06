@@ -5425,7 +5425,9 @@ fi
 # (sin gastar cuota Tuya). La rama de bypass (door_stale + transición) se verifica
 # estáticamente en 58.0 y en vivo en la tarea F85-08.
 if [ "$SERVER_UP" = true ]; then
-    F85_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    # Requiere una sala de almacén CON sensor de puerta; si no, el refresh
+    # responde no_door_sensor y el escenario no es verificable (skip).
+    F85_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id JOIN devices d ON d.pack_id=r.pack_id AND d.kind='PROXIMITY' WHERE rt.code='ALMACEN_BEBIDAS' ORDER BY r.id LIMIT 1" 2>/dev/null)
     if [ -n "$F85_ROOM" ]; then
         F85_PREV_AT=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.status_probed_at')) FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY' LIMIT 1" 2>/dev/null)
         $MYSQL -e "UPDATE devices d JOIN rooms r ON r.pack_id=d.pack_id SET d.meta_json=JSON_SET(COALESCE(d.meta_json,'{}'),'\$.status_probed_at','$(date -u +%Y-%m-%dT%H:%M:%SZ)') WHERE r.id=$F85_ROOM AND d.kind='PROXIMITY';" 2>/dev/null
