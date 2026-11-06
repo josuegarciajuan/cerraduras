@@ -81,6 +81,7 @@ use App\Http\Middlewares\KeyDeskAccessMiddleware;
 use App\Http\Controllers\AdminApiClientController;
 use App\Http\Controllers\AccessKeyController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\CrmController;
 use App\Http\Controllers\KeyDeskController;
 use App\Http\Controllers\DevEchoController;
@@ -3452,6 +3453,21 @@ $router->post('/api/v1/nfc-cards',                 [$nfcCardController, 'create'
 $router->get('/api/v1/nfc-cards/{id}',             [$nfcCardController, 'show'],            $authFactory(['nfc-cards:read']));
 $router->patch('/api/v1/nfc-cards/{id}',           [$nfcCardController, 'update'],          $authFactory(['nfc-cards:write']));
 $router->delete('/api/v1/nfc-cards/{id}',          [$nfcCardController, 'disable'],         $authFactory(['nfc-cards:write']));
+
+// --- Routes: Analítica del panel (F119, solo lectura, sin Tuya) ---
+$analyticsController = new AnalyticsController($pdo);
+$router->get('/api/v1/analytics/overview',        [$analyticsController, 'overview'],      $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/live',            [$analyticsController, 'live'],          $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/workers',         [$analyticsController, 'workers'],       $authFactory(['workers:read']));
+$router->get('/api/v1/analytics/workers/{id}',    [$analyticsController, 'workerDetail'],  $authFactory(['workers:read']));
+$router->get('/api/v1/analytics/rooms',           [$analyticsController, 'rooms'],         $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/rooms/{id}',      [$analyticsController, 'roomDetail'],    $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/accesses',        [$analyticsController, 'accesses'],      $authFactory(['audit:read']));
+$router->get('/api/v1/analytics/keys',            [$analyticsController, 'keys'],          $authFactory(['keys:read']));
+$router->get('/api/v1/analytics/devices',         [$analyticsController, 'devices'],       $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/anomalies',       [$analyticsController, 'anomalies'],     $authFactory(['presence:read']));
+$router->get('/api/v1/analytics/warehouse',       [$analyticsController, 'warehouse'],     $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/search',          [$analyticsController, 'search'],        $authFactory(['rooms:read']));
 
 // --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
 $warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);

@@ -13674,3 +13674,41 @@ pendientes.
 - **RF-301.5**: `server_ts` es aditivo en `/live` y SSE; sin migración.
 
 **Estado F118.4:** implementado (código); pendiente prueba física con dos dispositivos.
+
+## F119 — Panel CRM v2 y analítica de uso (RF-302…RF-310)
+
+**Objetivo:** rediseñar `/panel` para que sea claro, visual y usable, sin perder
+ninguna función existente, y añadir un explorador de analítica de uso calculado
+solo con datos locales.
+
+- **RF-302 (UI):** tema claro moderno, sidebar agrupado (Operación, Personas,
+  Análisis, Sistema), topbar con búsqueda global, rango de fechas, indicador de
+  actualización y drawer de detalle. Responsive en móvil con menú deslizante y
+  backdrop.
+- **RF-303 (Dashboard):** KPIs de ocupación, personas dentro, accesos, escaneos,
+  anomalías, estancia media, visitas de almacén y dispositivos; donut de estados,
+  tendencia de ocupación, actividad por periodo, mapa de habitaciones, “ahora
+  mismo”, rankings, accesos, anomalías, almacén y acciones rápidas.
+- **RF-304 (Analítica):** endpoints de solo lectura `GET /api/v1/analytics/*`
+  con rango `days=1..366`; overview, live, workers, rooms, accesses, keys,
+  devices, anomalies, warehouse y search. Todos leen la BD local; **cero llamadas
+  a Tuya**.
+- **RF-305 (Personas):** por trabajador, sesiones, tiempo, salas distintas,
+  llaves, denegaciones, timeline, actividad diaria, mapa de calor día×hora,
+  últimas sesiones y accesos con llave.
+- **RF-306 (Habitaciones):** estado en vivo, mapa de salas, sesiones, accesos,
+  denegaciones, anomalías, visitas de almacén, estancias, dispositivos y detalle
+  por drawer.
+- **RF-307 (Accesos y otros):** series y resúmenes de accesos, uso de llaves/NFC,
+  salud/batería/firmware de dispositivos, tendencias de anomalías y métricas de
+  almacén (visitas, resultados, grabaciones y disco).
+- **RF-308 (UX):** búsqueda global, enlaces profundos por hash (`#w`, `#ro`,
+  `#ana`…), actualización local cada 20 s solo con pestaña visible, estados de
+  carga/vacío/error, tablas responsive y exportación visual.
+- **RF-309 (Compatibilidad):** se conservan todos los endpoints y acciones
+  existentes; `/dashboard`, `/almacen`, `/llaves` y `/timbre` no se modifican.
+- **RF-310 (Datos):** ocupación histórica aproximada con `stays`; no se añade
+  histórico de estados. Migración `0144` solo añade índices de rango.
+
+**Estado F119:** implementado (código); regresión **1127 passed, 0 failed,
+18 skipped**; validación visual desktop/móvil con Playwright.

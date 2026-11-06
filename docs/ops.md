@@ -449,3 +449,27 @@ php /root/cerraduras/api/bin/register-devices.php devices.csv
 ```
 
 Formato CSV: `external_id,room_code` (ej. `92f57630,101`)
+
+## Panel CRM v2 (F119)
+
+- **URL**: `/panel` (login propio en `/panel/login`).
+- **Secciones**: Dashboard, Habitaciones, Packs, Estancias, QRs, Deudas,
+  Trabajadores, Roles, Llaves, Fichas NFC, Accesos, Analítica, Anomalías,
+  Dispositivos, Fábrica, Monitor, Usuarios, API Clients, Salud y Configuración.
+- **Búsqueda global**: `Ctrl/Cmd+K`.
+- **Rango de fechas**: Hoy, 7, 30 o 90 días. Afecta al dashboard y a la
+  analítica.
+- **Enlaces profundos**: el hash de la URL identifica la sección (`#w`,
+  `#ro`, `#ana`, `#an`…).
+- **Datos**: todo se calcula en la BD local. **No hay llamadas a Tuya ni
+  pollers nuevos**; el refresco automático es local cada 20 s y solo con la
+  pestaña visible.
+- **Endpoints**: `GET /api/v1/analytics/{overview,live,workers,rooms,accesses,
+  keys,devices,anomalies,warehouse,search}` (ver `contracts.md` §F119).
+- **Migración**: `php api/bin/migrate.php` aplica `0144_analytics_indexes.sql`
+  (solo índices).
+- **Pruebas**: `php api/tests/Unit/PanelV2UiTest.php`,
+  `bash api/bin/run-tests.sh` (BLOCK 88) y regresión completa.
+- **Requisito de entorno**: el servidor necesita `node_modules` de
+  `api/bin/zigbee-ingress` y `api/run/zigbee-mqtt.pass` para los tests de
+  calibración del radar; son datos de runtime, no se versionan.

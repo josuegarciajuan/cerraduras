@@ -1,0 +1,1426 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Http\Controllers;
+
+use App\Http\Request;
+use App\Http\Response;
+use App\Support\Config;
+use DateTimeImmutable;
+use DateTimeZone;
+use PDO;
+
+/**
+ * AnalyticsController — F119.
+ *
+ * Read-only aggregates for the CRM panel. Everything is computed from the
+ * local database (rooms, stays, worker_sessions, access_events,
+ * key_access_events, anomalies, devices, warehouse_*). No Tuya calls, no
+ * pollers, no writes.
+ *
+ * All endpoints accept ?days=N (1..366, default 7). Dates are grouped in the
+ * application timezone (APP_TZ, Europe/Madrid by default) using a numeric
+ * offset and converted to UTC for the SQL bounds. The underlying columns stay
+ * in UTC.
+ */
+final class AnalyticsController
+{
+    private PDO $pdo;
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Public endpoints
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function overview(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $today = $this->todayUtc();
+
+        $statusRows = $this->rows('SELECT status, COUNT(*) AS c FROM rooms GROUP BY status');
+        $statusCounts = [];
+        foreach ($statusRows as $row) {
+            $statusCounts[(string) $row['status']] = (int) $row['c'];
+        }
+        $roomsTotal = array_sum($statusCounts);
+        $occupied = ($statusCounts['OCCUPIED'] ?? 0) + ($statusCounts['OVERSTAY'] ?? 0);
+
+        $workersInside = $this->scalar('SELECT COUNT(DISTINCT worker_id) FROM worker_sessions WHERE exited_at IS NULL');
+        $sessionsToday = $this->scalar(
+            'SELECT COUNT(*) FROM worker_sessions WHERE entered_at >= :today',
+            [':today' => $today]
+        );
+        $accessesToday = $this->scalar(
+            'SELECT COUNT(*) FROM access_events WHERE occurred_at >= :today',
+            [':today' => $today]
+        );
+        $deniedToday = $this->scalar(
+            "SELECT COUNT(*) FROM access_events WHERE result = 'FAIL' AND occurred_at >= :today",
+            [':today' => $today]
+        );
+        $scansToday = $this->scalar(
+            "SELECT COUNT(*) FROM access_events WHERE kind = 'QR_VALIDATE' AND occurred_at >= :today",
+            [':today' => $today]
+        ) + $this->scalar(
+            'SELECT COUNT(*) FROM key_access_events WHERE occurred_at >= :today',
+            [':today' => $today]
+        );
+        $anomaliesOpen = $this->scalar("SELECT COUNT(*) FROM anomalies WHERE status = 'OPEN'");
+        $avgStay = $this->scalar(
+            'SELECT AVG(TIMESTAMPDIFF(MINUTE, first_entry_at, COALESCE(closed_at, exit_detected_at, UTC_TIMESTAMP())))
+             FROM stays
+             WHERE first_entry_at IS NOT NULL AND first_entry_at BETWEEN :from AND :to',
+            [':from' => $from, ':to' => $to]
+        );
+        $warehouseVisitsToday = $this->scalar(
+            'SELECT COUNT(*) FROM warehouse_visits WHERE created_at >= :today',
+            [':today' => $today]
+        );
+
+        $deviceSummary = $this->deviceSummary();
+        $warehouse = $this->warehouseSummary($from, $to);
+        $accessSummary = $this->accessSummary($from, $to);
+        $anomalySummary = $this->anomalySummary($from);
+
+        $canSeeWorkers = $this->canSeeWorkers($request);
+
+        $payload = [
+            'generated_at' => gmdate('c'),
+            'range' => [
+                'from' => $fromLocal->format('Y-m-d'),
+                'to' => $toLocal->format('Y-m-d'),
+                'days' => $days,
+                'granularity' => $granularity,
+            ],
+            'kpis' => [
+                'rooms_total' => $roomsTotal,
+                'rooms_occupied' => $statusCounts['OCCUPIED'] ?? 0,
+                'rooms_overstay' => $statusCounts['OVERSTAY'] ?? 0,
+                'rooms_free' => $statusCounts['FREE'] ?? 0,
+                'rooms_cleaning' => $statusCounts['CLEANING'] ?? 0,
+                'rooms_reserved' => $statusCounts['RESERVED'] ?? 0,
+                'rooms_out_of_service' => $statusCounts['OUT_OF_SERVICE'] ?? 0,
+                'occupancy_pct' => $roomsTotal > 0 ? round($occupied / $roomsTotal * 100, 1) : 0.0,
+                'workers_inside' => $workersInside,
+                'sessions_today' => $sessionsToday,
+                'accesses_today' => $accessesToday,
+                'denied_today' => $deniedToday,
+                'scans_today' => $scansToday,
+                'anomalies_open' => $anomaliesOpen,
+                'avg_stay_minutes' => $avgStay !== null ? (int) round((float) $avgStay) : 0,
+                'warehouse_visits_today' => $warehouseVisitsToday,
+                'devices_online' => $deviceSummary['online'],
+                'devices_offline' => $deviceSummary['offline'],
+                'devices_unknown' => $deviceSummary['unknown'],
+                'low_battery' => $deviceSummary['low_battery'],
+            ],
+            'status_distribution' => $this->statusDistribution($statusCounts),
+            'occupancy_series' => $this->occupancySeries($from, $to, $fromLocal, $toLocal, $roomsTotal, $occupied),
+            'activity_series' => $this->activitySeries($from, $to, $granularity, $fromLocal, $toLocal),
+            'access_summary' => $accessSummary,
+            'anomaly_summary' => $anomalySummary,
+            'device_summary' => $deviceSummary,
+            'warehouse' => $warehouse,
+            'recent_activity' => $this->recentActivity(10),
+        ];
+
+        if ($canSeeWorkers) {
+            $payload['top_workers'] = $this->topWorkers($from, $to, 5);
+        } else {
+            $payload['top_workers'] = [];
+        }
+        $payload['top_rooms'] = $this->topRooms($from, $to, 5);
+
+        return Response::json(200, $payload);
+    }
+
+    public function live(Request $request): Response
+    {
+        $offset = $this->tzOffset();
+        $rooms = $this->rows(
+            "SELECT r.id, r.code, r.status, r.pack_id,
+                    rt.name AS room_type,
+                    p.name AS pack_name,
+                    i.door_state, i.presence_state,
+                    i.last_door_event_at, i.last_presence_event_at,
+                    (SELECT COUNT(*) FROM worker_sessions ws
+                      WHERE ws.room_id = r.id AND ws.exited_at IS NULL) AS workers_inside
+             FROM rooms r
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             LEFT JOIN device_packs p ON p.id = r.pack_id
+             LEFT JOIN iot_sessions i ON i.room_id = r.id
+             ORDER BY r.code"
+        );
+
+        $workersInside = $this->rows(
+            "SELECT ws.id, ws.room_id, ws.entered_at,
+                    w.name AS worker_name, wr.name AS role,
+                    r.code AS room_code,
+                    TIMESTAMPDIFF(MINUTE, ws.entered_at, UTC_TIMESTAMP()) AS duration_minutes
+             FROM worker_sessions ws
+             JOIN workers w ON w.id = ws.worker_id
+             LEFT JOIN worker_roles wr ON wr.id = w.role_id
+             JOIN rooms r ON r.id = ws.room_id
+             WHERE ws.exited_at IS NULL
+             ORDER BY ws.entered_at ASC"
+        );
+
+        $doorStale = max(1, Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300);
+        $presenceStale = max(1, Config::getInt('PRESENCE_STALE_SECONDS', 180) ?? 180);
+        $now = time();
+
+        foreach ($rooms as &$room) {
+            $room['door_age_seconds'] = $this->ageSeconds($room['last_door_event_at'] ?? null, $now);
+            $room['presence_age_seconds'] = $this->ageSeconds($room['last_presence_event_at'] ?? null, $now);
+            $room['door_stale'] = $room['door_age_seconds'] !== null && $room['door_age_seconds'] > $doorStale;
+            $room['presence_stale'] = $room['presence_age_seconds'] !== null && $room['presence_age_seconds'] > $presenceStale;
+        }
+        unset($room);
+
+        $alerts = [];
+        $anomaliesOpen = $this->rows(
+            "SELECT severity, COUNT(*) AS c FROM anomalies WHERE status = 'OPEN' GROUP BY severity"
+        );
+        foreach ($anomaliesOpen as $a) {
+            $alerts[] = [
+                'type' => 'anomaly',
+                'severity' => (string) $a['severity'],
+                'text' => (int) $a['c'] . ' anomalía(s) ' . $a['severity'],
+            ];
+        }
+        $doorOpen = 0;
+        $presencePresent = 0;
+        foreach ($rooms as $room) {
+            if (($room['door_state'] ?? '') === 'OPEN') {
+                $doorOpen++;
+            }
+            if (($room['presence_state'] ?? '') === 'PRESENT') {
+                $presencePresent++;
+            }
+        }
+        if ($doorOpen > 0) {
+            $alerts[] = ['type' => 'door_open', 'severity' => 'MEDIUM', 'text' => $doorOpen . ' puerta(s) abierta(s)'];
+        }
+
+        return Response::json(200, [
+            'generated_at' => gmdate('c'),
+            'server_ts' => gmdate('c'),
+            'server_epoch' => $now,
+            'rooms' => $rooms,
+            'workers_inside' => $workersInside,
+            'alerts' => $alerts,
+            'counts' => [
+                'rooms' => count($rooms),
+                'workers_inside' => count($workersInside),
+                'door_open' => $doorOpen,
+                'presence_present' => $presencePresent,
+                'anomalies_open' => (int) $this->scalar("SELECT COUNT(*) FROM anomalies WHERE status = 'OPEN'"),
+                'devices_offline' => (int) $this->scalar('SELECT COUNT(*) FROM devices WHERE online_state = 0'),
+                'devices_unknown' => (int) $this->scalar('SELECT COUNT(*) FROM devices WHERE online_state IS NULL'),
+            ],
+        ]);
+    }
+
+    public function workers(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $q = trim((string) ($request->query('q') ?? ''));
+        $roleId = (int) ($request->query('role_id') ?? 0);
+        $active = $request->query('active');
+
+        $where = [];
+        $params = [':from' => $from, ':to' => $to];
+        if ($q !== '') {
+            $where[] = 'w.name LIKE :q';
+            $params[':q'] = '%' . $q . '%';
+        }
+        if ($roleId > 0) {
+            $where[] = 'w.role_id = :role_id';
+            $params[':role_id'] = $roleId;
+        }
+        if ($active !== null && $active !== '') {
+            $where[] = 'w.active = :active';
+            $params[':active'] = ($active === '1' || $active === 'true') ? 1 : 0;
+        }
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $rows = $this->rows(
+            "SELECT w.id, w.name, w.active, w.role_id, wr.name AS role,
+                    COUNT(ws.id) AS sessions,
+                    COALESCE(SUM(GREATEST(0, TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP())))), 0) AS minutes,
+                    COUNT(DISTINCT ws.room_id) AS rooms_visited,
+                    MAX(ws.entered_at) AS last_seen,
+                    SUM(CASE WHEN ws.exited_at IS NULL THEN 1 ELSE 0 END) AS open_sessions
+             FROM workers w
+             LEFT JOIN worker_roles wr ON wr.id = w.role_id
+             LEFT JOIN worker_sessions ws
+                    ON ws.worker_id = w.id AND ws.entered_at BETWEEN :from AND :to
+             {$whereSql}
+             GROUP BY w.id, w.name, w.active, w.role_id, wr.name
+             ORDER BY sessions DESC, w.name ASC",
+            $params
+        );
+
+        $keyCounts = [];
+        foreach ($this->rows(
+            "SELECT worker_id, COUNT(*) AS c FROM access_keys
+             WHERE status = 'ACTIVE' AND valid_until > UTC_TIMESTAMP() AND worker_id IS NOT NULL
+             GROUP BY worker_id"
+        ) as $row) {
+            $keyCounts[(int) $row['worker_id']] = (int) $row['c'];
+        }
+        $denials = [];
+        foreach ($this->rows(
+            "SELECT worker_id, COUNT(*) AS c FROM key_access_events
+             WHERE result = 'FAIL' AND occurred_at BETWEEN :from AND :to AND worker_id IS NOT NULL
+             GROUP BY worker_id",
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $denials[(int) $row['worker_id']] = (int) $row['c'];
+        }
+
+        $current = [];
+        foreach ($this->rows(
+            "SELECT ws.worker_id, r.code AS room_code
+             FROM worker_sessions ws JOIN rooms r ON r.id = ws.room_id
+             WHERE ws.exited_at IS NULL ORDER BY ws.entered_at ASC"
+        ) as $row) {
+            if (!isset($current[(int) $row['worker_id']])) {
+                $current[(int) $row['worker_id']] = (string) $row['room_code'];
+            }
+        }
+
+        foreach ($rows as &$row) {
+            $id = (int) $row['id'];
+            $row['id'] = $id;
+            $row['sessions'] = (int) $row['sessions'];
+            $row['minutes'] = (int) $row['minutes'];
+            $row['rooms_visited'] = (int) $row['rooms_visited'];
+            $row['open_sessions'] = (int) $row['open_sessions'];
+            $row['active'] = (bool) $row['active'];
+            $row['keys_active'] = $keyCounts[$id] ?? 0;
+            $row['denials'] = $denials[$id] ?? 0;
+            $row['current_room'] = $current[$id] ?? null;
+            $row['status'] = $row['open_sessions'] > 0 ? 'INSIDE' : 'OUTSIDE';
+        }
+        unset($row);
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'items' => $rows,
+            'meta' => ['total' => count($rows)],
+        ]);
+    }
+
+    public function workerDetail(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $id = (int) $request->routeParam('id');
+
+        $workerRows = $this->rows(
+            "SELECT w.id, w.name, w.active, w.role_id, wr.name AS role, w.notes
+             FROM workers w LEFT JOIN worker_roles wr ON wr.id = w.role_id
+             WHERE w.id = :id LIMIT 1",
+            [':id' => $id]
+        );
+        if ($workerRows === []) {
+            return Response::json(404, ['error' => ['code' => 'worker_not_found', 'message' => 'Worker not found']]);
+        }
+        $worker = $workerRows[0];
+        $worker['id'] = (int) $worker['id'];
+        $worker['active'] = (bool) $worker['active'];
+
+        $sessions = $this->rows(
+            "SELECT ws.id, ws.room_id, r.code AS room_code, ws.entered_at, ws.exited_at,
+                    ws.exit_kind,
+                    TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP())) AS duration_minutes
+             FROM worker_sessions ws JOIN rooms r ON r.id = ws.room_id
+             WHERE ws.worker_id = :id AND ws.entered_at BETWEEN :from AND :to
+             ORDER BY ws.entered_at DESC LIMIT 200",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $perRoom = $this->rows(
+            "SELECT ws.room_id, r.code AS room_code, COUNT(*) AS sessions,
+                    COALESCE(SUM(GREATEST(0, TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP())))), 0) AS minutes
+             FROM worker_sessions ws JOIN rooms r ON r.id = ws.room_id
+             WHERE ws.worker_id = :id AND ws.entered_at BETWEEN :from AND :to
+             GROUP BY ws.room_id, r.code ORDER BY minutes DESC, sessions DESC",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $daily = [];
+        foreach ($this->rows(
+            "SELECT DATE(CONVERT_TZ(entered_at, '+00:00', :tz)) AS d, COUNT(*) AS sessions,
+                    COALESCE(SUM(GREATEST(0, TIMESTAMPDIFF(MINUTE, entered_at, COALESCE(exited_at, UTC_TIMESTAMP())))), 0) AS minutes
+             FROM worker_sessions
+             WHERE worker_id = :id AND entered_at BETWEEN :from AND :to
+             GROUP BY d ORDER BY d",
+            [':id' => $id, ':from' => $from, ':to' => $to, ':tz' => $this->tzOffset()]
+        ) as $row) {
+            $daily[(string) $row['d']] = [
+                'sessions' => (int) $row['sessions'],
+                'minutes' => (int) $row['minutes'],
+            ];
+        }
+
+        $heat = [];
+        foreach ($this->rows(
+            "SELECT DAYOFWEEK(CONVERT_TZ(entered_at, '+00:00', :tz1)) AS dw,
+                    HOUR(CONVERT_TZ(entered_at, '+00:00', :tz2)) AS h,
+                    COUNT(*) AS c
+             FROM worker_sessions
+             WHERE worker_id = :id AND entered_at BETWEEN :from AND :to
+             GROUP BY dw, h",
+            [':id' => $id, ':from' => $from, ':to' => $to, ':tz1' => $this->tzOffset(), ':tz2' => $this->tzOffset()]
+        ) as $row) {
+            $heat[(int) $row['dw']][(int) $row['h']] = (int) $row['c'];
+        }
+
+        $keys = $this->rows(
+            "SELECT k.id, k.label, k.key_type, k.status, k.valid_until,
+                    (SELECT COUNT(*) FROM key_access_events e WHERE e.key_id = k.id AND e.occurred_at BETWEEN :from1 AND :to1) AS uses,
+                    (SELECT COUNT(*) FROM key_access_events e WHERE e.key_id = k.id AND e.result = 'FAIL' AND e.occurred_at BETWEEN :from2 AND :to2) AS denials
+             FROM access_keys k
+             WHERE k.worker_id = :id
+             ORDER BY k.status ASC, k.valid_until DESC",
+            [':id' => $id, ':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to]
+        );
+
+        $keyEvents = $this->rows(
+            "SELECT e.id, e.occurred_at, e.credential_type, e.result, e.reason,
+                    r.code AS room_code, k.label AS key_label
+             FROM key_access_events e
+             LEFT JOIN rooms r ON r.id = e.room_id
+             LEFT JOIN access_keys k ON k.id = e.key_id
+             WHERE e.worker_id = :id AND e.occurred_at BETWEEN :from AND :to
+             ORDER BY e.occurred_at DESC LIMIT 25",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $totals = [
+            'sessions' => count($sessions),
+            'minutes' => array_sum(array_map(static fn($s) => (int) $s['duration_minutes'], $sessions)),
+            'rooms_visited' => count($perRoom),
+            'denials' => array_sum(array_map(static fn($e) => $e['result'] === 'FAIL' ? 1 : 0, $keyEvents)),
+        ];
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'worker' => $worker,
+            'totals' => $totals,
+            'sessions' => $sessions,
+            'per_room' => $perRoom,
+            'daily' => $this->fillDaily($fromLocal, $days, $daily, ['sessions' => 0, 'minutes' => 0]),
+            'heatmap' => $heat,
+            'keys' => $keys,
+            'key_events' => $keyEvents,
+            'current_room' => $this->currentRoomForWorker($id),
+        ]);
+    }
+
+    public function rooms(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $q = trim((string) ($request->query('q') ?? ''));
+        $status = trim((string) ($request->query('status') ?? ''));
+        $typeId = (int) ($request->query('room_type_id') ?? 0);
+
+        $where = [];
+        $params = [
+            ':from1' => $from, ':to1' => $to,
+            ':from2' => $from, ':to2' => $to,
+            ':from3' => $from, ':to3' => $to,
+            ':from4' => $from, ':to4' => $to,
+            ':from5' => $from, ':to5' => $to,
+        ];
+        if ($q !== '') {
+            $where[] = '(r.code LIKE :q1 OR rt.name LIKE :q2)';
+            $params[':q1'] = '%' . $q . '%';
+            $params[':q2'] = '%' . $q . '%';
+        }
+        if ($status !== '') {
+            $where[] = 'r.status = :status';
+            $params[':status'] = $status;
+        }
+        if ($typeId > 0) {
+            $where[] = 'r.room_type_id = :type_id';
+            $params[':type_id'] = $typeId;
+        }
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $rows = $this->rows(
+            "SELECT r.id, r.code, r.status, r.room_type_id, rt.name AS room_type,
+                    r.pack_id, p.name AS pack_name,
+                    (SELECT COUNT(*) FROM worker_sessions ws
+                      WHERE ws.room_id = r.id AND ws.entered_at BETWEEN :from1 AND :to1) AS sessions,
+                    (SELECT COUNT(*) FROM access_events ae
+                      WHERE ae.room_id = r.id AND ae.occurred_at BETWEEN :from2 AND :to2) AS accesses,
+                    (SELECT COUNT(*) FROM access_events ae
+                      WHERE ae.room_id = r.id AND ae.result = 'FAIL' AND ae.occurred_at BETWEEN :from3 AND :to3) AS denied,
+                    (SELECT COUNT(*) FROM anomalies a
+                      WHERE a.room_id = r.id AND a.detected_at BETWEEN :from4 AND :to4) AS anomalies,
+                    (SELECT COUNT(*) FROM warehouse_visits v
+                      WHERE v.room_id = r.id AND v.created_at BETWEEN :from5 AND :to5) AS visits,
+                    (SELECT MAX(ae.occurred_at) FROM access_events ae WHERE ae.room_id = r.id) AS last_access_at,
+                    (SELECT COUNT(*) FROM worker_sessions ws
+                      WHERE ws.room_id = r.id AND ws.exited_at IS NULL) AS workers_inside
+             FROM rooms r
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             LEFT JOIN device_packs p ON p.id = r.pack_id
+             {$whereSql}
+             ORDER BY (sessions + accesses) DESC, r.code ASC",
+            $params
+        );
+
+        foreach ($rows as &$row) {
+            $row['id'] = (int) $row['id'];
+            $row['room_type_id'] = (int) $row['room_type_id'];
+            $row['sessions'] = (int) $row['sessions'];
+            $row['accesses'] = (int) $row['accesses'];
+            $row['denied'] = (int) $row['denied'];
+            $row['anomalies'] = (int) $row['anomalies'];
+            $row['visits'] = (int) $row['visits'];
+            $row['workers_inside'] = (int) $row['workers_inside'];
+        }
+        unset($row);
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'items' => $rows,
+            'meta' => ['total' => count($rows)],
+        ]);
+    }
+
+    public function roomDetail(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $id = (int) $request->routeParam('id');
+
+        $roomRows = $this->rows(
+            "SELECT r.id, r.code, r.status, r.room_type_id, rt.name AS room_type,
+                    r.pack_id, p.name AS pack_name, r.notes
+             FROM rooms r
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             LEFT JOIN device_packs p ON p.id = r.pack_id
+             WHERE r.id = :id LIMIT 1",
+            [':id' => $id]
+        );
+        if ($roomRows === []) {
+            return Response::json(404, ['error' => ['code' => 'room_not_found', 'message' => 'Room not found']]);
+        }
+        $room = $roomRows[0];
+        $room['id'] = (int) $room['id'];
+
+        $sessions = $this->rows(
+            "SELECT ws.id, ws.worker_id, w.name AS worker_name, ws.entered_at, ws.exited_at, ws.exit_kind,
+                    TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP())) AS duration_minutes
+             FROM worker_sessions ws JOIN workers w ON w.id = ws.worker_id
+             WHERE ws.room_id = :id AND ws.entered_at BETWEEN :from AND :to
+             ORDER BY ws.entered_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $accesses = $this->rows(
+            "SELECT id, occurred_at, kind, result, reason, provider
+             FROM access_events WHERE room_id = :id AND occurred_at BETWEEN :from AND :to
+             ORDER BY occurred_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $keyAccesses = $this->rows(
+            "SELECT e.id, e.occurred_at, e.credential_type, e.result, e.reason,
+                    k.label AS key_label, w.name AS worker_name, e.owner_type
+             FROM key_access_events e
+             LEFT JOIN access_keys k ON k.id = e.key_id
+             LEFT JOIN workers w ON w.id = e.worker_id
+             WHERE e.room_id = :id AND e.occurred_at BETWEEN :from AND :to
+             ORDER BY e.occurred_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $stays = $this->rows(
+            "SELECT id, status, duracion_minutos, reserved_at, first_entry_at, exit_detected_at, closed_at
+             FROM stays WHERE room_id = :id AND reserved_at BETWEEN :from AND :to
+             ORDER BY reserved_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $visits = $this->rows(
+            "SELECT id, entry_trigger, outcome, qr_at, entered_at, exited_at, created_at
+             FROM warehouse_visits WHERE room_id = :id AND created_at BETWEEN :from AND :to
+             ORDER BY created_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $anomalies = $this->rows(
+            "SELECT id, anomaly_type, severity, status, detected_at
+             FROM anomalies WHERE room_id = :id AND detected_at BETWEEN :from AND :to
+             ORDER BY detected_at DESC LIMIT 100",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
+        $devices = $this->rows(
+            "SELECT d.id, d.kind, d.subtype, d.external_id, d.label, d.battery_pct,
+                    d.online_state, d.online_probed_at, d.transport, d.firmware_variant, d.firmware_version
+             FROM devices d
+             JOIN device_packs p ON p.id = d.pack_id
+             JOIN rooms r ON r.pack_id = p.id
+             WHERE r.id = :id
+             ORDER BY d.kind ASC",
+            [':id' => $id]
+        );
+
+        $daily = [];
+        foreach ($this->rows(
+            "SELECT DATE(CONVERT_TZ(occurred_at, '+00:00', :tz)) AS d, COUNT(*) AS c
+             FROM access_events WHERE room_id = :id AND occurred_at BETWEEN :from AND :to
+             GROUP BY d ORDER BY d",
+            [':id' => $id, ':from' => $from, ':to' => $to, ':tz' => $this->tzOffset()]
+        ) as $row) {
+            $daily[(string) $row['d']]['accesses'] = (int) $row['c'];
+        }
+        foreach ($this->rows(
+            "SELECT DATE(CONVERT_TZ(entered_at, '+00:00', :tz)) AS d, COUNT(*) AS c
+             FROM worker_sessions WHERE room_id = :id AND entered_at BETWEEN :from AND :to
+             GROUP BY d ORDER BY d",
+            [':id' => $id, ':from' => $from, ':to' => $to, ':tz' => $this->tzOffset()]
+        ) as $row) {
+            $daily[(string) $row['d']]['sessions'] = (int) $row['c'];
+        }
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'room' => $room,
+            'sessions' => $sessions,
+            'accesses' => $accesses,
+            'key_accesses' => $keyAccesses,
+            'stays' => $stays,
+            'visits' => $visits,
+            'anomalies' => $anomalies,
+            'devices' => $devices,
+            'daily' => $this->fillDaily($fromLocal, $days, $daily, ['sessions' => 0, 'accesses' => 0]),
+        ]);
+    }
+
+    public function accesses(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $offset = $this->tzOffset();
+
+        $byResult = [];
+        foreach ($this->rows(
+            "SELECT result, COUNT(*) AS c FROM access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY result",
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $byResult[(string) $row['result']] = (int) $row['c'];
+        }
+        foreach ($this->rows(
+            "SELECT result, COUNT(*) AS c FROM key_access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY result",
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $byResult[(string) $row['result']] = ($byResult[(string) $row['result']] ?? 0) + (int) $row['c'];
+        }
+
+        $byKind = $this->rows(
+            "SELECT kind, result, COUNT(*) AS c FROM access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY kind, result ORDER BY c DESC",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $byCredential = $this->rows(
+            "SELECT credential_type, result, COUNT(*) AS c FROM key_access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY credential_type, result",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $denialReasons = $this->rows(
+            "SELECT reason, COUNT(*) AS c FROM (
+                SELECT reason FROM access_events WHERE result = 'FAIL' AND occurred_at BETWEEN :from1 AND :to1
+                UNION ALL
+                SELECT reason FROM key_access_events WHERE result = 'FAIL' AND occurred_at BETWEEN :from2 AND :to2
+             ) x GROUP BY reason ORDER BY c DESC LIMIT 10",
+            [':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to]
+        );
+
+        $topWorkers = $this->rows(
+            "SELECT w.id, w.name, COUNT(*) AS c
+             FROM key_access_events e JOIN workers w ON w.id = e.worker_id
+             WHERE e.occurred_at BETWEEN :from AND :to AND e.worker_id IS NOT NULL
+             GROUP BY w.id, w.name ORDER BY c DESC LIMIT 8",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $topKeys = $this->rows(
+            "SELECT k.id, k.label, k.key_type, COUNT(*) AS c,
+                    SUM(CASE WHEN e.result = 'FAIL' THEN 1 ELSE 0 END) AS denials
+             FROM key_access_events e JOIN access_keys k ON k.id = e.key_id
+             WHERE e.occurred_at BETWEEN :from AND :to AND e.key_id IS NOT NULL
+             GROUP BY k.id, k.label, k.key_type ORDER BY c DESC LIMIT 8",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $series = [];
+        $key = $granularity === 'hour' ? 'HOUR(CONVERT_TZ(occurred_at, \'+00:00\', :tz))' : 'DATE(CONVERT_TZ(occurred_at, \'+00:00\', :tz))';
+        foreach ($this->rows(
+            "SELECT {$key} AS k, COUNT(*) AS c FROM access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY k ORDER BY k",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['k']]['accesses'] = (int) $row['c'];
+        }
+        foreach ($this->rows(
+            "SELECT {$key} AS k, COUNT(*) AS c FROM key_access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY k ORDER BY k",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['k']]['keys'] = (int) $row['c'];
+        }
+
+        $recent = $this->rows(
+            "SELECT e.id, e.occurred_at, 'ACCESS' AS source, r.code AS room_code,
+                    e.kind AS type, e.result, e.reason, NULL AS worker_name, NULL AS key_label
+             FROM access_events e JOIN rooms r ON r.id = e.room_id
+             WHERE e.occurred_at BETWEEN :from1 AND :to1
+             UNION ALL
+             SELECT e.id, e.occurred_at, 'KEY' AS source, r.code AS room_code,
+                    e.credential_type AS type, e.result, e.reason, w.name AS worker_name, k.label AS key_label
+             FROM key_access_events e
+             LEFT JOIN rooms r ON r.id = e.room_id
+             LEFT JOIN workers w ON w.id = e.worker_id
+             LEFT JOIN access_keys k ON k.id = e.key_id
+             WHERE e.occurred_at BETWEEN :from2 AND :to2
+             ORDER BY occurred_at DESC LIMIT 100",
+            [':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to]
+        );
+
+        $total = array_sum($byResult);
+        $ok = $byResult['OK'] ?? 0;
+        $fail = $byResult['FAIL'] ?? 0;
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'summary' => [
+                'total' => $total,
+                'ok' => $ok,
+                'fail' => $fail,
+                'success_rate' => $total > 0 ? round($ok / $total * 100, 1) : 0.0,
+            ],
+            'by_result' => $byResult,
+            'by_kind' => $byKind,
+            'by_credential' => $byCredential,
+            'denial_reasons' => $denialReasons,
+            'top_workers' => $topWorkers,
+            'top_keys' => $topKeys,
+            'series' => $this->fillActivity($fromLocal, $days, $granularity, $series, ['accesses' => 0, 'keys' => 0]),
+            'recent' => $recent,
+        ]);
+    }
+
+    public function keys(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+
+        $counts = ['active' => 0, 'expired' => 0, 'revoked' => 0, 'total' => 0];
+        foreach ($this->rows('SELECT status, valid_until FROM access_keys') as $row) {
+            $counts['total']++;
+            if ((string) $row['status'] !== 'ACTIVE') {
+                $counts['revoked']++;
+            } elseif (strtotime((string) $row['valid_until']) !== false && strtotime((string) $row['valid_until']) < time()) {
+                $counts['expired']++;
+            } else {
+                $counts['active']++;
+            }
+        }
+
+        $expiring = $this->rows(
+            "SELECT id, label, key_type, valid_until FROM access_keys
+             WHERE status = 'ACTIVE' AND valid_until BETWEEN UTC_TIMESTAMP() AND DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+             ORDER BY valid_until ASC LIMIT 20"
+        );
+
+        $top = $this->rows(
+            "SELECT k.id, k.label, k.key_type, k.owner_type,
+                    COUNT(e.id) AS uses,
+                    SUM(CASE WHEN e.result = 'FAIL' THEN 1 ELSE 0 END) AS denials
+             FROM access_keys k LEFT JOIN key_access_events e
+                    ON e.key_id = k.id AND e.occurred_at BETWEEN :from AND :to
+             GROUP BY k.id, k.label, k.key_type, k.owner_type
+             ORDER BY uses DESC, k.label ASC LIMIT 20",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $unused = $this->rows(
+            "SELECT k.id, k.label, k.key_type, k.valid_until
+             FROM access_keys k
+             WHERE k.status = 'ACTIVE' AND k.valid_until > UTC_TIMESTAMP()
+               AND NOT EXISTS (SELECT 1 FROM key_access_events e WHERE e.key_id = k.id AND e.occurred_at BETWEEN :from AND :to)
+             ORDER BY k.valid_until ASC LIMIT 20",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $nfc = ['available' => 0, 'assigned' => 0, 'disabled' => 0, 'total' => 0];
+        foreach ($this->rows('SELECT status, COUNT(*) AS c FROM nfc_cards GROUP BY status') as $row) {
+            $nfc['total'] += (int) $row['c'];
+            $nfc[strtolower((string) $row['status'])] = (int) $row['c'];
+        }
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'counts' => $counts,
+            'expiring_soon' => $expiring,
+            'top_keys' => $top,
+            'unused_keys' => $unused,
+            'nfc' => $nfc,
+        ]);
+    }
+
+    public function devices(Request $request): Response
+    {
+        $summary = $this->deviceSummary();
+
+        $byKind = $this->rows(
+            'SELECT kind, COUNT(*) AS c,
+                    SUM(CASE WHEN online_state = 1 THEN 1 ELSE 0 END) AS online,
+                    SUM(CASE WHEN online_state = 0 THEN 1 ELSE 0 END) AS offline,
+                    SUM(CASE WHEN online_state IS NULL THEN 1 ELSE 0 END) AS unknown
+             FROM devices GROUP BY kind ORDER BY c DESC'
+        );
+        $byTransport = $this->rows(
+            "SELECT COALESCE(transport, 'UNKNOWN') AS transport, COUNT(*) AS c
+             FROM devices GROUP BY transport ORDER BY c DESC"
+        );
+        $lowBattery = $this->rows(
+            'SELECT d.id, d.kind, d.label, d.external_id, d.battery_pct, p.name AS pack_name, r.code AS room_code
+             FROM devices d
+             LEFT JOIN device_packs p ON p.id = d.pack_id
+             LEFT JOIN rooms r ON r.pack_id = p.id
+             WHERE d.battery_pct IS NOT NULL AND d.battery_pct <= 20
+             ORDER BY d.battery_pct ASC LIMIT 30'
+        );
+        $packs = $this->rows(
+            'SELECT p.id, p.name, p.code, r.code AS room_code, COUNT(d.id) AS devices
+             FROM device_packs p
+             LEFT JOIN rooms r ON r.pack_id = p.id
+             LEFT JOIN devices d ON d.pack_id = p.id
+             GROUP BY p.id, p.name, p.code, r.code
+             ORDER BY devices DESC, p.name ASC'
+        );
+        $firmware = $this->rows(
+            "SELECT COALESCE(firmware_variant, '—') AS variant, COALESCE(firmware_version, '—') AS version,
+                    COUNT(*) AS c
+             FROM devices WHERE kind = 'RPI'
+             GROUP BY firmware_variant, firmware_version ORDER BY c DESC"
+        );
+
+        return Response::json(200, [
+            'summary' => $summary,
+            'by_kind' => $byKind,
+            'by_transport' => $byTransport,
+            'low_battery' => $lowBattery,
+            'packs' => $packs,
+            'firmware' => $firmware,
+        ]);
+    }
+
+    public function anomalies(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $offset = $this->tzOffset();
+
+        $byStatus = [];
+        foreach ($this->rows(
+            'SELECT status, COUNT(*) AS c FROM anomalies WHERE detected_at BETWEEN :from AND :to GROUP BY status',
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $byStatus[(string) $row['status']] = (int) $row['c'];
+        }
+        $bySeverity = [];
+        foreach ($this->rows(
+            'SELECT severity, COUNT(*) AS c FROM anomalies WHERE detected_at BETWEEN :from AND :to GROUP BY severity',
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $bySeverity[(string) $row['severity']] = (int) $row['c'];
+        }
+        $byType = $this->rows(
+            'SELECT anomaly_type, severity, COUNT(*) AS c FROM anomalies
+             WHERE detected_at BETWEEN :from AND :to GROUP BY anomaly_type, severity ORDER BY c DESC',
+            [':from' => $from, ':to' => $to]
+        );
+        $topRooms = $this->rows(
+            'SELECT a.room_id, r.code AS room_code, COUNT(*) AS c,
+                    SUM(CASE WHEN a.severity = "CRITICAL" THEN 1 ELSE 0 END) AS critical
+             FROM anomalies a JOIN rooms r ON r.id = a.room_id
+             WHERE a.detected_at BETWEEN :from AND :to
+             GROUP BY a.room_id, r.code ORDER BY c DESC LIMIT 10',
+            [':from' => $from, ':to' => $to]
+        );
+        $mtta = $this->scalar(
+            'SELECT AVG(TIMESTAMPDIFF(MINUTE, detected_at, acknowledged_at))
+             FROM anomalies WHERE acknowledged_at IS NOT NULL AND detected_at BETWEEN :from AND :to',
+            [':from' => $from, ':to' => $to]
+        );
+        $series = [];
+        foreach ($this->rows(
+            "SELECT DATE(CONVERT_TZ(detected_at, '+00:00', :tz)) AS d, COUNT(*) AS c
+             FROM anomalies WHERE detected_at BETWEEN :from AND :to GROUP BY d ORDER BY d",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['d']] = (int) $row['c'];
+        }
+        $recent = $this->rows(
+            'SELECT a.id, a.room_id, r.code AS room_code, a.anomaly_type, a.severity, a.status,
+                    a.detected_at, a.acknowledged_at
+             FROM anomalies a JOIN rooms r ON r.id = a.room_id
+             WHERE a.detected_at BETWEEN :from AND :to
+             ORDER BY a.detected_at DESC LIMIT 100',
+            [':from' => $from, ':to' => $to]
+        );
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'by_status' => $byStatus,
+            'by_severity' => $bySeverity,
+            'by_type' => $byType,
+            'top_rooms' => $topRooms,
+            'mtta_minutes' => $mtta !== null ? (int) round((float) $mtta) : null,
+            'series' => $this->fillDaily($fromLocal, $days, $series, 0),
+            'recent' => $recent,
+        ]);
+    }
+
+    public function warehouse(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $offset = $this->tzOffset();
+
+        $byTrigger = $this->rows(
+            'SELECT entry_trigger, COUNT(*) AS c FROM warehouse_visits
+             WHERE created_at BETWEEN :from AND :to GROUP BY entry_trigger ORDER BY c DESC',
+            [':from' => $from, ':to' => $to]
+        );
+        $byOutcome = $this->rows(
+            'SELECT outcome, COUNT(*) AS c FROM warehouse_visits
+             WHERE created_at BETWEEN :from AND :to GROUP BY outcome ORDER BY c DESC',
+            [':from' => $from, ':to' => $to]
+        );
+        $topWorkers = $this->rows(
+            'SELECT w.id, w.name, COUNT(*) AS visits,
+                    SUM(CASE WHEN v.outcome = "ENTERED" THEN 1 ELSE 0 END) AS entered
+             FROM warehouse_visits v JOIN workers w ON w.id = v.worker_id
+             WHERE v.created_at BETWEEN :from AND :to AND v.worker_id IS NOT NULL
+             GROUP BY w.id, w.name ORDER BY visits DESC LIMIT 10',
+            [':from' => $from, ':to' => $to]
+        );
+        $recordings = [];
+        foreach ($this->rows(
+            'SELECT status, COUNT(*) AS c, COALESCE(SUM(size_bytes), 0) AS bytes,
+                    COALESCE(SUM(duration_s), 0) AS seconds
+             FROM camera_recordings WHERE requested_at BETWEEN :from AND :to
+             GROUP BY status',
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            $recordings[(string) $row['status']] = [
+                'count' => (int) $row['c'],
+                'bytes' => (int) $row['bytes'],
+                'seconds' => (int) $row['seconds'],
+            ];
+        }
+        $series = [];
+        foreach ($this->rows(
+            "SELECT DATE(CONVERT_TZ(created_at, '+00:00', :tz)) AS d, COUNT(*) AS c
+             FROM warehouse_visits WHERE created_at BETWEEN :from AND :to GROUP BY d ORDER BY d",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['d']] = (int) $row['c'];
+        }
+        $recent = $this->rows(
+            'SELECT v.id, v.room_id, r.code AS room_code, v.worker_id, w.name AS worker_name,
+                    v.entry_trigger, v.outcome, v.created_at, v.entered_at, v.exited_at
+             FROM warehouse_visits v
+             LEFT JOIN rooms r ON r.id = v.room_id
+             LEFT JOIN workers w ON w.id = v.worker_id
+             WHERE v.created_at BETWEEN :from AND :to
+             ORDER BY v.created_at DESC LIMIT 100',
+            [':from' => $from, ':to' => $to]
+        );
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'by_trigger' => $byTrigger,
+            'by_outcome' => $byOutcome,
+            'top_workers' => $topWorkers,
+            'recordings' => $recordings,
+            'series' => $this->fillDaily($fromLocal, $days, $series, 0),
+            'recent' => $recent,
+        ]);
+    }
+
+    public function search(Request $request): Response
+    {
+        $q = trim((string) ($request->query('q') ?? ''));
+        if (mb_strlen($q) < 2) {
+            return Response::json(200, ['q' => $q, 'groups' => []]);
+        }
+        $like = '%' . $q . '%';
+        $limit = 6;
+
+        $rooms = $this->rows(
+            "SELECT r.id, r.code, r.status, rt.name AS room_type
+             FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             WHERE r.code LIKE :q1 OR rt.name LIKE :q2
+             ORDER BY r.code ASC LIMIT {$limit}",
+            [':q1' => $like, ':q2' => $like]
+        );
+        $workers = $this->rows(
+            "SELECT w.id, w.name, wr.name AS role
+             FROM workers w LEFT JOIN worker_roles wr ON wr.id = w.role_id
+             WHERE w.name LIKE :q1 ORDER BY w.name ASC LIMIT {$limit}",
+            [':q1' => $like]
+        );
+        $keys = $this->rows(
+            "SELECT k.id, k.label, k.key_type, k.status
+             FROM access_keys k WHERE k.label LIKE :q1
+             ORDER BY k.label ASC LIMIT {$limit}",
+            [':q1' => $like]
+        );
+        $devices = $this->rows(
+            "SELECT d.id, d.kind, d.label, d.external_id
+             FROM devices d WHERE d.label LIKE :q1 OR d.external_id LIKE :q2
+             ORDER BY d.kind ASC LIMIT {$limit}",
+            [':q1' => $like, ':q2' => $like]
+        );
+        $packs = $this->rows(
+            "SELECT p.id, p.name, p.code FROM device_packs p
+             WHERE p.name LIKE :q1 OR p.code LIKE :q2 ORDER BY p.name ASC LIMIT {$limit}",
+            [':q1' => $like, ':q2' => $like]
+        );
+        $anomalies = $this->rows(
+            "SELECT a.id, a.anomaly_type, a.severity, a.status, r.code AS room_code
+             FROM anomalies a JOIN rooms r ON r.id = a.room_id
+             WHERE a.anomaly_type LIKE :q OR CAST(a.id AS CHAR) = :exact
+             ORDER BY a.detected_at DESC LIMIT {$limit}",
+            [':q' => $like, ':exact' => $q]
+        );
+        $stays = $this->rows(
+            "SELECT s.id, s.status, s.room_id, r.code AS room_code
+             FROM stays s JOIN rooms r ON r.id = s.room_id
+             WHERE CAST(s.id AS CHAR) = :exact
+             ORDER BY s.id DESC LIMIT {$limit}",
+            [':exact' => $q]
+        );
+
+        $groups = [];
+        if ($rooms) $groups[] = ['type' => 'rooms', 'label' => 'Habitaciones', 'items' => $rooms];
+        if ($workers) $groups[] = ['type' => 'workers', 'label' => 'Trabajadores', 'items' => $workers];
+        if ($keys) $groups[] = ['type' => 'keys', 'label' => 'Llaves', 'items' => $keys];
+        if ($devices) $groups[] = ['type' => 'devices', 'label' => 'Dispositivos', 'items' => $devices];
+        if ($packs) $groups[] = ['type' => 'packs', 'label' => 'Packs', 'items' => $packs];
+        if ($anomalies) $groups[] = ['type' => 'anomalies', 'label' => 'Anomalías', 'items' => $anomalies];
+        if ($stays) $groups[] = ['type' => 'stays', 'label' => 'Estancias', 'items' => $stays];
+
+        return Response::json(200, ['q' => $q, 'groups' => $groups]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** @return array{0:string,1:string,2:int,3:string,4:DateTimeImmutable,5:DateTimeImmutable} */
+    private function range(Request $request): array
+    {
+        $days = (int) ($request->query('days') ?? 7);
+        $days = max(1, min(366, $days));
+        $tz = new DateTimeZone(date_default_timezone_get());
+        $toLocal = new DateTimeImmutable('now', $tz);
+        $fromLocal = (new DateTimeImmutable('today', $tz))->modify('-' . ($days - 1) . ' days');
+        $utc = new DateTimeZone('UTC');
+        $from = $fromLocal->setTimezone($utc)->format('Y-m-d H:i:s');
+        $to = $toLocal->setTimezone($utc)->format('Y-m-d H:i:s');
+        $granularity = $days <= 1 ? 'hour' : 'day';
+        return [$from, $to, $days, $granularity, $fromLocal, $toLocal];
+    }
+
+    private function todayUtc(): string
+    {
+        $tz = new DateTimeZone(date_default_timezone_get());
+        return (new DateTimeImmutable('today', $tz))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->format('Y-m-d H:i:s');
+    }
+
+    private function tzOffset(): string
+    {
+        $tz = new DateTimeZone(date_default_timezone_get());
+        return (new DateTimeImmutable('now', $tz))->format('P');
+    }
+
+    /** @param array<string,mixed> $params */
+    private function scalar(string $sql, array $params = []): mixed
+    {
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $value = $stmt->fetchColumn();
+        return $value === false ? null : $value;
+    }
+
+    /**
+     * @param array<string,mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function rows(string $sql, array $params = []): array
+    {
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    private function ageSeconds(?string $sqlDate, int $now): ?int
+    {
+        if ($sqlDate === null || $sqlDate === '') {
+            return null;
+        }
+        $ts = strtotime($sqlDate . ' UTC');
+        return $ts === false ? null : max(0, $now - $ts);
+    }
+
+    /** @param array<string,int> $statusCounts */
+    private function statusDistribution(array $statusCounts): array
+    {
+        $order = ['FREE', 'OCCUPIED', 'OVERSTAY', 'RESERVED', 'CLEANING', 'OUT_OF_SERVICE'];
+        $labels = [
+            'FREE' => 'Libres',
+            'OCCUPIED' => 'Ocupadas',
+            'OVERSTAY' => 'Excedidas',
+            'RESERVED' => 'Reservadas',
+            'CLEANING' => 'Limpieza',
+            'OUT_OF_SERVICE' => 'Fuera de servicio',
+        ];
+        $out = [];
+        foreach ($order as $status) {
+            $out[] = [
+                'status' => $status,
+                'label' => $labels[$status],
+                'count' => $statusCounts[$status] ?? 0,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Occupancy approximated from stays. For today, the current room snapshot is
+     * more accurate and replaces the computed value.
+     */
+    private function occupancySeries(
+        string $from,
+        string $to,
+        DateTimeImmutable $fromLocal,
+        DateTimeImmutable $toLocal,
+        int $roomsTotal,
+        int $currentOccupied
+    ): array {
+        $stays = $this->rows(
+            "SELECT room_id, first_entry_at, COALESCE(closed_at, exit_detected_at, UTC_TIMESTAMP()) AS ended_at
+             FROM stays
+             WHERE first_entry_at IS NOT NULL
+               AND first_entry_at <= :to
+               AND (closed_at IS NULL OR closed_at >= :from)",
+            [':from' => $from, ':to' => $to]
+        );
+
+        $tz = new DateTimeZone(date_default_timezone_get());
+        $utc = new DateTimeZone('UTC');
+        $days = (int) $fromLocal->diff($toLocal->setTime(0, 0, 0))->days + 1;
+        $days = max(1, min($days, 366));
+        $out = [];
+        $todayKey = (new DateTimeImmutable('today', $tz))->format('Y-m-d');
+
+        for ($i = 0; $i < $days; $i++) {
+            $dayLocal = $fromLocal->modify('+' . $i . ' days');
+            $dayStart = $dayLocal->setTime(0, 0, 0)->setTimezone($utc)->format('Y-m-d H:i:s');
+            $dayEnd = $dayLocal->setTime(0, 0, 0)->modify('+1 day')->setTimezone($utc)->format('Y-m-d H:i:s');
+            $rooms = [];
+            foreach ($stays as $stay) {
+                $entry = (string) $stay['first_entry_at'];
+                $ended = (string) $stay['ended_at'];
+                if ($entry < $dayEnd && $ended >= $dayStart) {
+                    $rooms[(int) $stay['room_id']] = true;
+                }
+            }
+            $count = count($rooms);
+            $key = $dayLocal->format('Y-m-d');
+            if ($key === $todayKey) {
+                $count = $currentOccupied;
+            }
+            $out[] = [
+                'date' => $key,
+                'occupied' => $count,
+                'occupancy_pct' => $roomsTotal > 0 ? round($count / $roomsTotal * 100, 1) : 0.0,
+            ];
+        }
+        return $out;
+    }
+
+    private function activitySeries(
+        string $from,
+        string $to,
+        string $granularity,
+        DateTimeImmutable $fromLocal,
+        DateTimeImmutable $toLocal
+    ): array {
+        $offset = $this->tzOffset();
+        $series = [];
+        $bucketSql = $granularity === 'hour'
+            ? "HOUR(CONVERT_TZ(%s, '+00:00', :tz))"
+            : "DATE(CONVERT_TZ(%s, '+00:00', :tz))";
+
+        $queries = [
+            'entries' => ['worker_sessions', 'entered_at'],
+            'exits' => ['worker_sessions', 'exited_at'],
+            'accesses' => ['access_events', 'occurred_at'],
+        ];
+        foreach ($queries as $key => [$table, $column]) {
+            $bucket = sprintf($bucketSql, $column);
+            foreach ($this->rows(
+                "SELECT {$bucket} AS k, COUNT(*) AS c FROM {$table}
+                 WHERE {$column} IS NOT NULL AND {$column} BETWEEN :from AND :to
+                 GROUP BY k ORDER BY k",
+                [':from' => $from, ':to' => $to, ':tz' => $offset]
+            ) as $row) {
+                $series[(string) $row['k']][$key] = (int) $row['c'];
+            }
+        }
+        $scanBucket = sprintf($bucketSql, 'occurred_at');
+        foreach ($this->rows(
+            "SELECT {$scanBucket} AS k, COUNT(*) AS c FROM access_events
+             WHERE kind = 'QR_VALIDATE' AND occurred_at BETWEEN :from AND :to GROUP BY k",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['k']]['scans'] = (int) $row['c'];
+        }
+        foreach ($this->rows(
+            "SELECT {$scanBucket} AS k, COUNT(*) AS c FROM key_access_events
+             WHERE occurred_at BETWEEN :from AND :to GROUP BY k",
+            [':from' => $from, ':to' => $to, ':tz' => $offset]
+        ) as $row) {
+            $series[(string) $row['k']]['scans'] = ($series[(string) $row['k']]['scans'] ?? 0) + (int) $row['c'];
+        }
+
+        return $this->fillActivity($fromLocal, (int) $fromLocal->diff($toLocal)->days + 1, $granularity, $series, [
+            'entries' => 0, 'exits' => 0, 'accesses' => 0, 'scans' => 0,
+        ]);
+    }
+
+    private function fillActivity(
+        DateTimeImmutable $fromLocal,
+        int $days,
+        string $granularity,
+        array $data,
+        array $defaults
+    ): array {
+        $out = [];
+        if ($granularity === 'hour') {
+            for ($h = 0; $h < 24; $h++) {
+                $label = str_pad((string) $h, 2, '0', STR_PAD_LEFT);
+                $row = ['label' => $label . ':00', 'key' => (string) $h];
+                foreach ($defaults as $k => $v) {
+                    $row[$k] = $data[(string) $h][$k] ?? $v;
+                }
+                $out[] = $row;
+            }
+            return $out;
+        }
+        $days = max(1, min($days, 366));
+        for ($i = 0; $i < $days; $i++) {
+            $day = $fromLocal->modify('+' . $i . ' days');
+            $key = $day->format('Y-m-d');
+            $row = ['label' => $day->format('d/m'), 'key' => $key];
+            foreach ($defaults as $k => $v) {
+                $row[$k] = $data[$key][$k] ?? $v;
+            }
+            $out[] = $row;
+        }
+        return $out;
+    }
+
+    private function fillDaily(DateTimeImmutable $fromLocal, int $days, array $data, mixed $default): array
+    {
+        $out = [];
+        $days = max(1, min($days, 366));
+        for ($i = 0; $i < $days; $i++) {
+            $day = $fromLocal->modify('+' . $i . ' days');
+            $key = $day->format('Y-m-d');
+            $value = $data[$key] ?? $default;
+            $out[] = ['date' => $key, 'label' => $day->format('d/m'), 'value' => $value];
+        }
+        return $out;
+    }
+
+    private function topWorkers(string $from, string $to, int $limit): array
+    {
+        $limit = max(1, min(50, $limit));
+        $rows = $this->rows(
+            "SELECT w.id, w.name, wr.name AS role, COUNT(ws.id) AS sessions,
+                    COALESCE(SUM(GREATEST(0, TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP())))), 0) AS minutes
+             FROM worker_sessions ws
+             JOIN workers w ON w.id = ws.worker_id
+             LEFT JOIN worker_roles wr ON wr.id = w.role_id
+             WHERE ws.entered_at BETWEEN :from AND :to
+             GROUP BY w.id, w.name, wr.name
+             ORDER BY sessions DESC, minutes DESC LIMIT {$limit}",
+            [':from' => $from, ':to' => $to]
+        );
+        foreach ($rows as &$row) {
+            $row['id'] = (int) $row['id'];
+            $row['sessions'] = (int) $row['sessions'];
+            $row['minutes'] = (int) $row['minutes'];
+        }
+        unset($row);
+        return $rows;
+    }
+
+    private function topRooms(string $from, string $to, int $limit): array
+    {
+        $limit = max(1, min(50, $limit));
+        $rows = $this->rows(
+            "SELECT r.id, r.code, r.status, rt.name AS room_type,
+                    (SELECT COUNT(*) FROM worker_sessions ws
+                      WHERE ws.room_id = r.id AND ws.entered_at BETWEEN :from1 AND :to1) AS sessions,
+                    (SELECT COUNT(*) FROM access_events ae
+                      WHERE ae.room_id = r.id AND ae.occurred_at BETWEEN :from2 AND :to2) AS accesses
+             FROM rooms r LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             ORDER BY (sessions + accesses) DESC, r.code ASC LIMIT {$limit}",
+            [':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to]
+        );
+        foreach ($rows as &$row) {
+            $row['id'] = (int) $row['id'];
+            $row['sessions'] = (int) $row['sessions'];
+            $row['accesses'] = (int) $row['accesses'];
+        }
+        unset($row);
+        return $rows;
+    }
+
+    private function accessSummary(string $from, string $to): array
+    {
+        $ok = 0;
+        $fail = 0;
+        foreach ($this->rows(
+            'SELECT result, COUNT(*) AS c FROM access_events WHERE occurred_at BETWEEN :from AND :to GROUP BY result',
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            if ((string) $row['result'] === 'OK') $ok += (int) $row['c'];
+            else $fail += (int) $row['c'];
+        }
+        foreach ($this->rows(
+            'SELECT result, COUNT(*) AS c FROM key_access_events WHERE occurred_at BETWEEN :from AND :to GROUP BY result',
+            [':from' => $from, ':to' => $to]
+        ) as $row) {
+            if ((string) $row['result'] === 'OK') $ok += (int) $row['c'];
+            else $fail += (int) $row['c'];
+        }
+        $total = $ok + $fail;
+        return [
+            'ok' => $ok,
+            'fail' => $fail,
+            'total' => $total,
+            'success_rate' => $total > 0 ? round($ok / $total * 100, 1) : 0.0,
+        ];
+    }
+
+    private function anomalySummary(string $from): array
+    {
+        $counts = [];
+        foreach ($this->rows(
+            "SELECT severity, COUNT(*) AS c FROM anomalies WHERE status = 'OPEN' GROUP BY severity"
+        ) as $row) {
+            $counts[(string) $row['severity']] = (int) $row['c'];
+        }
+        $out = [];
+        foreach (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as $sev) {
+            $out[] = ['severity' => $sev, 'count' => $counts[$sev] ?? 0];
+        }
+        return $out;
+    }
+
+    private function deviceSummary(): array
+    {
+        $row = $this->rows(
+            'SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN online_state = 1 THEN 1 ELSE 0 END) AS online,
+                    SUM(CASE WHEN online_state = 0 THEN 1 ELSE 0 END) AS offline,
+                    SUM(CASE WHEN online_state IS NULL THEN 1 ELSE 0 END) AS unknown,
+                    SUM(CASE WHEN battery_pct IS NOT NULL AND battery_pct <= 20 THEN 1 ELSE 0 END) AS low_battery
+             FROM devices'
+        )[0] ?? [];
+        return [
+            'total' => (int) ($row['total'] ?? 0),
+            'online' => (int) ($row['online'] ?? 0),
+            'offline' => (int) ($row['offline'] ?? 0),
+            'unknown' => (int) ($row['unknown'] ?? 0),
+            'low_battery' => (int) ($row['low_battery'] ?? 0),
+        ];
+    }
+
+    private function warehouseSummary(string $from, string $to): array
+    {
+        $row = $this->rows(
+            "SELECT COUNT(*) AS visits,
+                    SUM(CASE WHEN outcome = 'ENTERED' THEN 1 ELSE 0 END) AS entered,
+                    SUM(CASE WHEN outcome = 'NO_SHOW' THEN 1 ELSE 0 END) AS no_show,
+                    SUM(CASE WHEN outcome = 'NOISE' THEN 1 ELSE 0 END) AS noise,
+                    SUM(CASE WHEN outcome = 'DENIED' THEN 1 ELSE 0 END) AS denied
+             FROM warehouse_visits WHERE created_at BETWEEN :from AND :to",
+            [':from' => $from, ':to' => $to]
+        )[0] ?? [];
+        $recordings = (int) $this->scalar(
+            'SELECT COUNT(*) FROM camera_recordings WHERE requested_at BETWEEN :from AND :to',
+            [':from' => $from, ':to' => $to]
+        );
+        return [
+            'visits' => (int) ($row['visits'] ?? 0),
+            'entered' => (int) ($row['entered'] ?? 0),
+            'no_show' => (int) ($row['no_show'] ?? 0),
+            'noise' => (int) ($row['noise'] ?? 0),
+            'denied' => (int) ($row['denied'] ?? 0),
+            'recordings' => $recordings,
+        ];
+    }
+
+    private function recentActivity(int $limit): array
+    {
+        $limit = max(1, min(50, $limit));
+        return $this->rows(
+            "SELECT e.id, e.occurred_at, 'ACCESS' AS source, r.code AS room_code,
+                    e.kind AS type, e.result, e.reason
+             FROM access_events e JOIN rooms r ON r.id = e.room_id
+             ORDER BY e.occurred_at DESC LIMIT {$limit}"
+        );
+    }
+
+    private function currentRoomForWorker(int $workerId): ?string
+    {
+        $room = $this->scalar(
+            "SELECT r.code FROM worker_sessions ws JOIN rooms r ON r.id = ws.room_id
+             WHERE ws.worker_id = :id AND ws.exited_at IS NULL
+             ORDER BY ws.entered_at ASC LIMIT 1",
+            [':id' => $workerId]
+        );
+        return $room !== null ? (string) $room : null;
+    }
+
+    private function canSeeWorkers(Request $request): bool
+    {
+        $client = $request->attr('api_client');
+        if ($client === null || !method_exists($client, 'hasScope')) {
+            return false;
+        }
+        return $client->hasScope('workers:read');
+    }
+}

@@ -26550,3 +26550,36 @@ y `serverNow` producen el mismo badge y monigote.
 `KeyEpisodePolicyTest` (9), `choreography.test.js` (82), `croquis-logic.test.js`
 (119), `ExitRuleEvaluatorTest` (31), BLOCK 33 y regresión. Prueba física con dos
 dispositivos pendiente.
+
+## F119 — Panel CRM v2 y analítica
+
+### Frontend
+
+`api/public/panel/index.html` mantiene el componente histórico `crm()` (para no
+romper los tests estáticos de F91/F100/F101) y carga, después:
+
+- `assets/panel-v2.css`: tokens claros, layout, componentes, responsive y print.
+- `assets/charts.js`: SVG puro (`line`, `bars`, `donut`, `sparkline`,
+  `heatmap`, `progress`), sin dependencias.
+- `assets/format.js`: fechas UTC→local, duraciones, porcentajes, bytes, estados.
+- `assets/panel-v2.js`: envuelve `crm()`, añade estado de analítica, router por
+  hash, búsqueda global, drawers y render de las 19 secciones.
+
+### Backend
+
+`AnalyticsController` (solo lectura) usa consultas preparadas y agrupa en la zona
+`APP_TZ` con `CONVERT_TZ` numérico; los rangos se convierten a UTC. Límite de
+366 días. Endpoints bajo `/api/v1/analytics/` con scopes existentes. La ocupación
+histórica se aproxima con intervalos de `stays` y se sustituye por el snapshot
+actual en el día de hoy. Sin pollers ni llamadas a Tuya.
+
+### Migración
+
+`0144_analytics_indexes.sql` añade índices de rango a `stays`,
+`worker_sessions`, `access_events`, `key_access_events`, `warehouse_visits`,
+`camera_recordings`, `anomalies` y `workers`. No modifica datos.
+
+### Verificación
+
+`PanelV2UiTest`, BLOCK 88 del runner (estáticos + HTTP), Playwright desktop/móvil
+y regresión completa: **1127 passed, 0 failed, 18 skipped**.
