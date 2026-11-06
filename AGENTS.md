@@ -1133,5 +1133,10 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Frescura**: `/live` y SSE añaden `door_stale`/`presence_stale` + edades y
   umbrales; el fingerprint del SSE los incluye.
 - **Sin tocar**: `deriveChoreography`, F42/F57, `/almacen`, Tuya/polling.
-- **Verificación**: `croquis-logic.test.js` (90 checks), BLOCK 33 y regresión.
+- **Verificación**: `croquis-logic.test.js` (103 checks), BLOCK 33 y regresión.
+- **F118.1**: el hold de cruce (1,8 s) y la presencia posterior a la apertura
+  evitan el salto al centro al abrir; la ausencia sostenida (3 s) evita parpadeos.
+  Zigbee standard respeta el contexto F48. `run-tests.sh` guarda/restaura el
+  perfil del radar (trap incluido) y `radar-apply-profile.php --profile-file`
+  permite recuperar la calibración archivada.
 

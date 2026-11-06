@@ -19,6 +19,8 @@ const {
   resolveDashboardMonigote,
   DOOR_PULSE_MS,
   KEY_ACCESS_WINDOW_MS,
+  CROSSING_HOLD_MS,
+  ABSENCE_HOLD_MS,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'croquis-logic.js'));
 
 let passed = 0;
@@ -373,40 +375,119 @@ check('F118 ficha fuera de ventana no se considera activa', oldFicha.active === 
 
 check('F118 ventana de ficha por defecto 15 s', KEY_ACCESS_WINDOW_MS === 15000);
 
-const posInsideEntry = resolveDashboardMonigote({
-  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+const t = (offsetMs) => new Date(BASE + offsetMs).toISOString();
+
+check('F118 hold de cruce 1,8 s', CROSSING_HOLD_MS === 1800);
+check('F118 hold de ausencia 3 s', ABSENCE_HOLD_MS === 3000);
+
+// Pre-entrada: la presencia no puede sacar el monigote de QR/lector.
+const posQrPre = resolveDashboardMonigote({
+  stateName: 'QR_DISPONIBLE', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: 0, lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 presencia dentro + umbral → INSIDE', posInsideEntry === 'INSIDE');
+check('F118 QR_DISPONIBLE ignora presencia previa', posQrPre === 'state');
+
+const posQrOkPre = resolveDashboardMonigote({
+  stateName: 'QR_OK', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: 0, lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118 QR_OK ignora presencia previa (no centro)', posQrOkPre === 'state');
+
+// Cruce: al abrir la puerta se ve umbral, no centro.
+const posEntryHold = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-500), lastPresenceAt: t(-100), now: BASE,
+});
+check('F118 puerta abierta + hold → CROSSING', posEntryHold === 'CROSSING');
+
+const posEntryAfterHold = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-5000), lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118 tras hold + presencia posterior a apertura → INSIDE', posEntryAfterHold === 'INSIDE');
+
+const posEntryPrePresence = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-5000), lastPresenceAt: t(-10000), now: BASE,
+});
+check('F118 presencia previa a abrir no pasa a INSIDE', posEntryPrePresence === 'CROSSING');
+
+const posEntryOutside = resolveDashboardMonigote({
+  stateName: 'HUESPED_EN_PUERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'ABSENT', lastOpenAt: t(-9000), lastAbsentSince: t(-1000), now: BASE,
+});
+check('F118 entrada en curso con puerta abierta no salta a OUTSIDE', posEntryOutside === 'CROSSING');
+
+const posExitHold = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-500), lastPresenceAt: t(-100), now: BASE,
+});
+check('F118 reapertura → WAITING (umbral)', posExitHold === 'WAITING');
+
+const posReentry = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-5000), lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118 vuelve dentro con puerta abierta → INSIDE', posReentry === 'INSIDE');
+
+const posExitSettled = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'ABSENT', lastOpenAt: t(-10000), lastAbsentSince: t(-4000), now: BASE,
+});
+check('F118 ausencia sostenida con puerta abierta → OUTSIDE', posExitSettled === 'OUTSIDE');
+
+const posExitPending = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
+  presenceState: 'ABSENT', lastOpenAt: t(-10000), lastAbsentSince: t(-1000), now: BASE,
+});
+check('F118 ausencia reciente aún no confirma OUTSIDE', posExitPending === 'WAITING');
+
+const posInsideStable = resolveDashboardMonigote({
+  stateName: 'OCUPADA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'ABSENT', lastAbsentSince: t(-1000), now: BASE,
+});
+check('F118 OCUPADA con puerta cerrada no parpadea a OUTSIDE', posInsideStable === 'INSIDE');
+
+const posVerifyOutside = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'ABSENT', lastAbsentSince: t(-4000), now: BASE,
+});
+check('F118 verificación de salida con ausencia sostenida → OUTSIDE', posVerifyOutside === 'OUTSIDE');
+
+const posVerifyInside = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118 verificación con presencia → INSIDE', posVerifyInside === 'INSIDE');
 
 const posInsideNoStay = resolveDashboardMonigote({
   stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 presencia dentro sin estancia (ficha) → INSIDE', posInsideNoStay === 'INSIDE');
+check('F118 presencia dentro sin estancia → INSIDE', posInsideNoStay === 'INSIDE');
 
 const posFichaWait = resolveDashboardMonigote({
-  stateName: 'ESPERANDO', phase: 'outside', doorOpen: false, keyAccessActive: true,
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: true,
+  presenceState: 'PRESENT', lastOpenAt: 0, lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 ficha reciente sin puerta → AT_QR', posFichaWait === 'AT_QR');
+check('F118 ficha reciente sin puerta → AT_QR (no centro)', posFichaWait === 'AT_QR');
 
 const posFichaDoor = resolveDashboardMonigote({
-  stateName: 'ANOMALIA_RP', phase: 'outside', doorOpen: true, keyAccessActive: true,
+  stateName: 'ANOMALIA_RP', phase: 'inside', doorOpen: true, keyAccessActive: true,
+  presenceState: 'PRESENT', lastOpenAt: t(-5000), lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 ficha reciente con puerta abierta → CROSSING', posFichaDoor === 'CROSSING');
+check('F118 ficha con puerta abierta y presencia posterior → INSIDE', posFichaDoor === 'INSIDE');
 
-const posOpenAbsent = resolveDashboardMonigote({
-  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
+const posFichaQrAvailable = resolveDashboardMonigote({
+  stateName: 'QR_DISPONIBLE', phase: 'inside', doorOpen: false, keyAccessActive: true,
+  presenceState: 'PRESENT', lastOpenAt: 0, lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 puerta abierta sin presencia → OUTSIDE', posOpenAbsent === 'OUTSIDE');
+check('F118 ficha con QR disponible → AT_QR', posFichaQrAvailable === 'AT_QR');
 
 const posNearClosed = resolveDashboardMonigote({
   stateName: 'VERIFICANDO_ENTRADA', phase: 'near', doorOpen: false, keyAccessActive: false,
 });
 check('F118 cerca con puerta cerrada → WAITING', posNearClosed === 'WAITING');
-
-const posQrState = resolveDashboardMonigote({
-  stateName: 'QR_DISPONIBLE', phase: 'outside', doorOpen: false, keyAccessActive: false,
-});
-check('F118 QR disponible conserva posición de estado', posQrState === 'state');
 
 const posCleaning = resolveDashboardMonigote({
   stateName: 'LIMPIEZA', phase: 'outside', doorOpen: false, keyAccessActive: false,
@@ -416,7 +497,7 @@ check('F118 limpieza conserva posición de estado', posCleaning === 'state');
 const posInsideCleaning = resolveDashboardMonigote({
   stateName: 'LIMPIEZA', phase: 'inside', doorOpen: false, keyAccessActive: false,
 });
-check('F118 limpieza con presencia dentro → INSIDE', posInsideCleaning === 'INSIDE');
+check('F118 limpieza con presencia no se sobreescribe', posInsideCleaning === 'state');
 
 const posLoading = resolveDashboardMonigote({
   stateName: 'LOADING', phase: 'inside', doorOpen: false, keyAccessActive: false,

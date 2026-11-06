@@ -116,6 +116,54 @@ SAVED_STATUS=""
 SAVED_COOLDOWN=""
 SAVED_PRESENCE_CHECK_SAVE=""  # nombre distinto para no colisionar con test vars
 
+# F118: perfil del radar Zigbee para restaurarlo tras las pruebas del asistente
+# de sensores (F94/F95/F102/F104/F108 aplican la base F110 de 6 m y no la
+# devuelven). Sin esto, una regresión deja el radar sin calibrar.
+RADAR_PROFILE_FILE=""
+RADAR_ROOM=""
+RADAR_PROFILE_RESTORED=false
+
+_save_radar_profile() {
+    db_exec "SELECT 1" >/dev/null 2>&1 || return 0
+    RADAR_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id=r.pack_id WHERE d.kind='PRESENCE' AND UPPER(COALESCE(d.transport,''))='ZIGBEE2MQTT' ORDER BY r.id LIMIT 1" 2>/dev/null)
+    [ -z "$RADAR_ROOM" ] && return 0
+    local device_id profile_json
+    device_id=$($MYSQL -sN -e "SELECT d.id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$RADAR_ROOM AND d.kind='PRESENCE' AND UPPER(COALESCE(d.transport,''))='ZIGBEE2MQTT' LIMIT 1" 2>/dev/null)
+    [ -z "$device_id" ] && return 0
+    profile_json=$($MYSQL -sN -e "SELECT COALESCE(JSON_EXTRACT(meta_json,'\$.calibration'), JSON_EXTRACT(meta_json,'\$.calibration_previous')) FROM devices WHERE id=$device_id" 2>/dev/null)
+    case "$profile_json" in
+        ""|"NULL"|"null") return 0 ;;
+    esac
+    RADAR_PROFILE_FILE=$(mktemp /tmp/cerraduras-radar-profile.XXXXXX.json)
+    printf '%s\n' "$profile_json" > "$RADAR_PROFILE_FILE"
+    if ! python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d,dict) and 'maximum_range' in d" "$RADAR_PROFILE_FILE" 2>/dev/null; then
+        rm -f "$RADAR_PROFILE_FILE"
+        RADAR_PROFILE_FILE=""
+        echo "[TEST-RUNNER] ⚠ Perfil radar no válido; no se restaurará al final"
+        return 0
+    fi
+    echo "[TEST-RUNNER] Perfil radar guardado (room=$RADAR_ROOM device=$device_id): $RADAR_PROFILE_FILE"
+}
+
+_restore_radar_profile() {
+    [ "$RADAR_PROFILE_RESTORED" = true ] && return 0
+    [ -n "$RADAR_ROOM" ] && [ -n "$RADAR_PROFILE_FILE" ] && [ -s "$RADAR_PROFILE_FILE" ] || return 0
+    local attempt out rc
+    for attempt in 1 2; do
+        out=$(php bin/radar-apply-profile.php --room="$RADAR_ROOM" --profile-file="$RADAR_PROFILE_FILE" 2>&1)
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+            RADAR_PROFILE_RESTORED=true
+            echo "[TEST-RUNNER] ✅ Perfil radar restaurado (room=$RADAR_ROOM, intento $attempt)"
+            return 0
+        fi
+        [ "$attempt" -lt 2 ] && sleep 2
+    done
+    RADAR_PROFILE_RESTORED=true
+    echo "[TEST-RUNNER] ⚠ No se pudo restaurar el perfil radar: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    return 1
+}
+
 # Recursos exclusivos del test F40. Se limpian también si un caso intermedio
 # falla; no se imprimen credenciales ni se toca la auditoría histórica.
 FACTORY_CHIP=""
@@ -147,7 +195,11 @@ _cleanup_factory_test() {
         fail "F40 cleanup" "Quedaron recursos del chip de prueba"
     fi
 }
-trap _cleanup_factory_test EXIT
+_cleanup_all() {
+    _cleanup_factory_test
+    _restore_radar_profile
+}
+trap _cleanup_all EXIT
 
 _save_room1_state() {
     if db_exec "SELECT 1" > /dev/null 2>&1; then
@@ -323,6 +375,9 @@ done < <(find tests/Unit -name "*Test.php" -print0 2>/dev/null | sort -z)
 
 # Guardar estado de producción de room 1 antes de que los tests lo modifiquen
 _save_room1_state
+
+# F118: guardar el perfil del radar ANTES de los bloques del asistente de sensores.
+_save_radar_profile
 
 # =============================================================================
 # BLOCK 2 — Base de datos: conexión + migraciones
@@ -8817,6 +8872,23 @@ if [ "$SERVER_UP" = true ]; then
     fi
 else
     skip "F116 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
+# POST-FLIGHT F118 — restaurar la calibración del radar
+# =============================================================================
+_restore_radar_profile
+if [ -n "$RADAR_ROOM" ] && [ -n "$RADAR_PROFILE_FILE" ] && [ -s "$RADAR_PROFILE_FILE" ]; then
+    RADAR_SAVED_MAX=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('maximum_range',''))" "$RADAR_PROFILE_FILE" 2>/dev/null)
+    RADAR_NOW_MAX=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.settings.maximum_range')) FROM presence_events WHERE room_id=$RADAR_ROOM AND sensor='PRESENCE' ORDER BY id DESC LIMIT 1" 2>/dev/null)
+    if [ -n "$RADAR_SAVED_MAX" ] && [ -n "$RADAR_NOW_MAX" ] && \
+       python3 -c "import sys; sys.exit(0 if abs(float(sys.argv[1])-float(sys.argv[2])) < 0.001 else 1)" "$RADAR_SAVED_MAX" "$RADAR_NOW_MAX" 2>/dev/null; then
+        pass "F118: calibración del radar restaurada (maximum_range=$RADAR_NOW_MAX)"
+    else
+        fail "F118: calibración del radar restaurada" "saved=$RADAR_SAVED_MAX now=$RADAR_NOW_MAX"
+    fi
+else
+    skip "F118: calibración del radar restaurada" "sin perfil o sala radar"
 fi
 
 # =============================================================================

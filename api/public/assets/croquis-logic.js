@@ -42,27 +42,28 @@
   var KEY_ACCESS_WINDOW_MS = 15000;
 
   /**
-   * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
-   * posición semántica del estado: QR junto al lector, limpieza, avería...).
-   * La presencia dentro (`phase==='inside'`) sigue ganando salvo en los estados
-   * de indisponibilidad total (LOADING/SIN_CONFIGURAR/FUERA_SERVICIO).
+   * F118: tiempo mínimo en el umbral desde que la puerta se abre antes de poder
+   * pasar a INSIDE. Evita el salto al centro "nada más abrir" cuando el radar ya
+   * tenía presencia (p. ej. detección a través de la puerta).
    */
-  var DASHBOARD_STATE_ONLY = {
-    LOADING: 1, SIN_CONFIGURAR: 1, FUERA_SERVICIO: 1, SENSORES_DESCONECTADOS: 1,
-    LIMPIEZA: 1, QR_DISPONIBLE: 1, ESPERANDO_HUESPED: 1, QR_OK: 1,
-    QR_ESPERANDO: 1, QR_RECHAZADO: 1
-  };
+  var CROSSING_HOLD_MS = 1800;
 
   /**
-   * F118: estados donde la posición física la dictan los sensores
-   * (incluye FREE/ESPERANDO para que un acceso con ficha, que no crea estancia,
-   * también mueva el monigote).
+   * F118: ausencia sostenida necesaria para afirmar OUTSIDE. Evita saltos por
+   * pérdidas puntuales del radar mientras el huésped está dentro o en la puerta.
    */
-  var DASHBOARD_SENSOR_DRIVEN = {
-    ESPERANDO: 1, OCUPADA: 1, HUESPED_EN_PUERTA: 1, PUERTA_ABIERTA: 1,
-    VERIFICANDO_ENTRADA: 1, VERIFICANDO_PRESENCIA: 1, SALIDA_DETECTADA: 1,
-    HUESPED_HA_SALIDO: 1, ANOMALIA_RP: 1, ANOMALIA_PA: 1,
-    ANTI_REENTRADA: 1, EXCESO_TIEMPO: 1
+  var ABSENCE_HOLD_MS = 3000;
+
+  /**
+   * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
+   * posición semántica del estado: QR junto al lector, limpieza, avería...).
+   * La presencia dentro (`phase==='inside'`) NO los sobreescribe. Así un
+   * PRESENT previo a la entrada no manda al centro en QR_DISPONIBLE/QR_OK.
+   */
+  var DASHBOARD_STATE_ONLY = {
+    SIN_CONFIGURAR: 1, SENSORES_DESCONECTADOS: 1, LIMPIEZA: 1,
+    QR_DISPONIBLE: 1, ESPERANDO_HUESPED: 1, QR_OK: 1,
+    QR_ESPERANDO: 1, QR_RECHAZADO: 1
   };
 
   /** F118: estados donde nunca se debe mover el monigote por presencia. */
@@ -323,18 +324,26 @@
   }
 
   /**
-   * F118: posición del monigote del dashboard a partir de la fase física.
+   * F118: posición del monigote del dashboard a partir de la fase física y del
+   * episodio de acceso.
    *
-   * Prioridad:
-   *   1. estados de indisponibilidad total → 'state'
-   *   2. presencia dentro → INSIDE
-   *   3. acceso con ficha reciente → AT_QR / CROSSING
-   *   4. estados físicos → phase near/outside
-   *   5. resto → 'state'
+   * Reglas clave:
+   *   - Los estados QR/limpieza (DASHBOARD_STATE_ONLY) conservan su posición.
+   *   - La presencia NO pasa a INSIDE hasta que la puerta de la entrada se ha
+   *     abierto y hay un reporte de presencia posterior a esa apertura.
+   *   - Al abrir la puerta se muestra umbral (CROSSING/WAITING) durante
+   *     CROSSING_HOLD_MS; después, INSIDE si hay evidencia interior.
+   *   - OUTSIDE exige ausencia sostenida (ABSENCE_HOLD_MS) salvo estados de
+   *     salida confirmada.
+   *   - OCUPADA con puerta cerrada es INSIDE estable (no parpadea por un ABSENT
+   *     puntual del radar).
    *
    * 'state' significa: usa `STATES[stateName].moni` en dashboard.html.
    *
-   * @param {object} input {stateName, phase, doorOpen, keyAccessActive}
+   * @param {object} input {stateName, phase, doorOpen, keyAccessActive,
+   *                        entryConfirmed, presenceState,
+   *                        lastOpenAt, lastPresenceAt, lastAbsentSince, now,
+   *                        crossingHoldMs, absenceHoldMs}
    * @returns {string} 'INSIDE'|'CROSSING'|'WAITING'|'AT_QR'|'OUTSIDE'|'state'
    */
   function resolveDashboardMonigote(input) {
@@ -343,21 +352,118 @@
     var phase = String(s.phase || 'outside');
     var doorOpen = !!s.doorOpen;
     var keyAccess = !!s.keyAccessActive;
+    var entryConfirmed = !!s.entryConfirmed;
+    var presenceState = String(s.presenceState || 'UNKNOWN');
+    var nowMs = (typeof s.now === 'number' && isFinite(s.now)) ? s.now : Date.now();
+    var crossingHold = (typeof s.crossingHoldMs === 'number' && s.crossingHoldMs >= 0)
+      ? s.crossingHoldMs : CROSSING_HOLD_MS;
+    var absenceHold = (typeof s.absenceHoldMs === 'number' && s.absenceHoldMs >= 0)
+      ? s.absenceHoldMs : ABSENCE_HOLD_MS;
 
+    var lastOpenAt = parseTime(s.lastOpenAt);
+    var lastPresenceAt = parseTime(s.lastPresenceAt);
+    var lastAbsentSince = parseTime(s.lastAbsentSince);
+
+    // Estados que nunca se mueven por sensores.
     if (DASHBOARD_NEVER_SENSOR[stateName]) return 'state';
-    if (phase === 'inside') return 'INSIDE';
+    // Estados de QR/limpieza: la presencia previa no los sobreescribe. Una
+    // ficha sí puede iniciar el movimiento aunque haya un QR de huésped
+    // disponible (pero no sustituye a un QR_OK recién escaneado).
+    var keyCanStart = keyAccess
+      && (stateName === 'QR_DISPONIBLE' || stateName === 'ESPERANDO_HUESPED');
+    if (DASHBOARD_STATE_ONLY[stateName] && !keyCanStart) return 'state';
 
+    var recentOpen = doorOpen && lastOpenAt > 0 && (nowMs - lastOpenAt) < crossingHold;
+    var presenceAfterOpen = lastPresenceAt > 0 && lastOpenAt > 0
+      && lastPresenceAt >= lastOpenAt;
+    // Para pasar a INSIDE hace falta presencia posterior a la apertura (o una
+    // entrada ya confirmada). Un PRESENT previo a abrir no cuenta.
+    var insideEvidence = (phase === 'inside')
+      && (presenceAfterOpen || entryConfirmed);
+    var absenceSettled = presenceState === 'ABSENT'
+      && lastAbsentSince > 0 && (nowMs - lastAbsentSince) >= absenceHold;
+
+    // Acceso con ficha/NFC sin estancia de huésped.
     if (keyAccess) {
-      return (doorOpen || phase === 'near') ? 'CROSSING' : 'AT_QR';
+      if (doorOpen) {
+        if (recentOpen) return 'CROSSING';
+        if (insideEvidence) return 'INSIDE';
+        if (absenceSettled) return 'OUTSIDE';
+        return 'CROSSING';
+      }
+      return insideEvidence ? 'INSIDE' : 'AT_QR';
     }
 
-    if (DASHBOARD_STATE_ONLY[stateName]) return 'state';
+    if (stateName === 'HUESPED_EN_PUERTA') {
+      if (doorOpen) {
+        if (recentOpen) return 'CROSSING';
+        if (insideEvidence) return 'INSIDE';
+        // Entrada en curso: nunca saltar a OUTSIDE con la puerta abierta.
+        return 'CROSSING';
+      }
+      if (insideEvidence || entryConfirmed) return 'INSIDE';
+      return 'WAITING';
+    }
 
-    if (DASHBOARD_SENSOR_DRIVEN[stateName]) {
-      if (phase === 'near') return doorOpen ? 'CROSSING' : 'WAITING';
+    if (stateName === 'PUERTA_ABIERTA') {
+      if (doorOpen) {
+        if (recentOpen) return 'WAITING';
+        if (insideEvidence) return 'INSIDE';
+        if (absenceSettled) return 'OUTSIDE';
+        return 'WAITING';
+      }
+      if (absenceSettled) return 'OUTSIDE';
+      if (phase === 'inside') return 'INSIDE';
+      return 'WAITING';
+    }
+
+    if (stateName === 'VERIFICANDO_ENTRADA') {
+      if (insideEvidence || entryConfirmed) return 'INSIDE';
+      return 'WAITING';
+    }
+
+    if (stateName === 'VERIFICANDO_PRESENCIA') {
+      if (absenceSettled) return 'OUTSIDE';
+      if (phase === 'inside') return 'INSIDE';
+      return 'WAITING';
+    }
+
+    if (stateName === 'OCUPADA' || stateName === 'ANTI_REENTRADA'
+        || stateName === 'EXCESO_TIEMPO') {
+      if (doorOpen) {
+        if (recentOpen) return 'WAITING';
+        if (absenceSettled) return 'OUTSIDE';
+        if (phase === 'inside') return 'INSIDE';
+        return 'WAITING';
+      }
+      // Huésped confirmado dentro: un ABSENT puntual del radar no lo saca.
+      return 'INSIDE';
+    }
+
+    if (stateName === 'SALIDA_DETECTADA' || stateName === 'HUESPED_HA_SALIDO') {
       return 'OUTSIDE';
     }
 
+    if (stateName === 'ANOMALIA_RP' || stateName === 'ANOMALIA_PA') {
+      if (phase === 'inside') return 'INSIDE';
+      if (doorOpen) {
+        if (recentOpen) return 'CROSSING';
+        if (absenceSettled) return 'OUTSIDE';
+        return 'CROSSING';
+      }
+      return absenceSettled ? 'OUTSIDE' : 'state';
+    }
+
+    if (stateName === 'ESPERANDO') {
+      if (phase === 'inside') return 'INSIDE';
+      if (absenceSettled) return 'OUTSIDE';
+      if (doorOpen) return 'CROSSING';
+      return 'OUTSIDE';
+    }
+
+    // Fallback para estados no contemplados.
+    if (phase === 'inside') return 'INSIDE';
+    if (phase === 'near') return doorOpen ? 'CROSSING' : 'WAITING';
     return 'state';
   }
 
@@ -368,6 +474,8 @@
     recentKeyAccess: recentKeyAccess,
     resolveDashboardMonigote: resolveDashboardMonigote,
     DOOR_PULSE_MS: DOOR_PULSE_MS,
-    KEY_ACCESS_WINDOW_MS: KEY_ACCESS_WINDOW_MS
+    KEY_ACCESS_WINDOW_MS: KEY_ACCESS_WINDOW_MS,
+    CROSSING_HOLD_MS: CROSSING_HOLD_MS,
+    ABSENCE_HOLD_MS: ABSENCE_HOLD_MS
   };
 });
