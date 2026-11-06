@@ -128,10 +128,10 @@ function getJson(path) {
   });
 }
 
-function postJson(path, obj) {
+function postJson(path, obj, base = API) {
   return new Promise((resolve) => {
     const data = Buffer.from(JSON.stringify(obj));
-    const u = new URL(`${API}${path}`);
+    const u = new URL(`${String(base).replace(/\/+$/, '')}${path}`);
     const req = http.request(
       {
         hostname: u.hostname,
@@ -146,7 +146,7 @@ function postJson(path, obj) {
       },
       (res) => {
         res.resume();
-        res.on('end', resolve(true));
+        res.on('end', () => resolve(true));
       }
     );
     req.on('error', () => resolve(false));
@@ -334,5 +334,6 @@ module.exports = {
   frameDiffPct,
   debounce,
   go2rtcUrl,
+  postJson,
   CameraMotionStream,
 };
