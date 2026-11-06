@@ -1313,7 +1313,9 @@ function applyMonigoteOverlay(posKey) {
     currentState === 'VERIFICANDO_PRESENCIA' ||
     currentState === 'VERIFICANDO_ENTRADA' ||
     currentState === 'HUESPED_EN_PUERTA' ||
-    currentState === 'PUERTA_ABIERTA'
+    currentState === 'PUERTA_ABIERTA' ||
+    posKey === 'WAITING' ||
+    posKey === 'CROSSING'
   );
 
   face.style.display = isInside ? '' : 'none';
