@@ -215,6 +215,10 @@ final class EventStreamController
      */
     private function computeFingerprint(int $roomId): string
     {
+        // F118: incluir la frescura (stale) en el fingerprint para empujar un
+        // `state` cuando la presencia/puerta cruza el umbral sin evento nuevo.
+        $doorStaleSeconds = max(1, (int) (Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300));
+        $presenceStaleSeconds = max(1, (int) (Config::getInt('PRESENCE_STALE_SECONDS', 180) ?? 180));
         try {
             $stmt = $this->pdo->prepare(
                 "SELECT
@@ -228,6 +232,14 @@ final class EventStreamController
                     COALESCE(s.last_door_value,        '') AS c16,
                     COALESCE(s.last_presence_value,    '') AS c17,
                     COALESCE(st.entry_confirmed_at,    '') AS c18,
+                    CASE WHEN s.door_state = 'UNKNOWN'
+                              OR s.last_door_event_at IS NULL
+                              OR s.last_door_event_at < UTC_TIMESTAMP(3) - INTERVAL {$doorStaleSeconds} SECOND
+                         THEN '1' ELSE '0' END AS c19,
+                    CASE WHEN s.presence_state = 'PRESENT'
+                              AND (s.last_presence_event_at IS NULL
+                                   OR s.last_presence_event_at < UTC_TIMESTAMP(3) - INTERVAL {$presenceStaleSeconds} SECOND)
+                         THEN '1' ELSE '0' END AS c20,
                     COALESCE(r.status,             '') AS c6,
                     COALESCE(r.cooldown_until,     '') AS c7,
                     COALESCE(st.status,            '') AS c8,
@@ -308,6 +320,24 @@ final class EventStreamController
                     'last_door_value'        => null,
                     'last_presence_value'    => null,
                 ];
+
+            // F118: frescura de sensores (aditivo; mismo criterio que /almacen).
+            $nowTs = Clock::nowUtc()->getTimestamp();
+            $doorStaleSeconds = max(1, (int) (Config::getInt('DOOR_STALE_SECONDS', 300) ?? 300));
+            $presenceStaleSeconds = max(1, (int) (Config::getInt('PRESENCE_STALE_SECONDS', 180) ?? 180));
+            $doorEventTs = self::sqlEpoch($iotData['last_door_event_at'] ?? null);
+            $presenceEventTs = self::sqlEpoch($iotData['last_presence_event_at'] ?? null);
+            $doorAge = $doorEventTs !== null ? max(0, $nowTs - $doorEventTs) : null;
+            $presenceAge = $presenceEventTs !== null ? max(0, $nowTs - $presenceEventTs) : null;
+            $iotData['door_age_seconds'] = $doorAge;
+            $iotData['presence_age_seconds'] = $presenceAge;
+            $iotData['door_stale_seconds'] = $doorStaleSeconds;
+            $iotData['presence_stale_seconds'] = $presenceStaleSeconds;
+            $iotData['door_stale'] = (($iotData['door_state'] ?? 'UNKNOWN') === 'UNKNOWN')
+                || $doorAge === null
+                || $doorAge > $doorStaleSeconds;
+            $iotData['presence_stale'] = (($iotData['presence_state'] ?? 'UNKNOWN') === 'PRESENT')
+                && ($presenceAge === null || $presenceAge > $presenceStaleSeconds);
 
             // Active stay
             $stayStmt = $this->pdo->prepare(

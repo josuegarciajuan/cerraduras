@@ -216,6 +216,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F115 Video portero del almacén (`/timbre`)** | **BLOCK 85 + `timbre-logic.test.js`** | **Implementado (código); prueba manual pendiente** |
 | **F117 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 87 + units F117** | **Implementado; migración aplicada; prueba física pendiente** |
 | **F116 Apertura remota real desde `/timbre`** | **BLOCK 86 + units F116** | **Implementado (código); OTA `CERRADURA 2.7-ota` y prueba física pendientes** |
+| **F118 Monigote del dashboard por sensores + ficha** | **BLOCK 33 + `croquis-logic.test.js`** | **Implementado (código); prueba física QR/ficha pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1117,3 +1118,20 @@ para Tuya cloud.
 Guía de arranque, URLs, BD, hardware: [`docs/ops.md`](docs/ops.md)
 
 Arranque rápido: `bash /root/cerraduras/start-all.sh`
+
+### F118 — Monigote del dashboard por sensores + ficha
+
+- **Motivo**: con QR y presencia dentro, el monigote esperaba al cierre de puerta
+  (~18 s en la prueba real). `/almacen` ya era casi tiempo real porque usa
+  `CroquisLogic.deriveCroquis()`.
+- **Dashboard**: `applyState()` mantiene el badge; `updateMonigoteFromSensors()`
+  mueve el monigote con la fase física (`inside`/`near`/`outside`) en cada SSE y
+  cada 1 s. Presencia dentro gana siempre.
+- **Ficha/NFC**: `recentKeyAccess()` detecta `QR_VALIDATE`/`OPEN` OK con
+  `meta.key_id` (15 s) y mueve el monigote aunque no haya estancia. El QR de
+  huésped (`meta.jti`) no se confunde con ficha. Ficha denegada no mueve.
+- **Frescura**: `/live` y SSE añaden `door_stale`/`presence_stale` + edades y
+  umbrales; el fingerprint del SSE los incluye.
+- **Sin tocar**: `deriveChoreography`, F42/F57, `/almacen`, Tuya/polling.
+- **Verificación**: `croquis-logic.test.js` (90 checks), BLOCK 33 y regresión.
+

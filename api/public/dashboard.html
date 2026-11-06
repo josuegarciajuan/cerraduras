@@ -6,6 +6,7 @@
 <title>Cerraduras — Test Room</title>
 <script src="/assets/qrcode.min.js"></script>
 <script src="/assets/choreography.js"></script>
+<script src="/assets/croquis-logic.js"></script>
 <script src="/assets/cal-walktest.js"></script>
 <script src="/assets/room-selector.js"></script>
 <style>
@@ -838,6 +839,11 @@ const MONIGOTE_POS = {
   WAITING:     { tx:292, ty:308 }   // at door threshold during verification
 };
 
+// F118: el monigote sigue a los sensores con la misma lógica que /almacen.
+// La máquina de estados de acceso (badge/overlays) no cambia; solo la posición.
+const MONIGOTE_PRESENCE_STALE_SECONDS = 180; // default PRESENCE_STALE_SECONDS
+const MONIGOTE_DOOR_STALE_SECONDS = 300;     // default DOOR_STALE_SECONDS
+
 // 22 states: name → { icon, desc, bgColor, monigote, door, bulb, phase }
 const STATES = {
   LOADING:             { icon:'⏳', desc:'Conectando con la API...',         bg:'rgba(20,20,34,0.6)',     moni:'OUTSIDE', door:'closed', bulb:false, phase:'Inicializando' },
@@ -1211,6 +1217,91 @@ function deriveState(data) {
     });
   }
   return result.state;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   F118: SENSOR-DRIVEN MONIGOTE (mismo patrón que /almacen)║
+// ╚══════════════════════════════════════════════════════════╝
+
+/** Antigüedad en segundos de un timestamp (0 si no hay/fecha inválida). */
+function monigoteAgeSeconds(value, nowMs) {
+  if (!value) return null;
+  const t = (typeof Choreography !== 'undefined' && Choreography.parseTime)
+    ? Choreography.parseTime(value)
+    : Date.parse(String(value) + 'Z');
+  if (!t) return null;
+  return Math.max(0, (nowMs - t) / 1000);
+}
+
+/** Snapshot compatible con CroquisLogic.deriveCroquis() desde /live o SSE. */
+function buildMonigoteSnapshot(data, nowMs) {
+  const io = (data && data.iot_session) || {};
+  const stay = data && data.active_stay;
+  const presenceState = io.presence_state || 'UNKNOWN';
+  const doorState = io.door_state || 'UNKNOWN';
+  const presenceAge = (typeof io.presence_age_seconds === 'number')
+    ? io.presence_age_seconds : monigoteAgeSeconds(io.last_presence_event_at, nowMs);
+  const doorAge = (typeof io.door_age_seconds === 'number')
+    ? io.door_age_seconds : monigoteAgeSeconds(io.last_door_event_at, nowMs);
+  // F118: si el backend ya calcula la frescura, se usa tal cual.
+  const presenceStale = (typeof io.presence_stale === 'boolean')
+    ? io.presence_stale
+    : (presenceState === 'PRESENT'
+        && (presenceAge === null || presenceAge > MONIGOTE_PRESENCE_STALE_SECONDS));
+  const doorStale = (typeof io.door_stale === 'boolean')
+    ? io.door_stale
+    : (doorState === 'UNKNOWN'
+        || doorAge === null || doorAge > MONIGOTE_DOOR_STALE_SECONDS);
+  return {
+    occupied: !!(stay && (stay.entry_confirmed_at || stay.status === 'OCCUPIED')),
+    live: {
+      door_state: doorState,
+      presence_state: presenceState,
+      last_open_at: io.last_open_at || null,
+      last_close_at: io.last_close_at || null,
+      last_absent_since: io.last_absent_since || null,
+      switch_state: ((data && data.switch_state) || {}).state || 'UNKNOWN',
+      recent_presence: (data && data.recent_presence) || [],
+      presence_stale: presenceStale,
+      door_stale: doorStale
+    }
+  };
+}
+
+/**
+ * F118: recoloca el monigote en cada tick de datos (SSE o polling), aunque el
+ * estado de acceso no cambie. `applyState()` sigue gestionando badge/overlays.
+ */
+function updateMonigoteFromSensors(data) {
+  if (_lastHasPack !== true) return; // sin pack se conserva el dibujo especial
+  const C = (typeof CroquisLogic !== 'undefined') ? CroquisLogic : null;
+  if (!C || !C.deriveCroquis || !C.resolveDashboardMonigote) return;
+
+  const payload = data || lastLiveData;
+  if (!payload || !Object.keys(payload).length) return;
+
+  const now = Date.now();
+  const snapshot = buildMonigoteSnapshot(payload, now);
+  const d = C.deriveCroquis(snapshot, now);
+  const key = C.recentKeyAccess(payload.recent_events || [], now);
+  const resolved = C.resolveDashboardMonigote({
+    stateName: currentState,
+    phase: d.phase,
+    doorOpen: d.doorOpen,
+    keyAccessActive: key.active
+  });
+
+  const stateDef = STATES[currentState] || STATES.ESPERANDO;
+  const posKey = (resolved === 'state') ? stateDef.moni : resolved;
+  const pos = MONIGOTE_POS[posKey] || MONIGOTE_POS.OUTSIDE;
+
+  _currentStateMonigotePos = posKey;
+  const moni = document.getElementById('monigote-group');
+  if (moni) moni.style.transform = `translate(${pos.tx}px,${pos.ty}px)`;
+
+  // La animación idle debe seguir a la posición física, no solo a OCUPADA.
+  if (posKey === 'INSIDE') startIdleAnimation();
+  else stopIdleAnimation();
 }
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -2133,6 +2224,8 @@ function processLiveData(data) {
   // ALWAYS render sensor SVG (door/bulb/cone/QR)
   // Must be called AFTER applyState so currentState reflects QR_OK etc.
   renderSensorSvg();
+  // F118: la posición del monigote sigue a sensores + ficha, no al badge.
+  updateMonigoteFromSensors(data);
 
   // Toast detection
   const recentQR = (data.recent_events || []).find(e =>
@@ -3285,6 +3378,12 @@ async function init() {
   });
   // F41·TSK-F41-14: conteo local a 250 ms (no se congela si no llegan eventos).
   setInterval(updateCountdown, 250);
+  // F118: refresco ligero para fin de ventana de ficha y staleness de sensores.
+  setInterval(() => {
+    if (lastLiveData && Object.keys(lastLiveData).length) {
+      updateMonigoteFromSensors(lastLiveData);
+    }
+  }, 1000);
   // Rooms refresh (less frequent, keep for room selector).
   // Skip while the selector is focused/interacting: rebuilding <option> closes
   // the native picker mid-interaction (Firefox/Safari/Android). fetchRooms()

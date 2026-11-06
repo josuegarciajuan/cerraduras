@@ -13585,3 +13585,21 @@ sesión futura no puede analizar un fallo equivalente.
 
 **Estado F116:** implementación de código completada; OTA y prueba física
 pendientes.
+
+### RF-297 — Monigote del dashboard en tiempo real por sensores y ficha
+- **RF-297.1**: la posición del monigote de `/dashboard` se deriva de los
+  sensores vivos (`door_state`, `presence_state`, `last_*`) y no del badge de
+  acceso. `PRESENT` → dentro; `ABSENT`/stale → fuera; apertura reciente sin
+  presencia → umbral.
+- **RF-297.2**: un acceso válido con ficha/NFC (`QR_VALIDATE`/`OPEN` OK con
+  `meta.key_id`) inicia la secuencia visual (`AT_QR` → `CROSSING` → `INSIDE`)
+  aunque no exista estancia de huésped. Una ficha denegada no mueve el monigote.
+- **RF-297.3**: la máquina de estados de acceso (`deriveChoreography`), las
+  reglas de entrada/salida (F42/F57), los badges y las anomalías no cambian.
+- **RF-297.4**: `/live` y el SSE exponen de forma aditiva la frescura de los
+  sensores (`door_stale`, `presence_stale`, edades y umbrales) para que el panel
+  no afirme “dentro” con un `PRESENT` viejo.
+- **RF-297.5**: sin polling a Tuya ni llamadas de nube; todo sale de la BD
+  local, el push de sensores y el SSE.
+
+**Estado F118:** implementado; pendiente prueba física con QR y ficha.
