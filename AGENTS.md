@@ -217,6 +217,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F117 Oficina TIMBRADO: aperturas, vídeo y llaves QR** | **BLOCK 87 + units F117** | **Implementado; migración aplicada; prueba física pendiente** |
 | **F116 Apertura remota real desde `/timbre`** | **BLOCK 86 + units F116** | **Implementado (código); OTA `CERRADURA 2.7-ota` y prueba física pendientes** |
 | **F118 Monigote del dashboard por sensores + ficha** | **BLOCK 33 + `croquis-logic.test.js`** | **Implementado (código); prueba física QR/ficha pendiente** |
+| **F119 Panel CRM v2 + analítica de uso** | **BLOCK 88 + `PanelV2UiTest`** | **Implementado; regresión 1127/0/18; validación visual pendiente del operador** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1181,4 +1182,25 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   del servidor; dos dispositivos con el mismo snapshot muestran lo mismo.
 - **Verificación**: `KeyEpisodePolicyTest` (9), `choreography.test.js` (82),
   `croquis-logic.test.js` (119) y regresión.
+
+### F119 — Panel CRM v2 y analítica de uso
+
+- **UI**: tema claro moderno, sidebar agrupado (Operación, Personas, Análisis,
+  Sistema), topbar con búsqueda global (`Ctrl/Cmd+K`), rango de fechas, indicador
+  de actualización y drawer de detalle. Responsive con menú deslizante y backdrop.
+- **Dashboard**: KPIs, donut de estados, tendencia de ocupación, actividad,
+  mapa de habitaciones, “ahora mismo”, rankings, accesos, anomalías, almacén y
+  acciones rápidas.
+- **Analítica**: `GET /api/v1/analytics/{overview,live,workers,workers/{id},
+  rooms,rooms/{id},accesses,keys,devices,anomalies,warehouse,search}`. Solo
+  lectura local; **cero llamadas a Tuya** y ningún poller nuevo.
+- **Personas/habitaciones**: historial por sala, timeline, tiempos, llaves,
+  denegaciones, heatmap día×hora y detalle de sala con dispositivos y visitas.
+- **Datos**: ocupación histórica aproximada con `stays`; migración `0144` solo
+  añade índices de rango.
+- **Archivos**: `api/public/panel/assets/{panel-v2.css,panel-v2.js,charts.js,
+  format.js}`, `api/src/Http/Controllers/AnalyticsController.php`,
+  `api/migrations/0144_analytics_indexes.sql`.
+- **Verificación**: `PanelV2UiTest` (52), BLOCK 88 y regresión
+  **1127 passed, 0 failed, 18 skipped**; Playwright desktop/móvil sin errores.
 

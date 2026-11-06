@@ -171,36 +171,102 @@ tr:hover td{background:rgba(108,142,224,.05)}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media (max-width:560px){.dv-card{flex-wrap:wrap}.dv-side{margin-left:0;align-items:flex-start;flex-direction:row;width:100%;justify-content:space-between}.dv-bus{padding-left:0}.dv-bus::before{display:none}}
 </style>
+<link rel="stylesheet" href="/panel/assets/panel-v2.css">
 </head>
 <body x-data="crm()" x-init="init()">
-<aside class="sidebar">
-  <div class="sidebar-header"><h2>🔐 Cerraduras</h2><div class="ui" x-text="user?.display_name||user?.username||'...'"></div></div>
+<aside class="sidebar" :class="{open:sidebarOpen}">
+  <div class="sidebar-header">
+    <div class="brand">
+      <span class="brand-mark">C</span>
+      <div><strong>Cerraduras</strong><small>Panel de control</small></div>
+      <button class="icon-btn sidebar-close" @click="sidebarOpen=false" aria-label="Cerrar menú">✕</button>
+    </div>
+  </div>
   <nav>
-    <a :class="{active:p==='db'}" role="button" tabindex="0" @click="nav('db')" @keydown.enter="nav('db')" @keydown.space.prevent="nav('db')"><span class="ic">📊</span>Dashboard</a>
-    <a :class="{active:p==='ro'}" role="button" tabindex="0" @click="nav('ro')" @keydown.enter="nav('ro')" @keydown.space.prevent="nav('ro')"><span class="ic">🚪</span>Habitaciones</a>
-    <a :class="{active:p==='pk'}" role="button" tabindex="0" @click="nav('pk')" @keydown.enter="nav('pk')" @keydown.space.prevent="nav('pk')"><span class="ic">📦</span>Packs</a>
-    <a :class="{active:p==='dv'}" role="button" tabindex="0" @click="nav('dv')" @keydown.enter="nav('dv')" @keydown.space.prevent="nav('dv')"><span class="ic">🔌</span>Dispositivos</a>
-    <a :class="{active:p==='st'}" role="button" tabindex="0" @click="nav('st')" @keydown.enter="nav('st')" @keydown.space.prevent="nav('st')"><span class="ic">⏱️</span>Estancias</a>
-    <a :class="{active:p==='qr'}" role="button" tabindex="0" @click="nav('qr')" @keydown.enter="nav('qr')" @keydown.space.prevent="nav('qr')"><span class="ic">🎫</span>QRs</a>
-    <a :class="{active:p==='dbts'}" role="button" tabindex="0" @click="nav('dbts')" @keydown.enter="nav('dbts')" @keydown.space.prevent="nav('dbts')"><span class="ic">💰</span>Deudas</a>
-     <a :class="{active:p==='w'}" role="button" tabindex="0" @click="nav('w')" @keydown.enter="nav('w')" @keydown.space.prevent="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
-     <a :class="{active:p==='ky'}" role="button" tabindex="0" @click="nav('ky')" @keydown.enter="nav('ky')" @keydown.space.prevent="nav('ky')"><span class="ic">🔑</span>Llaves</a>
-     <a :class="{active:p==='nc'}" role="button" tabindex="0" @click="nav('nc')" @keydown.enter="nav('nc')" @keydown.space.prevent="nav('nc')"><span class="ic">💳</span>Fichas NFC</a>
-     <a :class="{active:p==='ac'}" role="button" tabindex="0" @click="nav('ac')" @keydown.enter="nav('ac')" @keydown.space.prevent="nav('ac')"><span class="ic">📜</span>Accesos</a>
-     <a :class="{active:p==='fd'}" role="button" tabindex="0" @click="nav('fd')" @keydown.enter="nav('fd')" @keydown.space.prevent="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
-    <a :class="{active:p==='wr'}" role="button" tabindex="0" @click="nav('wr')" @keydown.enter="nav('wr')" @keydown.space.prevent="nav('wr')"><span class="ic">🏷️</span>Roles</a>
-    <a :class="{active:p==='mon'}" role="button" tabindex="0" @click="nav('mon')" @keydown.enter="nav('mon')" @keydown.space.prevent="nav('mon')"><span class="ic">📋</span>Monitor</a>
-    <a :class="{active:p==='us'}" role="button" tabindex="0" @click="nav('us')" @keydown.enter="nav('us')" @keydown.space.prevent="nav('us')"><span class="ic">👥</span>Usuarios</a>
-    <a :class="{active:p==='cl'}" role="button" tabindex="0" @click="nav('cl')" @keydown.enter="nav('cl')" @keydown.space.prevent="nav('cl')"><span class="ic">🔑</span>API Clients</a>
-    <a :class="{active:p==='an'}" role="button" tabindex="0" @click="nav('an')" @keydown.enter="nav('an')" @keydown.space.prevent="nav('an')"><span class="ic">⚠️</span>Anomalías<span x-show="anomalyCount>0" class="sidebar-badge" x-text="anomalyCount"></span></a>
-    <a :class="{active:p==='he'}" role="button" tabindex="0" @click="nav('he')" @keydown.enter="nav('he')" @keydown.space.prevent="nav('he')"><span class="ic">❤️</span>Salud</a>
-    <a :class="{active:p==='cfg'}" role="button" tabindex="0" @click="nav('cfg')" @keydown.enter="nav('cfg')" @keydown.space.prevent="nav('cfg')"><span class="ic">⚙️</span>Configuración</a>
+    <div class="nav-group">
+      <div class="nav-group-title">Operación</div>
+      <a :class="{active:p==='db'}" role="button" tabindex="0" @click="nav('db')" @keydown.enter="nav('db')" @keydown.space.prevent="nav('db')"><span class="ic">📊</span>Dashboard</a>
+      <a :class="{active:p==='ro'}" role="button" tabindex="0" @click="nav('ro')" @keydown.enter="nav('ro')" @keydown.space.prevent="nav('ro')"><span class="ic">🚪</span>Habitaciones</a>
+      <a :class="{active:p==='pk'}" role="button" tabindex="0" @click="nav('pk')" @keydown.enter="nav('pk')" @keydown.space.prevent="nav('pk')"><span class="ic">📦</span>Packs</a>
+      <a :class="{active:p==='st'}" role="button" tabindex="0" @click="nav('st')" @keydown.enter="nav('st')" @keydown.space.prevent="nav('st')"><span class="ic">⏱️</span>Estancias</a>
+      <a :class="{active:p==='qr'}" role="button" tabindex="0" @click="nav('qr')" @keydown.enter="nav('qr')" @keydown.space.prevent="nav('qr')"><span class="ic">🎫</span>QRs</a>
+      <a :class="{active:p==='dbts'}" role="button" tabindex="0" @click="nav('dbts')" @keydown.enter="nav('dbts')" @keydown.space.prevent="nav('dbts')"><span class="ic">💰</span>Deudas</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Personas</div>
+      <a :class="{active:p==='w'}" role="button" tabindex="0" @click="nav('w')" @keydown.enter="nav('w')" @keydown.space.prevent="nav('w')"><span class="ic">🧹</span>Trabajadores<span x-show="workerAlertCount>0" class="sidebar-badge" x-text="workerAlertCount"></span></a>
+      <a :class="{active:p==='wr'}" role="button" tabindex="0" @click="nav('wr')" @keydown.enter="nav('wr')" @keydown.space.prevent="nav('wr')"><span class="ic">🏷️</span>Roles</a>
+      <a :class="{active:p==='ky'}" role="button" tabindex="0" @click="nav('ky')" @keydown.enter="nav('ky')" @keydown.space.prevent="nav('ky')"><span class="ic">🔑</span>Llaves</a>
+      <a :class="{active:p==='nc'}" role="button" tabindex="0" @click="nav('nc')" @keydown.enter="nav('nc')" @keydown.space.prevent="nav('nc')"><span class="ic">💳</span>Fichas NFC</a>
+      <a :class="{active:p==='ac'}" role="button" tabindex="0" @click="nav('ac')" @keydown.enter="nav('ac')" @keydown.space.prevent="nav('ac')"><span class="ic">📜</span>Accesos</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Análisis</div>
+      <a :class="{active:p==='ana'}" role="button" tabindex="0" @click="nav('ana')" @keydown.enter="nav('ana')" @keydown.space.prevent="nav('ana')"><span class="ic">📈</span>Analítica</a>
+      <a :class="{active:p==='an'}" role="button" tabindex="0" @click="nav('an')" @keydown.enter="nav('an')" @keydown.space.prevent="nav('an')"><span class="ic">⚠️</span>Anomalías<span x-show="anomalyCount>0" class="sidebar-badge" x-text="anomalyCount"></span></a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Sistema</div>
+      <a :class="{active:p==='dv'}" role="button" tabindex="0" @click="nav('dv')" @keydown.enter="nav('dv')" @keydown.space.prevent="nav('dv')"><span class="ic">🔌</span>Dispositivos</a>
+      <a :class="{active:p==='fd'}" role="button" tabindex="0" @click="nav('fd')" @keydown.enter="nav('fd')" @keydown.space.prevent="nav('fd')"><span class="ic">🏭</span>Fábrica</a>
+      <a :class="{active:p==='mon'}" role="button" tabindex="0" @click="nav('mon')" @keydown.enter="nav('mon')" @keydown.space.prevent="nav('mon')"><span class="ic">📋</span>Monitor</a>
+      <a :class="{active:p==='us'}" role="button" tabindex="0" @click="nav('us')" @keydown.enter="nav('us')" @keydown.space.prevent="nav('us')"><span class="ic">👥</span>Usuarios</a>
+      <a :class="{active:p==='cl'}" role="button" tabindex="0" @click="nav('cl')" @keydown.enter="nav('cl')" @keydown.space.prevent="nav('cl')"><span class="ic">🔑</span>API Clients</a>
+      <a :class="{active:p==='he'}" role="button" tabindex="0" @click="nav('he')" @keydown.enter="nav('he')" @keydown.space.prevent="nav('he')"><span class="ic">❤️</span>Salud</a>
+      <a :class="{active:p==='cfg'}" role="button" tabindex="0" @click="nav('cfg')" @keydown.enter="nav('cfg')" @keydown.space.prevent="nav('cfg')"><span class="ic">⚙️</span>Configuración</a>
+    </div>
   </nav>
-  <div class="sidebar-footer"><button @click="logout">Cerrar sesión</button></div>
+  <div class="sidebar-footer">
+    <div class="user-chip">
+      <span class="avatar" x-text="(user?.display_name||user?.username||'?').slice(0,1).toUpperCase()"></span>
+      <div><strong x-text="user?.display_name||user?.username||'...'"></strong><small x-text="user?.role||''"></small></div>
+    </div>
+    <button @click="logout">Cerrar sesión</button>
+  </div>
 </aside>
-<main class="main"><div x-html="render() || ''"></div></main>
+<div x-show="sidebarOpen" class="sidebar-backdrop" @click="sidebarOpen=false" x-cloak aria-hidden="true"></div>
+<div class="app-main">
+  <header class="topbar">
+    <button class="icon-btn topbar-menu" @click="sidebarOpen=!sidebarOpen" aria-label="Abrir menú">☰</button>
+    <div class="topbar-title"><strong x-text="pageTitle()"></strong><span x-text="pageSubtitle()"></span></div>
+    <div class="topbar-actions">
+      <div class="search-wrap">
+        <input type="search" placeholder="Buscar sala, persona, llave… (Ctrl+K)" x-model="globalSearch" @input.debounce.250ms="doSearch()" @keydown.escape="globalSearch='';searchResults=null" aria-label="Búsqueda global">
+        <div class="search-results" x-show="searchResults && globalSearch.length>=2" x-cloak>
+          <template x-for="g in (searchResults?.groups||[])" :key="g.type">
+            <div class="search-group">
+              <h4 x-text="g.label"></h4>
+              <template x-for="it in g.items" :key="it.id">
+                <div class="search-item" @click="openSearchResult(g.type, it)">
+                  <span x-text="it.code || it.name || it.label || it.room_code || ('#'+it.id)"></span>
+                  <span class="mono" x-text="it.room_type || it.role || it.kind || it.key_type || it.status || ''"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+      <select class="range-select" x-model.number="analyticsDays" @change="setDays(analyticsDays)" aria-label="Rango de fechas">
+        <option value="1">Hoy</option>
+        <option value="7">7 días</option>
+        <option value="30">30 días</option>
+        <option value="90">90 días</option>
+      </select>
+      <span class="live-dot" :class="{on:liveOk}" title="Datos locales; sin Tuya"></span>
+      <button class="btn btn-o btn-sm" @click="refreshAll()" title="Actualizar datos">↻</button>
+    </div>
+  </header>
+  <main class="main"><div x-html="render() || ''"></div></main>
+</div>
 <div x-show="toast.show" class="toast" role="status" aria-live="polite" :class="'toast-'+toast.type" x-text="toast.msg || ''" @click="toast.show=false" style="cursor:pointer"></div>
 <div x-show="modal.show" class="modal-overlay" @click.self="modal.show=false" @keydown.escape.window="modal.show=false"><div class="modal" role="dialog" aria-modal="true" aria-label="Diálogo del panel" tabindex="-1"><div x-html="modal.content"></div></div></div>
+<div x-show="drawer.show" class="drawer-overlay" @click.self="drawer.show=false" x-cloak>
+  <aside class="drawer" role="dialog" aria-modal="true" :aria-label="drawer.title">
+    <div class="drawer-head"><div style="flex:1"><h2 x-text="drawer.title"></h2><p x-text="drawer.subtitle"></p></div><button class="icon-btn" @click="drawer.show=false" aria-label="Cerrar detalle">✕</button></div>
+    <div class="drawer-body" x-html="drawer.content"></div>
+    <div class="drawer-foot" x-html="drawer.footer"></div>
+  </aside>
+</div>
 
 <script>
 function crm(){return{
@@ -1026,5 +1092,8 @@ function crm(){return{
   async loadDeviceStatus(){}
 }};
 </script>
+<script src="/panel/assets/charts.js"></script>
+<script src="/panel/assets/format.js"></script>
+<script src="/panel/assets/panel-v2.js"></script>
 </body>
 </html>

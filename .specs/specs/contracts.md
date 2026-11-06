@@ -16552,3 +16552,26 @@ Es aditivo; sin rutas nuevas ni migración. El fingerprint del SSE incluye el
 
 Aditivos; sin rutas nuevas ni migración. El fingerprint del SSE incluye el
 `MAX(id)` de `key_access_events` y los eventos de puerta/presencia ya existentes.
+
+## F119 — Analítica del panel (solo lectura)
+
+Todos los endpoints aceptan `?days=N` (1..366, por defecto 7) y devuelven JSON.
+Requieren los scopes indicados; sin credencial devuelven 401.
+
+| Endpoint | Scope | Respuesta |
+|---|---|---|
+| `GET /api/v1/analytics/overview` | `rooms:read` | `range`, `kpis`, `status_distribution`, `occupancy_series`, `activity_series`, `access_summary`, `anomaly_summary`, `device_summary`, `warehouse`, `top_workers`*, `top_rooms`, `recent_activity` |
+| `GET /api/v1/analytics/live` | `rooms:read` | `rooms`, `workers_inside`, `alerts`, `counts`, `server_ts` |
+| `GET /api/v1/analytics/workers` | `workers:read` | `items[]` con sesiones, minutos, salas, llaves y denegaciones |
+| `GET /api/v1/analytics/workers/{id}` | `workers:read` | `worker`, `totals`, `sessions`, `per_room`, `daily`, `heatmap`, `keys`, `key_events`, `current_room` |
+| `GET /api/v1/analytics/rooms` | `rooms:read` | `items[]` con sesiones, accesos, denegaciones, anomalías, visitas |
+| `GET /api/v1/analytics/rooms/{id}` | `rooms:read` | `room`, `sessions`, `accesses`, `key_accesses`, `stays`, `visits`, `anomalies`, `devices`, `daily` |
+| `GET /api/v1/analytics/accesses` | `audit:read` | `summary`, `by_result`, `by_kind`, `by_credential`, `denial_reasons`, `top_workers`, `top_keys`, `series`, `recent` |
+| `GET /api/v1/analytics/keys` | `keys:read` | `counts`, `expiring_soon`, `top_keys`, `unused_keys`, `nfc` |
+| `GET /api/v1/analytics/devices` | `rooms:read` | `summary`, `by_kind`, `by_transport`, `low_battery`, `packs`, `firmware` |
+| `GET /api/v1/analytics/anomalies` | `presence:read` | `by_status`, `by_severity`, `by_type`, `top_rooms`, `mtta_minutes`, `series`, `recent` |
+| `GET /api/v1/analytics/warehouse` | `rooms:read` | `by_trigger`, `by_outcome`, `top_workers`, `recordings`, `series`, `recent` |
+| `GET /api/v1/analytics/search?q=` | `rooms:read` | `groups[]` con rooms, workers, keys, devices, packs, anomalies y stays |
+
+\* `top_workers` se omite (array vacío) si el cliente no tiene `workers:read`.
+Los campos son aditivos y no alteran contratos existentes.

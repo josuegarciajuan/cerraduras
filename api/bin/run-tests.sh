@@ -8896,6 +8896,133 @@ else
 fi
 
 # =============================================================================
+# BLOCK 88 — F119: panel v2 y analítica (solo lectura, sin Tuya)
+# Trazabilidad: F119 · requirements.md §F119 · contracts.md §F119
+# =============================================================================
+block "BLOCK 88 — F119: panel v2 y analítica"
+
+for F119_FILE in \
+    public/panel/assets/panel-v2.css \
+    public/panel/assets/panel-v2.js \
+    public/panel/assets/charts.js \
+    public/panel/assets/format.js \
+    src/Http/Controllers/AnalyticsController.php \
+    migrations/0144_analytics_indexes.sql \
+    tests/Unit/PanelV2UiTest.php; do
+    if [ -f "$F119_FILE" ]; then
+        pass "F119: existe $F119_FILE"
+    else
+        fail "F119: $F119_FILE" "no encontrado"
+    fi
+done
+
+for F119_MARK in \
+    '/panel/assets/panel-v2.css' \
+    '/panel/assets/panel-v2.js' \
+    '/panel/assets/charts.js' \
+    '/panel/assets/format.js' \
+    "nav('ana')" \
+    'globalSearch' \
+    'drawer.show'; do
+    if grep -qF "$F119_MARK" public/panel/index.html 2>/dev/null; then
+        pass "F119: index.html incluye $F119_MARK"
+    else
+        fail "F119: index.html $F119_MARK" "ausente"
+    fi
+done
+
+if grep -qi 'tuya' public/panel/assets/panel-v2.js public/panel/assets/charts.js public/panel/assets/format.js 2>/dev/null; then
+    fail "F119: frontend v2 sin llamadas a Tuya" "referencia encontrada"
+else
+    pass "F119: frontend v2 sin llamadas a Tuya"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    for F119_JS in public/panel/assets/panel-v2.js public/panel/assets/charts.js public/panel/assets/format.js; do
+        if node --check "$F119_JS" >/tmp/f119-js.log 2>&1; then
+            pass "F119: sintaxis JS $(basename "$F119_JS")"
+        else
+            fail "F119: sintaxis JS $(basename "$F119_JS")" "$(tail -3 /tmp/f119-js.log | tr '\n' ' ')"
+        fi
+    done
+else
+    skip "F119: sintaxis JS" "node no disponible"
+fi
+if php -l src/Http/Controllers/AnalyticsController.php >/tmp/f119-php.log 2>&1; then
+    pass "F119: sintaxis AnalyticsController"
+else
+    fail "F119: sintaxis AnalyticsController" "$(tail -2 /tmp/f119-php.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F119_KEY=$(get_key ADMIN-CLI)
+    if [ -n "$F119_KEY" ]; then
+        http_test GET '/api/v1/analytics/overview?days=7' 200 \
+            "F119: GET /api/v1/analytics/overview → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/live' 200 \
+            "F119: GET /api/v1/analytics/live → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/workers?days=7' 200 \
+            "F119: GET /api/v1/analytics/workers → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/rooms?days=7' 200 \
+            "F119: GET /api/v1/analytics/rooms → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/accesses?days=7' 200 \
+            "F119: GET /api/v1/analytics/accesses → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/keys?days=7' 200 \
+            "F119: GET /api/v1/analytics/keys → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/devices' 200 \
+            "F119: GET /api/v1/analytics/devices → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/anomalies?days=7' 200 \
+            "F119: GET /api/v1/analytics/anomalies → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/warehouse?days=7' 200 \
+            "F119: GET /api/v1/analytics/warehouse → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/search?q=a' 200 \
+            "F119: GET /api/v1/analytics/search → 200" --key ADMIN-CLI
+
+        F119_OVER=$(curl -s --max-time 10 -H "X-API-Key: $F119_KEY" \
+            "$API_BASE/api/v1/analytics/overview?days=7" 2>/dev/null)
+        for F119_MARK in '"kpis"' '"occupancy_series"' '"activity_series"' '"top_rooms"' '"device_summary"'; do
+            if printf '%s' "$F119_OVER" | grep -q "$F119_MARK"; then
+                pass "F119: overview incluye $F119_MARK"
+            else
+                fail "F119: overview sin $F119_MARK" "$(printf '%s' "$F119_OVER" | head -c 240)"
+            fi
+        done
+
+        F119_NOAUTH=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            "$API_BASE/api/v1/analytics/overview" 2>/dev/null)
+        if [ "$F119_NOAUTH" = "401" ]; then
+            pass "F119: analítica exige autenticación (401)"
+        else
+            fail "F119: analítica sin auth" "HTTP $F119_NOAUTH"
+        fi
+
+        http_test GET '/api/v1/analytics/overview?days=0' 200 \
+            "F119: days=0 se acota sin error" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/overview?days=9999' 200 \
+            "F119: days=9999 se acota sin error" --key ADMIN-CLI
+
+        F119_WID=$($MYSQL -sN -e "SELECT id FROM workers ORDER BY id LIMIT 1" 2>/dev/null)
+        if [ -n "$F119_WID" ]; then
+            http_test GET "/api/v1/analytics/workers/$F119_WID?days=7" 200 \
+                "F119: detalle de trabajador → 200" --key ADMIN-CLI
+        else
+            skip "F119: detalle de trabajador" "sin trabajadores"
+        fi
+        F119_RID=$($MYSQL -sN -e "SELECT id FROM rooms ORDER BY id LIMIT 1" 2>/dev/null)
+        if [ -n "$F119_RID" ]; then
+            http_test GET "/api/v1/analytics/rooms/$F119_RID?days=7" 200 \
+                "F119: detalle de habitación → 200" --key ADMIN-CLI
+        else
+            skip "F119: detalle de habitación" "sin salas"
+        fi
+    else
+        skip "F119 HTTP" "sin clave ADMIN-CLI"
+    fi
+else
+    skip "F119 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

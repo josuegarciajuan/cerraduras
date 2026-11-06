@@ -11762,3 +11762,20 @@ pendientes.
 - [x] TSK-F118-35: `deriveEpisodesFromSnapshot` para badge determinista.
 - [x] TSK-F118-36: tests de política, snapshot, hold y runner.
 - [ ] TSK-F118-37: reiniciar API/worker y prueba física con dos dispositivos.
+
+## F119 — Panel CRM v2 y analítica
+
+- [x] TSK-F119-01: sistema de diseño claro, sidebar agrupado y topbar.
+- [x] TSK-F119-02: charts.js SVG, format.js y componentes de render.
+- [x] TSK-F119-03: dashboard con KPIs, ocupación, actividad, mapa, live y rankings.
+- [x] TSK-F119-04: `AnalyticsController` + endpoints `/api/v1/analytics/*`.
+- [x] TSK-F119-05: migración `0144_analytics_indexes.sql`.
+- [x] TSK-F119-06: trabajadores con timeline, métricas, heatmap y llaves.
+- [x] TSK-F119-07: habitaciones con mapa, detalle, sesiones, accesos y dispositivos.
+- [x] TSK-F119-08: estancias, QRs, deudas, llaves, NFC, accesos, fábrica, roles,
+      monitor, usuarios, API clients, anomalías, salud y configuración.
+- [x] TSK-F119-09: búsqueda global, rango de fechas, hash routing y drawer.
+- [x] TSK-F119-10: responsive móvil con backdrop y cierre de menú.
+- [x] TSK-F119-11: `PanelV2UiTest` + BLOCK 88 del runner.
+- [x] TSK-F119-12: regresión completa (1127/0/18) y validación Playwright.
+- [ ] TSK-F119-13: prueba de aceptación visual con el operador.
