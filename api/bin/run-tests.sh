@@ -3767,6 +3767,7 @@ E2E_VB6=$(get_key VB6-MAIN)
 E2E_RPIKEY=$(get_key RPI-DEV)
 E2E_ADM=$(get_key ADMIN-CLI)
 E2E_ROOM_PACK=$($MYSQL -sN -e "SELECT COALESCE(pack_id,'NULL') FROM rooms WHERE id=$E2E_ROOM" 2>/dev/null || echo "ERR")
+E2E_ROOM_PACK_CODE=$($MYSQL -sN -e "SELECT COALESCE(p.code,'NULL') FROM rooms r LEFT JOIN device_packs p ON p.id=r.pack_id WHERE r.id=$E2E_ROOM" 2>/dev/null || echo "ERR")
 E2E_RPI_EXT=$($MYSQL -sN -e "SELECT d.external_id FROM devices d JOIN rooms r ON r.pack_id=d.pack_id WHERE r.id=$E2E_ROOM AND d.kind='RPI' LIMIT 1" 2>/dev/null || echo "")
 
 if [ "$SERVER_UP" != "true" ]; then
@@ -3775,6 +3776,8 @@ elif [ -z "$E2E_SIM" ] || [ -z "$E2E_VB6" ] || [ -z "$E2E_RPIKEY" ] || [ -z "$E2
     skip "BLOCK 42 — F54 (E2E)" "faltan claves SIM-CLIENT/VB6-MAIN/RPI-DEV/ADMIN-CLI en $KEYS_FILE"
 elif ! db_exec "SELECT 1" > /dev/null 2>&1; then
     skip "BLOCK 42 — F54 (E2E)" "BD no accesible"
+elif [ "$E2E_ROOM_PACK_CODE" != "proto2" ]; then
+    skip "BLOCK 42 — F54 (E2E)" "room $E2E_ROOM no tiene pack proto2 (pack=$E2E_ROOM_PACK code=$E2E_ROOM_PACK_CODE); E2E PROTO2 omitida"
 elif [ "$E2E_ROOM_PACK" = "NULL" ] || [ "$E2E_ROOM_PACK" = "ERR" ] || [ -z "$E2E_RPI_EXT" ]; then
     skip "BLOCK 42 — F54 (E2E)" "room $E2E_ROOM sin pack/RPI resoluble (pack=$E2E_ROOM_PACK)"
 else
