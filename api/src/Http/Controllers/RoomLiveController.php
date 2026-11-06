@@ -272,6 +272,10 @@ final class RoomLiveController
             }
         }
 
+        // F118.3: episodio de ficha/NFC sin estancia. Se mantiene mientras la
+        // presencia siga activa y el acceso sea posterior al último ABSENT.
+        $keyEpisode = $this->latestKeyEpisode($roomId, $iotData);
+
         return Response::json(200, [
             'room_id'          => $roomId,
             'code'             => $room->code,
@@ -280,6 +284,7 @@ final class RoomLiveController
             'cooldown_until'   => $room->cooldownUntil,
             'iot_session'      => $iotData,
             'active_stay'      => $stayData,
+            'key_episode'      => $keyEpisode,
             'switch_state'     => $switchState,
             'battery'          => $battery,
             'exit_deadline'    => $exitDeadline,
@@ -310,6 +315,60 @@ final class RoomLiveController
             ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->withHeader('Pragma', 'no-cache')
             ->withHeader('Expires', '0');
+    }
+
+    /**
+     * F118.3: último acceso válido con ficha/NFC de la sala.
+     *
+     * `active` = hay acceso de ficha y la presencia sigue en PRESENT, sin un
+     * ABSENT posterior al acceso. Sin caducidad temporal: el episodio se cierra
+     * por ausencia (o por el cierre de salida del dashboard), no por reloj.
+     *
+     * @param array<string,mixed> $iotData
+     * @return array{active:bool,key_id:?int,worker_id:?int,credential_type:?string,at:?string}
+     */
+    private function latestKeyEpisode(int $roomId, array $iotData): array
+    {
+        $default = [
+            'active' => false,
+            'key_id' => null,
+            'worker_id' => null,
+            'credential_type' => null,
+            'at' => null,
+        ];
+        $stmt = $this->pdo->prepare(
+            "SELECT key_id, worker_id, credential_type, occurred_at
+               FROM key_access_events
+              WHERE room_id = :rid AND result = 'OK'
+              ORDER BY occurred_at DESC, id DESC
+              LIMIT 1"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return $default;
+        }
+
+        $presence = (string) ($iotData['presence_state'] ?? 'UNKNOWN');
+        $lastAbsent = $this->pdo->prepare(
+            "SELECT MAX(occurred_at) FROM presence_events
+              WHERE room_id = :rid AND sensor = 'PRESENCE' AND value = 'ABSENT'"
+        );
+        $lastAbsent->execute([':rid' => $roomId]);
+        $absentAt = $lastAbsent->fetchColumn() ?: null;
+        $keyTs = self::sqlEpoch((string) $row['occurred_at']);
+        $absentTs = $absentAt !== null ? self::sqlEpoch((string) $absentAt) : null;
+        $active = $presence === 'PRESENT'
+            && $keyTs !== null
+            && ($absentTs === null || $keyTs > $absentTs);
+
+        return [
+            'active' => $active,
+            'key_id' => $row['key_id'] !== null ? (int) $row['key_id'] : null,
+            'worker_id' => $row['worker_id'] !== null ? (int) $row['worker_id'] : null,
+            'credential_type' => $row['credential_type'] !== null ? (string) $row['credential_type'] : null,
+            'at' => (string) $row['occurred_at'],
+        ];
     }
 
     /**

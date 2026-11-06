@@ -13636,3 +13636,22 @@ pendientes.
   heurístico y vuelve al comportamiento solo-ABSENT.
 
 **Estado F118.2:** implementado; pendiente prueba física de salida.
+
+### RF-300 — Estabilidad del monigote en entrada, salida y ficha sin estancia
+- **RF-300.1**: con la puerta abierta, el monigote de `/dashboard` no debe
+  mostrar `OUTSIDE` para estados físicos: permanece en el umbral o pasa a
+  `INSIDE` solo con presencia posterior a la apertura.
+- **RF-300.2**: al abrir la puerta en una salida, el monigote pasa al umbral con
+  `?`; `entry_confirmed_at` no se usa como evidencia de “dentro” en ese ciclo.
+- **RF-300.3**: una habitación FREE sin estancia ni ficha no muestra `INSIDE`
+  por presencia sola.
+- **RF-300.4**: una ficha/NFC sin estancia se representa igual que una estancia,
+  sin caducidad temporal: episodio `key_episode` persistente
+  (`pending`/`inside`/`exit`) que solo termina por ausencia o salida.
+- **RF-300.5**: la verificación de salida tiene un máximo de **15 s**
+  (`EXIT_MAX_VERIFY_SECONDS`). Al agotarse, la estancia/el monigote pasan a
+  fuera aunque el radar siga en `PRESENT`.
+- **RF-300.6**: la guarda de ausencia sigue en 1 s y el heurístico rápido de 3 s
+  sin presencia posterior al cierre se mantiene.
+
+**Estado F118.3:** implementado (código); pendiente prueba física y reinicio API.

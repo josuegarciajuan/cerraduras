@@ -436,13 +436,26 @@ const posExitSettled = resolveDashboardMonigote({
   stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
   presenceState: 'ABSENT', lastOpenAt: t(-10000), lastAbsentSince: t(-4000), now: BASE,
 });
-check('F118 ausencia sostenida con puerta abierta → OUTSIDE', posExitSettled === 'OUTSIDE');
+check('F118 ausencia sostenida con puerta abierta → WAITING (umbral)', posExitSettled === 'WAITING');
 
 const posExitPending = resolveDashboardMonigote({
   stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: true, keyAccessActive: false,
   presenceState: 'ABSENT', lastOpenAt: t(-10000), lastAbsentSince: t(-1000), now: BASE,
 });
 check('F118 ausencia reciente aún no confirma OUTSIDE', posExitPending === 'WAITING');
+
+const posExitClosedAbsent = resolveDashboardMonigote({
+  stateName: 'PUERTA_ABIERTA', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'ABSENT', lastCloseAt: t(-5000), lastAbsentSince: t(-4000), now: BASE,
+});
+check('F118 puerta cerrada + ausencia sostenida → OUTSIDE', posExitClosedAbsent === 'OUTSIDE');
+
+const posExitMax = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastOpenAt: t(-20000), lastCloseAt: t(-16000),
+  lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118.3 máximo visual 15 s → OUTSIDE aunque haya presencia', posExitMax === 'OUTSIDE');
 
 const posInsideStable = resolveDashboardMonigote({
   stateName: 'OCUPADA', phase: 'outside', doorOpen: false, keyAccessActive: false,
@@ -482,11 +495,17 @@ const posExitVisualCancelled = resolveDashboardMonigote({
 });
 check('F118.2 presencia posterior al cierre cancela OUTSIDE → INSIDE', posExitVisualCancelled === 'INSIDE');
 
-const posInsideNoStay = resolveDashboardMonigote({
+const posFreeNoContext = resolveDashboardMonigote({
   stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
   presenceState: 'PRESENT', lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 presencia dentro sin estancia → INSIDE', posInsideNoStay === 'INSIDE');
+check('F118 FREE sin estancia/ficha con presencia → OUTSIDE', posFreeNoContext === 'OUTSIDE');
+
+const posFreeWithContext = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, presenceState: 'PRESENT', lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118 FREE con contexto de entrada y presencia → INSIDE', posFreeWithContext === 'INSIDE');
 
 const posFichaWait = resolveDashboardMonigote({
   stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: true,
@@ -505,6 +524,36 @@ const posFichaQrAvailable = resolveDashboardMonigote({
   presenceState: 'PRESENT', lastOpenAt: 0, lastPresenceAt: t(-1000), now: BASE,
 });
 check('F118 ficha con QR disponible → AT_QR', posFichaQrAvailable === 'AT_QR');
+
+// F118.3: episodio persistente de ficha (mismo comportamiento que estancia).
+const posKeyPending = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, hasKeyEpisode: true, keyEpisodePhase: 'pending',
+  presenceState: 'ABSENT', now: BASE,
+});
+check('F118.3 ficha pendiente sin puerta → AT_QR', posKeyPending === 'AT_QR');
+
+const posKeyInside = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'outside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, hasKeyEpisode: true, keyEpisodePhase: 'inside',
+  presenceState: 'ABSENT', lastCloseAt: t(-60000), now: BASE,
+});
+check('F118.3 ficha dentro sin límite temporal → INSIDE', posKeyInside === 'INSIDE');
+
+const posKeyExitOpen = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: true, keyAccessActive: false,
+  hasEntryContext: true, hasKeyEpisode: true, keyEpisodePhase: 'exit',
+  presenceState: 'PRESENT', lastOpenAt: t(-500), lastPresenceAt: t(-100), now: BASE,
+});
+check('F118.3 ficha saliendo con puerta abierta → WAITING', posKeyExitOpen === 'WAITING');
+
+const posKeyExitMax = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, hasKeyEpisode: true, keyEpisodePhase: 'exit',
+  presenceState: 'PRESENT', lastOpenAt: t(-20000), lastCloseAt: t(-16000),
+  lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118.3 ficha salida máximo 15 s → OUTSIDE', posKeyExitMax === 'OUTSIDE');
 
 const posNearClosed = resolveDashboardMonigote({
   stateName: 'VERIFICANDO_ENTRADA', phase: 'near', doorOpen: false, keyAccessActive: false,

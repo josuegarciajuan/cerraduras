@@ -790,6 +790,8 @@ let _idleAnimTick = 0;                  // counter for idle sine wave
 let _qrFlashTimer = null;               // timer for QR flash cleanup
 let _previousRenderState = null;        // for latch click transition detection
 let _currentStateMonigotePos = 'OUTSIDE'; // current monigote position name
+// F118.3: episodio persistente de ficha/NFC sin estancia (idle|pending|inside|exit).
+let _keyEpisode = { at: '', phase: 'idle' };
 let _lastTimelineFingerprint = '';     // F33x: skip innerHTML rebuild when events unchanged
 
 // SSE (Server-Sent Events) for real-time updates — replaces main polling loop
@@ -1268,6 +1270,134 @@ function buildMonigoteSnapshot(data, nowMs) {
   };
 }
 
+// ╔══════════════════════════════════════════════════════════╗
+// ║   F118.3: EPISODIO DE FICHA/NFC (sin estancia)          ║
+// ╚══════════════════════════════════════════════════════════╝
+
+function keyEpisodeStorageKey(roomId) {
+  return 'cerraduras.keyEpisode.' + roomId;
+}
+
+function readStoredKeyEpisode(roomId) {
+  try {
+    const raw = localStorage.getItem(keyEpisodeStorageKey(roomId));
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
+function saveKeyEpisodeState() {
+  try {
+    localStorage.setItem(keyEpisodeStorageKey(currentRoomId), JSON.stringify({
+      at: _keyEpisode.at,
+      phase: _keyEpisode.phase
+    }));
+  } catch (_) { /* almacenamiento no disponible */ }
+}
+
+function clearKeyEpisodeState(persistCleared) {
+  const at = _keyEpisode.at || '';
+  _keyEpisode = { at: at, phase: 'idle' };
+  if (persistCleared) {
+    try {
+      localStorage.setItem(keyEpisodeStorageKey(currentRoomId), JSON.stringify({
+        at: at,
+        phase: 'cleared'
+      }));
+    } catch (_) { /* almacenamiento no disponible */ }
+  }
+}
+
+/**
+ * F118.3: mantiene el episodio de ficha sin caducidad temporal. Se siembra del
+ * backend (`key_episode.at`) y avanza con los eventos de puerta/presencia:
+ * pending -> inside -> exit -> idle. Se cierra por ausencia o por el máximo de
+ * salida (15 s), igual que una estancia.
+ */
+function updateKeyEpisode(data, now) {
+  const payload = data || {};
+  const io = payload.iot_session || {};
+  const stay = payload.active_stay;
+  const keyEp = payload.key_episode || {};
+  const keyAt = keyEp.at || '';
+  const nowMs = (typeof now === 'number' && isFinite(now)) ? now : Date.now();
+  const parse = (v) => (typeof Choreography !== 'undefined' && Choreography.parseTime)
+    ? Choreography.parseTime(v)
+    : (v ? Date.parse(String(v) + 'Z') : 0);
+
+  // Una estancia de huésped activa manda: se limpia cualquier ficha anterior.
+  if (stay && (stay.status === 'RESERVED' || stay.status === 'OCCUPIED' || stay.status === 'OVERSTAY')) {
+    if (_keyEpisode.phase !== 'idle') clearKeyEpisodeState(true);
+    return;
+  }
+
+  if (!keyAt) {
+    if (_keyEpisode.phase !== 'idle') clearKeyEpisodeState(false);
+    return;
+  }
+
+  if (_keyEpisode.at !== keyAt) {
+    const stored = readStoredKeyEpisode(currentRoomId);
+    if (stored && stored.at === keyAt) {
+      _keyEpisode = { at: keyAt, phase: (stored.phase === 'cleared' ? 'idle' : (stored.phase || 'pending')) };
+      if (_keyEpisode.phase === 'idle') return;
+    } else {
+      _keyEpisode = { at: keyAt, phase: 'pending' };
+    }
+  }
+  if (_keyEpisode.phase === 'idle') return;
+
+  const doorOpen = (io.door_state === 'OPEN');
+  const presenceInside = (io.presence_state === 'PRESENT');
+  const lastOpenAt = parse(io.last_open_at);
+  const lastCloseAt = parse(io.last_close_at);
+  const lastPresenceAt = parse(io.last_presence_event_at);
+  const keyAtMs = parse(keyAt);
+  const presenceAfterOpen = lastOpenAt > 0 && lastPresenceAt > lastOpenAt;
+  const presenceAfterClose = lastCloseAt > 0 && lastPresenceAt > lastCloseAt;
+
+  if (_keyEpisode.phase === 'pending') {
+    if (doorOpen) {
+      if (presenceAfterOpen) { _keyEpisode.phase = 'inside'; saveKeyEpisodeState(); }
+      return;
+    }
+    if (lastCloseAt > keyAtMs && lastCloseAt > lastOpenAt && !presenceInside && !presenceAfterClose) {
+      clearKeyEpisodeState(true);
+      return;
+    }
+    if (presenceInside || presenceAfterOpen) {
+      _keyEpisode.phase = 'inside';
+      saveKeyEpisodeState();
+      return;
+    }
+    if (nowMs - keyAtMs > KEY_ACCESS_WINDOW_MS) {
+      clearKeyEpisodeState(true);
+    }
+    return;
+  }
+
+  if (_keyEpisode.phase === 'inside') {
+    if (doorOpen) {
+      _keyEpisode.phase = 'exit';
+      saveKeyEpisodeState();
+    }
+    return;
+  }
+
+  if (_keyEpisode.phase === 'exit') {
+    if (doorOpen) {
+      if (presenceAfterOpen) { _keyEpisode.phase = 'inside'; saveKeyEpisodeState(); }
+      return;
+    }
+    if (lastCloseAt > lastOpenAt) {
+      const maxExit = lastCloseAt > 0 && (nowMs - lastCloseAt) >= EXIT_MAX_VISUAL_MS;
+      const absence = io.presence_state === 'ABSENT';
+      if (absence || maxExit || (!presenceAfterClose && (nowMs - lastCloseAt) >= EXIT_VISUAL_HOLD_MS)) {
+        clearKeyEpisodeState(true);
+      }
+    }
+  }
+}
+
 /**
  * F118: overlays de la cara atados a la POSICIÓN física, no solo al badge.
  * 😊/✓ solo cuando el monigote está INSIDE; 👍 en QR_OK; ? en umbral/verificación.
@@ -1325,6 +1455,9 @@ function updateMonigoteFromSensors(data) {
   const now = Date.now();
   const io = payload.iot_session || {};
   const stay = payload.active_stay;
+  updateKeyEpisode(payload, now);
+  const hasActiveStay = !!(stay && (stay.status === 'RESERVED' || stay.status === 'OCCUPIED' || stay.status === 'OVERSTAY'));
+  const hasKeyEpisode = _keyEpisode.phase !== 'idle';
   const snapshot = buildMonigoteSnapshot(payload, now);
   const d = C.deriveCroquis(snapshot, now);
   const key = C.recentKeyAccess(payload.recent_events || [], now);
@@ -1338,6 +1471,9 @@ function updateMonigoteFromSensors(data) {
     doorOpen: d.doorOpen,
     keyAccessActive: key.active,
     entryConfirmed: entryConfirmed,
+    hasEntryContext: hasActiveStay || hasKeyEpisode,
+    hasKeyEpisode: hasKeyEpisode,
+    keyEpisodePhase: _keyEpisode.phase,
     presenceState: io.presence_state || 'UNKNOWN',
     lastOpenAt: io.last_open_at || null,
     lastCloseAt: io.last_close_at || null,
@@ -1975,6 +2111,7 @@ async function resetRoom() {
     const data = await res.json();
     if (res.ok && data.ok) {
       qrTestData = null;
+      clearKeyEpisodeState(true);
       updateQrTestPanelNew();
       showQrToast(true, 'Habitación reseteada');
       lastEventIds.clear();
@@ -2089,6 +2226,8 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
 function onRoomSelect() {
   const sel = document.getElementById('room-selector');
   currentRoomId = parseInt(sel.value);
+  // F118.3: al cambiar de sala se reevalúa el episodio de ficha desde storage.
+  _keyEpisode = { at: '', phase: 'idle' };
   // Reset sensor grace flag for the new room
   _sensorsEverSeen = false;
   if (_graceTimer) { clearTimeout(_graceTimer); _graceTimer = null; }
@@ -2981,6 +3120,7 @@ async function createTestQr() {
         revoked: false,
         expired: false
       };
+      clearKeyEpisodeState(true);
       updateQrTestPanelNew();
       showQrToast(true, 'QR de pruebas creado (ciclo limpio)');
     } else {
@@ -3018,6 +3158,7 @@ async function resetTestQr() {
         revoked: false,
         expired: false
       };
+      clearKeyEpisodeState(true);
       updateQrTestPanelNew();
       showQrToast(true, 'QR reseteado y nuevo QR creado');
     } else {
