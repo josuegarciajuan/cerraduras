@@ -22,6 +22,8 @@ Re-aplica el perfil de calibración guardado del radar de una sala.
 
 Opciones:
   --room=<id>        Sala del radar (entero > 0). Por defecto, la primera ALMACEN_BEBIDAS.
+  --profile-file=<f> Perfil JSON a aplicar (p. ej. snapshot del runner). Si no se
+                     indica, usa devices.meta_json.calibration o calibration_previous.
   --fading=<seg>     Override explícito de fading_time (0.5..1500 segundos).
   --dry-run          Muestra el perfil y los comandos sin publicar por MQTT.
   -h, --help         Muestra esta ayuda y no toca la base de datos ni MQTT.
@@ -34,7 +36,10 @@ TXT;
 $roomId = 0;
 $dryRun = false;
 $fadingOpt = null;
-foreach (array_slice($argv ?? [], 1) as $arg) {
+$profileFile = null;
+$args = array_slice($argv ?? [], 1);
+for ($i = 0; $i < count($args); $i++) {
+    $arg = $args[$i];
     if ($arg === '--help' || $arg === '-h') {
         echo radarApplyUsage();
         exit(0);
@@ -43,9 +48,33 @@ foreach (array_slice($argv ?? [], 1) as $arg) {
         $dryRun = true;
         continue;
     }
-    if ($arg === '--room' || $arg === '--fading') {
-        fwrite(STDERR, "Falta valor para {$arg}\n\n" . radarApplyUsage());
-        exit(2);
+    if ($arg === '--room' || $arg === '--fading' || $arg === '--profile-file') {
+        if (!isset($args[$i + 1])) {
+            fwrite(STDERR, "Falta valor para {$arg}\n\n" . radarApplyUsage());
+            exit(2);
+        }
+        $value = $args[++$i];
+        if ($arg === '--room') {
+            if (!preg_match('/^\d+$/', $value) || (int) $value <= 0) {
+                fwrite(STDERR, "Valor inválido para --room: '{$value}' (entero > 0)\n\n" . radarApplyUsage());
+                exit(2);
+            }
+            $roomId = (int) $value;
+        } elseif ($arg === '--fading') {
+            if (!is_numeric($value)) {
+                fwrite(STDERR, "Valor inválido para --fading: '{$value}' (numérico 0.5..1500)\n\n" . radarApplyUsage());
+                exit(2);
+            }
+            $fading = (float) $value;
+            if ($fading < 0.5 || $fading > 1500.0) {
+                fwrite(STDERR, "Valor fuera de rango para --fading: '{$value}' (0.5..1500)\n\n" . radarApplyUsage());
+                exit(2);
+            }
+            $fadingOpt = $fading;
+        } else {
+            $profileFile = $value;
+        }
+        continue;
     }
     if (str_starts_with($arg, '--room=')) {
         $value = substr($arg, strlen('--room='));
@@ -54,6 +83,14 @@ foreach (array_slice($argv ?? [], 1) as $arg) {
             exit(2);
         }
         $roomId = (int) $value;
+        continue;
+    }
+    if (str_starts_with($arg, '--profile-file=')) {
+        $profileFile = substr($arg, strlen('--profile-file='));
+        if ($profileFile === '') {
+            fwrite(STDERR, "Valor inválido para --profile-file: vacío\n\n" . radarApplyUsage());
+            exit(2);
+        }
         continue;
     }
     if (str_starts_with($arg, '--fading=')) {
@@ -106,11 +143,25 @@ if ($device === null) {
 $meta = is_array($device->meta) ? $device->meta : [];
 $profile = null;
 $source = null;
-foreach (['calibration', 'calibration_previous'] as $key) {
-    if (is_array($meta[$key] ?? null)) {
-        $profile = $meta[$key];
-        $source = $key;
-        break;
+if ($profileFile !== null) {
+    if (!is_file($profileFile) || !is_readable($profileFile)) {
+        fwrite(STDERR, "No se puede leer --profile-file: {$profileFile}\n");
+        exit(1);
+    }
+    $decoded = json_decode((string) file_get_contents($profileFile), true);
+    if (!is_array($decoded)) {
+        fwrite(STDERR, "JSON inválido en --profile-file: {$profileFile}\n");
+        exit(1);
+    }
+    $profile = is_array($decoded['profile'] ?? null) ? $decoded['profile'] : $decoded;
+    $source = 'profile_file';
+} else {
+    foreach (['calibration', 'calibration_previous'] as $key) {
+        if (is_array($meta[$key] ?? null)) {
+            $profile = $meta[$key];
+            $source = $key;
+            break;
+        }
     }
 }
 if ($profile === null) {

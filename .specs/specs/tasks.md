@@ -11727,3 +11727,13 @@ pendientes.
 - [ ] TSK-F118-10: prueba física QR de huésped + ficha NFC en STANDARD.
 
 **Estado F118:** implementación de código completada; prueba física pendiente.
+
+## F118.1 — Corrección del salto prematuro y calibración
+- [x] TSK-F118-11: holds de cruce/ausencia y prioridad de estados QR.
+- [x] TSK-F118-12: overlays atados a la posición (😊/✓ solo INSIDE).
+- [x] TSK-F118-13: Zigbee standard respeta F48 en `SensorEventDecision` y `IotSessionService`.
+- [x] TSK-F118-14: `radar-apply-profile.php --profile-file`.
+- [x] TSK-F118-15: snapshot/restore del perfil radar en `run-tests.sh` + trap.
+- [x] TSK-F118-16: `RadarProfileRestoreTest` y tests de resolución.
+- [ ] TSK-F118-17: restaurar el perfil de 3 m en PROTO2 y prueba física.
+- [ ] TSK-F118-18: regresión completa sin perder la calibración.

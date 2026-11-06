@@ -237,7 +237,8 @@ final class IotSessionService
                 $warehousePresence = false;
                 // F88 (RF-123.3): evidencia física para corroborar el radar en el almacén.
                 $physicalEvidence = true;
-                if ($provider === PresenceEvent::PROVIDER_TUYA
+                if (($provider === PresenceEvent::PROVIDER_TUYA
+                        || $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT)
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                     && $value === PresenceEvent::VALUE_PRESENT
                 ) {

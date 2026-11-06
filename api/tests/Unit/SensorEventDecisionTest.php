@@ -279,6 +279,41 @@ $decision = SensorEventDecision::decide(
 if ($decision === SensorEventDecision::APPLY) pass('F48: none (ABSENT) sin contexto → apply (limpia estado)');
 else fail('F48: ABSENT debería aplicar sin contexto, got ' . $decision);
 
+// F118: Zigbee también respeta el contexto F48 en habitaciones standard.
+function zigbeePresenceEvent(string $occurredAt, string $value, string $raw = 'presence'): array
+{
+    return [
+        'room_id'        => 12,
+        'sensor'         => PresenceEvent::SENSOR_PRESENCE,
+        'value'          => $value,
+        'provider'       => PresenceEvent::PROVIDER_ZIGBEE2MQTT,
+        'occurred_at'    => $occurredAt,
+        'source_event_id'=> null,
+        'meta'           => ['source' => 'zigbee2mqtt', 'tuya_raw_val' => $raw],
+    ];
+}
+
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    zigbeePresenceEvent('2026-04-28T10:00:05Z', 'PRESENT'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::NO_CONTEXT) pass('F118: Zigbee PRESENT sin ventana → no_context');
+else fail('F118: Zigbee PRESENT sin contexto debería ser no_context, got ' . $decision);
+
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
+$decision = SensorEventDecision::decide(
+    zigbeePresenceEvent('2026-04-28T10:00:05Z', 'PRESENT'), $session, false, true, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F118: Zigbee PRESENT con ventana → apply');
+else fail('F118: Zigbee PRESENT con ventana debería aplicar, got ' . $decision);
+
+$session = sessionWithPresence('2026-04-28 10:00:00.000', 'PRESENT');
+$decision = SensorEventDecision::decide(
+    zigbeePresenceEvent('2026-04-28T10:00:05Z', 'ABSENT', 'none'), $session, false, false, false
+);
+if ($decision === SensorEventDecision::APPLY) pass('F118: Zigbee ABSENT sin contexto → apply');
+else fail('F118: Zigbee ABSENT debería aplicar sin contexto, got ' . $decision);
+
 // Regresión: el camino clásico (defaults true) no cambia.
 $session = sessionWithPresence('2026-04-28 10:00:00.000', 'ABSENT');
 $decision = SensorEventDecision::decide(

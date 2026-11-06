@@ -1269,8 +1269,50 @@ function buildMonigoteSnapshot(data, nowMs) {
 }
 
 /**
+ * F118: overlays de la cara atados a la POSICIÓN física, no solo al badge.
+ * 😊/✓ solo cuando el monigote está INSIDE; 👍 en QR_OK; ? en umbral/verificación.
+ */
+function applyMonigoteOverlay(posKey) {
+  const face = document.getElementById('moni-face');
+  const check = document.getElementById('moni-check');
+  const question = document.getElementById('moni-question');
+  const thumbs = document.getElementById('moni-thumbsup');
+  const head = document.getElementById('moni-head');
+  if (!face || !check || !question || !thumbs || !head) return;
+
+  // La limpieza muestra su posición INSIDE semántica, pero no la cara de huésped.
+  const isInside = posKey === 'INSIDE' && currentState !== 'LIMPIEZA';
+  const isQrOk = !isInside && currentState === 'QR_OK';
+  const isVerifying = !isInside && !isQrOk && (
+    currentState === 'VERIFICANDO_PRESENCIA' ||
+    currentState === 'VERIFICANDO_ENTRADA' ||
+    currentState === 'HUESPED_EN_PUERTA' ||
+    currentState === 'PUERTA_ABIERTA'
+  );
+
+  face.style.display = isInside ? '' : 'none';
+  check.style.display = isInside ? '' : 'none';
+  thumbs.style.display = isQrOk ? '' : 'none';
+  question.style.display = (!isInside && !isQrOk && isVerifying) ? '' : 'none';
+
+  if (isInside) {
+    head.setAttribute('fill', '#ffd740');
+    head.setAttribute('stroke', 'rgba(255,215,64,0.7)');
+  } else if (isQrOk) {
+    head.setAttribute('fill', '#00e676');
+    head.setAttribute('stroke', 'rgba(0,230,118,0.7)');
+  } else if (isVerifying) {
+    head.setAttribute('fill', 'rgba(255,215,64,0.6)');
+    head.setAttribute('stroke', 'rgba(255,215,64,0.4)');
+  } else {
+    head.setAttribute('fill', 'rgba(255,255,255,0.9)');
+    head.setAttribute('stroke', 'rgba(255,255,255,0.5)');
+  }
+}
+
+/**
  * F118: recoloca el monigote en cada tick de datos (SSE o polling), aunque el
- * estado de acceso no cambie. `applyState()` sigue gestionando badge/overlays.
+ * estado de acceso no cambie. `applyState()` sigue gestionando badge/estilos.
  */
 function updateMonigoteFromSensors(data) {
   if (_lastHasPack !== true) return; // sin pack se conserva el dibujo especial
@@ -1281,14 +1323,26 @@ function updateMonigoteFromSensors(data) {
   if (!payload || !Object.keys(payload).length) return;
 
   const now = Date.now();
+  const io = payload.iot_session || {};
+  const stay = payload.active_stay;
   const snapshot = buildMonigoteSnapshot(payload, now);
   const d = C.deriveCroquis(snapshot, now);
   const key = C.recentKeyAccess(payload.recent_events || [], now);
+  const entryConfirmed = !!(
+    (stay && stay.entry_confirmed_at) ||
+    (_choreoEpisodes && _choreoEpisodes.entryConsolidatedAt > 0)
+  );
   const resolved = C.resolveDashboardMonigote({
     stateName: currentState,
     phase: d.phase,
     doorOpen: d.doorOpen,
-    keyAccessActive: key.active
+    keyAccessActive: key.active,
+    entryConfirmed: entryConfirmed,
+    presenceState: io.presence_state || 'UNKNOWN',
+    lastOpenAt: io.last_open_at || null,
+    lastPresenceAt: io.last_presence_event_at || null,
+    lastAbsentSince: io.last_absent_since || null,
+    now: now
   });
 
   const stateDef = STATES[currentState] || STATES.ESPERANDO;
@@ -1298,6 +1352,7 @@ function updateMonigoteFromSensors(data) {
   _currentStateMonigotePos = posKey;
   const moni = document.getElementById('monigote-group');
   if (moni) moni.style.transform = `translate(${pos.tx}px,${pos.ty}px)`;
+  applyMonigoteOverlay(posKey);
 
   // La animación idle debe seguir a la posición física, no solo a OCUPADA.
   if (posKey === 'INSIDE') startIdleAnimation();

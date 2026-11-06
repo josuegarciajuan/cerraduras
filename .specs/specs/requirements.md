@@ -13603,3 +13603,18 @@ pendientes.
   local, el push de sensores y el SSE.
 
 **Estado F118:** implementado; pendiente prueba física con QR y ficha.
+
+### RF-298 — La regresión no debe borrar la calibración del radar
+- **RF-298.1**: antes de los bloques del asistente de sensores, `run-tests.sh`
+  guarda el perfil del radar (`devices.meta_json.calibration` o
+  `calibration_previous`) en un fichero temporal.
+- **RF-298.2**: al terminar (incluido un fallo o interrupción), el runner
+  reaplica ese perfil por MQTT y persiste la calibración; nunca deja el radar
+  en la base F110 de 6 m como efecto colateral.
+- **RF-298.3**: el runner verifica al final que `maximum_range` coincide con el
+  perfil guardado. El comando manual `radar-apply-profile.php --room=<id>`
+  sigue disponible para restaurar una calibración archivada.
+- **RF-298.4**: `radar-apply-profile.php` acepta `--profile-file` para aplicar
+  un snapshot sin depender del meta actual.
+
+**Estado F118.1:** implementado; pendiente prueba física con el perfil de 3 m.

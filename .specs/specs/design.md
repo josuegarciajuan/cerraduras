@@ -26370,3 +26370,49 @@ campos previos.
 - BLOCK 33 del runner: estáticos de `dashboard.html`/`croquis-logic.js`.
 - Prueba manual: QR de huésped y ficha NFC en una sala STANDARD; el monigote
   debe pasar a `INSIDE` al llegar `PRESENT`, no al cerrar la puerta.
+
+## 118.7 F118.1 — Corrección del salto prematuro y protección de la calibración
+
+### Diagnóstico
+
+En la prueba del 2026-11-06 14:12 el radar estaba en la base F110
+(`maximum_range=6`, `fading_time=15.5`) porque el runner de regresión arrancó
+corridas del asistente de sensores a las 12:53; `resetRadarToBaseline()` archivó
+la calibración de 3 m en `calibration_previous` y no la restauró. El radar
+detectó a 4,62 m antes de entrar y el resolver del monigote, que daba prioridad
+a `phase=inside`, lo llevó al centro en `QR_OK`. La cara que se veía era el 👍
+de `QR_OK`; al pasar a `HUESPED_EN_PUERTA` desapareció.
+
+### Reglas nuevas del monigote
+
+- `QR_DISPONIBLE`, `QR_OK`, `QR_ESPERANDO`, `QR_RECHAZADO`, `ESPERANDO_HUESPED`,
+  `LIMPIEZA` y `SENSORES_DESCONECTADOS` conservan la posición de su estado; la
+  presencia previa no los sobreescribe.
+- `HUESPED_EN_PUERTA`: umbral (`CROSSING`) durante `CROSSING_HOLD_MS` (1,8 s)
+  desde `last_open_at`; después `INSIDE` solo si `phase=inside` y hay un reporte
+  de presencia posterior a la apertura (`last_presence_event_at >= last_open_at`).
+  Con la puerta abierta nunca salta a `OUTSIDE` durante la entrada.
+- `PUERTA_ABIERTA`: umbral durante el hold; después `INSIDE` si vuelve dentro,
+  `OUTSIDE` solo con ausencia sostenida (`ABSENCE_HOLD_MS`, 3 s).
+- `OCUPADA` con puerta cerrada: `INSIDE` estable (un `ABSENT` puntual no saca al
+  huésped).
+- `VERIFICANDO_*`: `INSIDE`/`OUTSIDE` según presencia/ausencia sostenida.
+- Ficha/NFC sin estancia: `AT_QR` al escanear, `CROSSING` al abrir y `INSIDE`
+  con presencia posterior a la apertura. La ficha no crea estancia.
+- Overlays: 😊/✓ solo con posición `INSIDE`; 👍 en `QR_OK`; `?` en umbral.
+
+### Zigbee y contexto F48
+
+`SensorEventDecision` e `IotSessionService` aplican la credibilidad F48 también
+a `ZIGBEE2MQTT` en habitaciones standard. Almacén y TIMBRADO conservan su rama
+específica. Un `PRESENT` sin ventana de entrada ni estancia confirmada se
+audita como `no_context`; `ABSENT` sigue aplicándose siempre.
+
+### Protección de la calibración
+
+- `run-tests.sh` guarda el perfil antes de F94/F95/F102/F104/F108 y lo restaura
+  al final; el trap `_cleanup_all` lo restaura también ante interrupción.
+- La restauración usa `radar-apply-profile.php --room=<id> --profile-file=<f>`,
+  que publica por MQTT y persiste `calibration`.
+- El runner verifica que `maximum_range` coincide con el perfil guardado.
+- `RadarProfileRestoreTest` comprueba estáticamente esta protección.

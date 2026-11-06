@@ -683,5 +683,50 @@ if (is_array($f81Last2) && $f81Last2['event'] === 'DOOR_CLOSE') {
 
 Clock::unfreeze();
 
+// ============================================================================
+// F118 (RF-297): Zigbee standard también respeta el contexto F48
+// ============================================================================
+echo "\nF118 · Zigbee standard: presencia con contexto F48\n";
+
+function makeZigbeePresence(int $roomId, string $value, string $occurredAt, string $srcId): array {
+    return ['room_id'=>$roomId,'sensor'=>PresenceEvent::SENSOR_PRESENCE,'value'=>$value,
+            'provider'=>PresenceEvent::PROVIDER_ZIGBEE2MQTT,'occurred_at'=>$occurredAt,
+            'source_event_id'=>$srcId,'meta'=>['source'=>'zigbee2mqtt']];
+}
+
+$roomRepo->byId[5] = new Room(5, '105', 1, null, Room::STATUS_OCCUPIED, true, null);
+Clock::freeze(new DateTimeImmutable('2026-04-28T17:00:00Z', new DateTimeZone('UTC')));
+
+// Sin ventana de entrada ni estancia confirmada → no_context.
+$svc->processEvent(
+    makeZigbeePresence(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T17:00:00Z', 'f118-zb-1'),
+    'corr-f118-zb-1'
+);
+$zbSess = $iotRepo->sessions[5] ?? null;
+if ($zbSess !== null && $zbSess->presenceState !== IotSession::PRESENCE_PRESENT) {
+    ok('F118: Zigbee PRESENT pre-entrada → no aplica (no_context)');
+} else {
+    bad('F118: Zigbee PRESENT pre-entrada no debería aplicar', 'got ' . ($zbSess->presenceState ?? 'null'));
+}
+
+// Con apertura reciente (ventana de entrada) → aplica.
+$svc->processEvent(
+    makeEvent(5, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T17:00:05Z', 'f118-zb-open'),
+    'corr-f118-zb-open'
+);
+Clock::freeze(new DateTimeImmutable('2026-04-28T17:00:06Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeePresence(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T17:00:06Z', 'f118-zb-2'),
+    'corr-f118-zb-2'
+);
+$zbSess = $iotRepo->sessions[5] ?? null;
+if ($zbSess !== null && $zbSess->presenceState === IotSession::PRESENCE_PRESENT) {
+    ok('F118: Zigbee PRESENT con ventana de entrada → aplica');
+} else {
+    bad('F118: Zigbee PRESENT con ventana debería aplicar', 'got ' . ($zbSess->presenceState ?? 'null'));
+}
+
+Clock::unfreeze();
+
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";
 exit($FAIL === 0 ? 0 : 1);

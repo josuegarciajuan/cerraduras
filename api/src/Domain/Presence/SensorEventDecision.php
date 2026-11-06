@@ -146,11 +146,14 @@ final class SensorEventDecision
             return self::NOOP;
         }
 
-        // 4) F48 (RF-57): credibilidad por contexto. Solo aplica a eventos REALES
-        // del sensor (provider TUYA); las inyecciones simuladas (/sim/*) se
-        // respetan tal cual (herramienta de desarrollo/tests). Solo afecta a
+        // 4) F48 (RF-57): credibilidad por contexto. Aplica a eventos REALES
+        // del sensor (TUYA y ZIGBEE2MQTT); las inyecciones simuladas (/sim/*)
+        // se respetan tal cual (herramienta de desarrollo/tests). Solo afecta a
         // PRESENT de presencia; ABSENT (`none`) siempre se aplica para limpiar.
-        if ($provider === PresenceEvent::PROVIDER_TUYA
+        // F118: Zigbee también respeta el contexto en habitaciones standard;
+        // almacén/TIMBRADO conservan su rama específica.
+        if (($provider === PresenceEvent::PROVIDER_TUYA
+                || $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT)
             && $sensor === PresenceEvent::SENSOR_PRESENCE
             && $value === PresenceEvent::VALUE_PRESENT
         ) {

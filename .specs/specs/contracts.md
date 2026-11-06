@@ -16520,3 +16520,10 @@ No hay migración: se usan `device_commands.payload_json`, `devices.meta_json`,
 Son campos aditivos: no cambian la forma ni el significado de los existentes.
 No hay rutas nuevas ni migración. El fingerprint del SSE incluye `door_stale` y
 `presence_stale`.
+
+## 118.2 Sin cambios de contrato por F118.1
+
+La corrección del monigote y la protección de la calibración no añaden rutas ni
+campos nuevos. `radar-apply-profile.php` gana la opción CLI `--profile-file`
+(herramienta operativa, no contrato HTTP). Los campos `door_stale`/
+`presence_stale` de §118.1 se mantienen.
