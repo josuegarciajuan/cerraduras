@@ -117,19 +117,20 @@ $stmt = $pdo->prepare('SELECT id, code, name FROM device_packs WHERE code = :c L
 $stmt->execute([':c' => PACK_CODE]);
 $pack = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
-// F117: el pack Zigbee ya vive en la sala TIMBRADO `oficina`. Este script
-// histórico del almacén no debe moverlo de vuelta ni reescribir la sala.
+// El pack Zigbee puede haberse movido a otra sala (p. ej. PROTO2 o TIMBRADO).
+// Este script histórico no debe moverlo: el dry-run informa y sale 0; --apply
+// falla para que el movimiento sea siempre una decisión explícita.
 if ($pack !== null) {
-    $assigned = $pdo->prepare(
-        'SELECT r.code, rt.code AS type_code
-           FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
-          WHERE r.pack_id = :pid LIMIT 1'
-    );
+    $assigned = $pdo->prepare('SELECT id, code FROM rooms WHERE pack_id = :pid LIMIT 1');
     $assigned->execute([':pid' => (int) $pack['id']]);
     $assignedRoom = $assigned->fetch(PDO::FETCH_ASSOC) ?: null;
-    if ($assignedRoom !== null && (string) $assignedRoom['type_code'] === 'TIMBRADO') {
-        $log('pack ' . PACK_CODE . ' ya provisionado en la sala ' . $assignedRoom['code'] . ' (TIMBRADO); dry-run: no se escribe nada');
-        exit(0);
+    if ($assignedRoom !== null && (string) $assignedRoom['code'] !== ROOM_CODE) {
+        $msg = 'pack ' . PACK_CODE . ' ya está asignado a la sala ' . $assignedRoom['code'];
+        if (!$apply) {
+            $log($msg . '; dry-run: no se escribe nada');
+            exit(0);
+        }
+        $fail($msg . '; no se mueve automáticamente');
     }
 }
 
