@@ -13,6 +13,67 @@ declare(strict_types=1);
  * push; no consulta Tuya ni crea pollers.
  */
 
+function radarApplyUsage(): string
+{
+    return <<<TXT
+Uso: php bin/radar-apply-profile.php [opciones]
+
+Re-aplica el perfil de calibración guardado del radar de una sala.
+
+Opciones:
+  --room=<id>        Sala del radar (entero > 0). Por defecto, la primera ALMACEN_BEBIDAS.
+  --fading=<seg>     Override explícito de fading_time (0.5..1500 segundos).
+  --dry-run          Muestra el perfil y los comandos sin publicar por MQTT.
+  -h, --help         Muestra esta ayuda y no toca la base de datos ni MQTT.
+
+TXT;
+}
+
+// El parsing ocurre ANTES de cargar Config/PDO: un argumento inválido no debe
+// abrir conexión ni publicar nada.
+$roomId = 0;
+$dryRun = false;
+$fadingOpt = null;
+foreach (array_slice($argv ?? [], 1) as $arg) {
+    if ($arg === '--help' || $arg === '-h') {
+        echo radarApplyUsage();
+        exit(0);
+    }
+    if ($arg === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+    if ($arg === '--room' || $arg === '--fading') {
+        fwrite(STDERR, "Falta valor para {$arg}\n\n" . radarApplyUsage());
+        exit(2);
+    }
+    if (str_starts_with($arg, '--room=')) {
+        $value = substr($arg, strlen('--room='));
+        if ($value === '' || !preg_match('/^\d+$/', $value) || (int) $value <= 0) {
+            fwrite(STDERR, "Valor inválido para --room: '{$value}' (entero > 0)\n\n" . radarApplyUsage());
+            exit(2);
+        }
+        $roomId = (int) $value;
+        continue;
+    }
+    if (str_starts_with($arg, '--fading=')) {
+        $value = substr($arg, strlen('--fading='));
+        if ($value === '' || !is_numeric($value)) {
+            fwrite(STDERR, "Valor inválido para --fading: '{$value}' (numérico 0.5..1500)\n\n" . radarApplyUsage());
+            exit(2);
+        }
+        $fading = (float) $value;
+        if ($fading < 0.5 || $fading > 1500.0) {
+            fwrite(STDERR, "Valor fuera de rango para --fading: '{$value}' (0.5..1500)\n\n" . radarApplyUsage());
+            exit(2);
+        }
+        $fadingOpt = $fading;
+        continue;
+    }
+    fwrite(STDERR, "Argumento desconocido: {$arg}\n\n" . radarApplyUsage());
+    exit(2);
+}
+
 require __DIR__ . '/../src/Support/Autoload.php';
 
 use App\Domain\Devices\Device;
@@ -20,10 +81,6 @@ use App\Domain\Devices\DeviceRepository;
 use App\Infrastructure\Db\PdoFactory;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use App\Support\Config;
-
-$opts = getopt('', ['room:', 'dry-run', 'fading:']);
-$roomId = isset($opts['room']) ? (int) $opts['room'] : 0;
-$dryRun = array_key_exists('dry-run', $opts);
 
 Config::load(dirname(__DIR__) . '/.env');
 $pdo = PdoFactory::make();
@@ -69,9 +126,8 @@ foreach (['maximum_range', 'minimum_range', 'radar_sensitivity', 'detection_dela
 }
 // Por defecto se respeta el fading_time del perfil guardado. `--fading=`
 // permite un override explícito para el A/B físico.
-$fadingOpt = isset($opts['fading']) ? (float) $opts['fading'] : null;
 if ($fadingOpt !== null) {
-    $commands['fading_time'] = max(0.5, min(1500.0, $fadingOpt));
+    $commands['fading_time'] = $fadingOpt;
 } elseif (!isset($commands['fading_time'])) {
     $fading = Config::get('RADAR_WAREHOUSE_FADING_TIME', '2.5') ?? '2.5';
     if (!is_numeric($fading)) {
