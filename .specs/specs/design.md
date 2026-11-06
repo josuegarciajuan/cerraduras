@@ -26221,6 +26221,15 @@ aplica al timbrado. `cameras-live.js` descubre salas `ALMACEN_BEBIDAS` y
 
 Units de reglas puras, JS de panel/listado/formulario, BLOCK 87 y resolución
 dinámica de la sala Zigbee por pack en el runner.
+
+## 116.7 Reescaneo y sesiones de trabajador (RF-303)
+
+En `TIMBRADO` no se crean ni se consultan `worker_sessions`: cada escaneo debe
+poder abrir la puerta y la auditoría vive en `key_access_events` +
+`timbre_movements`. El resto de salas conserva `already_inside`. La decisión es
+pura (`WorkerSessionPolicy`) y se aplica tanto a llaves de acceso (QR/NFC) como
+al lector legacy `sub=worker`. Regresión: unit `WorkerSessionPolicyTest` y
+BLOCK 87 (dos validaciones de ficha seguidas → `200/200`, cero sesiones).
 # F116 — Apertura remota real desde `/timbre`
 
 ## 116.1 Motivo

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Workers;
 
+use App\Domain\AccessKeys\WorkerSessionPolicy;
 use App\Domain\Locks\AccessEvent;
 use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
@@ -135,16 +136,20 @@ final class WorkerQrService
             );
         }
 
-        // 6. Check worker doesn't already have active session in this room
-        $activeSessions = $this->sessionRepo->findActiveForWorker($workerId);
-        foreach ($activeSessions as $as) {
-            if ($as->roomId === $roomId) {
-                throw new ApiException(
-                    409,
-                    'already_inside',
-                    'Worker already has an active session in this room',
-                    ['worker_id' => $workerId, 'room_id' => $roomId, 'worker_session_id' => $as->id]
-                );
+        // 6. Check worker doesn't already have active session in this room.
+        //    F117/RF-303: TIMBRADO no crea ni bloquea sesiones de trabajador.
+        $trackWorkerSession = WorkerSessionPolicy::tracksSessions($roomType?->code);
+        if ($trackWorkerSession) {
+            $activeSessions = $this->sessionRepo->findActiveForWorker($workerId);
+            foreach ($activeSessions as $as) {
+                if ($as->roomId === $roomId) {
+                    throw new ApiException(
+                        409,
+                        'already_inside',
+                        'Worker already has an active session in this room',
+                        ['worker_id' => $workerId, 'room_id' => $roomId, 'worker_session_id' => $as->id]
+                    );
+                }
             }
         }
 
@@ -153,11 +158,14 @@ final class WorkerQrService
         $openResult = $gateway->open($roomId);
         $gwProvider = $openResult['provider'] ?? $provider;
 
-        // 8. Create worker session
-        $now             = Clock::nowUtc();
-        $nowStr          = $now->format('Y-m-d H:i:s.v');
-        $session         = new WorkerSession(0, $workerId, $roomId, $nowStr, null, null, $correlationId, '', '');
-        $workerSessionId = $this->sessionRepo->insert($session);
+        // 8. Create worker session (never for TIMBRADO).
+        $workerSessionId = null;
+        if ($trackWorkerSession) {
+            $now             = Clock::nowUtc();
+            $nowStr          = $now->format('Y-m-d H:i:s.v');
+            $session         = new WorkerSession(0, $workerId, $roomId, $nowStr, null, null, $correlationId, '', '');
+            $workerSessionId = $this->sessionRepo->insert($session);
+        }
 
         // 9. Write QR_VALIDATE access event
         try {

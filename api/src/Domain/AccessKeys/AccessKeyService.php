@@ -670,8 +670,12 @@ final class AccessKeyService
             return $this->deny($key, $room->id, $deviceId, $credentialType, 'key_room_denied', $provider, $correlationId, 'Key has no permission for this room type');
         }
 
+        // F117/RF-303: TIMBRADO abre siempre y no persiste sesión de
+        // trabajador; el movimiento del timbrado es la auditoría.
+        $trackWorkerSession = WorkerSessionPolicy::tracksSessions($roomType?->code);
+
         $workerSessionId = null;
-        if ($key['owner_type'] === 'WORKER') {
+        if ($key['owner_type'] === 'WORKER' && $trackWorkerSession) {
             $workerId = (int) $key['worker_id'];
             foreach ($this->sessions->findActiveForWorker($workerId) as $session) {
                 if ($session->roomId === $room->id) {
@@ -688,7 +692,7 @@ final class AccessKeyService
         $openResult = $gateway->open($room->id);
         $gwProvider = $this->normaliseProvider((string) ($openResult['provider'] ?? $provider));
 
-        if ($key['owner_type'] === 'WORKER') {
+        if ($key['owner_type'] === 'WORKER' && $trackWorkerSession) {
             $nowStr = Clock::nowUtc()->format('Y-m-d H:i:s.v');
             $workerSessionId = $this->sessions->insert(new WorkerSession(
                 0,
