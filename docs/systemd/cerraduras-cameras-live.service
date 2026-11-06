@@ -21,6 +21,8 @@ Environment=CAMERAS_LIVE_IDLE_MS=5000
 ExecStart=/usr/bin/node bin/cameras-live.js
 Restart=always
 RestartSec=3
+# Acota la parada: los clientes MJPEG abiertos no cierran `server.close()`.
+TimeoutStopSec=20
 KillMode=control-group
 User=root
 StandardOutput=journal

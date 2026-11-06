@@ -12,7 +12,9 @@
 
 const path = require('path');
 
-const { parseScale, frameDiffPct, debounce, go2rtcUrl } = require(
+const http = require('http');
+
+const { parseScale, frameDiffPct, debounce, go2rtcUrl, postJson } = require(
   path.join(__dirname, '..', '..', 'bin', 'camera-motion-worker.js')
 );
 
@@ -66,6 +68,37 @@ check('debounce [1,1,1,0] min=2 win=3 → true', debounce([1, 1, 1, 0], 2, 3) ==
 check('go2rtcUrl construye el restream',
   go2rtcUrl('rtsp://127.0.0.1:8554/', 'almacen_12_INTERIOR') === 'rtsp://127.0.0.1:8554/almacen_12_INTERIOR');
 
-console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' camera-motion-worker: ' + passed + ' passed, ' + failed + ' failed\n');
-if (failed > 0) process.exit(1);
-process.exit(0);
+(async () => {
+  // Regresión: postJson debe resolver true al terminar la respuesta HTTP.
+  // Con `res.on('end', resolve(true))` el listener era `undefined` y el proceso
+  // reventaba antes de resolver.
+  let received = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      received = { method: req.method, url: req.url, body, type: req.headers['content-type'] };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  let ok = false;
+  let err = null;
+  try {
+    ok = await postJson('/almacen-api/motion', { device_id: 99 }, `http://127.0.0.1:${port}`);
+  } catch (e) {
+    err = e;
+  }
+  await new Promise((resolve) => server.close(resolve));
+  check('postJson resuelve true sin lanzar', ok === true && err === null);
+  check('postJson envía POST JSON al path indicado',
+    received !== null && received.method === 'POST' &&
+    received.url === '/almacen-api/motion' &&
+    received.type === 'application/json' &&
+    received.body === '{"device_id":99}');
+
+  console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' camera-motion-worker: ' + passed + ' passed, ' + failed + ' failed\n');
+  process.exit(failed > 0 ? 1 : 0);
+})();

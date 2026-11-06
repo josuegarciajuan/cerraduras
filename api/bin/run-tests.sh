@@ -78,8 +78,8 @@ done
 # Alias corto para queries con -sN (skip headers, numeric)
 MYSQL="$MYSQL_BIN -u$DB_USER -p$DB_PASS -h$DB_HOST -P$DB_PORT $DB_NAME"
 
-# F117: la sala Zigbee vive ahora en el pack PACK_ZIGBEE (TIMBRADO/oficina).
-# Se resuelve dinámicamente para no depender de ids fijos tras mover el pack.
+# El pack PACK_ZIGBEE se resuelve dinámicamente para los tests Zigbee. F117 no
+# depende de él: /timbre-api usa la primera sala TIMBRADO (preferir oficina).
 ZIGBEE_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
 [ -z "$ZIGBEE_ROOM_ID" ] && ZIGBEE_ROOM_ID=14
 WA_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' AND r.pack_id IS NOT NULL ORDER BY r.id LIMIT 1" 2>/dev/null)
@@ -8572,11 +8572,20 @@ done
 F117_TYPE_ID=$($MYSQL -sN -e "SELECT id FROM room_types WHERE code='TIMBRADO' LIMIT 1" 2>/dev/null)
 [ -n "$F117_TYPE_ID" ] && pass "F117: room_type TIMBRADO existe (id=$F117_TYPE_ID)" || fail "F117: room_type TIMBRADO" "no existe — ejecuta: php bin/migrate.php"
 
-F117_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
+# F117 usa una sala TIMBRADO real para /timbre-api. El pack Zigbee puede vivir en
+# otra sala (p. ej. ALMACEN_BEBIDAS) y solo se reporta como información.
+F117_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='TIMBRADO' ORDER BY (r.code='oficina') DESC, r.id ASC LIMIT 1" 2>/dev/null)
 if [ -n "$F117_ROOM" ]; then
-    pass "F117: PACK_ZIGBEE asignado a la sala $F117_ROOM"
+    pass "F117: sala TIMBRADO para /timbre-api (room=$F117_ROOM)"
 else
-    fail "F117: pack Zigbee" "sin sala asignada — ejecuta: php bin/setup-timbrado-oficina.php --apply"
+    fail "F117: sala TIMBRADO" "no existe — ejecuta: php bin/migrate.php"
+fi
+
+F117_PACK_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
+if [ -n "$F117_PACK_ROOM" ]; then
+    pass "F117: PACK_ZIGBEE en la sala $F117_PACK_ROOM (informativo; no exige TIMBRADO)"
+else
+    skip "F117: PACK_ZIGBEE" "sin sala asignada (informativo)"
 fi
 
 F117_TABLES=$($MYSQL -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('timbre_movements','timbre_state')" 2>/dev/null)

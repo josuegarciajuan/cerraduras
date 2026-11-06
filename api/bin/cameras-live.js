@@ -325,7 +325,13 @@ function start() {
 
   const shutdown = () => {
     for (const id of [...streams.keys()]) killStream(id);
+    // `server.close()` espera a que terminen las conexiones MJPEG abiertas; sin
+    // esto systemd agotaba su TimeoutStopSec (~90 s) y enviaba SIGKILL.
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections();
+    }
     server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
