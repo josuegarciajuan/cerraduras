@@ -26416,3 +26416,46 @@ audita como `no_context`; `ABSENT` sigue aplicándose siempre.
   que publica por MQTT y persiste `calibration`.
 - El runner verifica que `maximum_range` coincide con el perfil guardado.
 - `RadarProfileRestoreTest` comprueba estáticamente esta protección.
+
+## 118.8 F118.2 — Salida en tiempo real con radar que ve el pasillo
+
+En la prueba de 14:40–14:41 el radar mantuvo `PRESENT` hasta 14:41:27, 10,6 s
+después del cierre (14:41:16), porque seguía detectando un objetivo dentro de su
+alcance de 3 m. El backend esperaba `ABSENT` + guarda de 3 s y confirmaba la
+salida a las 14:41:30. El monigote, además, volvía a `INSIDE` al cerrar por usar
+presencia anterior al cierre.
+
+### Heurístico de salida
+
+`ExitRuleEvaluator::evaluate()` acepta `noPresenceAfterCloseSeconds`:
+
+- exige el ciclo acreditado de salida (ya existente);
+- si `presence_state = PRESENT` y **no hay ningún reporte de presencia posterior
+  al cierre** (`last_presence_event_at <= last_close_at`) durante
+  `EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS` (3 s), dispara la salida;
+- si `last_presence_event_at > last_close_at`, cancela y espera;
+- si `presence_state = ABSENT`, conserva la regla de ausencia sostenida con
+  guarda de 1 s.
+
+Se resuelve con `EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS` (default 3; 0 desactiva).
+`ExitActionService::executeIfPending()` y `shouldExit()` pasan el valor.
+
+### Monigote
+
+`resolveDashboardMonigote()` recibe `lastCloseAt` y calcula
+`presenceAfterClose = lastPresenceAt > lastCloseAt`. En `PUERTA_ABIERTA` cerrada
+y `VERIFICANDO_PRESENCIA`:
+
+1. ausencia sostenida → `OUTSIDE`;
+2. `phase=inside` y `presenceAfterClose` → `INSIDE`;
+3. sin presencia posterior al cierre y `now - lastCloseAt >= EXIT_VISUAL_HOLD_MS`
+   (3 s) → `OUTSIDE`;
+4. si no, `WAITING`.
+
+Así el monigote y el backend pasan a fuera a los 3 s del cierre en el caso del
+radar que sigue viendo el pasillo, y vuelven a dentro si llega un `PRESENT`
+posterior.
+
+### Guarda de salida
+
+`DEFAULT_GUARD_SECONDS` y `.env.example` pasan de 3 s a 1 s.

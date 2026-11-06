@@ -3637,9 +3637,12 @@ fi
 [ -f migrations/0113_exit_absence_guard.sql ] \
     && pass "F49: migración 0113_exit_absence_guard.sql presente" \
     || fail "F49: falta migración 0113_exit_absence_guard.sql" "revisa api/migrations/"
-grep -q '^EXIT_ABSENCE_GUARD_SECONDS=3' .env.example 2>/dev/null \
-    && pass "F49: .env.example documenta EXIT_ABSENCE_GUARD_SECONDS=3" \
-    || fail "F49: falta EXIT_ABSENCE_GUARD_SECONDS en .env.example" ""
+grep -q '^EXIT_ABSENCE_GUARD_SECONDS=1' .env.example 2>/dev/null \
+    && pass "F49: .env.example documenta EXIT_ABSENCE_GUARD_SECONDS=1" \
+    || fail "F49: falta EXIT_ABSENCE_GUARD_SECONDS=1 en .env.example" ""
+grep -q '^EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS=3' .env.example 2>/dev/null \
+    && pass "F118.2: .env.example documenta EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS=3" \
+    || fail "F118.2: falta EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS en .env.example" ""
 
 # =============================================================================
 # BLOCK 39 — F50: estado real del SWITCH por push y robustez del consumer

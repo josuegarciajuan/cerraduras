@@ -378,7 +378,7 @@ final class EventStreamController
             $gapSeconds   = $this->resolveGapSeconds($roomId, (int) ($roomRow['presence_check_seconds'] ?? 0));
 
             // Bug 1 (RF-47.2.4): guarda de SALIDA desacoplada de `gap_seconds`.
-            // Resolución: override de sala > global EXIT_ABSENCE_GUARD_SECONDS > 3.
+            // Resolución: override de sala > global EXIT_ABSENCE_GUARD_SECONDS > 1.
             $roomGuardOverride = isset($roomRow['presence_check_seconds'])
                 && $roomRow['presence_check_seconds'] !== null
                     ? (int) $roomRow['presence_check_seconds']

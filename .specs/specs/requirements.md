@@ -13618,3 +13618,21 @@ pendientes.
   un snapshot sin depender del meta actual.
 
 **Estado F118.1:** implementado; pendiente prueba física con el perfil de 3 m.
+
+### RF-299 — Salida en tiempo real con radar que sigue viendo el pasillo
+- **RF-299.1**: en un ciclo de salida acreditado (apertura posterior a la
+  entrada confirmada + cierre), si no llega ningún reporte de presencia
+  posterior al cierre en `EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS` (3 s), la
+  estancia se confirma como salida aunque `presence_state` siga en `PRESENT`.
+  Esto evita esperar a que el radar pierda un objetivo del pasillo dentro de su
+  alcance.
+- **RF-299.2**: un `PRESENT` posterior al cierre cancela el heurístico y
+  mantiene la estancia dentro (el huésped cerró desde dentro o volvió).
+- **RF-299.3**: el monigote aplica la misma regla (hold visual de 3 s), por lo
+  que pasa a `OUTSIDE` al mismo tiempo que el backend confirma la salida.
+- **RF-299.4**: la guarda de ausencia sostenida baja de 3 s a 1 s
+  (`EXIT_ABSENCE_GUARD_SECONDS`, default 1).
+- **RF-299.5**: `EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS=0` desactiva el
+  heurístico y vuelve al comportamiento solo-ABSENT.
+
+**Estado F118.2:** implementado; pendiente prueba física de salida.

@@ -55,6 +55,14 @@
   var ABSENCE_HOLD_MS = 3000;
 
   /**
+   * F118.2: en un ciclo de salida, si la puerta se cierra y el radar no emite
+   * ningún reporte de presencia POSTERIOR al cierre en este tiempo, el monigote
+   * pasa a OUTSIDE aunque el radar siga diciendo PRESENT (objetivo del pasillo
+   * dentro de su alcance). Si luego llega un PRESENT posterior, vuelve a INSIDE.
+   */
+  var EXIT_VISUAL_HOLD_MS = 3000;
+
+  /**
    * F118: estados cuyo monigote NO debe seguir a los sensores (se mantiene la
    * posición semántica del estado: QR junto al lector, limpieza, avería...).
    * La presencia dentro (`phase==='inside'`) NO los sobreescribe. Así un
@@ -342,7 +350,8 @@
    *
    * @param {object} input {stateName, phase, doorOpen, keyAccessActive,
    *                        entryConfirmed, presenceState,
-   *                        lastOpenAt, lastPresenceAt, lastAbsentSince, now,
+   *                        lastOpenAt, lastCloseAt, lastPresenceAt,
+   *                        lastAbsentSince, now,
    *                        crossingHoldMs, absenceHoldMs}
    * @returns {string} 'INSIDE'|'CROSSING'|'WAITING'|'AT_QR'|'OUTSIDE'|'state'
    */
@@ -361,6 +370,7 @@
       ? s.absenceHoldMs : ABSENCE_HOLD_MS;
 
     var lastOpenAt = parseTime(s.lastOpenAt);
+    var lastCloseAt = parseTime(s.lastCloseAt);
     var lastPresenceAt = parseTime(s.lastPresenceAt);
     var lastAbsentSince = parseTime(s.lastAbsentSince);
 
@@ -380,6 +390,11 @@
     // entrada ya confirmada). Un PRESENT previo a abrir no cuenta.
     var insideEvidence = (phase === 'inside')
       && (presenceAfterOpen || entryConfirmed);
+    var presenceAfterClose = lastPresenceAt > 0 && lastCloseAt > 0
+      && lastPresenceAt > lastCloseAt;
+    var visualExit = lastCloseAt > 0
+      && (nowMs - lastCloseAt) >= EXIT_VISUAL_HOLD_MS
+      && !presenceAfterClose;
     var absenceSettled = presenceState === 'ABSENT'
       && lastAbsentSince > 0 && (nowMs - lastAbsentSince) >= absenceHold;
 
@@ -413,7 +428,8 @@
         return 'WAITING';
       }
       if (absenceSettled) return 'OUTSIDE';
-      if (phase === 'inside') return 'INSIDE';
+      if (phase === 'inside' && presenceAfterClose) return 'INSIDE';
+      if (visualExit) return 'OUTSIDE';
       return 'WAITING';
     }
 
@@ -424,7 +440,8 @@
 
     if (stateName === 'VERIFICANDO_PRESENCIA') {
       if (absenceSettled) return 'OUTSIDE';
-      if (phase === 'inside') return 'INSIDE';
+      if (phase === 'inside' && presenceAfterClose) return 'INSIDE';
+      if (visualExit) return 'OUTSIDE';
       return 'WAITING';
     }
 
@@ -476,6 +493,7 @@
     DOOR_PULSE_MS: DOOR_PULSE_MS,
     KEY_ACCESS_WINDOW_MS: KEY_ACCESS_WINDOW_MS,
     CROSSING_HOLD_MS: CROSSING_HOLD_MS,
-    ABSENCE_HOLD_MS: ABSENCE_HOLD_MS
+    ABSENCE_HOLD_MS: ABSENCE_HOLD_MS,
+    EXIT_VISUAL_HOLD_MS: EXIT_VISUAL_HOLD_MS
   };
 });

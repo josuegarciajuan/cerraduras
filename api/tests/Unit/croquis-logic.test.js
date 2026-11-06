@@ -21,6 +21,7 @@ const {
   KEY_ACCESS_WINDOW_MS,
   CROSSING_HOLD_MS,
   ABSENCE_HOLD_MS,
+  EXIT_VISUAL_HOLD_MS,
 } = require(path.join(__dirname, '..', '..', 'public', 'assets', 'croquis-logic.js'));
 
 let passed = 0;
@@ -379,6 +380,7 @@ const t = (offsetMs) => new Date(BASE + offsetMs).toISOString();
 
 check('F118 hold de cruce 1,8 s', CROSSING_HOLD_MS === 1800);
 check('F118 hold de ausencia 3 s', ABSENCE_HOLD_MS === 3000);
+check('F118.2 hold de salida visual 3 s', EXIT_VISUAL_HOLD_MS === 3000);
 
 // Pre-entrada: la presencia no puede sacar el monigote de QR/lector.
 const posQrPre = resolveDashboardMonigote({
@@ -456,9 +458,29 @@ check('F118 verificación de salida con ausencia sostenida → OUTSIDE', posVeri
 
 const posVerifyInside = resolveDashboardMonigote({
   stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
-  presenceState: 'PRESENT', lastPresenceAt: t(-1000), now: BASE,
+  presenceState: 'PRESENT', lastCloseAt: t(-5000), lastPresenceAt: t(-1000), now: BASE,
 });
-check('F118 verificación con presencia → INSIDE', posVerifyInside === 'INSIDE');
+check('F118 verificación con presencia posterior al cierre → INSIDE', posVerifyInside === 'INSIDE');
+
+// F118.2: salida visual rápida. Sin reporte de presencia posterior al cierre,
+// el monigote no vuelve a INSIDE y pasa a OUTSIDE a los 3 s del cierre.
+const posExitVisualEarly = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastCloseAt: t(-1000), lastPresenceAt: t(-20000), now: BASE,
+});
+check('F118.2 cierre + 1 s sin presencia posterior → WAITING', posExitVisualEarly === 'WAITING');
+
+const posExitVisual = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastCloseAt: t(-3100), lastPresenceAt: t(-20000), now: BASE,
+});
+check('F118.2 cierre + 3,1 s sin presencia posterior → OUTSIDE', posExitVisual === 'OUTSIDE');
+
+const posExitVisualCancelled = resolveDashboardMonigote({
+  stateName: 'VERIFICANDO_PRESENCIA', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  presenceState: 'PRESENT', lastCloseAt: t(-3100), lastPresenceAt: t(-1000), now: BASE,
+});
+check('F118.2 presencia posterior al cierre cancela OUTSIDE → INSIDE', posExitVisualCancelled === 'INSIDE');
 
 const posInsideNoStay = resolveDashboardMonigote({
   stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,

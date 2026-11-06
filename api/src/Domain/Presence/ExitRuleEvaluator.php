@@ -25,9 +25,15 @@ use App\Support\Config;
  *   d) the close is not arbitrarily old (DOOR_CYCLE_MAX_S = 300 s);
  *   e) presence_state = ABSENT sustained >= exit guard seconds.
  *
+ * F118.2 (salida en tiempo real): si el radar sigue afirmando PRESENT pero no
+ * ha emitido NINGÚN reporte de presencia posterior al cierre durante
+ * EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS (3 s por defecto), se considera salida.
+ * Es el mismo heurístico que usa el monigote: evita esperar a que el radar
+ * pierda un objetivo del pasillo que sigue dentro de su alcance.
+ *
  * Bug 1 (desacoplamiento entrada/salida): la guarda de SALIDA ya NO es
  * `gap_seconds`. Se resuelve con resolveGuardSeconds():
- *   room.presence_check_seconds > EXIT_ABSENCE_GUARD_SECONDS > 3 s.
+ *   room.presence_check_seconds > EXIT_ABSENCE_GUARD_SECONDS > 1 s.
  * La ventana de ENTRADA es independiente y vive en
  * room_types.presence_entry_window_seconds (default 90 s), leída por
  * IotSessionService::resolveEntryWindowSeconds().
@@ -50,11 +56,17 @@ final class ExitRuleEvaluator
     public const DOOR_CYCLE_MAX_S = 300;
 
     /**
-     * Bug 1: default sustained-absence guard (seconds) for the EXIT rule when
-     * neither a per-room override nor the global env override is set. Short by
-     * design: the radar reports ABSENT ~3 s after the guest leaves.
+     * Bug 1/F118.2: default sustained-absence guard (seconds) for the EXIT rule
+     * when neither a per-room override nor the global env override is set.
      */
-    public const DEFAULT_GUARD_SECONDS = 3;
+    public const DEFAULT_GUARD_SECONDS = 1;
+
+    /**
+     * F118.2: si no llega ningún reporte de presencia posterior al cierre en
+     * este tiempo, la salida se considera confirmada aunque el radar siga
+     * afirmando PRESENT (objetivo del pasillo dentro del alcance).
+     */
+    public const DEFAULT_NO_PRESENCE_AFTER_CLOSE_SECONDS = 3;
 
     private IotSessionRepositoryInterface $iotSessions;
     private RoomRepositoryInterface       $rooms;
@@ -93,7 +105,13 @@ final class ExitRuleEvaluator
 
         $stay = $this->stays->findActiveForRoom($roomId);
 
-        return $this->evaluate($session, $stay, $this->resolveGapSeconds($room), $nowTs);
+        return $this->evaluate(
+            $session,
+            $stay,
+            $this->resolveGapSeconds($room),
+            $nowTs,
+            $this->resolveNoPresenceAfterCloseSecondsValue()
+        );
     }
 
     /**
@@ -133,6 +151,25 @@ final class ExitRuleEvaluator
     }
 
     /**
+     * F118.2: ventana sin reportes de presencia posteriores al cierre.
+     * 0 desactiva el heurístico (vuelve al comportamiento solo-ABSENT).
+     */
+    public static function resolveNoPresenceAfterCloseSeconds(?int $globalOverride): int
+    {
+        if ($globalOverride !== null && $globalOverride >= 0) {
+            return $globalOverride;
+        }
+        return self::DEFAULT_NO_PRESENCE_AFTER_CLOSE_SECONDS;
+    }
+
+    public function resolveNoPresenceAfterCloseSecondsValue(): int
+    {
+        return self::resolveNoPresenceAfterCloseSeconds(
+            Config::getInt('EXIT_NO_PRESENCE_AFTER_CLOSE_SECONDS', null)
+        );
+    }
+
+    /**
      * Pure evaluation: no repository calls.
      *
      * @param Stay|null $stay Active stay (null when none; rule never fires).
@@ -144,7 +181,8 @@ final class ExitRuleEvaluator
         IotSession $session,
         ?Stay      $stay,
         int        $exitGuardSeconds,
-        int        $nowTs
+        int        $nowTs,
+        int        $noPresenceAfterCloseSeconds = 0
     ): bool {
         // (a) Entry must have been confirmed by the backend.
         if ($stay === null || $stay->entryConfirmedAt === null) {
@@ -178,7 +216,25 @@ final class ExitRuleEvaluator
             return false;
         }
 
-        // (d) Sustained absence.
+        // (d) F118.2 — salida sin reportes de presencia posteriores al cierre.
+        // El radar puede seguir viendo el pasillo dentro de su alcance y no
+        // emitir ABSENT; si no llega ningún reporte PRESENT/ABSENT después del
+        // cierre en la ventana, la salida se confirma.
+        if ($session->presenceState === IotSession::PRESENCE_PRESENT
+            && $noPresenceAfterCloseSeconds > 0
+            && $session->lastPresenceEventAt !== null
+        ) {
+            $presenceTs = strtotime($session->lastPresenceEventAt . ' UTC');
+            if ($presenceTs !== false
+                && $presenceTs <= $closeTs
+                && ($nowTs - $closeTs) >= $noPresenceAfterCloseSeconds
+            ) {
+                return true;
+            }
+            return false;
+        }
+
+        // (e) Sustained absence.
         if ($session->presenceState !== IotSession::PRESENCE_ABSENT) {
             return false;
         }

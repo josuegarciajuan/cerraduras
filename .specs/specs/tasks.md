@@ -11737,3 +11737,11 @@ pendientes.
 - [x] TSK-F118-16: `RadarProfileRestoreTest` y tests de resolución.
 - [ ] TSK-F118-17: restaurar el perfil de 3 m en PROTO2 y prueba física.
 - [ ] TSK-F118-18: regresión completa sin perder la calibración.
+
+## F118.2 — Salida en tiempo real
+- [x] TSK-F118-19: heurístico sin presencia posterior al cierre (3 s).
+- [x] TSK-F118-20: monigote con `lastCloseAt` y salida visual a 3 s.
+- [x] TSK-F118-21: guarda de salida 3 s → 1 s.
+- [x] TSK-F118-22: tests de `ExitRuleEvaluator` y `croquis-logic`.
+- [ ] TSK-F118-23: prueba física de salida.
+- [ ] TSK-F118-24: regresión completa.

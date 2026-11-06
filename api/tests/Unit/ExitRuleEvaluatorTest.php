@@ -96,7 +96,8 @@ function makeSession(
     ?string $lastCloseAt,
     string  $presenceState,
     ?string $lastAbsentSince,
-    string  $doorState = IotSession::DOOR_CLOSED
+    string  $doorState = IotSession::DOOR_CLOSED,
+    ?string $lastPresenceEventAt = null
 ): IotSession {
     return new IotSession(
         1, 1, null,
@@ -105,7 +106,8 @@ function makeSession(
         $lastOpenAt,
         $lastCloseAt,
         $lastAbsentSince,
-        null, ''
+        null, '',
+        null, $lastPresenceEventAt
     );
 }
 
@@ -199,10 +201,46 @@ if ($eval->evaluate(makeSession($staleOpen, $staleClose, IotSession::PRESENCE_AB
     ok('T8: cycle older than DOOR_CYCLE_MAX_S → no fire');
 } else { bad('T8: cycle older than DOOR_CYCLE_MAX_S → no fire'); }
 
-// T9: presence PRESENT → no fire
+// T9: presence PRESENT → no fire (heurístico desactivado con el 5º argumento por defecto)
 if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_PRESENT, null), $stayOk, 5, $t0) === false) {
     ok('T9: presence PRESENT → no fire');
 } else { bad('T9: presence PRESENT → no fire'); }
+
+// T9b (F118.2): PRESENT sin reportes posteriores al cierre → fire por heurístico.
+// lastPresenceEventAt es anterior al cierre; el radar no ha vuelto a emitir.
+$presenceBeforeClose = gmdate('Y-m-d H:i:s', $t0 - 60) . '.000';
+if ($eval->evaluate(
+    makeSession($open30, $close3, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceBeforeClose),
+    $stayOk, 1, $t0, 3
+) === true) {
+    ok('F118.2: PRESENT sin reporte posterior al cierre → fire');
+} else { bad('F118.2: PRESENT sin reporte posterior al cierre debería disparar'); }
+
+// T9c: si hay un reporte de presencia posterior al cierre, NO fire.
+$presenceAfterClose = gmdate('Y-m-d H:i:s', $t0 - 1) . '.000';
+if ($eval->evaluate(
+    makeSession($open30, $close3, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceAfterClose),
+    $stayOk, 1, $t0, 3
+) === false) {
+    ok('F118.2: PRESENT posterior al cierre cancela la salida');
+} else { bad('F118.2: PRESENT posterior al cierre no debería disparar'); }
+
+// T9d: ventana de no-presencia aún no cumplida → no fire.
+$close1 = gmdate('Y-m-d H:i:s', $t0 - 1) . '.000';
+if ($eval->evaluate(
+    makeSession($open30, $close1, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceBeforeClose),
+    $stayOk, 1, $t0, 3
+) === false) {
+    ok('F118.2: ventana de 3 s aún no cumplida → no fire');
+} else { bad('F118.2: ventana incompleta no debería disparar'); }
+
+// T9e: 0 desactiva el heurístico.
+if ($eval->evaluate(
+    makeSession($open30, $close3, IotSession::PRESENCE_PRESENT, null, IotSession::DOOR_CLOSED, $presenceBeforeClose),
+    $stayOk, 1, $t0, 0
+) === false) {
+    ok('F118.2: ventana 0 desactiva el heurístico');
+} else { bad('F118.2: ventana 0 debería desactivar el heurístico'); }
 
 // T10: cancellation (PRESENT cleared last_absent_since) → no fire
 if ($eval->evaluate(makeSession($open30, $close3, IotSession::PRESENCE_ABSENT, null), $stayOk, 5, $t0) === false) {
@@ -254,17 +292,24 @@ if (ExitRuleEvaluator::resolveGuardSeconds(null, 5) === 5) {
     ok('T17: resolveGuardSeconds global sin override de sala (5)');
 } else { bad('T17: resolveGuardSeconds global sin override', (string) ExitRuleEvaluator::resolveGuardSeconds(null, 5)); }
 
-// T18: default is 3 s when neither override is present.
-if (ExitRuleEvaluator::resolveGuardSeconds(null, null) === 3
-    && ExitRuleEvaluator::DEFAULT_GUARD_SECONDS === 3
+// T18: default is 1 s when neither override is present (F118.2).
+if (ExitRuleEvaluator::resolveGuardSeconds(null, null) === 1
+    && ExitRuleEvaluator::DEFAULT_GUARD_SECONDS === 1
 ) {
-    ok('T18: resolveGuardSeconds default 3 s');
-} else { bad('T18: resolveGuardSeconds default 3 s', (string) ExitRuleEvaluator::resolveGuardSeconds(null, null)); }
+    ok('T18: resolveGuardSeconds default 1 s');
+} else { bad('T18: resolveGuardSeconds default 1 s', (string) ExitRuleEvaluator::resolveGuardSeconds(null, null)); }
 
 // T19: non-positive overrides are treated as "not set" (legacy rows / empty env).
-if (ExitRuleEvaluator::resolveGuardSeconds(0, null) === 3) {
-    ok('T19a: resolveGuardSeconds sala 0 se ignora → 3');
+if (ExitRuleEvaluator::resolveGuardSeconds(0, null) === 1) {
+    ok('T19a: resolveGuardSeconds sala 0 se ignora → 1');
 } else { bad('T19a: resolveGuardSeconds sala 0 se ignora'); }
+
+// T20 (F118.2): default de la ventana sin presencia posterior al cierre.
+if (ExitRuleEvaluator::resolveNoPresenceAfterCloseSeconds(null) === 3
+    && ExitRuleEvaluator::DEFAULT_NO_PRESENCE_AFTER_CLOSE_SECONDS === 3
+) {
+    ok('T20: ventana sin presencia posterior al cierre = 3 s');
+} else { bad('T20: ventana sin presencia posterior al cierre por defecto'); }
 if (ExitRuleEvaluator::resolveGuardSeconds(-1, 5) === 5) {
     ok('T19b: resolveGuardSeconds sala negativa se ignora → global 5');
 } else { bad('T19b: resolveGuardSeconds sala negativa se ignora'); }

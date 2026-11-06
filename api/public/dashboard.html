@@ -1340,6 +1340,7 @@ function updateMonigoteFromSensors(data) {
     entryConfirmed: entryConfirmed,
     presenceState: io.presence_state || 'UNKNOWN',
     lastOpenAt: io.last_open_at || null,
+    lastCloseAt: io.last_close_at || null,
     lastPresenceAt: io.last_presence_event_at || null,
     lastAbsentSince: io.last_absent_since || null,
     now: now
