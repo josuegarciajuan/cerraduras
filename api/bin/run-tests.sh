@@ -2500,6 +2500,41 @@ else
     "response: $(echo "$ANOM_STATUS_RESP" | head -c 400)"
 fi
 
+# 28.7b: ACTIVE expande a OPEN + ACKNOWLEDGED (vista "Pendientes y en seguimiento").
+# Precondición determinista: una anomalía OPEN y otra ACKNOWLEDGED sintéticas.
+ANOM_ACT_OPEN=$($MYSQL -sN -e "INSERT INTO anomalies (room_id,stay_id,anomaly_type,severity,status,context_data,detected_at,created_at,updated_at) VALUES (1,NULL,'TEST-F121-OPEN','LOW','OPEN',JSON_OBJECT('source','run-tests'),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null | tail -1)
+ANOM_ACT_ACK=$($MYSQL -sN -e "INSERT INTO anomalies (room_id,stay_id,anomaly_type,severity,status,context_data,detected_at,acknowledged_at,acknowledged_by,created_at,updated_at) VALUES (1,NULL,'TEST-F121-ACK','LOW','ACKNOWLEDGED',JSON_OBJECT('source','run-tests'),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'run-tests',UTC_TIMESTAMP(3),UTC_TIMESTAMP(3)); SELECT LAST_INSERT_ID();" 2>/dev/null | tail -1)
+
+F121_KEY=$(get_key ADMIN-CLI)
+F121_ACTIVE=$(curl -s --max-time 10 -H "X-API-Key: $F121_KEY" \
+  "$API_BASE/api/v1/anomalies?status=ACTIVE&limit=200" 2>/dev/null)
+if printf '%s' "$F121_ACTIVE" | grep -q 'TEST-F121-OPEN' && printf '%s' "$F121_ACTIVE" | grep -q 'TEST-F121-ACK'; then
+  pass "GET /anomalies?status=ACTIVE: incluye OPEN y ACKNOWLEDGED"
+else
+  fail "GET /anomalies?status=ACTIVE: falta OPEN o ACKNOWLEDGED" \
+    "response: $(printf '%s' "$F121_ACTIVE" | head -c 300)"
+fi
+
+F121_OPEN=$(curl -s --max-time 10 -H "X-API-Key: $F121_KEY" \
+  "$API_BASE/api/v1/anomalies?status=OPEN&limit=200" 2>/dev/null)
+if printf '%s' "$F121_OPEN" | grep -q 'TEST-F121-OPEN' && ! printf '%s' "$F121_OPEN" | grep -q 'TEST-F121-ACK'; then
+  pass "GET /anomalies?status=OPEN: solo pendientes (excluye ACKNOWLEDGED)"
+else
+  fail "GET /anomalies?status=OPEN: no respeta el filtro" \
+    "response: $(printf '%s' "$F121_OPEN" | head -c 300)"
+fi
+
+F121_COMMA=$(curl -s --max-time 10 -H "X-API-Key: $F121_KEY" \
+  "$API_BASE/api/v1/anomalies?status=OPEN,ACKNOWLEDGED&limit=200" 2>/dev/null)
+if printf '%s' "$F121_COMMA" | grep -q 'TEST-F121-OPEN' && printf '%s' "$F121_COMMA" | grep -q 'TEST-F121-ACK'; then
+  pass "GET /anomalies?status=OPEN,ACKNOWLEDGED: lista separada por comas"
+else
+  fail "GET /anomalies?status=OPEN,ACKNOWLEDGED: falta algún estado" \
+    "response: $(printf '%s' "$F121_COMMA" | head -c 300)"
+fi
+
+$MYSQL -e "DELETE FROM anomalies WHERE anomaly_type IN ('TEST-F121-OPEN','TEST-F121-ACK')" 2>/dev/null || true
+
 # 28.8: Verify acknowledge endpoint still works (sobre la anomalía sintética)
 if [ -n "$ANOM_TEST_ID" ]; then
   http_test POST "/api/v1/anomalies/$ANOM_TEST_ID/acknowledge" 200 \
@@ -9075,6 +9110,15 @@ for F120_MARK in 'anomaly-info.js' '/sensores?room=' 'loadOccupationsV2' 'openWa
         pass "F120: marcador $F120_MARK"
     else
         fail "F120: marcador $F120_MARK" "ausente"
+    fi
+done
+
+# F121: reconocer no oculta la anomalía (vista Pendientes y en seguimiento).
+for F121_MARK in "Pendientes y en seguimiento" "status: 'ACTIVE'" "Marcar como vista"; do
+    if grep -qF "$F121_MARK" public/panel/assets/panel-v2.js public/panel/index.html 2>/dev/null; then
+        pass "F121: marcador $F121_MARK"
+    else
+        fail "F121: marcador $F121_MARK" "ausente"
     fi
 done
 

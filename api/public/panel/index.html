@@ -270,7 +270,7 @@ tr:hover td{background:rgba(108,142,224,.05)}
 
 <script>
 function crm(){return{
-  user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:'',room_id:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
+  user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'ACTIVE',type:'',severity:'',room_id:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
    workers:[],workerRoles:[],workersInside:[],factoryDevices:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
    accessKeys:[],nfcCards:[],keyAccesses:[],keyFilters:{worker_id:'',status:'',q:''},nfcFilter:{status:'',q:''},accessFilters:{worker_id:'',key_id:'',result:'',from:'',to:''},_lastKeyToken:null,
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
@@ -685,8 +685,9 @@ function crm(){return{
       +this.ANOMALY_CATALOG.map(function(c){return'<option value="'+c.code+'"'+((f.type===c.code)?' selected':'')+'>'+c.name+'</option>'}).join('');
     let sevOpt='<option value="">Todas las severidades</option>'
       +['CRITICAL','HIGH','MEDIUM','LOW'].map(function(s){return'<option value="'+s+'"'+((f.severity===s)?' selected':'')+'>'+((window.AnomalyInfo&&window.AnomalyInfo.severityLabel)?window.AnomalyInfo.severityLabel(s):s)+'</option>'}).join('');
-    let statusOpt='<option value="OPEN"'+(f.status==='OPEN'?' selected':'')+'>📌 Pendientes</option>'
-      +'<option value="ACKNOWLEDGED"'+(f.status==='ACKNOWLEDGED'?' selected':'')+'>👁️ Reconocidas</option>'
+    let statusOpt='<option value="ACTIVE"'+(f.status==='ACTIVE'?' selected':'')+'>📌 Pendientes y en seguimiento</option>'
+      +'<option value="OPEN"'+(f.status==='OPEN'?' selected':'')+'>📌 Solo pendientes</option>'
+      +'<option value="ACKNOWLEDGED"'+(f.status==='ACKNOWLEDGED'?' selected':'')+'>👁️ Solo reconocidas</option>'
       +'<option value="DISMISSED"'+(f.status==='DISMISSED'?' selected':'')+'>✅ Histórico</option>'
       +'<option value="ALL"'+(f.status==='ALL'?' selected':'')+'>📋 Todas</option>';
     let filterBar='<div class="fbar">'
@@ -695,7 +696,7 @@ function crm(){return{
       +'<select @change="anomalyFilters.status=$event.target.value;loadAnomalies()">'+statusOpt+'</select>'
       +'<span class="dim" style="font-size:12px">'+this.anomalies.length+' resultados</span></div>';
 
-    let hdrMap={OPEN:'Pendientes',ACKNOWLEDGED:'Reconocidas',DISMISSED:'Histórico',ALL:'Todas'};
+    let hdrMap={ACTIVE:'Pendientes y en seguimiento',OPEN:'Pendientes',ACKNOWLEDGED:'Reconocidas',DISMISSED:'Histórico',ALL:'Todas'};
     let header='<div class="ph"><h1>⚠️ Anomalías — '+(hdrMap[f.status]||'Todas')+'</h1><p>'+this.anomalies.length+' mostradas'+(this.anomalyCount>0?' · '+this.anomalyCount+' pendientes':'')+'</p></div>';
 
     let emptyMsg=f.status==='OPEN'?'Sin anomalías pendientes 🎉':(f.status==='ACKNOWLEDGED'?'Sin anomalías reconocidas':'Sin anomalías en esta vista');

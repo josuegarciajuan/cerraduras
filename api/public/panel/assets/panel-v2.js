@@ -52,6 +52,10 @@
     o.roomsAnalytics = null;
     o.accessAnalytics = null;
     o.anomalyAnalytics = null;
+    // La vista por defecto muestra las anomalías todavía operativas:
+    // pendientes (OPEN) y en seguimiento (ACKNOWLEDGED). Reconocer no las
+    // oculta; solo descartar las saca de esta vista.
+    o.anomalyFilters = { status: 'ACTIVE', type: '', severity: '', room_id: '' };
     o.deviceAnalytics = null;
     o.warehouseAnalytics = null;
     o.keysAnalytics = null;
@@ -1516,15 +1520,15 @@
        ═══════════════════════════════════════════════════════════════ */
     o.anomalyPageV2 = function () {
       var a = this.anomalyAnalytics;
-      var f = this.anomalyFilters || { status: 'OPEN', type: '', severity: '', room_id: '' };
+      var f = this.anomalyFilters || { status: 'ACTIVE', type: '', severity: '', room_id: '' };
       var cat = AI.catalog;
       var rows = (this.anomalies || []).map(function (x) {
         var actions = '';
         if (x.status === 'OPEN') {
-          actions = '<button class="btn btn-p btn-xs" @click="acknowledgeAnomaly(' + x.id + ')">Reconocer</button> '
-            + '<button class="btn btn-o btn-xs" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
+          actions = '<button class="btn btn-p btn-xs" title="Marcar como vista: sigue visible en «En seguimiento» y se cerrará sola cuando desaparezca la causa" @click="acknowledgeAnomaly(' + x.id + ')">Reconocer</button> '
+            + '<button class="btn btn-o btn-xs" title="Cerrar la incidencia: sale de las vistas operativas; un humano puede reabrirla con motivo" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
         } else if (x.status === 'ACKNOWLEDGED') {
-          actions = '<button class="btn btn-o btn-xs" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
+          actions = '<button class="btn btn-o btn-xs" title="Cerrar la incidencia: sale de las vistas operativas; un humano puede reabrirla con motivo" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
         } else if (x.status === 'DISMISSED' && x.dismissed_by !== 'system') {
           actions = '<button class="btn btn-o btn-xs" @click="reopenAnomaly(' + x.id + ')">Reabrir incidencia</button>';
         } else if (x.status === 'DISMISSED') {
@@ -1556,10 +1560,14 @@
         + '<div class="fbar" style="margin-top:16px">'
         + '<select @change="anomalyFilters.type=$event.target.value;loadAnomalies()"><option value="">Todos los tipos</option>' + Object.keys(cat).map(function (code) { return '<option value="' + code + '"' + (f.type === code ? ' selected' : '') + '>' + F.escape(cat[code].title) + '</option>'; }).join('') + '</select>'
         + '<select @change="anomalyFilters.severity=$event.target.value;loadAnomalies()"><option value="">Todas las severidades</option>' + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(function (s) { return '<option value="' + s + '"' + (f.severity === s ? ' selected' : '') + '>' + AI.severityLabel(s) + '</option>'; }).join('') + '</select>'
-        + '<select @change="anomalyFilters.status=$event.target.value;loadAnomalies()"><option value="OPEN"' + (f.status === 'OPEN' ? ' selected' : '') + '>Pendientes</option><option value="ACKNOWLEDGED"' + (f.status === 'ACKNOWLEDGED' ? ' selected' : '') + '>En seguimiento</option><option value="DISMISSED"' + (f.status === 'DISMISSED' ? ' selected' : '') + '>Resueltas/descartadas</option><option value="ALL"' + (f.status === 'ALL' ? ' selected' : '') + '>Todas</option></select>'
+        + '<select @change="anomalyFilters.status=$event.target.value;loadAnomalies()"><option value="ACTIVE"' + (f.status === 'ACTIVE' ? ' selected' : '') + '>Pendientes y en seguimiento</option><option value="OPEN"' + (f.status === 'OPEN' ? ' selected' : '') + '>Solo pendientes</option><option value="ACKNOWLEDGED"' + (f.status === 'ACKNOWLEDGED' ? ' selected' : '') + '>Solo en seguimiento</option><option value="DISMISSED"' + (f.status === 'DISMISSED' ? ' selected' : '') + '>Resueltas/descartadas</option><option value="ALL"' + (f.status === 'ALL' ? ' selected' : '') + '>Todas</option></select>'
         + '<select @change="anomalyFilters.room_id=$event.target.value;loadAnomalies()">' + roomOpts + '</select>'
-        + '<button class="btn btn-o" @click="anomalyFilters={status:\'OPEN\',type:\'\',severity:\'\',room_id:\'\'};loadAnomalies()">Limpiar</button>'
+        + '<button class="btn btn-o" @click="anomalyFilters={status:\'ACTIVE\',type:\'\',severity:\'\',room_id:\'\'};loadAnomalies()">Limpiar</button>'
         + '</div>'
+        + '<p class="small muted" style="margin:-4px 0 12px">'
+        + '<b>Reconocer</b>: la incidencia sigue operativa y visible, queda «En seguimiento» y se cerrará sola cuando desaparezca la causa. '
+        + '<b>Descartar</b>: cierra la incidencia (sale de esta vista); si la descartó una persona puede reabrirse con motivo.'
+        + '</p>'
         + this.v2Table(['ID', 'Sala', 'Tipo', 'Severidad', 'Estado', 'Detectada', ''], rows, 'Sin anomalías');
     };
 

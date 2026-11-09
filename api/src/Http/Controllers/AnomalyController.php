@@ -31,7 +31,9 @@ final class AnomalyController
      *   room_id      (int, optional)
      *   anomaly_type (string, optional) — A1..A8
      *   severity     (string, optional) — LOW|MEDIUM|HIGH|CRITICAL
-     *   status       (string, optional) — default: OPEN
+     *   status       (string, optional) — OPEN|ACKNOWLEDGED|DISMISSED|ALL|ACTIVE
+     *                  (ACTIVE = OPEN+ACKNOWLEDGED; admite lista "OPEN,ACKNOWLEDGED").
+     *                  Default: OPEN (compatibilidad hacia atrás).
      *   limit        (int, default 50)
      *   offset       (int, default 0)
      */
@@ -50,7 +52,18 @@ final class AnomalyController
             $filters['severity'] = (string) $params['severity'];
         }
         if (isset($params['status']) && $params['status'] !== '' && $params['status'] !== 'ALL') {
-            $filters['status'] = (string) $params['status'];
+            // ACTIVE = anomalías todavía operativas (pendientes + en seguimiento).
+            // Se admite también una lista separada por comas (OPEN,ACKNOWLEDGED).
+            $rawStatus = (string) $params['status'];
+            if (strtoupper($rawStatus) === 'ACTIVE') {
+                $filters['status'] = ['OPEN', 'ACKNOWLEDGED'];
+            } elseif (str_contains($rawStatus, ',')) {
+                $allowed = array_map('strtoupper', array_map('trim', explode(',', $rawStatus)));
+                $allowed = array_values(array_intersect($allowed, ['OPEN', 'ACKNOWLEDGED', 'DISMISSED']));
+                $filters['status'] = $allowed !== [] ? $allowed : 'OPEN';
+            } else {
+                $filters['status'] = $rawStatus;
+            }
         } elseif (!isset($params['status'])) {
             // Backward compatible: no status param defaults to OPEN
             $filters['status'] = 'OPEN';
