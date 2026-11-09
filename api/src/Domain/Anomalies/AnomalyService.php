@@ -241,6 +241,40 @@ final class AnomalyService
     }
 
     /**
+     * Reopen a manually dismissed anomaly (DISMISSED → OPEN) with audit.
+     *
+     * @throws \RuntimeException if not found, not DISMISSED, auto-dismissed
+     *         or missing a reason
+     */
+    public function reopen(int $anomalyId, string $actor, string $reason): Anomaly
+    {
+        $anomaly = $this->repo->findById($anomalyId);
+        if ($anomaly === null) {
+            throw new \RuntimeException("Anomaly {$anomalyId} not found");
+        }
+
+        $now = Clock::nowUtc()->format('Y-m-d H:i:s.v');
+        $anomaly->reopen($actor, $reason, $now);
+
+        $this->repo->update($anomaly->id, [
+            'status'        => $anomaly->status,
+            'reopened_at'   => $anomaly->reopenedAt,
+            'reopened_by'   => $anomaly->reopenedBy,
+            'reopen_reason' => $anomaly->reopenReason,
+        ]);
+
+        return $anomaly;
+    }
+
+    /**
+     * Find a single anomaly by id.
+     */
+    public function findById(int $anomalyId): ?Anomaly
+    {
+        return $this->repo->findById($anomalyId);
+    }
+
+    /**
      * Find anomalies with optional filters (composition over repo).
      *
      * @param array{room_id?:int, anomaly_type?:string, severity?:string, status?:string} $filters

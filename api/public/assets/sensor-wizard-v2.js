@@ -101,7 +101,13 @@
 
   function fillRooms() {
     var sel = $('roomSel');
-    var saved = parseInt(localStorage.getItem(LS_ROOM) || '0', 10);
+    // F120: `?room=ID` (enlaces desde el panel) manda sobre la última sala.
+    var fromUrl = 0;
+    try {
+      fromUrl = parseInt(new URLSearchParams(location.search).get('room') || '0', 10) || 0;
+    } catch (e) { fromUrl = 0; }
+    var saved = fromUrl || parseInt(localStorage.getItem(LS_ROOM) || '0', 10);
+    if (fromUrl) localStorage.setItem(LS_ROOM, String(fromUrl));
     sel.innerHTML = '';
     S.rooms.forEach(function (r) {
       var o = document.createElement('option');

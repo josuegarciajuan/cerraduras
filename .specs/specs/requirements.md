@@ -13712,3 +13712,89 @@ solo con datos locales.
 
 **Estado F119:** implementado (código); regresión **1129 passed, 0 failed,
 16 skipped**; validación visual desktop/móvil con Playwright.
+
+## F120 — Panel CRM v2.1: operación vinculada y calidad (RF-311…RF-330)
+
+**Objetivo:** convertir los listados del panel en una cadena operativa navegable
+(espacio → ocupación → QR → acceso → deuda → anomalía; almacén → visita →
+grabación), corregir filtros y formularios engañosos y elevar la accesibilidad y
+la legibilidad sin cambiar el lenguaje visual de F119. Sin pollers ni llamadas
+periódicas a Tuya.
+
+- **RF-311 (Anomalías legibles):** todo listado, tarjeta, drawer, búsqueda,
+  análisis y exportación muestra el **título** de la anomalía como contenido
+  principal y el código A1–A8 como dato secundario. La descripción y la acción
+  recomendada están disponibles con ratón, foco de teclado y toque; nunca solo
+  con `title`.
+- **RF-312 (Reapertura con auditoría):** `POST /api/v1/anomalies/{id}/reopen`
+  permite reabrir una anomalía `DISMISSED` con motivo obligatorio, actor y
+  fecha; conserva el reconocimiento y el descarte previos en campos de
+  auditoría separados. Solo se permite sobre anomalías descartadas manualmente
+  (`dismissed_by <> 'system'`).
+- **RF-313 (Reapertura inicial F120):** una operación única e idempotente reabre
+  las anomalías descartadas manualmente con motivo
+  `Reapertura inicial para revisión F120`. Las resueltas por `system` no se
+  tocan.
+- **RF-314 (Tipo Normal → Standard):** todas las salas `TIPO_NORMAL` pasan a
+  `STANDARD`; se migran `worker_role_room_types`, `worker_room_overrides`,
+  `access_key_room_types`, `time_slots` y `key_access_events` cuando
+  corresponda; se elimina el tipo `TIPO_NORMAL`. `STANDARD`, `ALMACEN_BEBIDAS`
+  y `TIMBRADO` conservan su comportamiento.
+- **RF-315 (Acciones por espacio):** cada fila de Habitaciones ofrece **Ver
+  panel** (`/dashboard?room=ID`, `/almacen?room=ID` o `/timbre?room=ID` según
+  tipo), **Calibrar** (`/sensores?room=ID`) y **Ver detalle**. `/sensores`
+  respeta `?room=` antes que `localStorage`.
+- **RF-316 (Ocupaciones unificadas):** la sección Estancias muestra estancias de
+  huéspedes (`stays`) y sesiones de empleados (`worker_sessions`) en una sola
+  vista con filtros por tipo, sala, estado, periodo y medio de acceso.
+- **RF-317 (Duración reservada vs real):** para huéspedes, la duración real se
+  calcula desde `first_entry_at` hasta la salida/cierre, o hasta ahora si sigue
+  dentro. La reservada se muestra por separado. Para empleados, la reservada es
+  “No aplica” y la real sale de `worker_sessions`.
+- **RF-318 (Medio de acceso):** cada ocupación indica QR de estancia, QR de
+  llave, ficha NFC, QR maestro de trabajador o acceso no identificado, sin
+  inferir vínculos por cercanía temporal.
+- **RF-319 (Vinculación):** los registros relacionados son enlazables: sala,
+  estancia, QR, deuda, acceso, anomalía, trabajador, visita y grabación. Cuando
+  no exista clave durable se muestra “Sin vínculo registrado”.
+- **RF-320 (Expediente lateral):** estancia, trabajador, anomalía y visita de
+  almacén disponen de drawer con cronología/resumen, relaciones y acciones
+  contextuales. La navegación profunda (`#st?stay=`, `#an?anomaly=`,
+  `#ro?room=`) abre el registro concreto.
+- **RF-321 (QR):** el estado no confunde `consumed_at` con cierre definitivo;
+  se distinguen emitido, en uso, caducado para llegada, caducado, revocado y
+  estancia cerrada. No se ofrece copiar el JTI como si fuese un QR utilizable.
+- **RF-322 (Deudas):** los KPIs y etiquetas usan los estados canónicos
+  `PENDING_SYNC`, `SYNCING`, `SYNCED`, `FAILED`; “Reintentar” solo aparece
+  cuando es accionable.
+- **RF-323 (Accesos):** los filtros de trabajador, llave, resultado y fechas
+  alteran realmente la tabla visible; las etiquetas de credencial son legibles
+  y cada evento enlaza a sus entidades relacionadas.
+- **RF-324 (Estancias correctas):** el filtro de estado filtra; el cierre envía
+  `Idempotency-Key`; la confirmación identifica sala y estancia.
+- **RF-325 (Analítica de almacén):** selector de almacén cuando hay más de uno;
+  cámaras configuradas/online/offline/sin verificar; visitas reales, ruido y
+  no-show separados; disparadores, duración, grabaciones por estado, duración y
+  tamaño del periodo; visitas enlazables a su detalle.
+- **RF-326 (Logs del almacén):** listado filtrable por almacén, periodo, tipo y
+  estado con eventos físicos y decisiones (puerta, presencia, movimiento, luz,
+  aplicado/descartado y motivo). Sin payloads completos por defecto.
+- **RF-327 (F38 Trabajadores):** el módulo carga roles antes de abrir el alta y
+  el drawer enlaza sesiones, llaves, accesos y visitas. Las acciones tienen
+  texto o nombre accesible.
+- **RF-328 (Formularios):** todos los formularios de alta/edición cargan sus
+  dependencias antes de abrir, usan una sola fuente de verdad por campo,
+  normalizan IDs numéricos, muestran errores inline y bloquean el guardado
+  durante el envío.
+- **RF-329 (Datos demo):** un script idempotente crea una sala demo de cada tipo
+  (`DEMO-STANDARD`, `DEMO-ALMACEN`, `DEMO-TIMBRADO`) y registros de muestra
+  identificables, sin packs ni automatizaciones físicas. Otro comando los
+  elimina sin tocar datos reales.
+- **RF-330 (Calidad):** contraste AA en texto funcional; objetivos táctiles de
+  44×44 px; tooltips accesibles; búsqueda disponible en móvil; foco atrapado y
+  restaurado en drawers/modales; estados explícitos de carga, vacío y error;
+  cifras tabulares y menor repetición de tarjetas KPI.
+
+**Fuera de alcance:** predicción de anomalías, decisiones financieras
+automáticas, reapertura masiva de anomalías auto-resueltas, creación de vídeo
+ficticio y cualquier sondeo periódico a Tuya.

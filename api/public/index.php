@@ -3286,6 +3286,11 @@ $router->get(
     [$anomalyController, 'index'],
     $authFactory(['audit:read'])
 );
+$router->get(
+    '/api/v1/anomalies/{id}',
+    [$anomalyController, 'show'],
+    $authFactory(['audit:read'])
+);
 $router->post(
     '/api/v1/anomalies/{id}/acknowledge',
     [$anomalyController, 'acknowledge'],
@@ -3294,6 +3299,11 @@ $router->post(
 $router->post(
     '/api/v1/anomalies/{id}/dismiss',
     [$anomalyController, 'dismiss'],
+    $authFactory(['audit:read'])
+);
+$router->post(
+    '/api/v1/anomalies/{id}/reopen',
+    [$anomalyController, 'reopen'],
     $authFactory(['audit:read'])
 );
 
@@ -3467,6 +3477,10 @@ $router->get('/api/v1/analytics/keys',            [$analyticsController, 'keys']
 $router->get('/api/v1/analytics/devices',         [$analyticsController, 'devices'],       $authFactory(['rooms:read']));
 $router->get('/api/v1/analytics/anomalies',       [$analyticsController, 'anomalies'],     $authFactory(['presence:read']));
 $router->get('/api/v1/analytics/warehouse',       [$analyticsController, 'warehouse'],     $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/warehouse/logs',  [$analyticsController, 'warehouseLogs'], $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/warehouse/visits/{id}', [$analyticsController, 'warehouseVisitDetail'], $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/occupations',     [$analyticsController, 'occupations'],   $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/occupations/{kind}/{id}', [$analyticsController, 'occupationDetail'], $authFactory(['rooms:read']));
 $router->get('/api/v1/analytics/search',          [$analyticsController, 'search'],        $authFactory(['rooms:read']));
 
 // --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---

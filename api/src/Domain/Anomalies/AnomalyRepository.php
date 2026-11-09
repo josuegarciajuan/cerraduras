@@ -46,7 +46,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
         $stmt = $this->pdo->prepare(
             'SELECT id, room_id, stay_id, anomaly_type, severity, status,
                     context_data, detected_at, acknowledged_at, acknowledged_by,
-                    dismissed_at, dismissed_by, created_at, updated_at
+                    dismissed_at, dismissed_by, reopened_at, reopened_by, reopen_reason, created_at, updated_at
              FROM anomalies
              WHERE room_id = :rid AND anomaly_type = :type AND status = :status
              ORDER BY detected_at DESC LIMIT 1'
@@ -66,7 +66,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
             $stmt = $this->pdo->prepare(
                 'SELECT id, room_id, stay_id, anomaly_type, severity, status,
                         context_data, detected_at, acknowledged_at, acknowledged_by,
-                        dismissed_at, dismissed_by, created_at, updated_at
+                        dismissed_at, dismissed_by, reopened_at, reopened_by, reopen_reason, created_at, updated_at
                  FROM anomalies WHERE room_id = :rid AND status = :status
                  ORDER BY detected_at DESC'
             );
@@ -75,7 +75,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
             $stmt = $this->pdo->prepare(
                 'SELECT id, room_id, stay_id, anomaly_type, severity, status,
                         context_data, detected_at, acknowledged_at, acknowledged_by,
-                        dismissed_at, dismissed_by, created_at, updated_at
+                        dismissed_at, dismissed_by, reopened_at, reopened_by, reopen_reason, created_at, updated_at
                  FROM anomalies WHERE room_id = :rid
                  ORDER BY detected_at DESC'
             );
@@ -101,7 +101,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
         $stmt = $this->pdo->prepare(
             'SELECT id, room_id, stay_id, anomaly_type, severity, status,
                     context_data, detected_at, acknowledged_at, acknowledged_by,
-                    dismissed_at, dismissed_by, created_at, updated_at
+                    dismissed_at, dismissed_by, reopened_at, reopened_by, reopen_reason, created_at, updated_at
              FROM anomalies
              WHERE room_id = :rid AND status IN (:open, :acked)
              ORDER BY detected_at DESC'
@@ -140,7 +140,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
 
         $sql = "SELECT a.id, a.room_id, a.stay_id, a.anomaly_type, a.severity, a.status,
                        a.context_data, a.detected_at, a.acknowledged_at, a.acknowledged_by,
-                       a.dismissed_at, a.dismissed_by, a.created_at, a.updated_at,
+                       a.dismissed_at, a.dismissed_by, a.reopened_at, a.reopened_by, a.reopen_reason, a.created_at, a.updated_at,
                        r.code AS room_code
                 FROM anomalies a
                 LEFT JOIN rooms r ON a.room_id = r.id
@@ -192,7 +192,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
         $stmt = $this->pdo->prepare(
             'SELECT id, room_id, stay_id, anomaly_type, severity, status,
                     context_data, detected_at, acknowledged_at, acknowledged_by,
-                    dismissed_at, dismissed_by, created_at, updated_at
+                    dismissed_at, dismissed_by, reopened_at, reopened_by, reopen_reason, created_at, updated_at
              FROM anomalies WHERE id = :id LIMIT 1'
         );
         $stmt->execute([':id' => $id]);
@@ -205,7 +205,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
         $sets = [];
         $params = [':id' => $id];
 
-        $allowed = ['status', 'acknowledged_at', 'acknowledged_by', 'dismissed_at', 'dismissed_by'];
+        $allowed = ['status', 'acknowledged_at', 'acknowledged_by', 'dismissed_at', 'dismissed_by', 'reopened_at', 'reopened_by', 'reopen_reason'];
         foreach ($allowed as $col) {
             if (array_key_exists($col, $fields)) {
                 $sets[] = "`{$col}` = :{$col}";
@@ -246,6 +246,9 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
             (string) $row['created_at'],
             (string) $row['updated_at'],
             isset($row['room_code']) ? (string) $row['room_code'] : null,
+            ($row['reopened_at'] ?? null) === null ? null : (string) $row['reopened_at'],
+            ($row['reopened_by'] ?? null) === null ? null : (string) $row['reopened_by'],
+            ($row['reopen_reason'] ?? null) === null ? null : (string) $row['reopen_reason'],
         );
     }
 }

@@ -16575,3 +16575,40 @@ Requieren los scopes indicados; sin credencial devuelven 401.
 
 \* `top_workers` se omite (array vacío) si el cliente no tiene `workers:read`.
 Los campos son aditivos y no alteran contratos existentes.
+
+## F120 — Extensiones aditivas del panel
+
+Todas las rutas requieren autenticación y conservan los scopes existentes. Los
+campos nuevos son aditivos; ningún contrato previo cambia de forma.
+
+### Anomalías
+
+| Método | Ruta | Body | Respuesta |
+|---|---|---|---|
+| POST | `/api/v1/anomalies/{id}/reopen` | `{ "reason": "texto", "actor"?: "texto" }` | `{ ok, anomaly }` |
+| GET | `/api/v1/anomalies` | — | añade `reopened_at`, `reopened_by`, `reopen_reason` |
+
+`409 anomaly_not_dismissed` si no está descartada; `409 anomaly_auto_dismissed`
+si `dismissed_by='system'`; `400 reason_required` sin motivo.
+
+### Analítica
+
+| Ruta | Respuesta |
+|---|---|
+| `GET /api/v1/analytics/occupations?days=&kind=&status=&room_id=&q=` | `items[]`, `summary`, `filters` |
+| `GET /api/v1/analytics/occupations/{kind}/{id}?days=` | `occupation`, `qr`, `debts`, `accesses`, `anomalies`, `timeline` |
+| `GET /api/v1/analytics/warehouse?days=&room_id=` | añade `rooms[]`, `recordings`, `visit_summary` |
+| `GET /api/v1/analytics/warehouse/logs?days=&room_id=&kind=&applied=` | `items[]`, `meta` |
+| `GET /api/v1/analytics/warehouse/visits/{id}` | `visit`, `recordings`, `room` |
+
+`kind` de ocupación: `stay` \| `worker`. `access_medium`:
+`QR_STAY` \| `QR_KEY` \| `NFC` \| `WORKER_QR` \| `UNKNOWN`.
+
+### Sensores
+
+`GET /sensores?room=ID` selecciona esa sala antes que `localStorage`.
+
+### Demo
+
+`php api/bin/panel-demo-fixture.php --create` y `--purge`; JSON con
+`created`, `skipped`, `purged`. Idempotentes y limitados a `DEMO-*`.

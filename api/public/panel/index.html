@@ -270,7 +270,7 @@ tr:hover td{background:rgba(108,142,224,.05)}
 
 <script>
 function crm(){return{
-  user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
+  user:null,p:'db',rooms:[],roomTypes:[],packs:[],stays:[],qrs:[],debts:[],events:[],pEvents:[],outbox:[],crmUsers:[],apiClients:[],anomalies:[],anomalySummary:{},anomalyCount:0,enabledTypes:['A1','A2','A3','A4','A5','A6','A7','A8'],anomalyFilters:{status:'OPEN',type:'',severity:'',room_id:''},newAnomalies:[],bannerDismissed:false,_seenAnomalyIds:new Set(),cfgSettings:{},
    workers:[],workerRoles:[],workersInside:[],factoryDevices:[],workerAlerts:[],workerAlertCount:0,workerTab:'list',workerDetail:null,workerDetailTab:'history',workerAlertSettings:{excessiveMin:120,strangeStart:7,strangeEnd:22},
    accessKeys:[],nfcCards:[],keyAccesses:[],keyFilters:{worker_id:'',status:'',q:''},nfcFilter:{status:'',q:''},accessFilters:{worker_id:'',key_id:'',result:'',from:'',to:''},_lastKeyToken:null,
   toast:{show:false,msg:'',type:'ok'},modal:{show:false,content:''},
@@ -431,7 +431,12 @@ function crm(){return{
       }).join('')+'</table>';
   },
 
-  openWorkerForm(id){
+  async openWorkerForm(id){
+    try{await Promise.all([this.loadWorkerRoles(),this.loadRoomTypes()])}catch(e){}
+    if(!this.workerRoles||!this.workerRoles.length){
+      this.modal.content='<h2>Sin roles disponibles</h2><p class="dim">Crea primero un rol de trabajador o reintenta la carga.</p><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cerrar</button><button class="btn btn-p" @click="loadWorkerRoles()">Reintentar</button></div>';
+      this.modal.show=true;return;
+    }
     let that=this;let w=id?this.workers.find(function(x){return x.id===id}):null;
     let rOpt=this.workerRoles.map(function(r){return'<option value="'+r.id+'"'+(w&&w.role_id===r.id?' selected':'')+'>'+that.esc(r.name)+'</option>'}).join('');
     this.modal.content='<h2>'+(id?'Editar':'Nuevo')+' trabajador</h2><div class="field"><label>Nombre</label><input id="wf_name" value="'+this.esc(w?w.name:'')+'"></div><div class="field"><label>Rol</label><select id="wf_role">'+rOpt+'</select></div><div class="field"><label>Notas</label><textarea id="wf_notes">'+this.esc(w?w.notes||'':'')+'</textarea></div><div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveWorker('+(id||0)+')">Guardar</button></div>';
@@ -542,16 +547,25 @@ function crm(){return{
     let typeOpts=this.roomTypes.map(function(t){return'<option value="'+t.id+'"'+(that.roomForm.room_type_id===t.id?' selected':'')+'>'+that.esc(t.name)+' ('+that.esc(t.code)+')</option>'}).join('');
     let packOpts='<option value="">Sin pack</option>'+this.packs.map(function(p){return'<option value="'+p.id+'"'+(that.roomForm.pack_id===p.id?' selected':'')+'>'+that.esc(p.code)+' · '+that.esc(p.name)+'</option>'}).join('');
     this.modal.content='<h2 id="modal-title">'+(r?'Editar':'Nueva')+' sala</h2>'
-      +'<div class="field"><label for="rmf_code">Código</label><input id="rmf_code" x-model="roomForm.code" placeholder="almacenZigbee" autocomplete="off"><p class="field-hint">Identificador único de la sala. Para el piloto Zigbee usa exactamente <code>almacenZigbee</code>.</p></div>'
-      +'<div class="field"><label for="rmf_type">Tipo de sala</label><select id="rmf_type" x-model="roomForm.room_type_id">'+typeOpts+'</select><p class="field-hint">El tipo <b>Almacén de bebidas</b> activa el motor de almacén.</p></div>'
-      +'<div class="field"><label for="rmf_pack">Pack</label><select id="rmf_pack" x-model="roomForm.pack_id">'+packOpts+'</select><p class="field-hint">La asignación se guarda con <code>apply-pack</code>. Un pack solo puede pertenecer a una sala.</p></div>'
-      +'<div class="field"><label for="rmf_notes">Notas</label><textarea id="rmf_notes" x-model="roomForm.notes" placeholder="Piloto Zigbee, no sustituye al almacén actual"></textarea></div>'
+      +'<div class="field"><label for="rmf_code">Código</label><input id="rmf_code" value="'+this.esc(this.roomForm.code||'')+'" placeholder="almacenZigbee" autocomplete="off" required><p class="field-hint">Identificador único de la sala. Para el piloto Zigbee usa exactamente <code>almacenZigbee</code>.</p></div>'
+      +'<div class="field"><label for="rmf_type">Tipo de sala</label><select id="rmf_type" required>'+typeOpts+'</select><p class="field-hint">El tipo <b>Almacén de bebidas</b> activa el motor de almacén.</p></div>'
+      +'<div class="field"><label for="rmf_pack">Pack</label><select id="rmf_pack">'+packOpts+'</select><p class="field-hint">La asignación se guarda con <code>apply-pack</code>. Un pack solo puede pertenecer a una sala.</p></div>'
+      +'<div class="field"><label for="rmf_notes">Notas</label><textarea id="rmf_notes" placeholder="Piloto Zigbee, no sustituye al almacén actual">'+this.esc(this.roomForm.notes||'')+'</textarea></div>'
       +'<div class="actions"><button class="btn btn-o" @click="modal.show=false">Cancelar</button><button class="btn btn-p" @click="saveRoom('+(r?r.id:0)+')">Guardar sala</button></div>';
     this.modal.show=true;
     if(this.$nextTick){this.$nextTick(function(){let el=document.getElementById('rmf_code');if(el)el.focus()})}
   },
   async saveRoom(id){
-    let f=this.roomForm;
+    let codeEl=document.getElementById('rmf_code');
+    let typeEl=document.getElementById('rmf_type');
+    let packEl=document.getElementById('rmf_pack');
+    let notesEl=document.getElementById('rmf_notes');
+    let f={
+      code:codeEl?codeEl.value:(this.roomForm.code||''),
+      room_type_id:typeEl?typeEl.value:this.roomForm.room_type_id,
+      pack_id:packEl?packEl.value:this.roomForm.pack_id,
+      notes:notesEl?notesEl.value:(this.roomForm.notes||'')
+    };
     if(!f.code||!f.code.trim()){this.toastErr('El código es obligatorio');return}
     if(!f.room_type_id){this.toastErr('Selecciona un tipo de sala');return}
     let that=this;
@@ -640,24 +654,20 @@ function crm(){return{
     if(f.status&&f.status!=='ALL')params.push('status='+f.status);
     if(f.type)params.push('anomaly_type='+f.type);
     if(f.severity)params.push('severity='+f.severity);
+    if(f.room_id)params.push('room_id='+f.room_id);
     params.push('limit=100');
     try{let d=await this.api('/api/v1/anomalies?'+params.join('&'));this.anomalies=d.data||[]}catch(e){}
   },
   async loadAnomalySummary(){try{let d=await this.api('/api/v1/anomalies?status=OPEN&limit=200');let items=d.data||[];this.anomalyCount=items.length}catch(e){}},
   async checkAnomalyAlerts(){try{let d=await this.api('/api/v1/anomalies?status=OPEN&limit=200');let items=d.data||[];this.anomalyCount=items.length}catch(e){}},
   roomCodeById(id){let r=this.rooms.find(function(x){return x.id===id});return r?r.code:'#'+id},
-  sevBadge(s){return'<span class="badge sev-'+s+'" style="font-size:11px">'+s+'</span>'},
-  stBadge(s){let m={OPEN:'Pendiente',ACKNOWLEDGED:'Reconocida',DISMISSED:'Descartada'};return'<span class="badge st-'+s+'" style="font-size:10px">'+(m[s]||s)+'</span>'},
-  ANOMALY_CATALOG:[
-    {code:'A1',name:'Presencia sin apertura',desc:'PRESENCE sin PROXIMITY=OPEN previo',sev:'HIGH'},
-    {code:'A2',name:'Presencia sin estancia',desc:'PRESENCE en room sin stay activo',sev:'HIGH'},
-    {code:'A3',name:'Puerta abierta sin QR',desc:'PROXIMITY=OPEN sin QR ni stay OCCUPIED',sev:'CRITICAL'},
-    {code:'A4',name:'Presencia sin actividad puerta',desc:'PRESENCE prolongada sin eventos PROXIMITY',sev:'HIGH'},
-    {code:'A5',name:'Salida sin apertura',desc:'stay EXITED sin PROXIMITY=OPEN de salida',sev:'MEDIUM'},
-    {code:'A6',name:'Presencia post-salida',desc:'PRESENCE tras stay EXITED',sev:'HIGH'},
-    {code:'A7',name:'Puerta abierta sin presencia',desc:'door OPEN + absence >120s',sev:'MEDIUM'},
-    {code:'A8',name:'Flapping de sensor',desc:'≥5 transiciones mismo sensor en 30s',sev:'LOW'},
-  ],
+  sevBadge(s){let l=(window.AnomalyInfo&&window.AnomalyInfo.severityLabel)?window.AnomalyInfo.severityLabel(s):s;return'<span class="badge sev-'+s+'" style="font-size:11px">'+l+'</span>'},
+  stBadge(s){let l=(window.AnomalyInfo&&window.AnomalyInfo.stateLabel)?window.AnomalyInfo.stateLabel(s):s;return'<span class="badge st-'+s+'" style="font-size:10px">'+l+'</span>'},
+  get ANOMALY_CATALOG(){
+    let src=(window.AnomalyInfo&&window.AnomalyInfo.catalog)||{};
+    let sev={A1:'HIGH',A2:'HIGH',A3:'CRITICAL',A4:'HIGH',A5:'MEDIUM',A6:'HIGH',A7:'MEDIUM',A8:'LOW'};
+    return Object.keys(src).map(function(code){return{code:code,name:src[code].title,desc:src[code].desc,sev:sev[code]||'MEDIUM'}});
+  },
   anomalyPage(){
     let that=this;
     let catTitle='<h3 style="margin:20px 0 8px;font-size:15px">📋 Catálogo de tipos</h3>';
@@ -669,9 +679,9 @@ function crm(){return{
 
     let f=this.anomalyFilters;
     let typeOpt='<option value="">Todos los tipos</option>'
-      +this.ANOMALY_CATALOG.map(function(c){return'<option value="'+c.code+'"'+((f.type===c.code)?' selected':'')+'>'+c.code+' — '+c.name+'</option>'}).join('');
+      +this.ANOMALY_CATALOG.map(function(c){return'<option value="'+c.code+'"'+((f.type===c.code)?' selected':'')+'>'+c.name+'</option>'}).join('');
     let sevOpt='<option value="">Todas las severidades</option>'
-      +['CRITICAL','HIGH','MEDIUM','LOW'].map(function(s){return'<option value="'+s+'"'+((f.severity===s)?' selected':'')+'>'+s+'</option>'}).join('');
+      +['CRITICAL','HIGH','MEDIUM','LOW'].map(function(s){return'<option value="'+s+'"'+((f.severity===s)?' selected':'')+'>'+((window.AnomalyInfo&&window.AnomalyInfo.severityLabel)?window.AnomalyInfo.severityLabel(s):s)+'</option>'}).join('');
     let statusOpt='<option value="OPEN"'+(f.status==='OPEN'?' selected':'')+'>📌 Pendientes</option>'
       +'<option value="ACKNOWLEDGED"'+(f.status==='ACKNOWLEDGED'?' selected':'')+'>👁️ Reconocidas</option>'
       +'<option value="DISMISSED"'+(f.status==='DISMISSED'?' selected':'')+'>✅ Histórico</option>'
@@ -699,11 +709,13 @@ function crm(){return{
         }else if(a.status==='ACKNOWLEDGED'){
           action='<span class="dim" style="font-size:10px">por '+(a.acknowledged_by||'—')+'<br>'+det+'</span>';
         }else{
-          action='<span class="dim" style="font-size:10px">auto<br>'+det+'</span>';
+          action=a.dismissed_by==='system'
+            ?'<span class="dim" style="font-size:10px">auto<br>'+det+'</span>'
+            :'<button @click="reopenAnomaly('+a.id+')" class="btn btn-o btn-xs">Reabrir</button>';
         }
         return'<tr><td style="font-family:monospace;font-size:11px">#'+a.id+'</td>'
           +'<td style="font-weight:600">'+code+'</td>'
-          +'<td title="'+((that.ANOMALY_CATALOG.find(function(c){return c.code===a.anomaly_type})||{}).desc||'')+'">'+a.anomaly_type+'</td>'
+          +'<td>'+((window.AnomalyInfo&&window.AnomalyInfo.cell)?window.AnomalyInfo.cell(a.anomaly_type):a.anomaly_type)+'</td>'
           +'<td>'+that.sevBadge(a.severity)+'</td>'
           +'<td>'+that.stBadge(a.status)+'</td>'
           +'<td style="font-size:11px;color:var(--dim)">'+det+'</td>'
@@ -711,6 +723,15 @@ function crm(){return{
       }).join('')+'</table>';
 
     return header+filterBar+catTitle+catTable+'<h3 style="margin:20px 0 8px;font-size:15px">🔍 Anomalías detectadas</h3>'+table;
+  },
+  reopenAnomaly(id){
+    let reason=prompt('Motivo de la reapertura (obligatorio):','');
+    if(reason==null)return; reason=String(reason).trim();
+    if(!reason){this.toastErr('El motivo es obligatorio');return}
+    let that=this;
+    this.api('/api/v1/anomalies/'+id+'/reopen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason,actor:(this.user&&(this.user.username||this.user.display_name))||'admin'})})
+      .then(function(){that.toastOk('Incidencia reabierta');that.loadAnomalies();that.loadAnomalySummary()})
+      .catch(function(e){that.toastErr(e.message)});
   },
   async acknowledgeAnomaly(id){
     let that=this;
@@ -1094,6 +1115,7 @@ function crm(){return{
 </script>
 <script src="/panel/assets/charts.js"></script>
 <script src="/panel/assets/format.js"></script>
+<script src="/panel/assets/anomaly-info.js"></script>
 <script src="/panel/assets/panel-v2.js"></script>
 </body>
 </html>

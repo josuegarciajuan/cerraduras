@@ -80,6 +80,13 @@ MYSQL="$MYSQL_BIN -u$DB_USER -p$DB_PASS -h$DB_HOST -P$DB_PORT $DB_NAME"
 
 # El pack PACK_ZIGBEE se resuelve dinámicamente para los tests Zigbee. F117 no
 # depende de él: /timbre-api usa la primera sala TIMBRADO (preferir oficina).
+# Tipo de sala primario resuelto dinámicamente (F120 eliminó TIPO_NORMAL; los
+# ids históricos no son estables entre bases de datos).
+ROOM_TYPE_PRIMARY=$($MYSQL -sN -e "SELECT id FROM room_types ORDER BY id LIMIT 1" 2>/dev/null)
+[ -z "$ROOM_TYPE_PRIMARY" ] && ROOM_TYPE_PRIMARY=1
+ROOM_TYPE_ALT=$($MYSQL -sN -e "SELECT id FROM room_types WHERE id <> $ROOM_TYPE_PRIMARY ORDER BY id LIMIT 1" 2>/dev/null)
+[ -z "$ROOM_TYPE_ALT" ] && ROOM_TYPE_ALT=$ROOM_TYPE_PRIMARY
+export ROOM_TYPE_PRIMARY ROOM_TYPE_ALT
 ZIGBEE_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN device_packs p ON p.id=r.pack_id WHERE p.code='PACK_ZIGBEE' ORDER BY r.id LIMIT 1" 2>/dev/null)
 [ -z "$ZIGBEE_ROOM_ID" ] && ZIGBEE_ROOM_ID=14
 WA_ROOM_ID=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='ALMACEN_BEBIDAS' AND r.pack_id IS NOT NULL ORDER BY r.id LIMIT 1" 2>/dev/null)
@@ -453,15 +460,15 @@ http_test GET /api/v1/rooms 403 \
 block "BLOCK 6 — HTTP: F3 — Rooms / RoomTypes / TimeSlots"
 
 http_test GET /api/v1/room-types      200 "GET /room-types (ADMIN-CLI)"         --key ADMIN-CLI
-http_test GET /api/v1/room-types/1    200 "GET /room-types/1 (ADMIN-CLI)"        --key ADMIN-CLI
+http_test GET "/api/v1/room-types/$ROOM_TYPE_PRIMARY"    200 "GET /room-types/{id} (ADMIN-CLI)"        --key ADMIN-CLI
 http_test GET /api/v1/room-types/9999 404 "GET /room-types/9999 → 404"           --key ADMIN-CLI
 
 http_test GET /api/v1/rooms           200 "GET /rooms (ADMIN-CLI)"               --key ADMIN-CLI
 http_test GET /api/v1/rooms/1         200 "GET /rooms/1 (ADMIN-CLI)"             --key ADMIN-CLI
 http_test GET /api/v1/rooms/9999      404 "GET /rooms/9999 → 404"                --key ADMIN-CLI
 
-http_test GET /api/v1/room-types/1/time-slots 200 \
-    "GET /room-types/1/time-slots (ADMIN-CLI)"                                   --key ADMIN-CLI
+http_test GET "/api/v1/room-types/$ROOM_TYPE_PRIMARY/time-slots" 200 \
+    "GET /room-types/{id}/time-slots (ADMIN-CLI)"                                   --key ADMIN-CLI
 
 # =============================================================================
 # BLOCK 7 — HTTP: F4 — Stays
@@ -2517,7 +2524,7 @@ http_test GET  /api/v1/worker-roles  200  "List worker roles"  --key ADMIN-CLI
 
 # Create a test role and capture its ID
 ROLE_RESP=$(curl -s -H "X-API-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"name":"Test Role F38","description":"F38 test","room_type_ids":[1]}' \
+  -d "{\"name\":\"Test Role F38\",\"description\":\"F38 test\",\"room_type_ids\":[$ROOM_TYPE_PRIMARY]}" \
   "${API_BASE}/api/v1/worker-roles")
 ROLE_ID=$(echo "$ROLE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])" 2>/dev/null)
 
@@ -2530,7 +2537,7 @@ fi
 http_test GET  "/api/v1/worker-roles/$ROLE_ID"  200  "Show worker role"  --key ADMIN-CLI
 
 http_test PATCH "/api/v1/worker-roles/$ROLE_ID"  200  "Update worker role"  --key ADMIN-CLI \
-  --body '{"name":"Test Role Updated","room_type_ids":[1,2]}'
+  --body "{\"name\":\"Test Role Updated\",\"room_type_ids\":[$ROOM_TYPE_PRIMARY]}"
 
 # ── Workers CRUD ──
 http_test GET  /api/v1/workers  200  "List workers"  --key ADMIN-CLI
@@ -7483,7 +7490,7 @@ f113_expect_error() {
 
 # Válida y normalización: se guarda en minúsculas y se valida en mayúsculas.
 F113_CARD_ID=$(f113_card_id "F113-HEX-$F113_TS" "$F113_HEX")
-F113_KEY_ID=$(f113_key_id "F113-HEX-$F113_TS" "$F113_CARD_ID" 1)
+F113_KEY_ID=$(f113_key_id "F113-HEX-$F113_TS" "$F113_CARD_ID" "$ROOM_TYPE_PRIMARY")
 if [ -n "$F113_CARD_ID" ] && [ -n "$F113_KEY_ID" ]; then
   F113_OK=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}/api/v1/qr/validate" \
     -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
@@ -7521,7 +7528,7 @@ f113_expect_error "F113: ficha sin llave → ficha_unassigned" "/api/v1/qr/valid
 
 # Llave revocada conservando la ficha asignada (revocación directa para el caso).
 F113_REV_CARD=$(f113_card_id "F113-REV-$F113_TS" "F113REV$F113_TS")
-F113_REV_KEY=$(f113_key_id "F113-REV-$F113_TS" "$F113_REV_CARD" 1)
+F113_REV_KEY=$(f113_key_id "F113-REV-$F113_TS" "$F113_REV_CARD" "$ROOM_TYPE_PRIMARY")
 if [ -n "$F113_REV_KEY" ]; then
   $MYSQL -e "UPDATE access_keys SET status='REVOKED', revoked_at=UTC_TIMESTAMP(3) WHERE id=$F113_REV_KEY" >/dev/null 2>&1 || true
   f113_expect_error "F113: llave revocada → key_revoked" "/api/v1/qr/validate" \
@@ -7533,7 +7540,7 @@ fi
 
 # Llave caducada.
 F113_EXP_CARD=$(f113_card_id "F113-EXP-$F113_TS" "F113EXP$F113_TS")
-F113_EXP_KEY=$(f113_key_id "F113-EXP-$F113_TS" "$F113_EXP_CARD" 1)
+F113_EXP_KEY=$(f113_key_id "F113-EXP-$F113_TS" "$F113_EXP_CARD" "$ROOM_TYPE_PRIMARY")
 if [ -n "$F113_EXP_KEY" ]; then
   $MYSQL -e "UPDATE access_keys SET valid_until=UTC_TIMESTAMP(3) - INTERVAL 1 DAY WHERE id=$F113_EXP_KEY" >/dev/null 2>&1 || true
   f113_expect_error "F113: llave caducada → key_expired" "/api/v1/qr/validate" \
@@ -7545,7 +7552,7 @@ fi
 
 # Sin permiso: llave de tipo STANDARD usada en una sala TIPO_NORMAL.
 F113_DENY_CARD=$(f113_card_id "F113-DENY-$F113_TS" "F113DENY$F113_TS")
-F113_DENY_KEY=$(f113_key_id "F113-DENY-$F113_TS" "$F113_DENY_CARD" 2)
+F113_DENY_KEY=$(f113_key_id "F113-DENY-$F113_TS" "$F113_DENY_CARD" "$ROOM_TYPE_ALT")
 if [ -n "$F113_DENY_KEY" ]; then
   f113_expect_error "F113: sala sin permiso → key_room_denied" "/api/v1/qr/validate" \
     "{\"qr_text\":\"F113DENY$F113_TS\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
@@ -9020,6 +9027,119 @@ if [ "$SERVER_UP" = true ]; then
     fi
 else
     skip "F119 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
+# BLOCK 89 — F120: panel v2.1 (operación vinculada, anomalías, almacén)
+# Trazabilidad: F120 · requirements.md §F120 · contracts.md §F120
+# =============================================================================
+block "BLOCK 89 — F120: panel v2.1"
+
+for F120_FILE in \
+    public/panel/assets/anomaly-info.js \
+    public/panel/assets/panel-v2.js \
+    src/Http/Controllers/AnalyticsController.php \
+    migrations/0145_anomaly_reopen_audit.sql \
+    migrations/0146_room_type_normal_to_standard.sql \
+    bin/panel-demo-fixture.php \
+    bin/panel-reopen-dismissed.php \
+    tests/Unit/AnomalyReopenTest.php \
+    tests/Unit/PanelV21Test.php; do
+    if [ -f "$F120_FILE" ]; then
+        pass "F120: existe $F120_FILE"
+    else
+        fail "F120: $F120_FILE" "no encontrado"
+    fi
+done
+
+for F120_MARK in 'anomaly-info.js' '/sensores?room=' 'loadOccupationsV2' 'openWarehouseVisit' 'Duración reservada'; do
+    if grep -qF "$F120_MARK" public/panel/assets/panel-v2.js public/panel/index.html 2>/dev/null; then
+        pass "F120: marcador $F120_MARK"
+    else
+        fail "F120: marcador $F120_MARK" "ausente"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    for F120_JS in public/panel/assets/anomaly-info.js public/panel/assets/panel-v2.js public/assets/sensor-wizard-v2.js; do
+        if node --check "$F120_JS" >/tmp/f120-js.log 2>&1; then
+            pass "F120: sintaxis JS $(basename "$F120_JS")"
+        else
+            fail "F120: sintaxis JS $(basename "$F120_JS")" "$(tail -3 /tmp/f120-js.log | tr '\n' ' ')"
+        fi
+    done
+else
+    skip "F120: sintaxis JS" "node no disponible"
+fi
+
+if php -l src/Http/Controllers/AnalyticsController.php >/tmp/f120-php.log 2>&1; then
+    pass "F120: sintaxis AnalyticsController"
+else
+    fail "F120: sintaxis AnalyticsController" "$(tail -2 /tmp/f120-php.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    if [ -n "$(get_key ADMIN-CLI)" ]; then
+        http_test GET '/api/v1/analytics/occupations?days=7' 200 \
+            "F120: ocupaciones unificadas → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/occupations?days=7&kind=stay' 200 \
+            "F120: ocupaciones filtradas por huésped → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/warehouse/logs?days=7' 200 \
+            "F120: logs físicos del almacén → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/warehouse?days=7&room_id=999999' 200 \
+            "F120: almacén con sala inexistente no rompe → 200" --key ADMIN-CLI
+
+        F120_KEY=$(get_key ADMIN-CLI)
+        F120_OCC=$(curl -s --max-time 10 -H "X-API-Key: $F120_KEY" \
+            "$API_BASE/api/v1/analytics/occupations?days=7" 2>/dev/null)
+        for F120_M in '"items"' '"summary"' '"access_medium"'; do
+            if printf '%s' "$F120_OCC" | grep -q "$F120_M"; then
+                pass "F120: occupations incluye $F120_M"
+            else
+                fail "F120: occupations sin $F120_M" "$(printf '%s' "$F120_OCC" | head -c 200)"
+            fi
+        done
+
+        F120_WH=$(curl -s --max-time 10 -H "X-API-Key: $F120_KEY" \
+            "$API_BASE/api/v1/analytics/warehouse?days=7" 2>/dev/null)
+        for F120_M in '"rooms"' '"cameras"' '"visit_summary"' '"recordings"'; do
+            if printf '%s' "$F120_WH" | grep -q "$F120_M"; then
+                pass "F120: warehouse incluye $F120_M"
+            else
+                fail "F120: warehouse sin $F120_M" "$(printf '%s' "$F120_WH" | head -c 200)"
+            fi
+        done
+
+        F120_AID=$($MYSQL -sN -e "SELECT id FROM anomalies ORDER BY id DESC LIMIT 1" 2>/dev/null)
+        if [ -n "$F120_AID" ]; then
+            http_test GET "/api/v1/anomalies/$F120_AID" 200 \
+                "F120: detalle de anomalía → 200" --key ADMIN-CLI
+            http_test POST "/api/v1/anomalies/$F120_AID/reopen" 400 \
+                "F120: reapertura sin motivo → 400" --key ADMIN-CLI --body '{}'
+        else
+            skip "F120: detalle/reapertura de anomalía" "sin anomalías"
+        fi
+
+        F120_DID=$($MYSQL -sN -e "SELECT id FROM anomalies WHERE status='DISMISSED' AND dismissed_by IS NOT NULL AND dismissed_by <> 'system' AND reopened_at IS NULL ORDER BY id DESC LIMIT 1" 2>/dev/null)
+        if [ -n "$F120_DID" ]; then
+            F120_REOPEN=$(curl -s --max-time 10 -X POST -H "X-API-Key: $F120_KEY" \
+                -H 'Content-Type: application/json' \
+                -d '{"reason":"BLOCK 89 verificación","actor":"regression"}' \
+                "$API_BASE/api/v1/anomalies/$F120_DID/reopen" 2>/dev/null)
+            if printf '%s' "$F120_REOPEN" | grep -q '"reopen_reason"'; then
+                pass "F120: reapertura manual auditada"
+                $MYSQL -e "UPDATE anomalies SET status='DISMISSED', reopened_at=NULL, reopened_by=NULL, reopen_reason=NULL WHERE id=$F120_DID" 2>/dev/null
+            else
+                fail "F120: reapertura manual" "$(printf '%s' "$F120_REOPEN" | head -c 240)"
+            fi
+        else
+            skip "F120: reapertura manual" "sin descartes manuales"
+        fi
+    else
+        skip "F120 HTTP" "sin clave ADMIN-CLI"
+    fi
+else
+    skip "F120 HTTP" "servidor no disponible"
 fi
 
 # =============================================================================

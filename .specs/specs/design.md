@@ -26583,3 +26583,52 @@ actual en el día de hoy. Sin pollers ni llamadas a Tuya.
 
 `PanelV2UiTest`, BLOCK 88 del runner (estáticos + HTTP), Playwright desktop/móvil
 y regresión completa: **1129 passed, 0 failed, 16 skipped**.
+
+## F120 — Panel CRM v2.1: operación vinculada
+
+### Frontend
+
+- `panel/assets/format.js` incorpora el catálogo canónico de anomalías
+  (`ANOMALIES`) y helpers `anomalyLabel`, `anomalyText`, `anomalyInfo`,
+  `severityLabel` y `stateLabel`. Todos los renderizadores usan estos helpers.
+- `panel/assets/anomaly-info.js` (nuevo) mantiene el catálogo y el componente de
+  información accesible (foco, toque, Escape, `aria-describedby`).
+- `panel-v2.js` añade: acciones por espacio, ocupaciones unificadas, expediente
+  de estancia/anomalía/visita, filtros de almacén y logs, deep links y el
+  refinamiento visual. Mantiene el patrón drawer de F119.
+- `/sensores` (`sensor-wizard-v2.js`) prioriza `?room=` sobre `localStorage`.
+
+### Backend
+
+- `Anomaly`/`AnomalyService` añaden `reopen()` y auditoría
+  (`reopened_at`, `reopened_by`, `reopen_reason`). El endpoint exige motivo.
+- `AnalyticsController` añade (aditivo):
+  - `GET /api/v1/analytics/occupations` — unión normalizada de `stays` y
+    `worker_sessions` con `kind`, `access_medium`, duración reservada/real,
+    sala, estado y relaciones.
+  - `GET /api/v1/analytics/occupations/{kind}/{id}` — expediente de ocupación
+    con QR, deudas, accesos y anomalías.
+  - `GET /api/v1/analytics/warehouse/logs` — eventos físicos y decisiones.
+  - `GET /api/v1/analytics/warehouse/visits/{id}` — visita + grabaciones.
+  - `warehouse` acepta `room_id` y devuelve `rooms[]` y desglose de grabaciones.
+- Todas las consultas son locales, con `prepare` y límite de 366 días. Cero
+  llamadas a Tuya.
+
+### Migraciones
+
+- `0145_anomaly_reopen_audit.sql`: columnas de auditoría de reapertura.
+- `0146_room_type_normal_to_standard.sql`: fusión de referencias y borrado de
+  `TIPO_NORMAL` (idempotente y seguro en caliente).
+- Sin cambios en `data/` ni en la calibración del radar.
+
+### Datos demo
+
+`bin/panel-demo-fixture.php --create|--purge` crea/elimina salas `DEMO-*` y
+registros marcados con `meta_json.demo_fixture = 'F120'`. Nunca asigna packs ni
+crea ficheros de vídeo.
+
+### Verificación
+
+Units de anomalía, ocupaciones y migración; extensión de `PanelV2UiTest`;
+nuevo BLOCK 89 del runner con HTTP; Playwright desktop/móvil; regresión
+completa sin fallos.
