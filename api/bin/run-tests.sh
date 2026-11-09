@@ -202,8 +202,18 @@ _cleanup_factory_test() {
         fail "F40 cleanup" "Quedaron recursos del chip de prueba"
     fi
 }
+_cleanup_test_workers() {
+    # BLOCK 29 crea un trabajador por ejecución y DELETE /workers solo lo
+    # desactiva (borrado lógico). Sin esto, cada corrida deja una fila
+    # "F38 Updated Worker" + su worker_session. También limpia residuos legacy.
+    db_exec "SELECT 1" > /dev/null 2>&1 || return 0
+    $MYSQL -sN -e "DELETE ws FROM worker_sessions ws JOIN workers w ON w.id = ws.worker_id WHERE w.name IN ('F38 Test Worker','F38 Updated Worker','Test Updated','QR Valid')" 2>/dev/null || true
+    $MYSQL -sN -e "DELETE FROM workers WHERE name IN ('F38 Test Worker','F38 Updated Worker','Test Updated','QR Valid')" 2>/dev/null || true
+}
+
 _cleanup_all() {
     _cleanup_factory_test
+    _cleanup_test_workers
     _restore_radar_profile
 }
 trap _cleanup_all EXIT
@@ -2597,6 +2607,14 @@ http_test DELETE "/api/v1/worker-roles/$ROLE_ID"  200  "Delete test role (no wor
 
 # ── Final check ──
 http_test GET  /api/v1/workers/inside  200  "Workers inside after close"  --key ADMIN-CLI
+
+# ── Cleanup físico ──
+# DELETE /workers/{id} es desactivación lógica. El runner borra el trabajador
+# de prueba y su sesión para no acumular residuos entre ejecuciones.
+if [ -n "$WORKER_ID" ]; then
+  $MYSQL -sN -e "DELETE FROM worker_sessions WHERE worker_id=$WORKER_ID" 2>/dev/null || true
+  $MYSQL -sN -e "DELETE FROM workers WHERE id=$WORKER_ID" 2>/dev/null || true
+fi
 
 # =============================================================================
 

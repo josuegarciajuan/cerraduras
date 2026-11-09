@@ -369,7 +369,7 @@ function crm(){return{
     if(!id){body.owner_type=ot;body.key_type=kt;if(ot==='WORKER')body.worker_id=parseInt(document.getElementById('kf_worker').value);else body.role_id=parseInt(document.getElementById('kf_role').value);if(kt==='NFC')body.nfc_card_id=parseInt(document.getElementById('kf_nfc').value||0)}
     else if(kt==='NFC'){let v=parseInt(document.getElementById('kf_nfc').value||0);if(v)body.nfc_card_id=v}
     let url=id?'/api/v1/keys/'+id:'/api/v1/keys';let meth=id?'PATCH':'POST';
-    this.api(url,{method:meth,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(d){that.modal.show=false;that.loadKeys();that.loadNfcCards();that.toastOk(id?'Llave actualizada':'Llave creada');if(d.data&&d.data.qr_token)that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)});
+    this.api(url,{method:meth,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(d){that.modal.show=false;that.loadKeys();if(that.loadKeysAnalyticsV2)that.loadKeysAnalyticsV2();that.loadNfcCards();that.toastOk(id?'Llave actualizada':'Llave creada');if(d.data&&d.data.qr_token)that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)});
   },
   showKeyQr(token,label){
     this.modal.content='<h2>🎫 QR de la llave</h2><p class="dim">'+this.esc(label||'')+' · Este QR es reutilizable hasta la caducidad o revocación.</p><div id="key-qr-box" style="background:#fff;padding:14px;border-radius:8px;display:inline-block"></div><div class="actions"><button class="btn btn-p" @click="downloadKeyQr()">⬇ Descargar PNG</button><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
@@ -390,8 +390,8 @@ function crm(){return{
         +'<div class="actions">'+(k.key_type==='QR'&&k.status==='ACTIVE'?'<button class="btn btn-p btn-sm" @click="regenerateKeyQr('+k.id+')">🔄 Regenerar QR</button>':'')+(k.status==='ACTIVE'?'<button class="btn btn-d btn-sm" @click="revokeKey('+k.id+')">Revocar</button>':'')+'<button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
       this.modal.show=true;
     }catch(e){this.toastErr(e.message)}},
-  regenerateKeyQr(id){if(!confirm('¿Regenerar el QR? El anterior dejará de funcionar.'))return;let that=this;this.api('/api/v1/keys/'+id+'/qr',{method:'POST'}).then(function(d){that.loadKeys();that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)})},
-  revokeKey(id){if(!confirm('¿Revocar esta llave? Dejará de abrir puertas y la ficha quedará disponible.'))return;let that=this;this.api('/api/v1/keys/'+id,{method:'DELETE'}).then(function(){that.modal.show=false;that.loadKeys();that.loadNfcCards();that.toastOk('Llave revocada')}).catch(function(e){that.toastErr(e.message)})},
+  regenerateKeyQr(id){if(!confirm('¿Regenerar el QR? El anterior dejará de funcionar.'))return;let that=this;this.api('/api/v1/keys/'+id+'/qr',{method:'POST'}).then(function(d){that.loadKeys();if(that.loadKeysAnalyticsV2)that.loadKeysAnalyticsV2();that.showKeyQr(d.data.qr_token,d.data.label)}).catch(function(e){that.toastErr(e.message)})},
+  revokeKey(id){if(!confirm('¿Revocar esta llave? Dejará de abrir puertas y la ficha quedará disponible.'))return;let that=this;this.api('/api/v1/keys/'+id,{method:'DELETE'}).then(function(){that.modal.show=false;that.loadKeys();if(that.loadKeysAnalyticsV2)that.loadKeysAnalyticsV2();that.loadNfcCards();that.toastOk('Llave revocada')}).catch(function(e){that.toastErr(e.message)})},
   openWorkerKeys(workerId){this.keyFilters={worker_id:workerId,status:'',q:''};this.nav('ky')},
 
   // ── FICHAS NFC ──
@@ -449,6 +449,7 @@ function crm(){return{
     let meth=id?'PATCH':'POST';let url=id?'/api/v1/workers/'+id:'/api/v1/workers';
     this.api(url,{method:meth,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(d){
       that.modal.show=false;that.loadWorkers();
+      if(that.loadWorkersAnalyticsV2)that.loadWorkersAnalyticsV2();
       if(!id&&d.data&&d.data.qr_token){
         that.modal.content='<h2>✅ QR Maestro</h2><p class="dim">Guarda este token. <b>No se volverá a mostrar.</b></p><div class="qr-token" id="qr-token-text">'+that.esc(d.data.qr_token)+'</div><div class="actions"><button class="btn btn-p" onclick="navigator.clipboard.writeText(document.getElementById(\'qr-token-text\').textContent)">📋 Copiar</button><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
         that.modal.show=true;
@@ -458,7 +459,7 @@ function crm(){return{
 
   deactivateWorker(id){
     if(!confirm('¿Desactivar trabajador? Su QR dejará de funcionar.'))return;
-    let that=this;this.api('/api/v1/workers/'+id,{method:'DELETE'}).then(function(){that.loadWorkers();that.toastOk('Desactivado')}).catch(function(e){that.toastErr(e.message)});
+    let that=this;this.api('/api/v1/workers/'+id,{method:'DELETE'}).then(function(){that.loadWorkers();if(that.loadWorkersAnalyticsV2)that.loadWorkersAnalyticsV2();that.toastOk('Desactivado')}).catch(function(e){that.toastErr(e.message)});
   },
 
   regenerateWorkerQr(id){
@@ -466,6 +467,7 @@ function crm(){return{
     let that=this;this.api('/api/v1/workers/'+id+'/qr',{method:'POST'}).then(function(d){
       that.modal.content='<h2>🔄 QR Regenerado</h2><p class="dim">El token anterior ha sido revocado.</p><div class="qr-token" id="qr-token-text">'+that.esc(d.data.qr_token)+'</div><div class="actions"><button class="btn btn-p" onclick="navigator.clipboard.writeText(document.getElementById(\'qr-token-text\').textContent)">📋 Copiar</button><button class="btn btn-o" @click="modal.show=false">Cerrar</button></div>';
       that.modal.show=true;that.loadWorkers();
+      if(that.loadWorkersAnalyticsV2)that.loadWorkersAnalyticsV2();
     }).catch(function(e){that.toastErr(e.message)});
   },
 
@@ -584,6 +586,7 @@ function crm(){return{
       }
       this.modal.show=false;
       await this.loadDashboard();await this.loadPacks();
+      if(this.loadRoomsAnalyticsV2)await this.loadRoomsAnalyticsV2();
       this.toastOk(id?'Sala actualizada':'Sala creada');
     }catch(e){this.toastErr(e.message)}
   },
@@ -945,12 +948,12 @@ function crm(){return{
       let prev=(id?((this.packs.find(x=>x.id===id)||{}).devices||[]):[]).map(x=>x.id);
       for(let did of prev){if(this.pkSel.indexOf(did)<0){await this.api('/api/v1/devices/'+did,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pack_id:null})})}}
       for(let did of this.pkSel){if(prev.indexOf(did)<0){await this.api('/api/v1/devices/'+did,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pack_id:packId})})}}
-      this.modal.show=false;await this.loadPacks();this.toastOk(id?'Pack actualizado':'Pack creado');
+      this.modal.show=false;await this.loadPacks();if(this.loadDeviceAnalyticsV2)await this.loadDeviceAnalyticsV2();this.toastOk(id?'Pack actualizado':'Pack creado');
     }catch(e){this.toastErr(e.message)}
   },
   async deletePack(id){
     if(!confirm('¿Eliminar el pack? Los dispositivos quedarán sin asignar.'))return;
-    try{await this.api('/api/v1/device-packs/'+id,{method:'DELETE'});this.modal.show=false;await this.loadPacks();this.toastOk('Pack eliminado')}
+    try{await this.api('/api/v1/device-packs/'+id,{method:'DELETE'});this.modal.show=false;await this.loadPacks();if(this.loadDeviceAnalyticsV2)await this.loadDeviceAnalyticsV2();this.toastOk('Pack eliminado')}
     catch(e){this.toastErr(e.message)}
   },
   async openDeviceForm(id,presetPackId){
@@ -1040,6 +1043,7 @@ function crm(){return{
         if(f.label&&f.label.trim()){await this.api('/api/v1/devices/'+d.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:f.label.trim()})})}
       }
       this.modal.show=false;await this.loadPacks();
+      if(this.loadDeviceAnalyticsV2)await this.loadDeviceAnalyticsV2();
       if(this.p==='dv'){await this.loadDevices()}
       await this.loadFirmwareOps();
       if(variantChanged)this.toastOk('Dispositivo actualizado · cambio a '+this.ESP_VARIANT_NAME[targetVariant]+(variantAlreadyRequested?' ya solicitado':' solicitado')+'. Se aplicará al reiniciar con el firmware nuevo.');
@@ -1066,7 +1070,7 @@ function crm(){return{
   },
   async deleteDevice(id){
     if(!confirm('¿Eliminar este dispositivo?'))return;
-    try{await this.api('/api/v1/devices/'+id,{method:'DELETE'});await this.loadPacks();this.toastOk('Dispositivo eliminado')}
+    try{await this.api('/api/v1/devices/'+id,{method:'DELETE'});await this.loadPacks();if(this.loadDeviceAnalyticsV2)await this.loadDeviceAnalyticsV2();this.toastOk('Dispositivo eliminado')}
     catch(e){this.toastErr(e.message)}
   },
   async loadFirmwareOps(){
@@ -1080,7 +1084,7 @@ function crm(){return{
     for(let d of list){
       let op=this.fwOps[d.id];
       if(!op||op.finished)continue;
-      try{let r=await this.api('/api/v1/firmware-operations/'+op.id);this.fwOps[d.id]=r;if(r.finished){await this.loadPacks();if(this.p==='dv')await this.loadDevices()}}catch(e){}
+      try{let r=await this.api('/api/v1/firmware-operations/'+op.id);this.fwOps[d.id]=r;if(r.finished){await this.loadPacks();if(this.p==='dv')await this.loadDevices();if(this.loadDeviceAnalyticsV2)await this.loadDeviceAnalyticsV2()}}catch(e){}
     }
   },
   async updateFirmware(id){
