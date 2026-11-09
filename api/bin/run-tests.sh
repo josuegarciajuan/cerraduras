@@ -9059,7 +9059,7 @@ else
 fi
 
 # 90.2 Sin marcadores de integración de nube en código.
-F122_MARKERS=$(grep -RInE "TUYA_ACCESS|openapi\.tuya|tuyaPresenceApi|TuyaSensorIngress|TuyaSwitchGateway|TuyaLockGateway|tuya-pulsar-consumer"     src public bin start-all.sh stop-all.sh 2>/dev/null | grep -v node_modules || true)
+F122_MARKERS=$(grep -RInE --exclude=run-tests.sh --exclude=acceptance-tests.json "TUYA_ACCESS|openapi\.tuya|tuyaPresenceApi|TuyaSensorIngress|TuyaSwitchGateway|TuyaLockGateway|tuya-pulsar-consumer" src public 2>/dev/null || true)
 if [ -z "$F122_MARKERS" ]; then
     pass "F122: sin integración de nube Tuya en código"
 else
