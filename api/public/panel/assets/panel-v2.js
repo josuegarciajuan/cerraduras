@@ -71,6 +71,12 @@
     o.whLogKind = '';
     o.whLogApplied = '';
     o.accessResultFilter = '';
+    // F121 — filtros de listados.
+    o.accessFilters = { worker_id: '', key_id: '', result: '', room_id: '', type: '', from: '', to: '' };
+    o.qrFilters = { room_id: '', status: '', q: '' };
+    o.debtFilters = { status: '', room_id: '', from: '', to: '' };
+    o.keyFilters = { worker_id: '', status: '', q: '', key_type: '' };
+    o.monitorFilters = { room_id: '', kind: '', result: '' };
     o.drawer = { show: false, title: '', subtitle: '', content: '', footer: '' };
     o._v2Timer = null;
     o._liveClock = null;
@@ -78,6 +84,52 @@
     /* ── Utilidades de render ──────────────────────────────────────── */
     o.pageTitle = function () { return (TITLES[this.p] || ['Panel', ''])[0]; };
     o.pageSubtitle = function () { return (TITLES[this.p] || ['', ''])[1]; };
+
+    // F121 — tipos de acceso: credenciales y eventos de puerta comparten filtro.
+    o.accessTypeLabel = function (type) {
+      var map = {
+        QR: 'QR de llave',
+        NFC: 'Ficha NFC',
+        QR_VALIDATE: 'QR validado',
+        OPEN: 'Apertura',
+        AUTO_LOCK: 'Cierre automático',
+        MANUAL_LOCK: 'Cierre manual',
+        DENIED: 'Denegado',
+        WORKER_EXIT: 'Salida de empleado'
+      };
+      return map[type] || (type || '—');
+    };
+
+    o.accessTypeOptions = function (selected) {
+      var groups = [
+        ['Credenciales', [['QR', 'QR de llave'], ['NFC', 'Ficha NFC']]],
+        ['Eventos de puerta', [
+          ['QR_VALIDATE', 'QR validado'],
+          ['OPEN', 'Apertura'],
+          ['AUTO_LOCK', 'Cierre automático'],
+          ['MANUAL_LOCK', 'Cierre manual'],
+          ['DENIED', 'Denegado'],
+          ['WORKER_EXIT', 'Salida de empleado']
+        ]]
+      ];
+      return groups.map(function (g) {
+        return '<optgroup label="' + F.escape(g[0]) + '">' + g[1].map(function (item) {
+          return '<option value="' + item[0] + '"' + (selected === item[0] ? ' selected' : '') + '>' + F.escape(item[1]) + '</option>';
+        }).join('') + '</optgroup>';
+      }).join('');
+    };
+
+    o.roomFilterOptions = function (selected, allLabel) {
+      return '<option value="">' + F.escape(allLabel || 'Todas las salas') + '</option>'
+        + (this.rooms || []).map(function (r) {
+          return '<option value="' + r.id + '"' + (String(selected) === String(r.id) ? ' selected' : '') + '>' + F.escape(r.code) + '</option>';
+        }).join('');
+    };
+
+    o.dtLocalValue = function (value) {
+      if (!value) return '';
+      return String(value).replace(' ', 'T').slice(0, 16);
+    };
 
     o.v2Kpi = function (label, value, sub, color, icon) {
       return '<div class="kpi" style="--kc:' + (color || 'var(--accent)') + '">'
@@ -303,8 +355,92 @@
       } catch (e) { this.roomsAnalytics = null; }
     };
     o.loadAccessAnalyticsV2 = async function () {
-      try { this.accessAnalytics = await this.api('/api/v1/analytics/accesses?days=' + this.analyticsDays); }
+      var f = this.accessFilters || {};
+      var params = ['days=' + this.analyticsDays];
+      ['room_id', 'type', 'worker_id', 'result', 'from', 'to'].forEach(function (k) {
+        if (f[k] !== undefined && f[k] !== null && f[k] !== '') {
+          params.push(k + '=' + encodeURIComponent(f[k]));
+        }
+      });
+      try { this.accessAnalytics = await this.api('/api/v1/analytics/accesses?' + params.join('&')); }
       catch (e) { this.accessAnalytics = null; }
+    };
+    o.setAccessFilterV2 = function (key, value) {
+      if (!this.accessFilters) this.accessFilters = {};
+      this.accessFilters[key] = value;
+      this.loadAccessAnalyticsV2();
+    };
+    o.clearAccessFiltersV2 = function () {
+      this.accessFilters = { worker_id: '', key_id: '', result: '', room_id: '', type: '', from: '', to: '' };
+      this.loadAccessAnalyticsV2();
+    };
+
+    // F121 — QRs: sala, estado real y JTI. El endpoint ya acepta estos filtros.
+    o.loadQrs = async function () {
+      var f = this.qrFilters || {};
+      var p = new URLSearchParams();
+      if (f.room_id) p.set('room_id', f.room_id);
+      if (f.status) p.set('status', f.status);
+      if (f.q) p.set('jti', f.q);
+      p.set('limit', '200');
+      try { var d = await this.api('/api/v1/qr?' + p.toString()); this.qrs = d.items || []; }
+      catch (e) { this.qrs = []; }
+    };
+    o.setQrFilter = function (key, value) {
+      if (!this.qrFilters) this.qrFilters = {};
+      this.qrFilters[key] = value;
+      this.loadQrs();
+    };
+    o.clearQrFilters = function () {
+      this.qrFilters = { room_id: '', status: '', q: '' };
+      this.loadQrs();
+    };
+
+    // F121 — Deudas: estado, sala y fechas. Límite visible de 200.
+    o.loadDebts = async function () {
+      var f = this.debtFilters || {};
+      var p = new URLSearchParams();
+      if (f.status) p.set('status', f.status);
+      if (f.room_id) p.set('room_id', f.room_id);
+      if (f.from) p.set('from', String(f.from).replace('T', ' '));
+      if (f.to) p.set('to', String(f.to).replace('T', ' '));
+      p.set('limit', '200');
+      try { var d = await this.api('/api/v1/debts?' + p.toString()); this.debts = d.items || []; }
+      catch (e) { this.debts = []; }
+    };
+    o.setDebtFilter = function (key, value) {
+      if (!this.debtFilters) this.debtFilters = {};
+      this.debtFilters[key] = value;
+      this.loadDebts();
+    };
+    o.clearDebtFilters = function () {
+      this.debtFilters = { status: '', room_id: '', from: '', to: '' };
+      this.loadDebts();
+    };
+
+    // F121 — Llaves: el endpoint ya acepta key_type y worker_id.
+    o.loadKeys = async function () {
+      var f = this.keyFilters || {};
+      var p = new URLSearchParams();
+      ['worker_id', 'status', 'q', 'key_type'].forEach(function (k) {
+        if (f[k]) p.set(k, f[k]);
+      });
+      try { var d = await this.api('/api/v1/keys' + (p.toString() ? '?' + p.toString() : '')); this.accessKeys = d.data || []; }
+      catch (e) { this.toastErr(e.message); }
+    };
+
+    // F121 — Monitor: sala, tipo de evento y resultado.
+    o.loadMonitor = async function () {
+      var f = this.monitorFilters || {};
+      var p = new URLSearchParams();
+      if (f.room_id) p.set('room_id', f.room_id);
+      if (f.kind) p.set('kind', f.kind);
+      if (f.result) p.set('result', f.result);
+      p.set('limit', '200');
+      try { var d = await this.api('/api/v1/admin/access-events?' + p.toString()); this.events = d.items || []; }
+      catch (e) { this.events = []; }
+      try { var o = await this.api('/api/v1/admin/outbox'); this.outbox = o.items || []; }
+      catch (e) { /* la cola no bloquea el monitor */ }
     };
     o.loadAnomalyAnalyticsV2 = async function () {
       try { this.anomalyAnalytics = await this.api('/api/v1/analytics/anomalies?days=' + this.analyticsDays); }
@@ -1243,6 +1379,16 @@
         + this.v2Kpi('En uso', qrs.filter(function (q) { return !!q.first_used_at && !q.revoked_at; }).length, 'primer uso registrado', '#0ea5e9', '✅')
         + this.v2Kpi('Revocados', qrs.filter(function (q) { return !!q.revoked_at; }).length, 'invalidados', '#dc2626', '⛔')
         + '</div>'
+        + '<div class="fbar"><select @change="setQrFilter(\'room_id\',$event.target.value)">' + this.roomFilterOptions((this.qrFilters || {}).room_id) + '</select>'
+        + '<select @change="setQrFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option>'
+        + '<option value="active"' + ((this.qrFilters || {}).status === 'active' ? ' selected' : '') + '>Utilizables</option>'
+        + '<option value="consumed"' + ((this.qrFilters || {}).status === 'consumed' ? ' selected' : '') + '>Consumidos</option>'
+        + '<option value="revoked"' + ((this.qrFilters || {}).status === 'revoked' ? ' selected' : '') + '>Revocados</option>'
+        + '<option value="expired"' + ((this.qrFilters || {}).status === 'expired' ? ' selected' : '') + '>Caducados</option></select>'
+        + '<input type="search" placeholder="Buscar JTI…" x-model="qrFilters.q" @keydown.enter="loadQrs()">'
+        + '<button class="btn btn-o" @click="loadQrs()">Aplicar</button>'
+        + '<button class="btn btn-o" @click="clearQrFilters()">Limpiar</button>'
+        + '<span class="small muted">Máx. 200 resultados</span></div>'
         + this.v2Table(['JTI', 'Sala', 'Estancia', 'Estado', 'Emitido', 'Válido hasta', ''], rows, 'Sin QRs');
     };
 
@@ -1274,6 +1420,16 @@
         + this.v2Kpi('Sincronizadas', debts.filter(function (d) { return d.status === 'SYNCED'; }).length, 'en VB6', '#16a34a', '✅')
         + this.v2Kpi('Con error', debts.filter(function (d) { return d.status === 'FAILED'; }).length, 'revisar', '#dc2626', '⛔')
         + '</div>'
+        + '<div class="fbar"><select @change="setDebtFilter(\'room_id\',$event.target.value)">' + this.roomFilterOptions((this.debtFilters || {}).room_id) + '</select>'
+        + '<select @change="setDebtFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option>'
+        + Object.keys(labels).map(function (st) {
+          return '<option value="' + st + '"' + ((this.debtFilters || {}).status === st ? ' selected' : '') + '>' + F.escape(labels[st]) + '</option>';
+        }.bind(this)).join('')
+        + '</select>'
+        + '<input type="datetime-local" title="Desde" @change="setDebtFilter(\'from\',$event.target.value)" value="' + F.escape(this.dtLocalValue((this.debtFilters || {}).from)) + '">'
+        + '<input type="datetime-local" title="Hasta" @change="setDebtFilter(\'to\',$event.target.value)" value="' + F.escape(this.dtLocalValue((this.debtFilters || {}).to)) + '">'
+        + '<button class="btn btn-o" @click="clearDebtFilters()">Limpiar</button>'
+        + '<span class="small muted">Máx. 200 resultados</span></div>'
         + this.v2Table(['ID', 'Estancia', 'Sala', 'Exceso', 'Importe', 'Estado', 'Intentos', 'Creada', ''], rows, 'Sin deudas');
     };
 
@@ -1358,7 +1514,20 @@
         + this.v2Kpi('Revocadas', ka ? ka.counts.revoked : 0, 'anuladas', '#dc2626', '⛔')
         + '</div>'
         + this.v2Card('Uso de llaves', 'Top por accesos', ka ? this.v2Rank((ka.top_keys || []).map(function (k) { return { id: k.id, label: k.label, uses: k.uses }; }), 'label', 'uses') : '<div class="skeleton skeleton-card"></div>')
-        + '<div class="fbar" style="margin-top:16px"><input class="grow" type="search" placeholder="Buscar etiqueta, titular, ficha…" @keydown.enter="setKeyFilter(\'q\',$event.target.value)"><select @change="setKeyFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option><option value="ACTIVE">Activas</option><option value="EXPIRED">Caducadas</option><option value="REVOKED">Revocadas</option></select></div>'
+        + '<div class="fbar" style="margin-top:16px">'
+        + '<input class="grow" type="search" placeholder="Buscar etiqueta, titular, ficha…" @keydown.enter="setKeyFilter(\'q\',$event.target.value)">'
+        + '<select @change="setKeyFilter(\'key_type\',$event.target.value)"><option value="">Todos los tipos</option>'
+        + '<option value="QR"' + (this.keyFilters.key_type === 'QR' ? ' selected' : '') + '>🎫 QR</option>'
+        + '<option value="NFC"' + (this.keyFilters.key_type === 'NFC' ? ' selected' : '') + '>💳 Ficha NFC</option></select>'
+        + '<select @change="setKeyFilter(\'worker_id\',$event.target.value)"><option value="">Todos los trabajadores</option>'
+        + (this.workers || []).map(function (w) {
+          return '<option value="' + w.id + '"' + (String(this.keyFilters.worker_id) === String(w.id) ? ' selected' : '') + '>' + F.escape(w.name) + '</option>';
+        }.bind(this)).join('') + '</select>'
+        + '<select @change="setKeyFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option>'
+        + '<option value="ACTIVE"' + (this.keyFilters.status === 'ACTIVE' ? ' selected' : '') + '>Activas</option>'
+        + '<option value="EXPIRED"' + (this.keyFilters.status === 'EXPIRED' ? ' selected' : '') + '>Caducadas</option>'
+        + '<option value="REVOKED"' + (this.keyFilters.status === 'REVOKED' ? ' selected' : '') + '>Revocadas</option></select>'
+        + '<button class="btn btn-o" @click="clearKeyFilters()">Limpiar</button></div>'
         + this.v2Table(['Etiqueta', 'Tipo', 'Permisos', 'Validez', 'Estado', ''], rows, 'Sin llaves');
     };
 
@@ -1380,6 +1549,13 @@
         + this.v2Kpi('Asignadas', cards.filter(function (c) { return c.status === 'ASSIGNED'; }).length, 'en uso', '#0ea5e9', '🔗')
         + this.v2Kpi('Desactivadas', cards.filter(function (c) { return c.status === 'DISABLED'; }).length, 'fuera de servicio', '#64748b', '⛔')
         + '</div>'
+        + '<div class="fbar"><input class="grow" type="search" placeholder="Buscar número, código, llave o notas…" x-model="nfcFilter.q" @keydown.enter="loadNfcCards()">'
+        + '<select @change="setNfcFilter(\'status\',$event.target.value)"><option value="">Todos los estados</option>'
+        + '<option value="AVAILABLE"' + (this.nfcFilter.status === 'AVAILABLE' ? ' selected' : '') + '>Disponibles</option>'
+        + '<option value="ASSIGNED"' + (this.nfcFilter.status === 'ASSIGNED' ? ' selected' : '') + '>Asignadas</option>'
+        + '<option value="DISABLED"' + (this.nfcFilter.status === 'DISABLED' ? ' selected' : '') + '>Desactivadas</option></select>'
+        + '<button class="btn btn-o" @click="loadNfcCards()">Aplicar</button>'
+        + '<button class="btn btn-o" @click="nfcFilter={status:\'\',q:\'\'};loadNfcCards()">Limpiar</button></div>'
         + this.v2Table(['Número', 'Código', 'Estado', 'Llave', 'Notas', ''], rows, 'Sin fichas');
     };
 
@@ -1389,35 +1565,20 @@
     o.accessesPageV2 = function () {
       var a = this.accessAnalytics;
       var f = this.accessFilters || {};
-      var filtered = !!(f.worker_id || f.key_id || f.result || f.from || f.to);
-      var rows;
-      if (filtered) {
-        rows = (this.keyAccesses || []).map(function (e) {
-          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
-            + '<td>' + (e.room_code ? '<button class="link-cell" @click="openRoomDrawer(' + e.room_id + ')">' + F.escape(e.room_code) + '</button>' : '—') + '</td>'
-            + '<td>' + F.escape(e.credential_type === 'QR' ? 'QR de llave' : (e.credential_type === 'NFC' ? 'Ficha NFC' : (e.credential_type || '—'))) + '</td>'
-            + '<td>' + (e.worker_id ? '<button class="link-cell" @click="openWorkerDrawer(' + e.worker_id + ')">' + F.escape(e.worker_name || ('#' + e.worker_id)) + '</button>' : (e.owner_type === 'ROLE' ? 'Rol compartido' : '—')) + '</td>'
-            + '<td>' + F.escape(e.key_label || '—') + '</td><td>' + F.badge(e.result) + '</td>'
-            + '<td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
-        }.bind(this));
-      } else if (a) {
-        rows = (a.recent || []).map(function (e) {
-          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
-            + '<td>' + (e.room_code ? '<button class="link-cell" @click="openRoomDrawer(' + e.room_id + ')">' + F.escape(e.room_code) + '</button>' : '—') + '</td>'
-            + '<td>' + F.escape(e.type || '—') + '</td>'
-            + '<td>' + (e.worker_name ? F.escape(e.worker_name) : '<span class="muted">—</span>') + '</td>'
-            + '<td>' + (e.key_label ? F.escape(e.key_label) : '<span class="muted">—</span>') + '</td>'
-            + '<td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
-        });
-      } else {
-        rows = (this.keyAccesses || []).map(function (e) {
-          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
-            + '<td>' + F.escape(e.room_code || '—') + '</td><td>' + F.escape(e.credential_type || '—') + '</td>'
-            + '<td>' + F.escape(e.worker_name || (e.owner_type === 'ROLE' ? 'Rol compartido' : '—')) + '</td>'
-            + '<td>' + F.escape(e.key_label || '—') + '</td><td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
-        });
-      }
+      var filtered = !!(f.worker_id || f.key_id || f.result || f.room_id || f.type || f.from || f.to);
+      var source = a ? (a.recent || []) : (this.keyAccesses || []);
+      var rows = source.map(function (e) {
+        return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
+          + '<td>' + (e.room_code ? '<button class="link-cell" @click="openRoomDrawer(' + e.room_id + ')">' + F.escape(e.room_code) + '</button>' : '—') + '</td>'
+          + '<td>' + F.escape(this.accessTypeLabel(e.type || e.credential_type)) + '</td>'
+          + '<td>' + (e.worker_id ? '<button class="link-cell" @click="openWorkerDrawer(' + e.worker_id + ')">' + F.escape(e.worker_name || ('#' + e.worker_id)) + '</button>' : (e.owner_type === 'ROLE' ? 'Rol compartido' : '<span class="muted">—</span>')) + '</td>'
+          + '<td>' + (e.key_label ? F.escape(e.key_label) : '<span class="muted">—</span>') + '</td>'
+          + '<td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
+      }.bind(this)).join('');
       var s = a ? a.summary : null;
+      var workerOpts = '<option value="">Todos los trabajadores</option>' + (this.workers || []).map(function (w) {
+        return '<option value="' + w.id + '"' + (String(f.worker_id) === String(w.id) ? ' selected' : '') + '>' + F.escape(w.name) + '</option>';
+      }).join('');
       return '<div class="ph"><div><h1>Accesos</h1><p>Intentos concedidos y denegados' + (filtered ? ' · filtros activos' : '') + '</p></div></div>'
         + '<div class="kpi-grid">'
         + this.v2Kpi('Total', s ? F.number(s.total) : (this.keyAccesses || []).length, 'intentos', '#2563eb', '📜')
@@ -1429,11 +1590,14 @@
           { name: 'Accesos', values: a.series.map(function (x) { return x.accesses; }), color: '#2563eb' },
           { name: 'Llaves', values: a.series.map(function (x) { return x.keys; }), color: '#0d9488' }
         ], { height: 220 })) : '')
-        + '<div class="fbar" style="margin-top:16px"><select id="ac_worker" @change="setAccessFilter(\'worker_id\',$event.target.value)"><option value="">Todos los trabajadores</option>' + (this.workers || []).map(function (w) { return '<option value="' + w.id + '"' + (String(f.worker_id) === String(w.id) ? ' selected' : '') + '>' + F.escape(w.name) + '</option>'; }).join('') + '</select>'
-        + '<select @change="setAccessFilter(\'result\',$event.target.value)"><option value="">Todos</option><option value="OK"' + (f.result === 'OK' ? ' selected' : '') + '>Concedidos</option><option value="FAIL"' + (f.result === 'FAIL' ? ' selected' : '') + '>Denegados</option></select>'
-        + '<input type="datetime-local" @change="setAccessFilter(\'from\',$event.target.value)" title="Desde" value="' + F.escape(f.from || '') + '">'
-        + '<input type="datetime-local" @change="setAccessFilter(\'to\',$event.target.value)" title="Hasta" value="' + F.escape(f.to || '') + '">'
-        + '<button class="btn btn-o btn-sm" @click="clearAccessFilters()">Limpiar</button></div>'
+        + '<div class="fbar" style="margin-top:16px">'
+        + '<select @change="setAccessFilterV2(\'room_id\',$event.target.value)">' + this.roomFilterOptions(f.room_id) + '</select>'
+        + '<select @change="setAccessFilterV2(\'type\',$event.target.value)"><option value="">Todos los tipos</option>' + this.accessTypeOptions(f.type) + '</select>'
+        + '<select id="ac_worker" @change="setAccessFilterV2(\'worker_id\',$event.target.value)">' + workerOpts + '</select>'
+        + '<select @change="setAccessFilterV2(\'result\',$event.target.value)"><option value="">Todos</option><option value="OK"' + (f.result === 'OK' ? ' selected' : '') + '>Concedidos</option><option value="FAIL"' + (f.result === 'FAIL' ? ' selected' : '') + '>Denegados</option></select>'
+        + '<input type="datetime-local" @change="setAccessFilterV2(\'from\',$event.target.value)" title="Desde" value="' + F.escape(this.dtLocalValue(f.from)) + '">'
+        + '<input type="datetime-local" @change="setAccessFilterV2(\'to\',$event.target.value)" title="Hasta" value="' + F.escape(this.dtLocalValue(f.to)) + '">'
+        + '<button class="btn btn-o btn-sm" @click="clearAccessFiltersV2()">Limpiar</button></div>'
         + this.v2Table(['Fecha', 'Sala', 'Tipo', 'Trabajador', 'Llave', 'Resultado', 'Motivo'], rows, 'Sin accesos');
     };
 
@@ -1480,10 +1644,19 @@
         return '<tr><td>#' + v.id + '</td><td>' + F.escape(v.room_code || '—') + '</td><td>' + F.escape(v.worker_name || '—') + '</td><td>' + F.escape(v.entry_trigger) + '</td><td>' + F.badge(v.outcome) + '</td><td class="small">' + F.dateTime(v.created_at) + '</td></tr>';
       }) : [];
       var outbox = this.outbox || [];
+      var mf = this.monitorFilters || {};
+      var monitorBar = '<div class="fbar" style="margin-bottom:12px">'
+        + '<select @change="monitorFilters.room_id=$event.target.value;loadMonitor()">' + this.roomFilterOptions(mf.room_id) + '</select>'
+        + '<select @change="monitorFilters.kind=$event.target.value;loadMonitor()"><option value="">Todos los tipos</option>' + this.accessTypeOptions(mf.kind) + '</select>'
+        + '<select @change="monitorFilters.result=$event.target.value;loadMonitor()"><option value="">Todos</option>'
+        + '<option value="OK"' + (mf.result === 'OK' ? ' selected' : '') + '>OK</option>'
+        + '<option value="FAIL"' + (mf.result === 'FAIL' ? ' selected' : '') + '>FAIL</option></select>'
+        + '<button class="btn btn-o" @click="monitorFilters={room_id:\'\',kind:\'\',result:\'\'};loadMonitor()">Limpiar</button>'
+        + '<span class="small muted">Máx. 200 eventos</span></div>';
       return '<div class="ph"><div><h1>Monitor</h1><p>Eventos recientes y cola VB6</p></div>'
         + '<div class="page-actions"><button class="btn btn-o btn-sm" @click="loadMonitor();loadAccessAnalyticsV2()">↻ Actualizar</button></div></div>'
         + '<div class="grid-2">'
-        + this.v2Card('Accesos recientes', 'Últimos 50', this.v2Table(['Fecha', 'Sala', 'Tipo', 'Resultado', 'Motivo'], events, 'Sin eventos'))
+        + this.v2Card('Accesos recientes', 'Últimos 200', monitorBar + this.v2Table(['Fecha', 'Sala', 'Tipo', 'Resultado', 'Motivo'], events, 'Sin eventos'))
         + this.v2Card('Cola VB6', outbox.length + ' elementos', this.v2Table(['ID', 'Estado', 'Tema', 'Intentos'], outbox.slice(0, 20).map(function (x) {
           return '<tr><td>#' + x.id + '</td><td>' + F.badge(x.status) + '</td><td class="mono small">' + F.escape(x.topic || '—') + '</td><td>' + (x.attempts || 0) + '</td></tr>';
         }), 'Cola vacía'))

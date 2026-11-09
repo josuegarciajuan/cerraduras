@@ -9205,6 +9205,94 @@ else
 fi
 
 # =============================================================================
+# BLOCK 90 — F121: filtros de listados del panel
+# Trazabilidad: F121 · requirements.md §F121 · contracts.md §F121
+# =============================================================================
+block "BLOCK 90 — F121: filtros de listados"
+
+for F121_FILE in \
+    public/panel/assets/panel-v2.js \
+    src/Http/Controllers/AnalyticsController.php \
+    src/Http/Controllers/DebtController.php \
+    src/Domain/Debts/DebtRepository.php \
+    tests/Unit/PanelFiltersTest.php; do
+    if [ -f "$F121_FILE" ]; then
+        pass "F121: existe $F121_FILE"
+    else
+        fail "F121: $F121_FILE" "no encontrado"
+    fi
+done
+
+for F121_MARK in 'setAccessFilterV2' 'accessTypeOptions' 'clearQrFilters' 'setDebtFilter' 'setNfcFilter' "setKeyFilter('key_type'" 'monitorFilters'; do
+    if grep -qF "$F121_MARK" public/panel/assets/panel-v2.js 2>/dev/null; then
+        pass "F121: marcador $F121_MARK"
+    else
+        fail "F121: marcador $F121_MARK" "ausente"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    if node --check public/panel/assets/panel-v2.js >/tmp/f121-js.log 2>&1; then
+        pass "F121: sintaxis JS panel-v2.js"
+    else
+        fail "F121: sintaxis JS panel-v2.js" "$(tail -3 /tmp/f121-js.log | tr '\n' ' ')"
+    fi
+else
+    skip "F121: sintaxis JS" "node no disponible"
+fi
+
+for F121_PHP in src/Http/Controllers/AnalyticsController.php src/Http/Controllers/DebtController.php src/Domain/Debts/DebtRepository.php; do
+    if php -l "$F121_PHP" >/tmp/f121-php.log 2>&1; then
+        pass "F121: sintaxis $(basename "$F121_PHP")"
+    else
+        fail "F121: sintaxis $(basename "$F121_PHP")" "$(tail -2 /tmp/f121-php.log | tr '\n' ' ')"
+    fi
+done
+
+if php tests/Unit/PanelFiltersTest.php >/tmp/f121-unit.log 2>&1; then
+    pass "F121: unit PanelFiltersTest"
+else
+    fail "F121: unit PanelFiltersTest" "$(tail -3 /tmp/f121-unit.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    if [ -n "$(get_key ADMIN-CLI)" ]; then
+        http_test GET '/api/v1/analytics/accesses?days=7&room_id=999999' 200 \
+            "F121: accesos filtrados por sala → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/accesses?days=7&type=QR' 200 \
+            "F121: accesos filtrados por credencial QR → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/accesses?days=7&type=QR_VALIDATE' 200 \
+            "F121: accesos filtrados por evento QR_VALIDATE → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/analytics/accesses?days=7&result=FAIL' 200 \
+            "F121: accesos filtrados por resultado → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/debts?room_id=999999&limit=5' 200 \
+            "F121: deudas filtradas por sala → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/qr?room_id=999999&status=active&limit=5' 200 \
+            "F121: QRs filtrados por sala y estado → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/nfc-cards?status=AVAILABLE' 200 \
+            "F121: fichas NFC filtradas por estado → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/keys?key_type=QR' 200 \
+            "F121: llaves filtradas por tipo → 200" --key ADMIN-CLI
+        http_test GET '/api/v1/admin/access-events?kind=OPEN&result=OK&limit=5' 200 \
+            "F121: monitor filtrado por tipo y resultado → 200" --key ADMIN-CLI
+
+        F121_ACC=$(curl -s --max-time 10 -H "X-API-Key: $(get_key ADMIN-CLI)" \
+            "$API_BASE/api/v1/analytics/accesses?days=7&type=QR" 2>/dev/null)
+        for F121_M in '"summary"' '"recent"' '"total"'; do
+            if printf '%s' "$F121_ACC" | grep -q "$F121_M"; then
+                pass "F121: accesos filtrados incluye $F121_M"
+            else
+                fail "F121: accesos filtrados sin $F121_M" "$(printf '%s' "$F121_ACC" | head -c 200)"
+            fi
+        done
+    else
+        skip "F121 HTTP" "sin clave ADMIN-CLI"
+    fi
+else
+    skip "F121 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

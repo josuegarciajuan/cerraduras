@@ -13798,3 +13798,31 @@ periódicas a Tuya.
 **Fuera de alcance:** predicción de anomalías, decisiones financieras
 automáticas, reapertura masiva de anomalías auto-resueltas, creación de vídeo
 ficticio y cualquier sondeo periódico a Tuya.
+
+## F121 — Filtros de listados del panel CRM (RF-331…RF-338)
+
+- **RF-331 (Accesos por sala y tipo):** la sección Accesos permite combinar
+  filtros de sala, tipo, trabajador, resultado y fechas. Todos los filtros son
+  acumulativos (AND) y «Limpiar» restaura el listado completo.
+- **RF-332 (Tipo unificado):** el filtro de tipo abarca tanto credenciales
+  (`QR`, `NFC`) como eventos de puerta (`QR_VALIDATE`, `OPEN`, `AUTO_LOCK`,
+  `MANUAL_LOCK`, `DENIED`, `WORKER_EXIT`). La etiqueta visible es legible para
+  el operador.
+- **RF-333 (Tabla unificada al filtrar):** al aplicar cualquier filtro, la tabla
+  sigue mostrando la unión de `access_events` y `key_access_events`; no se
+  pierden los eventos de puerta ni los accesos con llave.
+- **RF-334 (QRs):** el listado de QRs permite filtrar por sala, estado real
+  (`active`, `consumed`, `revoked`, `expired`) y buscar por JTI. El resultado
+  visible se amplía a 200 registros.
+- **RF-335 (Deudas):** el listado de deudas permite filtrar por sala, estado
+  canónico y rango de fechas. El resultado visible se amplía a 200 registros.
+- **RF-336 (Fichas NFC):** el listado permite filtrar por estado y buscar por
+  número, código enmascarado, llave o notas.
+- **RF-337 (Llaves):** el listado permite filtrar por tipo (`QR`/`NFC`) y
+  trabajador, además de búsqueda y estado.
+- **RF-338 (Monitor):** el listado de eventos recientes permite filtrar por
+  sala, tipo de evento y resultado. No se añade ningún sondeo ni llamada a
+  Tuya; todo sale de la base local.
+
+**Fuera de alcance:** nuevas migraciones, cambios en el modelo de datos y
+cualquier automatización que consulte Tuya.

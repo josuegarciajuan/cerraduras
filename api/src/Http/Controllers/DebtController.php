@@ -32,6 +32,7 @@ final class DebtController
         $filters = [
             'status'   => $request->query('status'),
             'stay_id'  => $request->query('stay_id'),
+            'room_id'  => $request->query('room_id'),
             'from'     => $request->query('from'),
             'to'       => $request->query('to'),
         ];
