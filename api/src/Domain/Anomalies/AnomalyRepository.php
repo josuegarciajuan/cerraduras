@@ -132,8 +132,7 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
             $params[':sev'] = $filters['severity'];
         }
         if (isset($filters['status'])) {
-            $where[] = 'a.status = :status';
-            $params[':status'] = $filters['status'];
+            $where[] = self::statusClause($filters['status'], 'a.status', $params);
         }
 
         $whereClause = implode(' AND ', $where);
@@ -177,14 +176,45 @@ final class AnomalyRepository implements AnomalyRepositoryInterface
             $params[':sev'] = $filters['severity'];
         }
         if (isset($filters['status'])) {
-            $where[] = 'status = :status';
-            $params[':status'] = $filters['status'];
+            $where[] = self::statusClause($filters['status'], 'status', $params);
         }
 
         $whereClause = implode(' AND ', $where);
         $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM anomalies WHERE {$whereClause}");
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Build a status filter supporting a single status or a list of statuses.
+     *
+     * The UI's "Pendientes y en seguimiento" view sends `status=ACTIVE`, which
+     * the controller expands to ['OPEN', 'ACKNOWLEDGED']; this helper keeps the
+     * SQL safe (generated placeholders, no raw interpolation).
+     *
+     * @param string|list<string> $status
+     * @param array<string,mixed> $params
+     */
+    private static function statusClause(string|array $status, string $column, array &$params): string
+    {
+        $statuses = is_array($status) ? $status : [$status];
+        $statuses = array_values(array_filter(
+            $statuses,
+            static fn ($s): bool => is_string($s) && $s !== ''
+        ));
+
+        if ($statuses === []) {
+            return '1=1';
+        }
+
+        $placeholders = [];
+        foreach ($statuses as $i => $s) {
+            $key              = ':status' . $i;
+            $placeholders[]   = $key;
+            $params[$key]     = $s;
+        }
+
+        return $column . ' IN (' . implode(', ', $placeholders) . ')';
     }
 
     public function findById(int $id): ?Anomaly
