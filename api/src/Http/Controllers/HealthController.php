@@ -152,7 +152,7 @@ final class HealthController
         }
 
         // 5b. Zigbee local (F91/RF-149): estado de ingress y spool sin sondear
-        // hardware ni Tuya. Aditivo; no altera el contrato de los 5 workers.
+        // hardware externo. Aditivo; no altera el contrato de los 5 workers.
         try {
             $ingressEnabled = Config::getBool('ZIGBEE_INGRESS_ENABLED', false);
             $spoolEnabled = Config::getBool('ZIGBEE_SPOOL_ENABLED', false);
@@ -189,16 +189,6 @@ final class HealthController
             ];
         } catch (\Throwable $e) {
             $checks['zigbee'] = ['status' => 'error', 'message' => $e->getMessage()];
-        }
-
-        // 6. Circuit breaker status (Fase 3 — T3.2)
-        if (class_exists('App\Support\Resilience\CircuitBreaker')) {
-            try {
-                $breaker = new \App\Support\Resilience\CircuitBreaker('tuya-api');
-                $checks['circuit_breaker'] = $breaker->getInfo();
-            } catch (\Throwable $e) {
-                $checks['circuit_breaker'] = ['state' => 'unknown', 'error' => $e->getMessage()];
-            }
         }
 
         $httpStatus = 200;  // Always 200 — the 'status' field carries healthy/degraded

@@ -106,7 +106,7 @@ echo "\n";
 echo "Últimos 20 eventos PRESENCE:\n";
 $ev = $pdo->prepare(
     "SELECT occurred_at, value, applied, COALESCE(discard_reason, '-') AS reason,
-            JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.tuya_raw_val')) AS raw
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.tuya_raw_val')), JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.zigbee_value'))) AS raw
        FROM presence_events
       WHERE room_id = :r AND sensor = 'PRESENCE'
         AND occurred_at >= (UTC_TIMESTAMP(3) - INTERVAL :m MINUTE)

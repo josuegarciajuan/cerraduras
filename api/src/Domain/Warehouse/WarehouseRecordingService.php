@@ -444,7 +444,7 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
     /**
      * F84 (RF-107.2): cuenta la evidencia de un episodio iniciado solo por
      * presencia y decide si es una visita real o un falso positivo del radar.
-     * Solo BD local (push ya persistido): no consume cuota Tuya.
+     * Solo BD local (push ya persistido, Tuya o Zigbee).
      *
      * @param array{x:int,m:int,min_moves:int,min_events:int,static_seconds:int,reentry_seconds:int} $config
      */
@@ -472,11 +472,14 @@ final class WarehouseRecordingService implements WarehouseRecordingServiceInterf
         $q = $this->pdo->prepare(
             "SELECT COUNT(DISTINCT COALESCE(event_fingerprint, CONCAT('id-', id))) AS total,
                     COUNT(DISTINCT CASE
-                        WHEN LOWER(JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.tuya_raw_val'))) = 'move'
+                        WHEN LOWER(COALESCE(
+                            JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.tuya_raw_val')),
+                            JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.zigbee_value'))
+                        )) IN ('move','true')
                         THEN COALESCE(event_fingerprint, CONCAT('id-', id)) END) AS moves
                FROM presence_events
               WHERE room_id = :r AND sensor = 'PRESENCE' AND value = 'PRESENT'
-                AND provider = 'TUYA' AND occurred_at BETWEEN :a AND :b"
+                AND provider IN ('TUYA','ZIGBEE2MQTT') AND occurred_at BETWEEN :a AND :b"
         );
         $q->execute([':r' => $roomId, ':a' => $from, ':b' => $to]);
         $row = $q->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'moves' => 0];

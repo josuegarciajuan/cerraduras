@@ -15,10 +15,13 @@ use App\Support\Config;
  *
  * Resolution rules (mirrors LockGatewayFactory, see design.md §2.4b):
  *   1. If room->simulatedOverride === true  → SimulatedSwitchGateway.
- *   2. If room->simulatedOverride === false → TuyaSwitchGateway.
+ *   2. If room->simulatedOverride === false → ZigbeeSwitchGateway (only Zigbee).
  *   3. If room->simulatedOverride === null  → use global SIMULATED_MODE.
  *      - SIMULATED_MODE=true  → SimulatedSwitchGateway.
- *      - SIMULATED_MODE=false → TuyaSwitchGateway.
+ *      - SIMULATED_MODE=false → ZigbeeSwitchGateway.
+ *
+ * F122 removed the Tuya fallback: a device without ZIGBEE2MQTT transport is
+ * retired/unsupported and must never reach the cloud.
  *
  * TSK-SW6.
  */
@@ -51,7 +54,10 @@ final class SwitchGatewayFactory
             return new ZigbeeSwitchGateway($deviceRepo);
         }
 
-        return new TuyaSwitchGateway($deviceRepo);
+        // F122: retired Tuya switch (or any non-Zigbee transport) is unsupported.
+        return new UnsupportedSwitchGateway(
+            $switchDevice !== null && $switchDevice->isRetired() ? 'device_retired' : 'unsupported_transport'
+        );
     }
 
     /**

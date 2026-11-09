@@ -147,6 +147,41 @@ local   -> last_seen nulo -> unknown
 
 ---
 
+# Fase 122: Diseño de la retirada de Tuya
+
+## Decisión
+
+Se elimina la integración Tuya de la plataforma. El flujo real queda:
+
+```text
+Zigbee2MQTT -> ingress -> spool -> zigbee-spool-worker -> IotSessionService
+  -> post-commit (luz del almacén, anomalías, regla de salida)
+```
+
+La cerradura se resuelve LOCAL/ESP32. `SIMULATED` se conserva para tests.
+
+## Componentes eliminados
+
+- `TuyaWebhookController`, `TuyaSensorIngress`, `SensorIngressFactory`.
+- `TuyaSwitchGateway`, `TuyaLockGateway`, `TuyaCreditsClassifier`,
+  `TuyaIdPropagation`, `CircuitBreaker` y `UpstreamException`.
+- `tuya-pulsar-consumer` y todos los scripts `bin/tuya-*`.
+- Rutas de cuota, batería, simulación y calibración REST Tuya.
+- Cuota y sonda de `RoomLiveController`/`device-status`.
+
+## Baja lógica
+
+`0147_retire_tuya_devices.sql` marca solo los cinco devices Tuya confirmados.
+No toca packs, salas ni devices locales. El histórico de eventos se conserva.
+
+## Consecuencias
+
+- Positiva: una sola vía de sensores, sin cuota ni dependencia de nube.
+- Riesgo: cualquier integración externa que esperase el webhook deja de existir.
+- Rollback: revertir la rama; la migración documenta el SQL de reversión.
+
+---
+
 # Fase 91: Diseño de la integración Zigbee aislada en `almacenZigbee`
 
 ## Decisión

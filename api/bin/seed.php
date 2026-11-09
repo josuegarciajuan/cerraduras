@@ -34,7 +34,7 @@ $clients = [
     ['RPI-DEV',      'RPI',         'qr:validate', null],
     ['FACTORY-DEVICE','RPI',        'factory:announce', null],
     ['ADMIN-CLI',    'ADMIN',       'audit:read,factory:claim,rooms:read,rooms:write,rooms:state,time-slots:read,time-slots:write,locks:open,locks:lock,locks:override,stays:read,stays:write,qr:revoke,debts:read,debts:sync,presence:read,presence:write,switches:write,keys:read,keys:write,nfc-cards:read,nfc-cards:write,workers:read,workers:write,worker-roles:read,sim:*', null],
-    ['TUYA-BRIDGE',  'TUYA_BRIDGE', 'presence:write', null],
+    ['SENSOR-BRIDGE', 'SENSOR_BRIDGE', 'presence:write', null],
     ['SIM-CLIENT',   'SIM',         'sim:*,presence:write', null],
     // NOTE: this is the API -> WS-VB6 outgoing credential (used by the outbox
     // worker). It is stored here for visibility; the WS-VB6 side validates it
@@ -114,11 +114,8 @@ echo "[seed] Seeding system_settings ...\n";
 
 $settingsSeed = [
     ['api', 'operation', 'SIMULATED_MODE',    Config::get('SIMULATED_MODE', 'true'),                                        'Modo simulación (true/false)',                                         0],
-    ['api', 'operation', 'LOCK_PROVIDER',     Config::get('LOCK_PROVIDER', 'LOCAL'),                                       'Proveedor de cerradura: LOCAL|ESP32|TUYA|SIMULATED',                   0],
+    ['api', 'operation', 'LOCK_PROVIDER',     Config::get('LOCK_PROVIDER', 'LOCAL'),                                       'Proveedor de cerradura: LOCAL|ESP32|SIMULATED',                        0],
     ['api', 'operation', 'QR_EXP_FROM_DB',    Config::get('QR_EXP_FROM_DB', 'false'),                                     'Caducidad QR desde BD (true=dev)',                                     0],
-    ['api', 'connections', 'TUYA_ACCESS_ID',  Config::get('TUYA_ACCESS_ID', ''),                                          'Tuya Cloud Access ID',                                                 1],
-    ['api', 'connections', 'TUYA_ACCESS_SECRET', Config::get('TUYA_ACCESS_SECRET', ''),                                   'Tuya Cloud Access Secret',                                             1],
-    ['api', 'connections', 'TUYA_BASE_URL',   Config::get('TUYA_BASE_URL', 'https://openapi.tuyaeu.com'),                 'Tuya Cloud Base URL',                                                  0],
     ['api', 'connections', 'WSVB6_BASE_URL',  Config::get('WSVB6_BASE_URL', 'http://127.0.0.1:8081/ws-vb6/v1'),           'URL del bridge WS-VB6',                                                0],
     ['api', 'connections', 'WSVB6_API_KEY',   Config::get('WSVB6_API_KEY', ''),                                           'API Key del bridge WS-VB6',                                            1],
     ['api', 'logging',    'LOG_LEVEL',        Config::get('LOG_LEVEL', 'debug'),                                          'Nivel de log: debug|info|warning|error',                               0],

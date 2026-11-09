@@ -57,9 +57,9 @@ else red "CRM Panel → HTTP $DASH_CODE" "¿panel/login.html existe?"; fi
 # 7. Workers — supervisados por systemd (F46). Se consulta el unit, no el proceso:
 #    los workers de tick largo (overstay 60s, outbox 30s) pasan la mayor parte del
 #    tiempo en `sleep` y pgrep los reportaba como caídos (falso negativo).
-#    Nota (F78/RF-101): NO existe ningún poller de Tuya. La presencia llega por
+#    Nota (F122): Tuya retirado; la presencia llega por Zigbee2MQTT push.
 #    push (consumer Pulsar) y los sensores se refrescan bajo demanda.
-WORKER_UNITS="cerraduras-worker@exit-scan cerraduras-worker@overstay-scan cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner cerraduras-pulsar-consumer"
+WORKER_UNITS="cerraduras-worker@exit-scan cerraduras-worker@overstay-scan cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner"
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cerraduras-api 2>/dev/null; then
   for u in $WORKER_UNITS; do
     if systemctl is-active --quiet "$u" 2>/dev/null; then green "Unit: $u → active"

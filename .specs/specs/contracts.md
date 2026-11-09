@@ -8,6 +8,44 @@
 
 ---
 
+# Fase 122: Contratos de la retirada de Tuya
+
+## Rutas eliminadas
+
+- `POST /api/v1/tuya/webhook` -> 404 (ruta eliminada).
+- `GET /dashboard-api/tuya-quota` -> eliminada.
+- `POST /dashboard-api/battery-refresh` -> eliminada.
+- `GET|POST /dashboard-api/simula/*` -> eliminadas.
+
+## Cambios de forma
+
+### `GET /dashboard-api/device-status`
+
+- Se elimina el campo `tuya_cloud`.
+- `state` puede ser `online|offline|unknown|retired`.
+- `checked_via` puede ser `ZIGBEE|CAMERA|ESP32|RETIRED|NONE`.
+
+### `POST /dashboard-api/ping-all-devices`
+
+- Se elimina `verify_tuya` del cuerpo.
+- Un device retirado devuelve `checked_via='RETIRED'`, `state='retired'`.
+
+### `POST /almacen-api/sensors/refresh`
+
+- Zigbee: `200 {ok:true, probed:false, reason:"zigbee_push", state}`.
+- No Zigbee: `422 {ok:false, reason:"sensor_not_zigbee"}`.
+
+### Altas y edición de devices
+
+- `transport=TUYA` -> `422 tuya_transport_removed`.
+
+## Compatibilidad histórica
+
+`provider='TUYA'` sigue siendo válido al leer eventos antiguos. No se cambia
+ningún enum de BD ni se borran filas.
+
+---
+
 # Fase 99: Contrato de reactivación de llaves
 
 ## `POST /api/v1/keys/{id}/reactivate`

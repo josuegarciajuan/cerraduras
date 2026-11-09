@@ -10,9 +10,9 @@ Esto levanta:
 - **API** en `0.0.0.0:8080` → `https://<api-host>/api/v1/health`
 - **WS-VB6** en `0.0.0.0:8081` → `http://92.113.151.136:8081/ws-vb6/v1/health`
 - **Workers** de fondo (instancia única): `exit-scan`, `overstay-scan`,
-  `outbox-worker`, `anomaly-scanner`, `tuya-pulsar-consumer`.
-  (F78/RF-101: **no existe poller de Tuya**; la presencia llega por push del
-  consumer Pulsar y los sensores se refrescan bajo demanda.)
+  `outbox-worker`, `anomaly-scanner`.
+  (F122: **Tuya está retirado**; los sensores y la luz llegan por push de
+  Zigbee2MQTT. No hay consumer ni poller de nube.)
 
 `start-all.sh` ejecuta primero una parada determinista, de modo que es
 **idempotente**: dos ejecuciones seguidas dejan exactamente una instancia por
@@ -97,11 +97,10 @@ Las claves API están en `api/seeds/dev_api_keys.txt`.
 | Variable | Valores | Default | Notas |
 |---|---|---|---|
 | `SIMULATED_MODE` | `true`/`false` | `true` | Sensores/locks simulados |
-| `LOCK_PROVIDER` | `LOCAL`/`ESP32`/`TUYA`/`SIMULATED` | `LOCAL` | Provider de apertura de cerradura |
+| `LOCK_PROVIDER` | `LOCAL`/`ESP32`/`SIMULATED` | `LOCAL` | Provider de apertura de cerradura (Tuya retirado por F122) |
 | **`QR_EXP_FROM_DB`** | `true`/`false` | **`false`** | **Caducidad de QR desde BD** |
 | `WAREHOUSE_MAX_RECORDING_SECONDS` | entero ≥ 0 | `0` | Tope de duración de grabaciones del almacén; `0` = sin límite (producción). En pruebas: `60`. |
 
-> **Migración de cuenta Tuya**: ver [`docs/tuya-account-migration.md`](tuya-account-migration.md).
 
 ### `QR_EXP_FROM_DB` — reutilización de QR físicos (pruebas)
 
@@ -183,9 +182,9 @@ Protocolo de prueba presencial (3–5 repeticiones):
 4. `QUIETO` 30 s → `ALEJO` → salir.
 5. Comparar puerta vs presencia y repetir para descartar ruido.
 
-**Estado del consumer**: `api/run/pulsar-consumer-status.json` (`connected`,
-`last_msg_at`, `known_devices`, `resyncs`). Si `connected=false` o `last_msg_at`
-se queda antiguo, revisar `cerraduras-pulsar-consumer.service`.
+**Estado de Zigbee**: `api/run/zigbee-ingress-status.json` y
+`api/run/zigbee-spool-status.json`. Si el ingress no está conectado, revisar
+`cerraduras-zigbee-ingress.service` y el túnel MQTT.
 
 **Arranque consistente**: el pool del API debe ser 16 (ver `start-all.sh` y
 `cerraduras-api.service`). `start-all.sh` avisa si el pool real no coincide.

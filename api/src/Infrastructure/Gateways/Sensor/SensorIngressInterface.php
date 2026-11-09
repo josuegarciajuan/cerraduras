@@ -11,7 +11,7 @@ namespace App\Infrastructure\Gateways\Sensor;
  *
  * Implementations:
  *   SimulatedSensorIngress — for dev / MVP testing (no Tuya required).
- *   TuyaSensorIngress      — real Tuya IoT adapter (F19).
+ *   (F122: the real ingest path is Zigbee2MQTT via zigbee-spool-worker.)
  *
  * The interface is deliberately thin: the domain service decides what to do
  * with the normalized event. The ingress only handles transport/format

@@ -44,33 +44,20 @@ mysql -u cerraduras_user -p'f83bdcfaf5fece29e91f968a' cerraduras_db -e "SELECT C
 
 ---
 
-## 3. Caída de Tuya API
+## 3. Tuya retirado (F122)
 
-### Síntomas
-- Circuit breaker se abre automáticamente tras 5 fallos consecutivos (Fase 2 — T2.2)
-- `/api/v1/health/deep` muestra `circuit_breaker.state = OPEN`
-- Sensores dejan de reportar en el dashboard
-- Pulsar consumer se desconecta y reconecta automáticamente
+Tuya ya no forma parte de la plataforma. No hay consumer, webhook, credenciales,
+poller ni sonda REST a Tuya.
 
-### Recuperación (automática)
-- El circuit breaker se cierra solo tras 60s de pausa
-- Pulsar consumer tiene backoff exponencial y `while true` (nunca se rinde)
-- F78/RF-101: **no hay poller de Tuya**. No existe backoff de poller que gestionar;
-  la cuota se protege con el presupuesto compartido de las sondas bajo demanda.
-
-### Recuperación (manual — reinicio completo Tuya)
+### Verificación
 ```bash
-pkill -f 'tuya-pulsar-consumer'
-# Si usas systemd: systemctl restart cerraduras-pulsar-consumer
-# NO existe `tuya-presence-poller`: prohibido reintroducirlo (F78/RF-101).
+systemctl is-active cerraduras-pulsar-consumer   # debe ser inactive
+grep -R "TUYA_ACCESS" /root/cerraduras/api/.env  # sin resultados
+systemctl status cerraduras-zigbee-ingress cerraduras-zigbee-spool
 ```
 
-### Verificar conectividad Tuya
-```bash
-curl -s -X GET "https://openapi.tuyaeu.com/v1.0/token?grant_type=1" \
-  -H "client_id: $(grep TUYA_ACCESS_ID /root/cerraduras/api/.env | cut -d= -f2)" \
-  -H "sign: ..."  # requiere firma HMAC — usar el health deep endpoint en su lugar
-```
+Si apareciera un proceso o unit Tuya legado, `start-all.sh` lo deshabilita. No
+reintroducirlo.
 
 ---
 
@@ -279,9 +266,9 @@ evento se perdió en el USB/lector (hardware). Si hay `[QR]` pero NO hay
    - Si sube pero el monigote no se mueve → problema de **representación** (coreografía).
    - Si NO sube pero la BD sí registra el evento (`presence_events`) → el panel no
      recibió el `state` (SSE) o el consumer no reenvió el push.
-4. Estado del consumer: `cat /root/cerraduras/api/run/pulsar-consumer-status.json`
-   (`connected`, `last_msg_at`, `resyncs`). Log de reconexiones:
-   `grep -aE "Closed|silencio|reconexión" /root/cerraduras/api/logs/pulsar-consumer.log | tail`.
+4. Estado de Zigbee: `cat /root/cerraduras/api/run/zigbee-ingress-status.json` y
+   `cat /root/cerraduras/api/run/zigbee-spool-status.json`. Log del ingress:
+   `journalctl -u cerraduras-zigbee-ingress -n 100 --no-pager`.
 
 **Regla de atribución**: `received_at - occurred_at` en `presence_events` es la
 latencia dispositivo→BD. Si es ~1 s y el panel tarda mucho, el problema es SSE o

@@ -98,33 +98,19 @@ systemctl restart cerraduras-api cerraduras-wsvb6 2>/dev/null || {
 
 cd "$API_DIR"
 
-echo "[3/8] Tuya Pulsar consumer (systemd — instancia única, F44)..."
-# F44 (RF-50.2): el consumer Pulsar tiene UN único dueño: el unit systemd
-# `cerraduras-pulsar-consumer.service`. NO se lanza un wrapper aquí para no
-# duplicar la conexión Reader ni reenviar cada evento dos veces al webhook.
-if systemctl restart cerraduras-pulsar-consumer 2>/dev/null; then
-  echo "       tuya-pulsar-consumer: systemd (pid $(systemctl show -p MainPID --value cerraduras-pulsar-consumer 2>/dev/null))"
-else
-  echo "       (unit cerraduras-pulsar-consumer ausente — NO se lanza wrapper: evita duplicado)"
+echo "[3/8] Guardia anti-Tuya (F122 — retirado)..."
+# F122: Tuya fue retirada por completo. Ningún consumer, webhook, poller ni
+# sonda de nube puede quedar activo. Zigbee llega por push vía ingress/spool.
+systemctl disable --now cerraduras-pulsar-consumer 2>/dev/null || true
+systemctl disable --now cerraduras-presence-poller 2>/dev/null || true
+pkill -f 'tuya-pulsar-consumer' 2>/dev/null || true
+pkill -f 'tuya-presence-poller\.js' 2>/dev/null || true
+if [ -f "$API_DIR/.env" ] && grep -q '^TUYA_ACCESS_ID=' "$API_DIR/.env" 2>/dev/null; then
+  echo "       ⚠ F122: TUYA_ACCESS_ID sigue en api/.env — retíralo (Tuya no se usa)"
 fi
+echo "       sin consumer/poller de Tuya: Zigbee por push OK"
 
-echo "[4/8] Guardia anti-poller Tuya (F78 — prohibido pollear en continuo)..."
-# F78 (RF-101): NO existe ningún poller de Tuya en el proyecto. La presencia
-# llega por push (consumer Pulsar, sin cuota) y los sensores del almacén se
-# refrescan bajo demanda. Este paso es una guardia activa: si detecta un poller
-# vivo o el unit legacy habilitado, lo neutraliza y avisa en voz alta.
-POLLER_PROCS="$(pgrep -f 'tuya-presence-poller\.js' 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$POLLER_PROCS" != "0" ]; then
-  echo "       ⚠ F78: $POLLER_PROCS proceso(s) tuya-presence-poller.js detectado(s) — matando (prohibido)"
-  pkill -f 'tuya-presence-poller\.js' 2>/dev/null || true
-fi
-if systemctl is-enabled cerraduras-presence-poller >/dev/null 2>&1; then
-  echo "       ⚠ F78: unit legacy cerraduras-presence-poller sigue habilitado — deshabilitando"
-  systemctl disable --now cerraduras-presence-poller >/dev/null 2>&1 || true
-fi
-echo "       sin poller de nube: push (Pulsar) + sondas bajo demanda OK"
-
-echo "[5/8] Workers de fondo (systemd: exit-scan, overstay-scan, outbox-worker, anomaly-scanner)..."
+echo "[4/8] Workers de fondo (systemd: exit-scan, overstay-scan, outbox-worker, anomaly-scanner)..."
 if systemctl restart cerraduras-worker@exit-scan cerraduras-worker@overstay-scan \
      cerraduras-worker@outbox-worker cerraduras-worker@anomaly-scanner 2>/dev/null; then
   echo "       workers: systemd arrancados (Restart=always)"
@@ -136,14 +122,14 @@ else
   launch "anomaly-scanner" "php bin/anomaly-scanner.php" 5 "$LOG_DIR/anomaly-scanner.log"
 fi
 
-echo "[5b/8] Warehouse recorder (systemd — grabación del almacén, F64)..."
+echo "[4b/8] Warehouse recorder (systemd — grabación del almacén, F64)..."
 if systemctl restart cerraduras-warehouse-recorder 2>/dev/null; then
   echo "       warehouse-recorder: systemd (pid $(systemctl show -p MainPID --value cerraduras-warehouse-recorder 2>/dev/null))"
 else
   echo "       (unit cerraduras-warehouse-recorder ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
-echo "[5c/8] Cámaras live MJPEG (systemd — directo del almacén, F70)..."
+echo "[4c/8] Cámaras live MJPEG (systemd — directo del almacén, F70)..."
 # F70/RF-80: un servidor Node sirve el RTSP como MJPEG (loopback:8086) y Apache
 # lo publica en /almacen-live. Sustituye al iframe de go2rtc (puerto 1984 no
 # abierto en ufw → pantalla negra).
@@ -153,7 +139,7 @@ else
   echo "       (unit cerraduras-cameras-live ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
-echo "[5d/8] Retención del almacén (systemd timer — F87/RF-120)..."
+echo "[4d/8] Retención del almacén (systemd timer — F87/RF-120)..."
 # F87: purga diaria de grabaciones SAVED según warehouse.retention_days.
 if systemctl enable --now cerraduras-warehouse-retention.timer 2>/dev/null; then
   echo "       warehouse-retention: timer diario activo"
@@ -161,21 +147,21 @@ else
   echo "       (unit cerraduras-warehouse-retention.timer ausente — ejecutar 'php bin/warehouse-retention.php' a mano)"
 fi
 
-echo "[5d2/8] Retención de evidencia DP9 del radar (F110)..."
+echo "[4d2/8] Retención de evidencia DP9 del radar (F110)..."
 if systemctl enable --now cerraduras-radar-distance-retention.timer 2>/dev/null; then
   echo "       radar-distance-retention: timer diario activo"
 else
   echo "       (unit cerraduras-radar-distance-retention.timer ausente — ejecutar 'php bin/radar-distance-retention.php --days=30')"
 fi
 
-echo "[5d3/8] Retención de evidencia de órdenes de luz (F112)..."
+echo "[4d3/8] Retención de evidencia de órdenes de luz (F112)..."
 if systemctl enable --now cerraduras-switch-evidence-retention.timer 2>/dev/null; then
   echo "       switch-evidence-retention: timer diario activo"
 else
   echo "       (unit cerraduras-switch-evidence-retention.timer ausente — ejecutar 'php bin/switch-evidence-retention.php' a mano)"
 fi
 
-echo "[5e/8] Detector de movimiento de cámaras (systemd — F88/RF-122)..."
+echo "[4e/8] Detector de movimiento de cámaras (systemd — F88/RF-122)..."
 # F88: verificación física de presencia por diferencia de frames (local, sin cuota).
 if systemctl restart cerraduras-camera-motion 2>/dev/null; then
   echo "       camera-motion: systemd (pid $(systemctl show -p MainPID --value cerraduras-camera-motion 2>/dev/null))"
@@ -183,7 +169,7 @@ else
   echo "       (unit cerraduras-camera-motion ausente — NO se lanza wrapper: evita duplicado)"
 fi
 
-echo "[5f/8] Zigbee local (ingress MQTT + spool, F91)..."
+echo "[4f/8] Zigbee local (ingress MQTT + spool, F91)..."
 # Opt-in: sin flags activos no se arranca nada. El broker Zigbee vive en el
 # servidor del hotel y este host lo consume por un túnel SSH inverso que se
 # inicia desde el hotel (no desde aquí). No hay poller de Tuya; el ingress solo

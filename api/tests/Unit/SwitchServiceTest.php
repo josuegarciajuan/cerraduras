@@ -153,7 +153,7 @@ final class FakeSwitchGateway implements SwitchGatewayInterface
         if ($this->throwOnTurnOn) {
             throw new \RuntimeException('Simulated gateway failure');
         }
-        return $this->nextTurnOnResult ?? ['ok' => true, 'provider' => 'TUYA', 'error' => null];
+        return $this->nextTurnOnResult ?? ['ok' => true, 'provider' => 'ZIGBEE2MQTT', 'error' => null];
     }
     public function turnOff(int $roomId, array $ctx = []): array
     {
@@ -161,9 +161,9 @@ final class FakeSwitchGateway implements SwitchGatewayInterface
         if ($this->throwOnTurnOff) {
             throw new \RuntimeException('Simulated gateway failure');
         }
-        return $this->nextTurnOffResult ?? ['ok' => true, 'provider' => 'TUYA', 'error' => null];
+        return $this->nextTurnOffResult ?? ['ok' => true, 'provider' => 'ZIGBEE2MQTT', 'error' => null];
     }
-    public function getProvider(): string { return 'TUYA'; }
+    public function getProvider(): string { return 'ZIGBEE2MQTT'; }
 
     public function turnOnForDevice(Device $device, array $ctx = []): array
     {

@@ -379,7 +379,7 @@
            disabled aria-label="Sensibilidad de 1 a 10">
     <div class="cal-range-labels"><span>0</span><span>3</span><span>6</span><span>9</span></div>
 
-    <!-- F93/RF-156.3: ajustes avanzados del radar Zigbee (no existen en el Tuya).
+    <!-- F93/RF-156.3: ajustes avanzados del radar Zigbee (Tuya retirado por F122).
          Se publican por MQTT y solo se dan por aplicados con un reporte nuevo. -->
     <div id="cal-zb-advanced" hidden style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px">
       <strong style="font-size:0.8rem">Radar Zigbee · ajustes avanzados</strong>
@@ -544,7 +544,7 @@
   <div id="zone4">
     <div class="panel-card" id="devices-panel">
       <h3>📊 Dispositivos</h3>
-      <button id="btn-refresh-devices" onclick="refreshDeviceStatus()" title="Consultar estado real de los dispositivos (Tuya, Zigbee y cámaras)" style="display:none;width:100%;padding:6px 10px;margin:4px 0 8px 0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:500;transition:all 0.2s">🔄 Comprobar dispositivos</button>
+      <button id="btn-refresh-devices" onclick="refreshDeviceStatus()" title="Consultar estado real de los dispositivos (Zigbee, ESP32 y cámaras)" style="display:none;width:100%;padding:6px 10px;margin:4px 0 8px 0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:500;transition:all 0.2s">🔄 Comprobar dispositivos</button>
       <div id="devices-content" class="devices-list">Cargando...</div>
     </div>
     <div class="panel-card" id="qr-test-panel">
@@ -665,31 +665,18 @@ let _offlinePollTimer = null;    // interval for auto-rechecking offline devices
 let _offlineDeviceIds = new Set(); // device IDs currently being polled every 10s
 
 // ── Estado verídico de conectividad por dispositivo ────────────────────
-// Dispositivos Tuya cloud (PRESENCE/PROXIMITY/SWITCH) consumen cuota de la API Tuya:
-// SOLO se verifican al cargar el panel o pulsando "Comprobar dispositivos", NUNCA en
-// el poll periódico (para no quemar cuota). El resto (RPI/SCANNER/LOCK, hardware ESP32)
-// se verifica gratis por heartbeat/command-queue y sí se re-comprueba periódicamente.
-const TUYA_CLOUD_KINDS = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
-const ESP32_KINDS      = ['RPI', 'SCANNER', 'LOCK'];
+// F122: Tuya está retirado. Solo Zigbee2MQTT, ESP32/local y cámaras tienen sonda.
+const ESP32_KINDS = ['RPI', 'SCANNER', 'LOCK'];
 function devTransport(d) {
   return String((d && d.transport) || '').toUpperCase();
 }
-// F92: el backend decide la categoría por transporte. `tuya_cloud` es la fuente
-// de verdad; el fallback por kind solo aplica a filas legacy sin transporte.
-function devIsTuyaCloud(d) {
-  if (!d) return false;
-  if (typeof d.tuya_cloud === 'boolean') return d.tuya_cloud;
-  const t = devTransport(d);
-  if (t === 'TUYA') return true;
-  if (t && t !== 'UNKNOWN') return false;
-  return TUYA_CLOUD_KINDS.indexOf(d.kind) >= 0;
-}
 function devIsZigbee(d) { return devTransport(d) === 'ZIGBEE2MQTT'; }
 function devIsCamera(d) { return !!(d && d.kind === 'CAMERA'); }
+function devIsRetired(d) { return !!(d && (d.is_retired === true || devTransport(d) === 'TUYA')); }
 function devViaLabel(d) {
   if (devIsCamera(d)) return 'Cámara';
   if (devIsZigbee(d)) return 'Zigbee2MQTT';
-  if (devIsTuyaCloud(d)) return 'Tuya';
+  if (devIsRetired(d)) return 'retirado';
   if (ESP32_KINDS.indexOf(d && d.kind) >= 0) return 'ESP32';
   return 'sin transporte';
 }
@@ -713,7 +700,7 @@ function devUnknownLabel(d) {
   return 'no verificado';
 }
 // Estado normalizado: 'online' | 'offline' | 'unknown'. Prefiere d.state (que el
-// backend calcula con verdad: sonda Tuya real o heartbeat/check ESP32), con fallback.
+// backend calcula con verdad: sonda Zigbee, heartbeat/check ESP32), con fallback.
 function devStateOf(d) {
   if (d && d.state) return d.state;
   if (d && d._pending_check) return 'unknown';
@@ -759,7 +746,7 @@ function packIndicatorHtml(packName, online, offline, unknown) {
 }
 // Dispositivo "alcanzable": online confirmado O aún sin verificar (no probado offline).
 // Los 'unknown' NO cuentan como caídos → evita falsos SIN_CONFIGURAR/SENSORES_DESCONECTADOS
-// antes de que la sonda Tuya (carga/"Comprobar") confirme el estado real.
+// antes de que la sonda de carga/"Comprobar" confirme el estado real.
 function anyDeviceReachable() {
   if (!_deviceCache || !_deviceCache.devices || !_deviceCache.devices.length) return false;
   return _deviceCache.devices.some(d => devStateOf(d) !== 'offline');
@@ -1798,12 +1785,12 @@ async function openConfigModal(deviceId, externalId, currentRoomId, packId, pack
         // Show initial state and start checking
         const deviceIds = data.devices.map(d => d.id);
         itemsEl.innerHTML = renderModalDevices(data.devices, 'checking');
-        // Ping all devices via Tuya (one-shot, user-triggered)
+        // Ping all devices (one-shot, user-triggered)
         try {
           const pingRes = await fetch('/dashboard-api/ping-all-devices', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true }),
+            body: JSON.stringify({ device_ids: deviceIds }),
           });
           const pingData = await pingRes.json();
           if (pingData.ok) {
@@ -1949,7 +1936,6 @@ async function confirmAssignPack() {
         const devicesForPanel = data.device_checks.map(c => ({
           id: c.device_id, kind: c.kind, external_id: c.external_id || '',
           label: null, last_seen_at: c.last_seen_at, online: c.online,
-          _tuya_fallback: !c.online && c.error ? false : (c.checked_via === 'TUYA'),
           meta_json: null
         }));
         const panelData = {
@@ -2082,7 +2068,7 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true, verify_cameras: true }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_cameras: true }),
     });
     const pingData = await pingRes.json();
     if (pingData.ok) {
@@ -2199,15 +2185,11 @@ async function poll() {
 // ║   SHARED DATA PROCESSOR (SSE + polling fallback)       ║
 // ╚══════════════════════════════════════════════════════════╝
 
-// F46+: banner de salud (cuota Tuya agotada / puerta abierta demasiado tiempo).
+// Banner de salud (puerta abierta demasiado tiempo).
 function updateHealthBanner(data) {
   let el = document.getElementById('health-banner');
-  const q = (data && data.tuya_quota) || null;
   let msg = '';
-  if (q && q.state === 'exhausted') {
-    msg = '⚠️ Cuota Tuya agotada: la verificación de dispositivos Tuya no está disponible ' +
-          '(la puerta y la presencia siguen en tiempo real por push).';
-  } else if (data && data.door_open_too_long) {
+  if (data && data.door_open_too_long) {
     msg = '⚠️ Puerta abierta demasiado tiempo.';
   }
   if (!msg) {
@@ -2345,7 +2327,7 @@ function processLiveData(data) {
   updateStayPanel(data);
   updateSensorPanel(data);
   updateTimeline(data);
-  updateHealthBanner(data); // F46+: cuota Tuya / puerta atascada
+  updateHealthBanner(data); // puerta atascada
 
   // Track seen event IDs
   (data.recent_events || []).forEach(e => lastEventIds.add(e.id));
@@ -2867,10 +2849,10 @@ function updateSensorPanel(data) {
     const pct = batt.pct;
     const st = batt.state;
     if (pct !== null && pct !== undefined) {
-      battEl.innerHTML = '🔋 ' + pct + '% <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+batt.device_id+')">🔄</button>';
+      battEl.innerHTML = '🔋 ' + pct + '%';
       battEl.className = 'value ' + (st==='critical'?'val-red':st==='low'?'val-yellow':'val-green');
     } else {
-      battEl.innerHTML = '— <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+batt.device_id+')">🔄</button>';
+      battEl.innerHTML = '—';
       battEl.className = 'value val-orange';
     }
   } else {
@@ -3105,7 +3087,6 @@ function updateDevicesPanel(data) {
           else if (d._inherited) statusLabel = '(vía ESP32)';
           else if (devIsCamera(d)) statusLabel = '(vía sonda)';
           else if (devIsZigbee(d)) statusLabel = '(vía Zigbee2MQTT)';
-          else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
           else statusLabel = '';
         } else if (st === 'unknown') {
           statusLabel = '(' + devUnknownLabel(d) + ')';
@@ -3154,7 +3135,6 @@ function updateDevicesPanelFromCache(result) {
       else if (d._inherited) statusLabel = '(vía ESP32)';
       else if (devIsCamera(d)) statusLabel = '(vía sonda)';
       else if (devIsZigbee(d)) statusLabel = '(vía Zigbee2MQTT)';
-      else if (devIsTuyaCloud(d)) statusLabel = '(vía Tuya)';
       else statusLabel = '';
     } else if (st === 'unknown') {
       statusLabel = '(' + devUnknownLabel(d) + ')';
@@ -3195,7 +3175,7 @@ function updatePackIndicatorFromCache(ds) {
 // porque el comando 'check' hacia la cerradura/relé la hacía saltar y hacia el
 // lector QR hacía que se iluminara continuamente, y el heartbeat/ping del ESP32
 // tampoco debe ejecutarse en bucle.
-// La verificación de conectividad (Tuya cloud y ESP32 via command-queue) se hace
+// La verificación de conectividad (Zigbee y ESP32 via command-queue) se hace
 // SOLO al cargar la página o pulsar "Comprobar dispositivos" (autoPing y refresh).
 // El estado online de ESP32 se mantiene por el heartbeat del propio chip
 // (device-heartbeat), sin necesidad de 'check' periódico.
@@ -3232,7 +3212,7 @@ async function refreshDeviceStatus() {
     const pingRes = await fetch('/dashboard-api/ping-all-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_ids: deviceIds, verify_tuya: true, verify_cameras: true }),
+      body: JSON.stringify({ device_ids: deviceIds, verify_cameras: true }),
     });
     const pingData = await pingRes.json();
 
@@ -3497,45 +3477,15 @@ async function init() {
 
 init();
 
-// F36: Refresh battery from dashboard sensor panel
-async function refreshDashboardBattery(deviceId) {
-  const battEl = document.getElementById('s-battery');
-  const orig = battEl ? battEl.innerHTML : null;
-  if (battEl) battEl.textContent = '⏳ Consultando...';
-  try {
-    const res = await fetch('/dashboard-api/battery-refresh', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({device_id: deviceId})
-    });
-    const d = await res.json();
-    if (d.ok && battEl) {
-      const pct = d.battery_pct;
-      const st = d.state;
-      if (pct !== null && pct !== undefined) {
-        battEl.innerHTML = '🔋 ' + pct + '% <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
-        battEl.className = 'value ' + (st==='critical'?'val-red':st==='low'?'val-yellow':'val-green');
-      } else {
-        battEl.innerHTML = '— <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
-        battEl.className = 'value val-orange';
-      }
-    } else if (battEl) {
-      battEl.innerHTML = orig || '🔋 — <button class="btn btn-o btn-xs" style="margin-left:4px;font-size:10px;padding:1px 4px" onclick="refreshDashboardBattery('+deviceId+')">🔄</button>';
-    }
-  } catch(e) { if (battEl) battEl.innerHTML = orig || 'Error'; }
-}
-
 // ═══════════════════════════════════════════════════════════
-// Calibrar sensor de presencia (per-room). Reads/writes the Tuya
-// presence DP directly while the modal is open (~2s live badge).
+// Calibrar radar de presencia Zigbee (per-room). Todo por push/API local.
 // ═══════════════════════════════════════════════════════════
 let calState = null;      // { roomId, device, online, hasSensor, appliedFar, appliedSens, readFar, readSens, readNear, initial, saved, lastRead }
 let _calDebounce = null;
-let _calBusy = false;     // a Tuya write/read is in flight (one at a time)
+let _calBusy = false;     // a write/read is in flight (one at a time)
 let _calDirtyFar = false;
 let _calDirtySens = false;
-let _calLastAnyApi = 0;   // client clock ms — Tuya quota guard
-let _calQuotaUntil = 0;   // client clock ms — show waiting state meanwhile
+let _calLastAnyApi = 0;   // client clock ms — API cooldown guard
 let _calLastReadAt = 0;
 let _calLastBadge = '';
 let _calCaps = null;      // per-device DP caps (F43): far/sens ranges from the server
@@ -3645,8 +3595,7 @@ function calApplyStatusToState(st) {
   calRenderBadge();
 }
 
-// F93: adapta el modal al transporte real del sensor. Tuya = lectura REST bajo
-// demanda; Zigbee = última configuración recibida por push (sin /get).
+// F93/F122: el modal solo atiende Zigbee; la configuración llega por push.
 function calApplyTransportUi(data, isZb) {
   const adv = calEl('cal-zb-advanced');
   const walk = calEl('cal-walktest');
@@ -3704,7 +3653,6 @@ async function calPostSet(body) {
     _calLastAnyApi = Date.now();
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      if (/quota|28841004/i.test(data.error || '')) _calQuotaUntil = Date.now() + 15000;
       throw new Error(data.error || ('HTTP ' + res.status));
     }
     if (data.status) calApplyStatusToState(data.status);
@@ -3752,7 +3700,6 @@ async function openCalibrateModal() {
   calEl('cal-done-btn').textContent = 'Guardar y Listo';
   _calDirtyFar = _calDirtySens = false;
   _calCaps = null;
-  _calQuotaUntil = 0;
   _calLastReadAt = 0;
   calWalkReset();
   calSetBusy(true, 'Consultando sensor…');
@@ -3834,10 +3781,8 @@ async function calReadStatus() {
   }
   // F93: en Zigbee la liveness es el último push; un valor cacheado no la prueba.
   const isZb = data.transport === 'ZIGBEE2MQTT';
-  calState.transport = isZb ? 'ZIGBEE2MQTT' : 'TUYA';
-  calState.online = !!(data.device && (isZb
-    ? data.device.online === true
-    : (data.device.online || data.far_detection != null)));
+  calState.transport = 'ZIGBEE2MQTT';
+  calState.online = !!(data.device && isZb && data.device.online === true);
   if (data.dp_caps) calApplyCaps(data.dp_caps);
   calApplyTransportUi(data, isZb);
   calState.saved = data.saved || calState.saved || null;

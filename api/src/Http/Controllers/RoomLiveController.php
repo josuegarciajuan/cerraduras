@@ -147,11 +147,11 @@ final class RoomLiveController
                     'external_id'  => $switchDevice->externalId,
                     'last_command' => $meta['last_command'] ?? 'UNKNOWN',
                     'commanded_at' => $meta['commanded_at'] ?? null,
-                    // F50: estado REAL del relé reportado por push de Tuya
+                    // F50: estado REAL del relé reportado por push (Zigbee2MQTT).
                     // (aditivo). `UNKNOWN` mientras no haya push.
                     'state'        => $meta['switch_state'] ?? 'UNKNOWN',
                     'state_at'     => $meta['switch_state_at'] ?? null,
-                    // Observabilidad del último fallo Tuya (aditivo, nullable).
+                    // Observabilidad del último fallo del actuador (aditivo, nullable).
                     'last_error'          => $meta['last_error'] ?? null,
                     'last_error_at'       => $meta['last_error_at'] ?? null,
                     'last_error_category' => $meta['last_error_category'] ?? null,
@@ -248,22 +248,6 @@ final class RoomLiveController
             $anomalies = array_map(fn ($a) => $a->toArray(), $openAnomalies);
         }
 
-        // F46+: visibilidad de cuota Tuya (presupuesto/backoff compartido con el
-        // poller) y de puerta abierta demasiado tiempo (anti-drenaje).
-        $quotaFile = dirname(__DIR__, 3) . '/run/tuya-quota.json';
-        $quota = ['callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
-        if (is_file($quotaFile)) {
-            $qd = json_decode((string) @file_get_contents($quotaFile), true);
-            if (is_array($qd)) {
-                $quota = array_merge($quota, $qd);
-            }
-        }
-        // F46++: `backoffUntil` en SEGUNDOS (normalizar legados en ms > 1e12).
-        if (($quota['backoffUntil'] ?? 0) > 1e12) {
-            $quota['backoffUntil'] = (int) round($quota['backoffUntil'] / 1000);
-        }
-        $quotaState = (($quota['backoffUntil'] ?? 0) > time()) ? 'exhausted' : 'ok';
-
         $doorOpenTooLong = false;
         if (($iotData['door_state'] ?? '') === \App\Domain\Presence\IotSession::DOOR_OPEN) {
             $ref   = $iotData['last_door_event_at'] ?? ($iotData['last_open_at'] ?? null);
@@ -304,13 +288,6 @@ final class RoomLiveController
             // incertidumbre que /almacen. Aditivo; null sin radar Zigbee.
             'presence_decision' => $this->latestRadarDecision($roomId),
             'anomalies'        => $anomalies,
-            // F46+: cuota Tuya (ok|exhausted) + puerta abierta demasiado tiempo.
-            'tuya_quota'         => [
-                'state'         => $quotaState,
-                'calls_today'   => (int) ($quota['callsDay'] ?? 0),
-                'calls_hour'    => (int) ($quota['callsHour'] ?? 0),
-                'backoff_until' => (int) ($quota['backoffUntil'] ?? 0),
-            ],
             'door_open_too_long' => $doorOpenTooLong,
             // F118.4: hora del servidor con ms para que todos los clientes usen
             // la misma base temporal en holds y ventanas.

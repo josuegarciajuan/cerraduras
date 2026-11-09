@@ -11,7 +11,7 @@ use App\Infrastructure\Gateways\Switch\SwitchGatewayFactory;
 use App\Infrastructure\Gateways\Switch\SwitchGatewayInterface;
 use App\Support\Clock;
 use App\Support\Errors\ConflictException;/**
- * SwitchService: operations for smart electricity protector (EAWCBT-J) — RF-16.
+ * SwitchService: operations for the room light switch (Zigbee2MQTT) — RF-16/F122.
  *
  * Responsibilities:
  *   - turnOn(): find the SWITCH device for a room and turn it on.
@@ -162,12 +162,9 @@ final class SwitchService
 
             $this->devices->update($device->id, ['meta_json' => json_encode($merged, JSON_UNESCAPED_UNICODE)]);
 
-            // NOTA (estado verídico): ya NO se refresca last_seen_at aquí. Un comando
-            // "aceptado" por el cloud Tuya NO prueba que el dispositivo físico esté
-            // conectado (Tuya lo encola aunque esté apagado); refrescar online aquí
-            // producía falsos "conectado" en el panel. El estado real lo determina la
-            // sonda Tuya (result.online) que se ejecuta al cargar el panel o al pulsar
-            // "Comprobar dispositivos".
+            // NOTA (estado verídico): no se refresca last_seen_at aquí. Un comando
+            // publicado a MQTT no prueba que el dispositivo físico esté conectado;
+            // el estado real lo determina el push/availability de Zigbee2MQTT.
         } catch (\Throwable $e) {
             error_log('[SwitchService] persistLastCommand failed for room ' . $roomId . ': ' . $e->getMessage());
         }

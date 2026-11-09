@@ -58,10 +58,10 @@ lee eventos ya persistidos (push) y las marcas físicas del técnico.
 ## 1. Antes de empezar
 
 - Confirmar la sala, el pack y el transporte de cada dispositivo:
-  `ZIGBEE2MQTT` (SNZB-04P + ZY-M100) o Tuya.
+  `ZIGBEE2MQTT` (SNZB-04P + ZY-M100). Tuya está retirado (F122).
 - Confirmar el tipo de habitación (`ALMACEN_BEBIDAS` o `TIPO_NORMAL`).
-- Comprobar que el consumer/ingress está recibiendo (`api/run/pulsar-consumer-status.json`
-  o `health/deep` para Zigbee).
+- Comprobar que el ingress/spool Zigbee está recibiendo
+  (`api/run/zigbee-ingress-status.json` o `health/deep`).
 - Anotar la configuración actual del radar: `GET /dashboard-api/presence-calibrate/status?room_id=N`.
 
 Nunca dejar un proceso de sondeo de Tuya en marcha.
@@ -146,7 +146,7 @@ El modal abre el sensor de la sala actual. Con Zigbee muestra:
 - ajustes avanzados: distancia mínima, retardo de detección y tiempo sin presencia.
 
 Al soltar un control se publica por MQTT y se espera un **reporte nuevo** del radar. Si
-no confirma, el valor no se guarda. Con Tuya se mantiene la lectura REST bajo demanda y
+no confirma, el valor no se guarda. Con Tuya (histórico, ya retirado) se mantenía la lectura REST bajo demanda y
 el cooldown de cuota.
 
 ## 6. Análisis sin efectos
