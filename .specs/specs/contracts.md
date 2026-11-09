@@ -16612,3 +16612,39 @@ si `dismissed_by='system'`; `400 reason_required` sin motivo.
 
 `php api/bin/panel-demo-fixture.php --create` y `--purge`; JSON con
 `created`, `skipped`, `purged`. Idempotentes y limitados a `DEMO-*`.
+
+## F121 — Filtros aditivos de listados
+
+Extensiones aditivas. Ningún campo ni respuesta previa cambia de forma o tipo.
+
+### Analítica de accesos
+
+`GET /api/v1/analytics/accesses?days=&room_id=&type=&worker_id=&result=&from=&to=`
+
+| Parámetro | Tipo | Descripción |
+|---|---|---|
+| `days` | int 1..366 | Periodo por defecto (7). |
+| `room_id` | int | Filtra por sala en ambas ramas. |
+| `type` | string | `QR`/`NFC` (credencial) o `QR_VALIDATE`/`OPEN`/`AUTO_LOCK`/`MANUAL_LOCK`/`DENIED`/`WORKER_EXIT` (evento). |
+| `worker_id` | int | Filtra por trabajador; en eventos usa `worker_sessions`. |
+| `result` | `OK`/`FAIL` | Resultado del intento. |
+| `from` / `to` | datetime local | Rango exacto que prevalece sobre `days`. |
+
+La respuesta conserva `summary`, `by_result`, `by_kind`, `by_credential`,
+`denial_reasons`, `top_workers`, `top_keys`, `series` y `recent`. `summary`,
+`recent` y `series` reflejan los filtros.
+
+### Deudas
+
+`GET /api/v1/debts?status=&stay_id=&room_id=&from=&to=&limit=&offset=`
+
+Se añade `room_id` (int, opcional) al filtrado existente.
+
+### Listados que solo cambian en el cliente
+
+- `GET /api/v1/qr?room_id=&status=&jti=&limit=`
+- `GET /api/v1/nfc-cards?status=&q=`
+- `GET /api/v1/keys?status=&key_type=&worker_id=&q=`
+- `GET /api/v1/admin/access-events?room_id=&kind=&result=&limit=&cursor=`
+
+Todos mantienen sus scopes actuales y sus respuestas existentes.

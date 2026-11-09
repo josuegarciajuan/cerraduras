@@ -58,6 +58,10 @@ final class DebtRepository implements DebtRepositoryInterface
             $wheres[] = 'stay_id = :sid';
             $params[':sid'] = (int) $filters['stay_id'];
         }
+        if (!empty($filters['room_id'])) {
+            $wheres[] = 'room_id = :rid';
+            $params[':rid'] = (int) $filters['room_id'];
+        }
         if (!empty($filters['from'])) {
             $wheres[] = 'created_at >= :from';
             $params[':from'] = $filters['from'];

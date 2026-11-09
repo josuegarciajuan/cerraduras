@@ -11800,3 +11800,16 @@ pendientes.
 - [x] TSK-F120-16: fixture demo idempotente y purga.
 - [x] TSK-F120-17: operación de reapertura inicial de anomalías manuales.
 - [x] TSK-F120-18: `PanelV2UiTest` + BLOCK 89 + regresión completa.
+
+## F121 — Filtros de listados del panel CRM
+
+- [ ] TSK-F121-01: contrato aditivo de filtros en `analytics/accesses` y `debts`.
+- [ ] TSK-F121-02: backend de filtros de accesos (sala, tipo, trabajador, resultado, fechas).
+- [ ] TSK-F121-03: `room_id` en el listado de deudas (controlador + repositorio + interfaz).
+- [ ] TSK-F121-04: frontend de Accesos con sala + tipo unificado y tabla única.
+- [ ] TSK-F121-05: filtros de QRs (sala, estado, JTI) con límite visible 200.
+- [ ] TSK-F121-06: filtros de deudas (sala, estado, fechas) con límite visible 200.
+- [ ] TSK-F121-07: filtros de fichas NFC y llaves (tipo/trabajador).
+- [ ] TSK-F121-08: filtros del monitor (sala, tipo de evento, resultado).
+- [ ] TSK-F121-09: `PanelFiltersTest` + extensión de tests existentes.
+- [ ] TSK-F121-10: BLOCK 90 del runner y regresión completa.

@@ -623,20 +623,108 @@ final class AnalyticsController
         [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
         $offset = $this->tzOffset();
 
-        $byResult = [];
-        foreach ($this->rows(
-            "SELECT result, COUNT(*) AS c FROM access_events
-             WHERE occurred_at BETWEEN :from AND :to GROUP BY result",
-            [':from' => $from, ':to' => $to]
-        ) as $row) {
-            $byResult[(string) $row['result']] = (int) $row['c'];
+        // F121 — rango exacto opcional (hora local del panel → UTC).
+        $tz  = new DateTimeZone(date_default_timezone_get());
+        $utc = new DateTimeZone('UTC');
+        foreach (['from', 'to'] as $bound) {
+            $raw = trim((string) ($request->query($bound) ?? ''));
+            if ($raw === '') {
+                continue;
+            }
+            try {
+                $dt = new DateTimeImmutable(str_replace(' ', 'T', $raw), $tz);
+                if ($bound === 'from') {
+                    $from = $dt->setTimezone($utc)->format('Y-m-d H:i:s');
+                    $fromLocal = $dt;
+                } else {
+                    $to = $dt->setTimezone($utc)->format('Y-m-d H:i:s');
+                    $toLocal = $dt;
+                }
+            } catch (\Throwable $e) {
+                // Fecha inválida: se conserva el rango por días.
+            }
         }
-        foreach ($this->rows(
-            "SELECT result, COUNT(*) AS c FROM key_access_events
-             WHERE occurred_at BETWEEN :from AND :to GROUP BY result",
-            [':from' => $from, ':to' => $to]
-        ) as $row) {
-            $byResult[(string) $row['result']] = ($byResult[(string) $row['result']] ?? 0) + (int) $row['c'];
+
+        // F121 — filtros aditivos (sala, tipo, trabajador, resultado).
+        $roomQuery = $request->query('room_id');
+        $roomId = $roomQuery !== null && $roomQuery !== '' ? (int) $roomQuery : null;
+        $workerQuery = $request->query('worker_id');
+        $workerId = $workerQuery !== null && $workerQuery !== '' ? (int) $workerQuery : null;
+        $resultFilter = (string) ($request->query('result') ?? '');
+        $resultFilter = in_array($resultFilter, ['OK', 'FAIL'], true) ? $resultFilter : null;
+
+        $type = (string) ($request->query('type') ?? '');
+        $credentialType = in_array($type, ['QR', 'NFC'], true) ? $type : null;
+        $eventKind = in_array($type, [
+            'QR_VALIDATE', 'OPEN', 'AUTO_LOCK', 'MANUAL_LOCK', 'DENIED', 'WORKER_EXIT',
+        ], true) ? $type : null;
+
+        // Una credencial solo existe en key_access_events y un evento de puerta
+        // solo en access_events; sin tipo se consultan ambas ramas.
+        $useAccess = $credentialType === null;
+        $useKey    = $eventKind === null;
+
+        $accessWhere  = ['e.occurred_at BETWEEN :ae_from AND :ae_to'];
+        $accessParams = [':ae_from' => $from, ':ae_to' => $to];
+        if ($roomId !== null) {
+            $accessWhere[] = 'e.room_id = :ae_room';
+            $accessParams[':ae_room'] = $roomId;
+        }
+        if ($eventKind !== null) {
+            $accessWhere[] = 'e.kind = :ae_kind';
+            $accessParams[':ae_kind'] = $eventKind;
+        }
+        if ($resultFilter !== null) {
+            $accessWhere[] = 'e.result = :ae_result';
+            $accessParams[':ae_result'] = $resultFilter;
+        }
+        if ($workerId !== null) {
+            $accessWhere[] = 'ws.worker_id = :ae_worker';
+            $accessParams[':ae_worker'] = $workerId;
+        }
+        $accessJoin = $workerId !== null
+            ? ' LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id '
+            : '';
+        $accessWhereSql = implode(' AND ', $accessWhere);
+
+        $keyWhere  = ['e.occurred_at BETWEEN :ke_from AND :ke_to'];
+        $keyParams = [':ke_from' => $from, ':ke_to' => $to];
+        if ($roomId !== null) {
+            $keyWhere[] = 'e.room_id = :ke_room';
+            $keyParams[':ke_room'] = $roomId;
+        }
+        if ($credentialType !== null) {
+            $keyWhere[] = 'e.credential_type = :ke_credential';
+            $keyParams[':ke_credential'] = $credentialType;
+        }
+        if ($resultFilter !== null) {
+            $keyWhere[] = 'e.result = :ke_result';
+            $keyParams[':ke_result'] = $resultFilter;
+        }
+        if ($workerId !== null) {
+            $keyWhere[] = 'e.worker_id = :ke_worker';
+            $keyParams[':ke_worker'] = $workerId;
+        }
+        $keyWhereSql = implode(' AND ', $keyWhere);
+
+        $byResult    = [];
+        $resultParts = [];
+        $resultParams = [];
+        if ($useAccess) {
+            $resultParts[] = 'SELECT result FROM access_events e' . $accessJoin . ' WHERE ' . $accessWhereSql;
+            $resultParams += $accessParams;
+        }
+        if ($useKey) {
+            $resultParts[] = 'SELECT result FROM key_access_events e WHERE ' . $keyWhereSql;
+            $resultParams += $keyParams;
+        }
+        if ($resultParts !== []) {
+            foreach ($this->rows(
+                'SELECT result, COUNT(*) AS c FROM (' . implode(' UNION ALL ', $resultParts) . ') x GROUP BY result',
+                $resultParams
+            ) as $row) {
+                $byResult[(string) $row['result']] = ($byResult[(string) $row['result']] ?? 0) + (int) $row['c'];
+            }
         }
 
         $byKind = $this->rows(
@@ -677,38 +765,57 @@ final class AnalyticsController
             [':from' => $from, ':to' => $to]
         );
 
-        $series = [];
-        $key = $granularity === 'hour' ? 'HOUR(CONVERT_TZ(occurred_at, \'+00:00\', :tz))' : 'DATE(CONVERT_TZ(occurred_at, \'+00:00\', :tz))';
-        foreach ($this->rows(
-            "SELECT {$key} AS k, COUNT(*) AS c FROM access_events
-             WHERE occurred_at BETWEEN :from AND :to GROUP BY k ORDER BY k",
-            [':from' => $from, ':to' => $to, ':tz' => $offset]
-        ) as $row) {
-            $series[(string) $row['k']]['accesses'] = (int) $row['c'];
+        $series       = [];
+        $bucket       = $granularity === 'hour' ? 'HOUR(CONVERT_TZ(occurred_at, \'+00:00\', %s))' : 'DATE(CONVERT_TZ(occurred_at, \'+00:00\', %s))';
+        $seriesParts  = [];
+        $seriesParams = [];
+        if ($useAccess) {
+            $seriesParts[] = 'SELECT ' . sprintf($bucket, ':tz_ae') . " AS k, 'accesses' AS src, COUNT(*) AS c
+                FROM access_events e{$accessJoin} WHERE {$accessWhereSql} GROUP BY k";
+            $seriesParams[':tz_ae'] = $offset;
+            $seriesParams += $accessParams;
         }
-        foreach ($this->rows(
-            "SELECT {$key} AS k, COUNT(*) AS c FROM key_access_events
-             WHERE occurred_at BETWEEN :from AND :to GROUP BY k ORDER BY k",
-            [':from' => $from, ':to' => $to, ':tz' => $offset]
-        ) as $row) {
-            $series[(string) $row['k']]['keys'] = (int) $row['c'];
+        if ($useKey) {
+            $seriesParts[] = 'SELECT ' . sprintf($bucket, ':tz_ke') . " AS k, 'keys' AS src, COUNT(*) AS c
+                FROM key_access_events e WHERE {$keyWhereSql} GROUP BY k";
+            $seriesParams[':tz_ke'] = $offset;
+            $seriesParams += $keyParams;
+        }
+        if ($seriesParts !== []) {
+            foreach ($this->rows(
+                'SELECT k, src, SUM(c) AS c FROM (' . implode(' UNION ALL ', $seriesParts) . ') y GROUP BY k, src',
+                $seriesParams
+            ) as $row) {
+                $series[(string) $row['k']][(string) $row['src']] = (int) $row['c'];
+            }
         }
 
-        $recent = $this->rows(
-            "SELECT e.id, e.occurred_at, 'ACCESS' AS source, r.code AS room_code,
-                    e.kind AS type, e.result, e.reason, NULL AS worker_name, NULL AS key_label
-             FROM access_events e JOIN rooms r ON r.id = e.room_id
-             WHERE e.occurred_at BETWEEN :from1 AND :to1
-             UNION ALL
-             SELECT e.id, e.occurred_at, 'KEY' AS source, r.code AS room_code,
-                    e.credential_type AS type, e.result, e.reason, w.name AS worker_name, k.label AS key_label
-             FROM key_access_events e
-             LEFT JOIN rooms r ON r.id = e.room_id
-             LEFT JOIN workers w ON w.id = e.worker_id
-             LEFT JOIN access_keys k ON k.id = e.key_id
-             WHERE e.occurred_at BETWEEN :from2 AND :to2
-             ORDER BY occurred_at DESC LIMIT 100",
-            [':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to]
+        $recentParts  = [];
+        $recentParams = [];
+        if ($useAccess) {
+            $recentParts[] = "SELECT e.id, e.occurred_at, 'ACCESS' AS source, e.room_id AS room_id, r.code AS room_code,
+                    e.kind AS type, e.result, e.reason, ws.worker_id AS worker_id,
+                    NULL AS worker_name, NULL AS key_label
+                 FROM access_events e
+                 JOIN rooms r ON r.id = e.room_id
+                 LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id
+                 WHERE {$accessWhereSql}";
+            $recentParams += $accessParams;
+        }
+        if ($useKey) {
+            $recentParts[] = "SELECT e.id, e.occurred_at, 'KEY' AS source, e.room_id AS room_id, r.code AS room_code,
+                    e.credential_type AS type, e.result, e.reason, e.worker_id AS worker_id,
+                    w.name AS worker_name, k.label AS key_label
+                 FROM key_access_events e
+                 LEFT JOIN rooms r ON r.id = e.room_id
+                 LEFT JOIN workers w ON w.id = e.worker_id
+                 LEFT JOIN access_keys k ON k.id = e.key_id
+                 WHERE {$keyWhereSql}";
+            $recentParams += $keyParams;
+        }
+        $recent = $recentParts === [] ? [] : $this->rows(
+            'SELECT * FROM (' . implode(' UNION ALL ', $recentParts) . ') x ORDER BY x.occurred_at DESC LIMIT 100',
+            $recentParams
         );
 
         $total = array_sum($byResult);

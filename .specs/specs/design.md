@@ -26632,3 +26632,40 @@ crea ficheros de vídeo.
 Units de anomalía, ocupaciones y migración; extensión de `PanelV2UiTest`;
 nuevo BLOCK 89 del runner con HTTP; Playwright desktop/móvil; regresión
 completa sin fallos.
+
+## F121 — Filtros de listados del panel CRM
+
+### Accesos
+
+- `AnalyticsController::accesses()` acepta filtros opcionales `room_id`,
+  `type`, `worker_id`, `result`, `from` y `to`. La forma de la respuesta no
+  cambia; solo se filtran `summary`, `recent` y `series`.
+- `type` se interpreta así:
+  - `QR`/`NFC` → rama `key_access_events.credential_type`;
+  - `QR_VALIDATE`/`OPEN`/`AUTO_LOCK`/`MANUAL_LOCK`/`DENIED`/`WORKER_EXIT` →
+    rama `access_events.kind`;
+  - vacío → unión completa.
+- `worker_id` en `access_events` se resuelve con
+  `LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id`.
+- `from`/`to` son horas locales del panel y se convierten a UTC con la zona
+  de la aplicación. Sin ellos se usa el rango `days` habitual.
+- El frontend usa siempre `accessAnalytics.recent`; se elimina el salto a
+  `keyAccesses` al filtrar.
+
+### Resto de listados
+
+- QRs, deudas, NFC, llaves y monitor usan parámetros que los endpoints ya
+  soportan. Solo deudas requiere añadir `room_id` al repositorio.
+- Todas las barras siguen el patrón `.fbar` de F119 y ofrecen «Limpiar».
+- Límite visible de 200 en QRs y deudas para evitar listados truncados a 50.
+
+### Datos y seguridad
+
+- Sin migraciones: `debts.room_id`, `access_events.kind` y
+  `key_access_events.credential_type` ya existen e indexan por tiempo.
+- Sin llamadas a Tuya, sin pollers y sin escrituras.
+
+### Verificación
+
+`PanelFiltersTest`, extensión de `PanelV2UiTest`, BLOCK 90 del runner,
+`node --check`, `php -l` y regresión completa.

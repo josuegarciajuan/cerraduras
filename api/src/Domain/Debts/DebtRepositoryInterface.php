@@ -19,7 +19,7 @@ interface DebtRepositoryInterface
     public function findActiveForStay(int $stayId): ?Debt;
 
     /**
-     * @param array<string,mixed> $filters  Supported: status, stay_id, from, to
+     * @param array<string,mixed> $filters  Supported: status, stay_id, room_id, from, to
      * @return list<Debt>
      */
     public function listFiltered(array $filters, int $limit = 50, int $offset = 0): array;

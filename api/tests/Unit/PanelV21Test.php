@@ -70,7 +70,7 @@ c(str_contains($v2, 'Idempotency-Key'), 'cierre de estancia con idempotencia');
 c(str_contains($v2, 'Caducado para llegada'), 'estado QR de llegada');
 c(str_contains($v2, 'En uso'), 'primer uso no se presenta como cierre');
 c(str_contains($v2, 'PENDING_SYNC') && str_contains($v2, "d.status === 'FAILED'"), 'deudas con estados canónicos');
-c(str_contains($v2, 'var filtered = !!(f.worker_id'), 'accesos respetan filtros activos');
+c(str_contains($v2, 'f.room_id || f.type') && str_contains($v2, 'setAccessFilterV2'), 'accesos respetan filtros activos');
 c(!preg_match("/Pendientes', debts\.filter\(function \(d\) \{ return d\.status === 'PENDING'/", $v2), 'deudas sin estado PENDING inexistente');
 
 // ── Almacén ──────────────────────────────────────────────────────────────
