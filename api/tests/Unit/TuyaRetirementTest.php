@@ -30,7 +30,7 @@ foreach ($it as $file) {
 }
 $hits === [] ? ok('sin ficheros Tuya en src') : ko('ficheros Tuya en src', implode(', ', $hits));
 
-$binHits = glob($root . '/bin/tuya-*') ?: [];
+$binHits = array_values(array_filter(glob($root . '/bin/tuya-*') ?: [], 'is_file'));
 $binHits === [] ? ok('sin scripts bin/tuya-*') : ko('scripts Tuya en bin', implode(', ', $binHits));
 
 // 2. No cloud markers in executable source.
