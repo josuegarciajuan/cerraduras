@@ -9223,7 +9223,7 @@ for F121_FILE in \
     fi
 done
 
-for F121_MARK in 'setAccessFilterV2' 'accessTypeOptions' 'clearQrFilters' 'setDebtFilter' 'setNfcFilter' "setKeyFilter('key_type'" 'monitorFilters'; do
+for F121_MARK in 'setAccessFilterV2' 'accessTypeOptions' 'clearQrFilters' 'setDebtFilter' 'setNfcFilter' 'key_type' 'monitorFilters'; do
     if grep -qF "$F121_MARK" public/panel/assets/panel-v2.js 2>/dev/null; then
         pass "F121: marcador $F121_MARK"
     else
