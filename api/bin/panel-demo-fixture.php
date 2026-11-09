@@ -148,6 +148,8 @@ function createStandardDemo(PDO $pdo, int $roomId, string $mark): array
         $created[] = 'anomaly';
     }
 
+    $pdo->prepare("UPDATE rooms SET status = 'OCCUPIED' WHERE id = :r")->execute([':r' => $roomId]);
+
     return $created;
 }
 
