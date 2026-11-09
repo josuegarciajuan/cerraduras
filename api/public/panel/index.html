@@ -739,13 +739,13 @@ function crm(){return{
   async acknowledgeAnomaly(id){
     let that=this;
     try{await this.api('/api/v1/anomalies/'+id+'/acknowledge',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    that.toastOk('Anomalía #'+id+' reconocida');that.loadAnomalies();that.loadAnomalySummary()}catch(e){that.toastErr(e.message)}
+    that.toastOk('Anomalía #'+id+' reconocida');that.loadAnomalies();that.loadAnomalySummary();if(that.loadAnomalyAnalyticsV2)that.loadAnomalyAnalyticsV2()}catch(e){that.toastErr(e.message)}
   },
   async dismissAnomaly(id){
     if(!confirm('¿Descartar anomalía #'+id+'?'))return;
     let that=this;
     try{await this.api('/api/v1/anomalies/'+id+'/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    that.toastOk('Anomalía #'+id+' descartada');that.loadAnomalies();that.loadAnomalySummary()}catch(e){that.toastErr(e.message)}
+    that.toastOk('Anomalía #'+id+' descartada');that.loadAnomalies();that.loadAnomalySummary();if(that.loadAnomalyAnalyticsV2)that.loadAnomalyAnalyticsV2()}catch(e){that.toastErr(e.message)}
   },
   async loadEnabledTypes(){
     try{let d=await this.api('/api/v1/admin/settings?service=api');
