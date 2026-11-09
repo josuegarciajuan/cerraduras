@@ -19,30 +19,23 @@ use Throwable;
  */
 final class DeviceLivenessService
 {
-    public const CATEGORY_CAMERA = 'camera';
-    public const CATEGORY_ZIGBEE = 'zigbee';
-    public const CATEGORY_TUYA   = 'tuya';
-    public const CATEGORY_LOCAL  = 'local';
-    public const CATEGORY_OTHER  = 'other';
+    public const CATEGORY_CAMERA  = 'camera';
+    public const CATEGORY_ZIGBEE  = 'zigbee';
+    public const CATEGORY_RETIRED = 'retired';
+    public const CATEGORY_LOCAL   = 'local';
+    public const CATEGORY_OTHER   = 'other';
 
     public const SOURCE_CAMERA_PROBE       = 'camera_probe';
     public const SOURCE_ZIGBEE_AVAILABILITY = 'zigbee_availability';
     public const SOURCE_ZIGBEE_PUSH        = 'zigbee_push';
-    public const SOURCE_TUYA_PROBE         = 'tuya_probe';
-    public const SOURCE_TUYA_PUSH          = 'tuya_push';
+    public const SOURCE_RETIRED            = 'retired';
     public const SOURCE_ESP32_HEARTBEAT    = 'esp32_heartbeat';
     public const SOURCE_NONE               = 'none';
 
     public const STATE_ONLINE  = 'online';
     public const STATE_OFFLINE = 'offline';
     public const STATE_UNKNOWN = 'unknown';
-
-    /** @var list<string> */
-    private const TUYA_KINDS = [
-        Device::KIND_PRESENCE,
-        Device::KIND_PROXIMITY,
-        Device::KIND_SWITCH,
-    ];
+    public const STATE_RETIRED = 'retired';
 
     /** @var list<string> */
     private const ESP32_KINDS = [
@@ -58,6 +51,13 @@ final class DeviceLivenessService
     public function category(array $row): string
     {
         $kind = strtoupper((string) ($row['kind'] ?? ''));
+
+        // F122: retired rows are never probed, even if they still carry a kind.
+        $meta = is_array($row['meta'] ?? null) ? $row['meta'] : [];
+        $retiredAt = $meta['retired_at'] ?? null;
+        if (is_string($retiredAt) && trim($retiredAt) !== '') {
+            return self::CATEGORY_RETIRED;
+        }
         if ($kind === Device::KIND_CAMERA) {
             return self::CATEGORY_CAMERA;
         }
@@ -67,27 +67,17 @@ final class DeviceLivenessService
             return self::CATEGORY_ZIGBEE;
         }
         if ($transport === Device::TRANSPORT_TUYA) {
-            return self::CATEGORY_TUYA;
+            return self::CATEGORY_RETIRED;
         }
         if ($transport === Device::TRANSPORT_LOCAL || $transport === Device::TRANSPORT_SIMULATED) {
             return self::CATEGORY_LOCAL;
         }
 
-        // Legacy rows: preserve the pre-F92 behavior when transport is NULL.
-        if (in_array($kind, self::TUYA_KINDS, true)) {
-            return self::CATEGORY_TUYA;
-        }
         if (in_array($kind, self::ESP32_KINDS, true)) {
             return self::CATEGORY_LOCAL;
         }
 
         return self::CATEGORY_OTHER;
-    }
-
-    /** @param array<string,mixed> $row */
-    public function isTuyaCloud(array $row): bool
-    {
-        return $this->category($row) === self::CATEGORY_TUYA;
     }
 
     /**
@@ -110,8 +100,8 @@ final class DeviceLivenessService
         if ($category === self::CATEGORY_ZIGBEE) {
             return $this->resolveZigbee($row, $now, $probeTtlSeconds, $presenceStaleSeconds);
         }
-        if ($category === self::CATEGORY_TUYA) {
-            return $this->resolveTuya($row, $now, $probeTtlSeconds, $pushTtlSeconds);
+        if ($category === self::CATEGORY_RETIRED) {
+            return $this->retired();
         }
         if ($category === self::CATEGORY_LOCAL) {
             return $this->resolveLocal($row, $now, $pushTtlSeconds);
@@ -188,30 +178,15 @@ final class DeviceLivenessService
         return $this->state(true, self::SOURCE_ZIGBEE_PUSH);
     }
 
-    /** @param array<string,mixed> $row */
-    private function resolveTuya(
-        array $row,
-        int $now,
-        int $probeTtlSeconds,
-        int $pushTtlSeconds
-    ): array {
-        $kind = strtoupper((string) ($row['kind'] ?? ''));
-        $meta = is_array($row['meta'] ?? null) ? $row['meta'] : [];
-        $isPush = ($kind === Device::KIND_PROXIMITY)
-            || (($meta['presence_source'] ?? null) === 'push');
-
-        if ($isPush) {
-            $lastSeen = $this->ageSeconds($row['last_seen_at'] ?? null, $now);
-            if ($lastSeen !== null && $lastSeen <= $pushTtlSeconds) {
-                return $this->state(true, self::SOURCE_TUYA_PUSH);
-            }
-        }
-
-        $probe = $this->freshProbe($row, $now, $probeTtlSeconds);
-        if ($probe === null) {
-            return $this->unknown(self::SOURCE_TUYA_PROBE, 'no_signal');
-        }
-        return $this->state($probe, self::SOURCE_TUYA_PROBE);
+    /** F122: a retired Tuya device is neither online nor offline; it is retired. */
+    private function retired(): array
+    {
+        return [
+            'state'  => self::STATE_RETIRED,
+            'online' => null,
+            'source' => self::SOURCE_RETIRED,
+            'reason' => 'tuya_retired',
+        ];
     }
 
     /** @param array<string,mixed> $row */

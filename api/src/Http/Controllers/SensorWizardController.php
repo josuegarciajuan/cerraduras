@@ -544,7 +544,10 @@ final class SensorWizardController
             if ($device === null) {
                 return Response::json(404, ['error' => 'door_device_missing']);
             }
-            $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+            if ($device->transport !== Device::TRANSPORT_ZIGBEE2MQTT) {
+                return Response::json(422, ['error' => 'sensor_not_zigbee']);
+            }
+            $provider = 'ZIGBEE2MQTT';
             $repo = new RoomSensorStateRepository($pdo);
             $barrier = $repo->maxAppliedEventId($roomId, 'PROXIMITY', $provider);
             $repo->setManual($roomId, 'PROXIMITY', $provider, $state, $barrier, $device->externalId);
@@ -581,6 +584,9 @@ final class SensorWizardController
             if ($device === null) {
                 return Response::json(404, ['error' => 'door_device_missing']);
             }
+            if ($device->transport !== Device::TRANSPORT_ZIGBEE2MQTT) {
+                return Response::json(422, ['error' => 'sensor_not_zigbee']);
+            }
             if ($restore) {
                 $meta = DoorPolarity::withPolarity($device->meta, DoorPolarity::NORMAL);
                 $devices->updateMeta((int) $device->id, $meta);
@@ -590,7 +596,7 @@ final class SensorWizardController
                       WHERE room_id = :rid"
                 )->execute([':rid' => $roomId]);
                 $stateRepo = new RoomSensorStateRepository($pdo);
-                $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+                $provider = 'ZIGBEE2MQTT';
                 $stateRepo->setUnknown(
                     $roomId,
                     'PROXIMITY',
@@ -657,7 +663,7 @@ final class SensorWizardController
             // F97.3: la confirmación manual del operador también fija la
             // proyección física, con barrera para no restaurar eventos previos.
             $stateRepo = new RoomSensorStateRepository($pdo);
-            $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+            $provider = 'ZIGBEE2MQTT';
             $stateRepo->setManual(
                 $roomId,
                 'PROXIMITY',
@@ -4446,7 +4452,10 @@ final class SensorWizardController
         if ($device === null) {
             throw new \RuntimeException('door_device_missing');
         }
-        $provider = $device->transport === Device::TRANSPORT_ZIGBEE2MQTT ? 'ZIGBEE2MQTT' : 'TUYA';
+        if ($device->transport !== Device::TRANSPORT_ZIGBEE2MQTT) {
+            throw new \RuntimeException('sensor_not_zigbee');
+        }
+        $provider = 'ZIGBEE2MQTT';
         $pdo->prepare(
             "UPDATE iot_sessions
                 SET door_state='CLOSED', last_door_value='CLOSED',

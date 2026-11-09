@@ -36,9 +36,7 @@ use App\Domain\Qr\QrCredentialRepository;
 use App\Domain\Qr\QrIssueService;
 use App\Domain\Qr\QrValidateService;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
-use App\Infrastructure\Gateways\Sensor\SensorIngressFactory;
 use App\Infrastructure\Gateways\Sensor\SimulatedSensorIngress;
-use App\Infrastructure\Gateways\Sensor\TuyaSensorIngress;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomService;
 use App\Domain\Rooms\RoomStateService;
@@ -106,7 +104,6 @@ use App\Http\Controllers\RoomTypeController;
 use App\Http\Controllers\SimController;
 use App\Http\Controllers\SwitchController;
 use App\Http\Controllers\AnomalyController;
-use App\Http\Controllers\TuyaWebhookController;
 use App\Http\Controllers\StayController;
 use App\Http\Controllers\TimeSlotController;
 use App\Http\Controllers\WorkerRoleController;
@@ -133,12 +130,6 @@ Config::validate([
     'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER',
     'QR_SIGNING_SECRET',
 ]);
-if (!Config::getBool('SIMULATED_MODE', true)) {
-    Config::validate(['TUYA_ACCESS_ID', 'TUYA_ACCESS_SECRET', 'TUYA_BASE_URL']);
-}
-if (Config::get('LOCK_PROVIDER', 'LOCAL') === 'TUYA') {
-    Config::validate(['TUYA_ACCESS_ID', 'TUYA_ACCESS_SECRET', 'TUYA_BASE_URL']);
-}
 date_default_timezone_set(Config::get('APP_TZ', 'Europe/Madrid') ?? 'UTC');
 
 // Serve static files for PHP built-in server (router script must return false
@@ -198,18 +189,6 @@ $router->get(
     }
 );
 
-// Public simula HTML (no auth — LAN/MVP, dev tool for presence sensor range toggle)
-$router->get(
-    '/simula',
-    function (\App\Http\Request $request): \App\Http\Response {
-        $htmlFile = __DIR__ . '/simula.html';
-        if (!is_file($htmlFile)) {
-            return \App\Http\Response::json(404, ['error' => 'simula HTML not found']);
-        }
-        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
-    }
-);
-
 // Public acceptance checklist HTML (no auth — LAN/MVP dev tool, F55/RF-62)
 $router->get(
     '/pruebas',
@@ -224,7 +203,7 @@ $router->get(
 
 // ── Sensor calibration wizard (F94) ──────────────────────────────────────────
 // Herramienta de campo: página /sensores + validación server-side de cada paso.
-// Solo lectura de BD/MQTT bajo demanda; sin pollers ni llamadas a Tuya.
+// Solo lectura de BD/MQTT bajo demanda; sin pollers ni llamadas a la nube.
 $router->get(
     '/sensores',
     function (\App\Http\Request $request): \App\Http\Response {
@@ -767,391 +746,10 @@ $router->delete(
 
 // --- Dashboard internal API (no auth — LAN/MVP) ---
 
-/**
- * EMERGENCY FALLBACK: Check Tuya PRESENCE device online status via Tuya Cloud API.
- *
- * IMPORTANT – DO NOT call this from automatic dashboard polling.
- * Device liveness is determined by last_seen_at (updated by Pulsar webhooks
- * and device heartbeat). This function exists ONLY for
- * manual debugging or emergency use.
- *
- * Changes from the original (which burned Tuya trial quota on 2 accounts):
- *   - Only checks PRESENCE (the others use Pulsar push or are command-only)
- *   - Stale threshold: 30 min (was 5 min)
- *   - Cache TTL: 5 min + FILE-BASED (shared across PHP built-in server workers)
- *   - Detects quota exhaustion (code 28841004) and backs off for 30 min (F46+)
- *
- * @param \PDO $pdo Database connection
- * @return array [external_id => bool] or [] if no stale devices / quota exhausted
- */
-function checkTuyaOnline(\PDO $pdo): array {
-    // ── File-based cache (shared across PHP built-in server workers) ──
-    $cacheFile = sys_get_temp_dir() . '/tuya_online_cache.json';
-    $cacheTTL  = 300; // 5 minutes
-
-    $cached = null;
-    if (file_exists($cacheFile)) {
-        $raw = @file_get_contents($cacheFile);
-        if ($raw !== false) {
-            $cached = json_decode($raw, true);
-            if (is_array($cached) && isset($cached['_ts']) && (time() - $cached['_ts']) < $cacheTTL) {
-                unset($cached['_ts']);
-                return $cached;
-            }
-        }
-    }
-
-    // ── Quota-exhaustion backoff ──
-    $backoffFile = sys_get_temp_dir() . '/tuya_quota_backoff.txt';
-    if (file_exists($backoffFile)) {
-        $backoffUntil = (int) @file_get_contents($backoffFile);
-        if (time() < $backoffUntil) {
-            return []; // Still in backoff — don't waste calls
-        }
-        @unlink($backoffFile); // Backoff expired, try again
-    }
-
-    // ── Credentials ──
-    $accessId  = $_ENV['TUYA_ACCESS_ID'] ?? getenv('TUYA_ACCESS_ID') ?: '';
-    $accessKey = $_ENV['TUYA_ACCESS_SECRET'] ?? getenv('TUYA_ACCESS_SECRET') ?: '';
-    $baseUrl   = $_ENV['TUYA_BASE_URL'] ?? getenv('TUYA_BASE_URL') ?: 'https://openapi.tuyaeu.com';
-    if (empty($accessId) || empty($accessKey)) {
-        return [];
-    }
-
-    // ── Only PRESENCE devices that are VERY stale (30+ minutes) ──
-    // PROXIMITY → Pulsar push (real-time, no API needed)
-    // LOCK       → command-only (no status polling needed)
-    // SWITCH     → command-only (no status polling needed)
-    $stale = $pdo->query(
-        "SELECT external_id FROM devices
-         WHERE external_id LIKE 'bf%'
-           AND kind = 'PRESENCE'
-           AND (last_seen_at IS NULL OR last_seen_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 MINUTE))"
-    )->fetchAll(\PDO::FETCH_COLUMN);
-
-    if (empty($stale)) {
-        file_put_contents($cacheFile, json_encode(['_ts' => time()]));
-        return [];
-    }
-
-    // ── Get access token ──
-    $ts   = (string)(int)(microtime(true) * 1000);
-    $sign = strtoupper(hash_hmac('sha256',
-        $accessId . $ts . "GET\n" . hash('sha256', '') . "\n\n/v1.0/token?grant_type=1",
-        $accessKey));
-
-    $ch = curl_init($baseUrl . '/v1.0/token?grant_type=1');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8,
-        CURLOPT_HTTPHEADER => [
-            "client_id: $accessId", "sign: $sign",
-            "sign_method: HMAC-SHA256", "t: $ts",
-        ],
-    ]);
-    $tokenResp = json_decode(curl_exec($ch), true);
-    curl_close($ch);
-
-    if (!($tokenResp['success'] ?? false)) {
-        $code = $tokenResp['code'] ?? 0;
-        if ($code === 28841004 || stripos($tokenResp['msg'] ?? '', 'quota') !== false) {
-            file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes)
-        }
-        return [];
-    }
-    $token = $tokenResp['result']['access_token'];
-
-    // ── Check each stale PRESENCE device ──
-    $result    = [];
-    $apiFailed = false;
-    $quotaExhausted = false;
-
-    foreach ($stale as $devId) {
-        $ts   = (string)(int)(microtime(true) * 1000);
-        $sign = strtoupper(hash_hmac('sha256',
-            $accessId . $token . $ts . "GET\n" . hash('sha256', '') . "\n\n/v1.0/iot-03/devices/$devId",
-            $accessKey));
-
-        $ch = curl_init($baseUrl . "/v1.0/iot-03/devices/$devId");
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5,
-            CURLOPT_HTTPHEADER => [
-                "client_id: $accessId", "sign: $sign",
-                "sign_method: HMAC-SHA256", "t: $ts",
-                "access_token: $token",
-            ],
-        ]);
-        $rawResp  = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        $resp = json_decode($rawResp, true);
-
-        // Detect quota exhaustion from device response
-        $code = $resp['code'] ?? 0;
-        if ($code === 28841004 || stripos($resp['msg'] ?? '', 'quota') !== false) {
-            $quotaExhausted = true;
-            $apiFailed = true;
-            continue;
-        }
-
-        if ($httpCode !== 200 || $resp === null || !isset($resp['result']['online'])) {
-            $apiFailed = true;
-            $result[$devId] = $cached[$devId] ?? false;
-        } else {
-            $result[$devId] = (bool) ($resp['result']['online']);
-        }
-    }
-
-    if ($quotaExhausted) {
-        file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes) backoff
-    }
-
-    // Cache result (5 min), unless all calls failed
-    if (!$apiFailed) {
-        $result['_ts'] = time();
-        file_put_contents($cacheFile, json_encode($result));
-        unset($result['_ts']);
-    }
-
-    return $result;
-}
-
-// ── F46+: presupuesto de cuota Tuya (F78: ya NO hay poller) ─────────────────
-// Fichero `api/run/tuya-quota.json`, escrito por la API y por el consumer
-// Pulsar. Fuente única de verdad para las sondas REST (bajo demanda) y las
-// llamadas del consumer. El 2026-09-17 una puerta atascada agotó la cuota con
-// ~1.400 llamadas/hora; hoy no existe ningún bucle de sondeo continuo (F78).
-function tuyaQuotaFile(): string
-{
-    return dirname(__DIR__) . '/run/tuya-quota.json';
-}
-
-/** @return array{day:?string,hour:?string,callsDay:int,callsHour:int,backoffUntil:int} */
-function tuyaQuotaRead(): array
-{
-    $default = ['day' => null, 'hour' => null, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
-    $f = tuyaQuotaFile();
-    if (!is_file($f)) {
-        return $default;
-    }
-    $d = json_decode((string) @file_get_contents($f), true);
-    if (!is_array($d)) {
-        return $default;
-    }
-    $q = array_merge($default, $d);
-    // F46++: normalizar `backoffUntil` a SEGUNDOS (valores legados en ms → /1000).
-    if (($q['backoffUntil'] ?? 0) > 1e12) {
-        $q['backoffUntil'] = (int) round($q['backoffUntil'] / 1000);
-    }
-    return $q;
-}
-
-function tuyaQuotaWrite(array $q): void
-{
-    $f = tuyaQuotaFile();
-    if (!is_dir(dirname($f))) {
-        @mkdir(dirname($f), 0775, true);
-    }
-    @file_put_contents($f . '.tmp', json_encode($q), LOCK_EX);
-    @rename($f . '.tmp', $f);
-}
-
-/** @return array{ok:bool,reason:string,q:array<string,mixed>} */
-function tuyaQuotaCheck(): array
-{
-    $now  = time();
-    $day  = gmdate('Y-m-d', $now);
-    $hour = gmdate('Y-m-d\TH', $now);
-    $q = tuyaQuotaRead();
-    if (($q['day'] ?? null) !== $day) {
-        $q = ['day' => $day, 'hour' => $hour, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
-    }
-    if (($q['hour'] ?? null) !== $hour) {
-        $q['hour'] = $hour;
-        $q['callsHour'] = 0;
-    }
-    $hourly = (int) ($_ENV['TUYA_HOURLY_BUDGET'] ?? (getenv('TUYA_HOURLY_BUDGET') ?: 150));
-    $daily  = (int) ($_ENV['TUYA_DAILY_BUDGET']  ?? (getenv('TUYA_DAILY_BUDGET')  ?: 1000));
-    if (($q['backoffUntil'] ?? 0) > $now) {
-        return ['ok' => false, 'reason' => 'backoff', 'q' => $q];
-    }
-    if (($q['callsDay'] ?? 0) >= $daily) {
-        return ['ok' => false, 'reason' => 'daily_budget', 'q' => $q];
-    }
-    if (($q['callsHour'] ?? 0) >= $hourly) {
-        return ['ok' => false, 'reason' => 'hourly_budget', 'q' => $q];
-    }
-    return ['ok' => true, 'reason' => 'ok', 'q' => $q];
-}
-
-function tuyaQuotaBump(): array
-{
-    $now  = time();
-    $day  = gmdate('Y-m-d', $now);
-    $hour = gmdate('Y-m-d\TH', $now);
-    $q = tuyaQuotaRead();
-    if (($q['day'] ?? null) !== $day) {
-        $q = ['day' => $day, 'hour' => $hour, 'callsDay' => 0, 'callsHour' => 0, 'backoffUntil' => 0];
-    }
-    if (($q['hour'] ?? null) !== $hour) {
-        $q['hour'] = $hour;
-        $q['callsHour'] = 0;
-    }
-    $q['callsDay']  = (int) ($q['callsDay'] ?? 0) + 1;
-    $q['callsHour'] = (int) ($q['callsHour'] ?? 0) + 1;
-    tuyaQuotaWrite($q);
-    return $q;
-}
-
-function tuyaQuotaBackoff(int $seconds): void
-{
-    $q = tuyaQuotaRead();
-    $q['backoffUntil'] = time() + $seconds;
-    tuyaQuotaWrite($q);
-}
-
-/**
- * Tuya Cloud API helper for presence sensor DP read/write.
- * Shared credentials with TuyaSwitchGateway / TuyaLockGateway.
- * Caches the access token in-process (static).
- *
- * @param string $method  'GET' or 'POST'
- * @param string $path    e.g. "/v1.0/iot-03/devices/{id}/status"
- * @param string|null $body  JSON body for POST (null for GET)
- * @param bool $ignoreLocalBudget  When true, bypass the LOCAL backoff/budget
- *        guards so a read-only credit probe can run while the local backoff is
- *        active. It never bypasses Tuya: the call is still counted and a quota
- *        answer still refreshes the shared backoff. Default false keeps every
- *        existing caller's behaviour unchanged.
- * @return array{http:int, data:array, error:string|null, elapsed_ms:int}
- */
-function tuyaPresenceApi(string $method, string $path, ?string $body, bool $ignoreLocalBudget = false): array {
-    // ── Shared quota-exhaustion backoff (same file as checkTuyaOnline) ──
-    $backoffFile = sys_get_temp_dir() . '/tuya_quota_backoff.txt';
-    if (!$ignoreLocalBudget) {
-        if (file_exists($backoffFile)) {
-            $backoffUntil = (int) @file_get_contents($backoffFile);
-            if (time() < $backoffUntil) {
-                return ['http' => 429, 'data' => [], 'error' => 'Tuya quota exhausted — backoff active', 'elapsed_ms' => 0];
-            }
-            @unlink($backoffFile);
-        }
-
-        // F46+: presupuesto compartido (mismo fichero tuya-quota.json).
-        $qchk = tuyaQuotaCheck();
-        if (!$qchk['ok']) {
-            return ['http' => 429, 'data' => [], 'error' => 'Tuya quota budget (' . $qchk['reason'] . ')', 'elapsed_ms' => 0];
-        }
-    }
-
-    $accessId  = $_ENV['TUYA_ACCESS_ID'] ?? getenv('TUYA_ACCESS_ID') ?: '';
-    $accessKey = $_ENV['TUYA_ACCESS_SECRET'] ?? getenv('TUYA_ACCESS_SECRET') ?: '';
-    $baseUrl   = $_ENV['TUYA_BASE_URL'] ?? getenv('TUYA_BASE_URL') ?: 'https://openapi.tuyaeu.com';
-
-    // ── Token caching ──
-    static $token = null, $tokenExpiry = 0;
-    $now = time();
-    if ($token === null || $now >= $tokenExpiry) {
-        $t = (string)(int)(microtime(true) * 1000);
-        $sign = strtoupper(hash_hmac('sha256',
-            $accessId . $t . 'GET' . "\n" . hash('sha256', '') . "\n" . "\n" . '/v1.0/token?grant_type=1',
-            $accessKey));
-        $ch = curl_init($baseUrl . '/v1.0/token?grant_type=1');
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8,
-            CURLOPT_HTTPHEADER => [
-                "client_id: $accessId", "sign: $sign",
-                "sign_method: HMAC-SHA256", "t: $t",
-            ],
-        ]);
-        $resp = curl_exec($ch);
-        curl_close($ch);
-        $data = json_decode($resp, true);
-        if (($data['success'] ?? false)) {
-            $token = $data['result']['access_token'];
-            $tokenExpiry = $now + (int)($data['result']['expire_time'] ?? 7200) - 60;
-        } else {
-            return ['http' => 502, 'data' => [], 'error' => 'Tuya token failed', 'elapsed_ms' => 0];
-        }
-    }
-
-    // ── Sign & call ──
-    $bodyStr = $body ?? '';
-    $contentSha = hash('sha256', $bodyStr);
-    $strToSign = $method . "\n" . $contentSha . "\n" . "\n" . $path;
-    $t = (string)(int)(microtime(true) * 1000);
-    $sign = strtoupper(hash_hmac('sha256', $accessId . $token . $t . $strToSign, $accessKey));
-
-    $headers = [
-        "client_id: $accessId", "sign: $sign",
-        "sign_method: HMAC-SHA256", "t: $t",
-        "access_token: $token",
-    ];
-    if ($method === 'POST') {
-        $headers[] = "Content-Type: application/json";
-        $headers[] = "Content-SHA256: $contentSha";
-    }
-
-    tuyaQuotaBump(); // F46+: contar la llamada en el presupuesto compartido
-
-    $ch = curl_init($baseUrl . $path);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => 10,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_HTTPHEADER     => $headers,
-    ]);
-    if ($method === 'POST') {
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $bodyStr);
-    }
-
-    $start = microtime(true);
-    $resp = curl_exec($ch);
-    $elapsed = (int)round((microtime(true) - $start) * 1000);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-
-    if ($err) {
-        return ['http' => 502, 'data' => [], 'error' => "curl: $err", 'elapsed_ms' => $elapsed];
-    }
-
-    $data = json_decode($resp, true);
-    if (is_array($data)) {
-        // Detect quota exhaustion (shared pure classifier, also used by
-        // /dashboard-api/tuya-quota) and set the local + shared backoff.
-        $cls = \App\Domain\Devices\TuyaCreditsClassifier::classifyTuyaCredits($httpCode, $data);
-        if ($cls['category'] === 'quota') {
-            file_put_contents($backoffFile, time() + 1800); // 30 min (F46+: recuperar antes)
-            tuyaQuotaBackoff(1800);                          // F46+: backoff compartido (30 min)
-        }
-    }
-    return ['http' => $httpCode, 'data' => is_array($data) ? $data : [], 'error' => null, 'elapsed_ms' => $elapsed];
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Estado verídico de conectividad por dispositivo.
-//
-// Cada dispositivo se clasifica por SU ORIGEN de verificación:
-//   - ESP32 / local (gratis, verificación periódica vía heartbeat/pull):
-//       RPI (heartbeat), SCANNER y LOCK (command-queue 'check' o relé).
-//       Su estado se deriva de last_seen_at (se mantiene fresco sin cuota).
-//   - Tuya cloud (consumen cuota de la API Tuya → SOLO se sondean al cargar
-//       el panel o al pulsar "Comprobar dispositivos", NUNCA en el poll):
-//       PRESENCE, PROXIMITY, SWITCH.
-//       Su estado se deriva de la última SONDA real (result.online) persistida
-//       en devices.online_state + devices.online_probed_at.
-//
-// IMPORTANTE: no añadir nunca un poll periódico que sondee Tuya cloud.
-// ─────────────────────────────────────────────────────────────────────
-/** @var list<string> Dispositivos que comparten hardware ESP32 (sin cuota Tuya). */
+/** @var list<string> Dispositivos que comparten hardware ESP32 (sin nube). */
 const DEVICE_KIND_ESP32 = ['RPI', 'SCANNER', 'LOCK'];
-/** @var list<string> Dispositivos Tuya cloud (cuota → sondear solo bajo demanda). */
-const DEVICE_KIND_TUYA  = ['PRESENCE', 'PROXIMITY', 'SWITCH'];
 /** Cuántos segundos conserva una verificación de conectividad antes de caducar. */
-const TUYA_PROBE_TTL_SECONDS = 600;
+const DEVICE_PROBE_TTL_SECONDS = 600;
 
 /** Política pura de liveness (F92/RF-152..RF-155). */
 function deviceLivenessService(): DeviceLivenessService {
@@ -1168,11 +766,7 @@ function deviceIsEsp32(array $dev): bool {
         && in_array((string) ($dev['kind'] ?? ''), DEVICE_KIND_ESP32, true);
 }
 
-function deviceIsTuyaCloud(array $dev): bool {
-    return deviceLivenessService()->isTuyaCloud($dev);
-}
-
-/** Persiste el resultado de una verificación de conectividad (Tuya, Zigbee availability o cámara). */
+/** Persiste el resultado de una verificación de conectividad (Zigbee availability o cámara). */
 function persistDeviceOnlineProbe(\PDO $pdo, int $deviceId, ?bool $online): void {
     if ($online === null) {
         return;
@@ -1181,52 +775,6 @@ function persistDeviceOnlineProbe(\PDO $pdo, int $deviceId, ?bool $online): void
         'UPDATE devices SET online_state = :st, online_probed_at = UTC_TIMESTAMP(3) WHERE id = :did'
     );
     $stmt->execute([':st' => $online ? 1 : 0, ':did' => $deviceId]);
-}
-
-/**
- * Sonda real de conectividad de un dispositivo Tuya cloud (GET /devices/{id}).
- * Devuelve true/false si la API respondió con un result.online válido, o null
- * si Tuya no pudo confirmar (error HTTP/red/cuota). NO debe llamarse en polls.
- * F92: los dispositivos con transporte declarado distinto de TUYA nunca llegan
- * a la red (defensa en profundidad contra gasto de cuota).
- */
-function probeTuyaOnlineOnce(\PDO $pdo, int $deviceId, string $externalId): ?bool {
-    if ($externalId === '') {
-        return null;
-    }
-    // F92: no sondear Zigbee/local/cámara contra Tuya. F46+: disabled tampoco.
-    try {
-        $m = $pdo->prepare('SELECT meta_json, transport FROM devices WHERE id = :id');
-        $m->execute([':id' => $deviceId]);
-        $row = $m->fetch(\PDO::FETCH_ASSOC);
-        if (is_array($row)) {
-            $transport = strtoupper(trim((string) ($row['transport'] ?? '')));
-            if ($transport !== '' && $transport !== \App\Domain\Devices\Device::TRANSPORT_TUYA) {
-                return null;
-            }
-            $meta = is_string($row['meta_json'] ?? null) && $row['meta_json'] !== ''
-                ? json_decode((string) $row['meta_json'], true)
-                : null;
-            if (is_array($meta) && (($meta['presence_source'] ?? null) === 'disabled')) {
-                return null;
-            }
-        }
-    } catch (\Throwable $e) {
-        /* best-effort: ante la duda, no bloquear */
-    }
-    $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId), null);
-    if (($res['error'] ?? null) !== null || (int) ($res['http'] ?? 0) >= 500) {
-        return null; // Tuya no disponible: no concluir online/offline
-    }
-    if (($res['data']['success'] ?? false) !== true) {
-        return null;
-    }
-    $online = isset($res['data']['result']['online']) ? (bool) $res['data']['result']['online'] : null;
-    if ($online === null) {
-        return null;
-    }
-    persistDeviceOnlineProbe($pdo, $deviceId, $online);
-    return $online;
 }
 
 /**
@@ -1288,163 +836,15 @@ function resolvePresenceDeviceForRoom(\PDO $pdo, int $roomId): ?array
         return null;
     }
     $row['online']    = (bool) ($row['online'] ?? false);
-    $row['transport'] = $row['transport'] !== null ? strtoupper((string) $row['transport']) : 'TUYA';
+    $row['transport'] = $row['transport'] !== null ? strtoupper((string) $row['transport']) : 'UNKNOWN';
     $row['meta']      = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
     unset($row['meta_json']);
     return $row;
 }
 
-/**
- * DP capability ranges for a PRESENCE device (F43).
- *
- * The 24G-Presence Sensor V3 and the ZY-M100 expose different Tuya DP ranges
- * (far 75-900 step 75 / sensitivity 1-10 vs far 0-1000 step 10 / sensitivity 0-9).
- * Caps are read from meta_json.dp_caps, falling back to ZY-M100-compatible defaults.
- *
- * @param array<string,mixed>|null $meta
- * @return array{far_min:int,far_max:int,far_step:int,sens_min:int,sens_max:int,off_far:?int,target_scale:int,near_min:int}
- */
-function presenceDpCaps(?array $meta): array
-{
-    $c = (is_array($meta) && isset($meta['dp_caps']) && is_array($meta['dp_caps'])) ? $meta['dp_caps'] : [];
-    $farMin  = isset($c['far_min'])  ? (int) $c['far_min']  : 0;
-    $farMax  = isset($c['far_max'])  ? (int) $c['far_max']  : 1000;
-    $farStep = isset($c['far_step']) ? (int) $c['far_step'] : 10;
-    $sensMin = isset($c['sens_min']) ? (int) $c['sens_min'] : 0;
-    $sensMax = isset($c['sens_max']) ? (int) $c['sens_max'] : 9;
-    // Divisor de target_dis_closest para obtener metros: 100 (cm, ZY-M100) o 10
-    // (decímetros, 24G V3). Declarado en meta_json.dp_caps.target_scale.
-    $targetScale = isset($c['target_scale']) ? (int) $c['target_scale'] : 100;
-    // Distancia mínima (zona muerta). El calibrador la fuerza siempre al mínimo
-    // para que el sensor detecte desde pegado a él; solo se gestiona el máximo.
-    $nearMin = isset($c['near_min']) ? (int) $c['near_min'] : 0;
-    // "Radio 0 = OFF" only exists when the sensor admits far_detection 0 (ZY-M100).
-    // The 24G V3 has far_min 75, so there is no off-by-radio sentinel for it.
-    $offFar  = array_key_exists('off_far', $c)
-        ? ($c['off_far'] === null ? null : (int) $c['off_far'])
-        : ($farMin === 0 ? 0 : null);
-    return [
-        'far_min'      => $farMin,
-        'far_max'      => $farMax,
-        'far_step'     => $farStep,
-        'sens_min'     => $sensMin,
-        'sens_max'     => $sensMax,
-        'off_far'      => $offFar,
-        'target_scale' => $targetScale,
-        'near_min'     => $nearMin,
-    ];
-}
-
-/**
- * Normalize a raw Tuya DP map for a PRESENCE device into the shape returned by
- * both the status and set endpoints (F43).
- *
- * @param array<string,mixed> $dps  code => value
- * @param array<string,mixed> $caps presenceDpCaps()
- * @return array<string,mixed>
- */
-function normalizePresenceDps(array $dps, array $caps): array
-{
-    $far   = isset($dps['far_detection']) ? (int) $dps['far_detection'] : null;
-    $sens  = isset($dps['sensitivity']) ? (int) $dps['sensitivity'] : null;
-    $near  = isset($dps['near_detection']) ? (int) $dps['near_detection'] : null;
-    $state = $dps['presence_state'] ?? null;
-    // OFF-by-radio only when the sensor admits far_detection 0 (ZY-M100).
-    $isOff = ($caps['off_far'] !== null && $far !== null && $far <= 1);
-    $targetScale = (int) ($caps['target_scale'] ?? 100);
-    return [
-        'far_detection'      => $far,
-        'near_detection'     => $near,
-        'sensitivity'        => $sens,
-        'presence_state'     => $state,
-        'target_dis_closest' => $dps['target_dis_closest'] ?? null,
-        'target_distance_m'  => (isset($dps['target_dis_closest']) && $dps['target_dis_closest'] !== null && $targetScale > 0)
-            ? round(((int) $dps['target_dis_closest']) / $targetScale, 1)
-            : null,
-        'illuminance_value'  => $dps['illuminance_value'] ?? null,
-        'mode'               => $isOff ? 'OFF' : 'ON',
-        // Accept both ZY-M100 ("presence") and 24G V3 ("move") as PRESENT.
-        'effective_presence' => $isOff
-            ? 'ABSENT'
-            : (in_array($state, ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
-    ];
-}
-
-/**
- * Persist the calibrated radio/sensitivity snapshot on the PRESENCE device of a room.
- * Stored under devices.meta_json.calibration so each room keeps its own configuration
- * (each sensor is assigned to a different room). Never clobbers other meta keys.
- * Returns the written snapshot array.
- */
-function persistPresenceCalibration(\PDO $pdo, int $deviceId, ?array $meta, int $farCm, int $sensitivity, ?int $nearCm = null): array
-{
-    $meta = is_array($meta) ? $meta : [];
-    $snap = [
-        'far_detection'  => $farCm,
-        'sensitivity'    => $sensitivity,
-        'calibrated_at'  => gmdate('Y-m-d\TH:i:s\Z'),
-        'source'         => 'dashboard-calib',
-    ];
-    if ($nearCm !== null) {
-        $snap['near_detection'] = $nearCm;
-    }
-    $meta['calibration'] = $snap;
-    $upd = $pdo->prepare('UPDATE devices SET meta_json = :m WHERE id = :id');
-    $upd->execute([':m' => json_encode($meta, JSON_UNESCAPED_SLASHES), ':id' => $deviceId]);
-    return $snap;
-}
-
-// GET /dashboard-api/rooms — list all rooms with code + status + pack info
-$router->get(
-    '/dashboard-api/rooms',
-    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
-        $pdo = $pdoProvider();
-        $rows = $pdo->query(
-            "SELECT r.id, r.code, r.status, r.pack_id, r.room_type_id,
-                    rt.code AS room_type_code, rt.name AS room_type_name,
-                    dp.name AS pack_name
-             FROM rooms r
-             LEFT JOIN device_packs dp ON dp.id = r.pack_id
-             LEFT JOIN room_types rt ON rt.id = r.room_type_id
-             ORDER BY r.code ASC"
-        )->fetchAll(\PDO::FETCH_ASSOC);
-
-        return \App\Http\Response::json(200, $rows ?: []);
-    }
-);
-
-// GET /dashboard-api/mirame — list RPI devices with is_identified=1 (auto-expire 15s)
-$router->get(
-    '/dashboard-api/mirame',
-    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
-        $pdo = $pdoProvider();
-        // Auto-clean stale identified flags (>30s old, e.g. WiFi lost before sending state:false)
-        $pdo->exec(
-            "UPDATE devices SET is_identified = 0 WHERE kind = 'RPI' AND is_identified = 1 AND (identified_at IS NULL OR identified_at <= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 SECOND))"
-        );
-        $rows = $pdo->query(
-            "SELECT d.id, d.external_id, d.label, d.pack_id, d.meta_json, d.is_identified, d.identified_at,
-                    r.id as room_id, r.code as room_code,
-                    dp.name as pack_name, dp.code as pack_code
-             FROM devices d
-             LEFT JOIN rooms r ON r.pack_id = d.pack_id
-             LEFT JOIN device_packs dp ON dp.id = d.pack_id
-             WHERE d.kind = 'RPI' AND d.is_identified = 1
-               AND d.identified_at > DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 15 SECOND)
-             ORDER BY d.identified_at DESC"
-        )->fetchAll(\PDO::FETCH_ASSOC);
-        // Decode meta_json for clients
-        foreach ($rows as &$row) {
-            $row['meta'] = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
-            unset($row['meta_json']);
-        }
-        return \App\Http\Response::json(200, $rows);
-    }
-);
-
 // GET /dashboard-api/system-status — health check of background processes
-// F41 (contracts.md §5): 5 workers with expected/instances/pids/healthy/degraded.
-// F78: el worker `presence-poller-manager` fue eliminado (no hay poller de Tuya).
+// F41/F122 (contracts.md §5): 4 workers with expected/instances/pids/healthy/degraded.
+// F78/F122: no hay poller ni consumer de nube.
 // label/online/pid are kept for the existing renderSystemStatus() frontend.
 $router->get(
     '/dashboard-api/system-status',
@@ -1457,10 +857,6 @@ $router->get(
             'overstay-scan'          => ['label' => 'Overstay Scanner',         'run_key' => 'overstay-scan',           'pattern' => 'bin/overstay-scan.php',          'systemd_unit' => 'cerraduras-worker@overstay-scan'],
             'outbox-worker'          => ['label' => 'Outbox Worker',            'run_key' => 'outbox-worker',           'pattern' => 'bin/outbox-worker.php',          'systemd_unit' => 'cerraduras-worker@outbox-worker'],
             'anomaly-scanner'        => ['label' => 'Anomaly Scanner',          'run_key' => 'anomaly-scanner',         'pattern' => 'bin/anomaly-scanner.php',        'systemd_unit' => 'cerraduras-worker@anomaly-scanner'],
-            // F78/RF-101: SIN poller de presencia. Fue eliminado por completo
-            // (el sistema usa push por Pulsar + sondas bajo demanda).
-            // F44 (RF-50.2.4): el consumer Pulsar es dueño único de systemd.
-            'pulsar-consumer'        => ['label' => 'Eventos Tuya (Pulsar)',    'run_key' => 'tuya-pulsar-consumer',    'pattern' => 'tuya-pulsar-consumer', 'systemd_unit' => 'cerraduras-pulsar-consumer'],
         ];
 
         // F41: each supervised worker is a `bash -c "while true; do <cmd>; ..."`
@@ -1489,9 +885,8 @@ $router->get(
             $marker  = 'run/' . $runKey . '.pid';
             $pids    = [];
 
-            // F44 (RF-50.2): worker gestionado por systemd (consumer Pulsar).
-            // Se cuenta su MainPID y se une con la detección por marcador para
-            // que un wrapper LEGADO duplicado se siga viendo como `degraded`.
+            // Workers gestionados por systemd: se cuenta su MainPID y se une
+            // con la detección por marcador para ver duplicados como `degraded`.
             if (!empty($cfg['systemd_unit'])) {
                 $unit   = (string) $cfg['systemd_unit'];
                 $active = trim((string) @shell_exec('systemctl is-active ' . escapeshellarg($unit) . ' 2>/dev/null'));
@@ -1582,28 +977,6 @@ $router->get(
             ];
         }
 
-        // F47 (RF-54.4.2): salud real del consumer Pulsar desde su fichero de
-        // estado (proceso vivo pero WS caído o mudo). El fichero lo escribe
-        // `bin/tuya-pulsar-consumer/index.js`; si aún no existe, no se añade nada.
-        //
-        // IMPORTANTE (contrato F41 §5): estos datos se exponen como campos
-        // ADITIVOS (`ws_connected`, `ws_silent`, `status_reason`) y NO alteran
-        // `healthy`/`degraded`, que siguen rigiéndose por el recuento de
-        // instancias (`healthy === (instances === expected)`).
-        $pcStatusFile = $runDir . '/pulsar-consumer-status.json';
-        if (isset($result['pulsar-consumer']) && is_file($pcStatusFile)) {
-            $pcRaw = @file_get_contents($pcStatusFile);
-            $pcSt  = $pcRaw !== false ? json_decode($pcRaw, true) : null;
-            if (is_array($pcSt) && array_key_exists('connected', $pcSt)) {
-                $pcLast   = isset($pcSt['last_msg_at']) ? strtotime((string) $pcSt['last_msg_at']) : false;
-                $pcSilent = $pcLast !== false && (time() - $pcLast) > 90;
-                $result['pulsar-consumer']['ws_connected'] = ($pcSt['connected'] === true);
-                $result['pulsar-consumer']['ws_silent']    = $pcSilent;
-                $result['pulsar-consumer']['status_reason'] = ($pcSt['connected'] !== true)
-                    ? 'ws_disconnected'
-                    : ($pcSilent ? 'ws_silent' : null);
-            }
-        }
 
         return \App\Http\Response::json(200, $result);
     }
@@ -1654,6 +1027,7 @@ $router->get(
             $d['meta'] = !empty($d['meta_json']) ? json_decode($d['meta_json'], true) : null;
             unset($d['meta_json']);
             $d['transport'] = $d['transport'] ?? 'UNKNOWN';
+            $d['is_retired'] = is_array($d['meta'] ?? null) && !empty($d['meta']['retired_at']);
             $d['integration_status'] = $deviceStatusFactory()->forRow($d);
         }
         unset($d);
@@ -1932,7 +1306,7 @@ $router->post(
             // F33: get RPI external_id from the pack for command queuing
             $rpiExtId = $rpi->externalId;
             foreach ($packDevices as $dev) {
-                // F92: categoría por transporte; cámara y Zigbee no tocan Tuya.
+                // F122: categoría por transporte; solo Zigbee/cámara/ESP32.
                 $dev['meta'] = is_string($dev['meta_json'] ?? null) && $dev['meta_json'] !== ''
                     ? json_decode((string) $dev['meta_json'], true)
                     : null;
@@ -1940,7 +1314,7 @@ $router->post(
                 $dev['integration_status'] = $deviceStatusFactory()->forRow($dev);
                 $category = deviceCategory($dev);
 
-                // F33: Skip RPI, SCANNER, and LOCK — all ESP32-connected, no Tuya
+                // F33: Skip RPI, SCANNER, and LOCK — all ESP32-connected, no cloud
                 $esp32Kinds = ['RPI', 'SCANNER', 'LOCK'];
                 if ($category === DeviceLivenessService::CATEGORY_LOCAL && in_array($dev['kind'], $esp32Kinds, true)) {
                     if ($dev['kind'] === 'RPI') {
@@ -1993,7 +1367,7 @@ $router->post(
                 }
 
                 if ($category === DeviceLivenessService::CATEGORY_ZIGBEE) {
-                    $st = resolveDeviceOnlineState($dev, TUYA_PROBE_TTL_SECONDS);
+                    $st = resolveDeviceOnlineState($dev, DEVICE_PROBE_TTL_SECONDS);
                     $deviceChecks[] = [
                         'device_id' => (int) $dev['id'],
                         'kind' => $dev['kind'],
@@ -2007,59 +1381,30 @@ $router->post(
                     continue;
                 }
 
-                if ($category !== DeviceLivenessService::CATEGORY_TUYA) {
+                if ($category === DeviceLivenessService::CATEGORY_RETIRED) {
                     $deviceChecks[] = [
                         'device_id' => (int) $dev['id'],
                         'kind' => $dev['kind'],
                         'external_id' => $dev['external_id'],
                         'online' => null,
-                        'state' => 'unknown',
-                        'error' => 'transporte sin sonda',
+                        'state' => 'retired',
+                        'error' => 'device_retired',
                         'last_seen_at' => $dev['last_seen_at'],
-                        'checked_via' => 'NONE',
+                        'checked_via' => 'RETIRED',
                     ];
                     continue;
                 }
 
-                // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda real de conectividad.
-                $online = probeTuyaOnlineOnce($pdo, (int)$dev['id'], (string)$dev['external_id']);
-                if ($online === true) {
-                    // Comandable alcanzable: refrescar actividad también.
-                    $pdo->prepare("UPDATE devices SET last_seen_at = UTC_TIMESTAMP(3) WHERE id = :did")
-                        ->execute([':did' => $dev['id']]);
-                    $deviceChecks[] = [
-                        'device_id' => (int)$dev['id'],
-                        'kind' => $dev['kind'],
-                        'external_id' => $dev['external_id'],
-                        'online' => true,
-                        'state' => 'online',
-                        'error' => null,
-                        'last_seen_at' => gmdate('Y-m-d\TH:i:s.v\Z'),
-                        'checked_via' => 'TUYA',
-                    ];
-                } elseif ($online === false) {
-                    $deviceChecks[] = [
-                        'device_id' => (int)$dev['id'],
-                        'kind' => $dev['kind'],
-                        'external_id' => $dev['external_id'],
-                        'online' => false,
-                        'state' => 'offline',
-                        'error' => null,
-                        'last_seen_at' => $dev['last_seen_at'],
-                        'checked_via' => 'TUYA',
-                    ];
-                } else {
-                    $deviceChecks[] = [
-                        'device_id' => (int)$dev['id'],
-                        'kind' => $dev['kind'],
-                        'external_id' => $dev['external_id'],
-                        'online' => null,
-                        'state' => 'unknown',
-                        'error' => 'Tuya no pudo confirmar conectividad',
-                        'last_seen_at' => $dev['last_seen_at'],
-                        'checked_via' => 'TUYA',
-                    ];
-                }
+                $deviceChecks[] = [
+                    'device_id' => (int) $dev['id'],
+                    'kind' => $dev['kind'],
+                    'external_id' => $dev['external_id'],
+                    'online' => null,
+                    'state' => 'unknown',
+                    'error' => 'transporte sin sonda',
+                    'last_seen_at' => $dev['last_seen_at'],
+                    'checked_via' => 'NONE',
+                ];
             }
 
             return \App\Http\Response::json(200, [
@@ -2127,12 +1472,12 @@ $router->get(
             unset($d['meta_json']);
 
             $d['transport'] = $d['transport'] ?? 'UNKNOWN';
+            $d['is_retired'] = is_array($d['meta'] ?? null) && !empty($d['meta']['retired_at']);
             $d['integration_status'] = $deviceStatusFactory()->forRow($d);
-            $d['tuya_cloud'] = deviceIsTuyaCloud($d);
 
-            // F92: la política resuelve cámara, Zigbee, Tuya y ESP32 por transporte.
+            // F122: la política resuelve cámara, Zigbee, ESP32 y retirados por transporte.
             // No hay ninguna sonda de red aquí: solo se leen señales/probes persistidos.
-            $st = resolveDeviceOnlineState($d, TUYA_PROBE_TTL_SECONDS);
+            $st = resolveDeviceOnlineState($d, DEVICE_PROBE_TTL_SECONDS);
             $d['state']  = $st['state'];
             $d['online'] = $st['online'];
             $d['liveness_source'] = $st['source'];
@@ -2150,11 +1495,8 @@ $router->get(
         }
         unset($d);
 
-        // NOTA: para Tuya cloud (PRESENCE/PROXIMITY/SWITCH) el punto del panel ya NO se
-        // calcula por last_seen_at reactivo (eso producía falsos "online" cuando un evento
-        // o un comando cloud aceptado refrescaba last_seen sin que el dispositivo físico
-        // estuviera realmente conectado). Solo una sonda real (al cargar o "Comprobar")
-        // marca online/offline; si no hay sonda fresca el estado es 'unknown' (ámbar).
+        // NOTA: el estado se calcula solo con señales/push persistidos. Los
+        // dispositivos retirados quedan 'retired' y no se sondean.
 
         $onlineCount  = 0;
         $offlineCount = 0;
@@ -2409,18 +1751,13 @@ $router->post(
 );
 
 // POST /dashboard-api/ping-all-devices — on-demand verification of a room's devices.
-// F92: la rama se decide por transporte. Zigbee nunca toca Tuya; la cámara usa
-// sonda RTSP solo si el cliente envía verify_cameras=true.
-// Body: {"device_ids":[<int>,...],"verify_tuya":true,"verify_cameras":true}
+// F122: Zigbee/ESP32/camera only. No cloud probe exists any more.
+// Body: {"device_ids":[<int>,...],"verify_cameras":true}
 $router->post(
     '/dashboard-api/ping-all-devices',
     function (\App\Http\Request $request) use ($pdo, $deviceRepo, $deviceStatusFactory, $commandQueueRepo, $resolveOwnerChip): \App\Http\Response {
         $body = $request->jsonBody ?? [];
         $ids = $body['device_ids'] ?? null;
-        // Solo se sondea Tuya cloud (consume cuota) cuando el cliente lo pide
-        // explícitamente (carga del panel / botón "Comprobar"). Sin la flag no se
-        // quema cuota: los dispositivos Tuya se devuelven como 'unknown' (sin verificar).
-        $verifyTuya = !empty($body['verify_tuya']);
         // La sonda de cámara también es bajo demanda y con timeout acotado.
         $verifyCameras = !empty($body['verify_cameras']);
         if (!is_array($ids) || $ids === []) {
@@ -2499,13 +1836,12 @@ $router->post(
 
             if ($category === DeviceLivenessService::CATEGORY_ZIGBEE) {
                 // Zigbee: estado por push/availability persistida; sin red.
-                $st = resolveDeviceOnlineState($row, TUYA_PROBE_TTL_SECONDS);
+                $st = resolveDeviceOnlineState($row, DEVICE_PROBE_TTL_SECONDS);
                 $results[] = [
                     'device_id' => $deviceId,
                     'found' => true,
                     'online' => $st['online'],
                     'state' => $st['state'],
-                    'tuya_cloud' => false,
                     'checked_via' => 'ZIGBEE',
                     '_pending_check' => false,
                     'error' => $st['reason'],
@@ -2515,53 +1851,18 @@ $router->post(
                 continue;
             }
 
-            if ($category === DeviceLivenessService::CATEGORY_TUYA) {
-                if (!$verifyTuya) {
-                    // Sin verificación explícita → no quemar cuota: estado 'unknown'.
-                    $results[] = [
-                        'device_id' => $deviceId,
-                        'found' => true,
-                        'online' => null,
-                        'state' => 'unknown',
-                        'tuya_cloud' => true,
-                        '_pending_check' => false,
-                        'checked_via' => 'TUYA',
-                        'error' => 'no verificado (sonda Tuya omitida)',
-                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
-                        'liveness_reason' => 'not_probed',
-                    ];
-                    continue;
-                }
-                // Tuya cloud (PRESENCE/PROXIMITY/SWITCH): sonda REAL de conectividad.
-                // Consume cuota Tuya → este endpoint solo lo invocan la carga del panel
-                // y el botón "Comprobar dispositivos", nunca el poll automático.
-                $probe = probeTuyaOnlineOnce($pdo, $deviceId, (string) $row['external_id']);
-                if ($probe === null) {
-                    $results[] = [
-                        'device_id' => $deviceId,
-                        'found' => true,
-                        'online' => null,
-                        'state' => 'unknown',
-                        'tuya_cloud' => true,
-                        '_pending_check' => false,
-                        'checked_via' => 'TUYA',
-                        'error' => 'Tuya no pudo confirmar conectividad',
-                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
-                        'liveness_reason' => 'no_signal',
-                    ];
-                } else {
-                    $results[] = [
-                        'device_id' => $deviceId,
-                        'found' => true,
-                        'online' => $probe,
-                        'state' => $probe ? 'online' : 'offline',
-                        'tuya_cloud' => true,
-                        '_pending_check' => false,
-                        'checked_via' => 'TUYA',
-                        'liveness_source' => DeviceLivenessService::SOURCE_TUYA_PROBE,
-                        'liveness_reason' => null,
-                    ];
-                }
+            if ($category === DeviceLivenessService::CATEGORY_RETIRED) {
+                $results[] = [
+                    'device_id' => $deviceId,
+                    'found' => true,
+                    'online' => null,
+                    'state' => 'retired',
+                    '_pending_check' => false,
+                    'checked_via' => 'RETIRED',
+                    'error' => 'device_retired',
+                    'liveness_source' => DeviceLivenessService::SOURCE_RETIRED,
+                    'liveness_reason' => 'sensor_retired',
+                ];
                 continue;
             }
 
@@ -2593,7 +1894,7 @@ $router->post(
 
             if ($category === DeviceLivenessService::CATEGORY_LOCAL) {
                 // RPI/ESP32: estado desde el heartbeat persistido (sin red).
-                $st = resolveDeviceOnlineState($row, TUYA_PROBE_TTL_SECONDS);
+                $st = resolveDeviceOnlineState($row, DEVICE_PROBE_TTL_SECONDS);
                 $results[] = [
                     'device_id' => $deviceId,
                     'online' => $st['online'],
@@ -2653,169 +1954,7 @@ $router->post(
     }
 );
 
-// POST /dashboard-api/battery-refresh — ask Tuya for the device's battery and
-// persist it (F36). Body: {"device_id":<int>}
-// Tuya connectivity errors map to 502 (dashboard/tests treat it as "unavailable").
-$router->post(
-    '/dashboard-api/battery-refresh',
-    function (\App\Http\Request $request) use ($pdo, $deviceRepo): \App\Http\Response {
-        $body = $request->jsonBody ?? [];
-        $deviceId = isset($body['device_id']) ? (int) $body['device_id'] : 0;
-        if ($deviceId <= 0) {
-            return \App\Http\Response::json(400, ['error' => 'device_id required']);
-        }
-        $dev = $deviceRepo->findById($deviceId);
-        if ($dev === null) {
-            return \App\Http\Response::json(404, ['error' => 'Device not found']);
-        }
-        // F92: la batería solo se consulta a Tuya para dispositivos Tuya.
-        if (!deviceIsTuyaCloud(['kind' => $dev->kind, 'transport' => $dev->transport])) {
-            return \App\Http\Response::json(400, ['error' => 'not a Tuya cloud device']);
-        }
 
-        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($dev->externalId) . '/status', null);
-        if (($res['error'] ?? null) !== null || (int) ($res['http'] ?? 0) >= 500) {
-            return \App\Http\Response::json(502, ['error' => $res['error'] ?? 'Tuya API unavailable']);
-        }
-        if (($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, ['error' => $res['data']['msg'] ?? 'Tuya status API failed']);
-        }
-
-        $batteryPct = null;
-        foreach (($res['data']['result'] ?? []) as $dp) {
-            if (!is_array($dp)) {
-                continue;
-            }
-            $code  = strtolower((string) ($dp['code'] ?? ''));
-            $value = $dp['value'] ?? null;
-            if ($code === 'battery_percentage' && is_numeric($value)) {
-                $pct = (int) $value;
-                if ($pct >= 0 && $pct <= 100) {
-                    $batteryPct = $pct;
-                    break;
-                }
-            }
-        }
-
-        if ($batteryPct !== null) {
-            $deviceRepo->updateBattery($deviceId, $batteryPct);
-        }
-
-        $state = $batteryPct === null ? 'unknown' : ($batteryPct <= 10 ? 'critical' : ($batteryPct <= 20 ? 'low' : 'normal'));
-        return \App\Http\Response::json(200, [
-            'ok' => true,
-            'device_id' => $deviceId,
-            'kind' => $dev->kind,
-            'external_id' => $dev->externalId,
-            'battery_pct' => $batteryPct,
-            'state' => $state,
-        ]);
-    }
-);
-
-// GET /dashboard-api/tuya-quota — read-only IoT Core credit probe (diagnóstico).
-// Makes exactly ONE read-only call (GET /iot-03/devices/{id}); it NEVER uses the
-// /commands endpoint, so the relay is not touched. Query: optional
-// ?external_id=<tuya_device_id>. Without it, picks the first SWITCH device,
-// else the first PRESENCE/PROXIMITY; 404 when there is no Tuya device at all.
-// 200 for any valid request (even when Tuya is unreachable → credits=unknown);
-// 400 for invalid params; 404 when the requested/no candidate device is missing.
-$router->get(
-    '/dashboard-api/tuya-quota',
-    function (\App\Http\Request $request) use ($deviceRepo): \App\Http\Response {
-        $requested = $request->query('external_id');
-        if ($requested !== null && trim($requested) === '') {
-            return \App\Http\Response::json(400, ['error' => 'external_id must not be empty']);
-        }
-
-        if ($requested !== null) {
-            $dev = $deviceRepo->findByExternalId(trim($requested));
-            if ($dev === null) {
-                return \App\Http\Response::json(404, ['error' => 'Device not found']);
-            }
-            if (!deviceIsTuyaCloud(['kind' => $dev->kind, 'transport' => $dev->transport])) {
-                return \App\Http\Response::json(400, ['error' => 'external_id is not a Tuya cloud device']);
-            }
-        } else {
-            $dev      = null;
-            $fallback = null;
-            foreach ($deviceRepo->findAll() as $candidate) {
-                if (!deviceIsTuyaCloud(['kind' => $candidate->kind, 'transport' => $candidate->transport])) {
-                    continue;
-                }
-                if ($candidate->kind === \App\Domain\Devices\Device::KIND_SWITCH) {
-                    $dev = $candidate;
-                    break;
-                }
-                if ($fallback === null && in_array($candidate->kind, [
-                    \App\Domain\Devices\Device::KIND_PRESENCE,
-                    \App\Domain\Devices\Device::KIND_PROXIMITY,
-                ], true)) {
-                    $fallback = $candidate;
-                }
-            }
-            $dev = $dev ?? $fallback;
-            if ($dev === null) {
-                return \App\Http\Response::json(404, ['error' => 'No Tuya device available to probe']);
-            }
-        }
-
-        $externalId = (string) $dev->externalId;
-        if ($externalId === '') {
-            return \App\Http\Response::json(400, ['error' => 'Device has no external_id']);
-        }
-
-        // Única llamada, SOLO LECTURA (device details). `ignoreLocalBudget=true`
-        // permite diagnosticar aunque el backoff local esté activo; la llamada se
-        // cuenta igual y una respuesta de cuota refresca el backoff compartido.
-        $res  = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId), null, true);
-        $http = (int) ($res['http'] ?? 0);
-        $data = is_array($res['data'] ?? null) ? $res['data'] : [];
-
-        $classification = \App\Domain\Devices\TuyaCreditsClassifier::classifyTuyaCredits($http, $data);
-
-        $deviceOnline = null;
-        if (($data['success'] ?? false) === true
-            && array_key_exists('online', (array) ($data['result'] ?? []))) {
-            $deviceOnline = (bool) $data['result']['online'];
-        }
-
-        $q            = tuyaQuotaRead();
-        $backoffUntil = (int) ($q['backoffUntil'] ?? 0);
-        $meta         = is_array($dev->meta) ? $dev->meta : [];
-        $lastError    = isset($meta['last_error_category']) ? [
-            'category' => (string) $meta['last_error_category'],
-            'at'       => isset($meta['last_error_at']) ? (string) $meta['last_error_at'] : null,
-        ] : null;
-
-        $payload = [
-            'credits'            => $classification['credits'],
-            'category'           => $classification['category'],
-            'http'               => $http,
-            'code'               => $data['code'] ?? null,
-            'msg'                => $data['msg'] ?? null,
-            'device_external_id' => $externalId,
-            'device_kind'        => (string) $dev->kind,
-            'device_online'      => $deviceOnline,
-            'elapsed_ms'         => (int) ($res['elapsed_ms'] ?? 0),
-            'checked_at'         => gmdate('Y-m-d\TH:i:s\Z'),
-            'local_budget'       => [
-                'calls_day'      => (int) ($q['callsDay'] ?? 0),
-                'calls_hour'     => (int) ($q['callsHour'] ?? 0),
-                'backoff_until'  => $backoffUntil,
-                'backoff_active' => $backoffUntil > time(),
-            ],
-            'last_known_error'   => $lastError,
-        ];
-        // Only present when the probe itself failed (curl/token): keeps the
-        // documented happy-path/quota payload shape unchanged.
-        if (($res['error'] ?? null) !== null) {
-            $payload['probe_error'] = (string) $res['error'];
-        }
-
-        return \App\Http\Response::json(200, $payload);
-    }
-);
 
 $roomController = new RoomController($roomService, $roomStateService, $deviceService, $deviceStatusFactory());
 
@@ -2958,7 +2097,7 @@ $iotSessionService = IotSessionServiceFactory::create(
     new \App\Domain\Sensors\RadarPresenceReportRepository($pdo)
 );
 // POST /presence/events always uses SimulatedSensorIngress (canonical format:
-// room_id, sensor, value). Tuya push comes via POST /api/v1/tuya/webhook.
+// room_id, sensor, value). Real signals arrive by Zigbee2MQTT push.
 $simulatedIngress     = new SimulatedSensorIngress();
 $presenceController   = new PresenceController($iotSessionService, $simulatedIngress);
 $simController        = new SimController($iotSessionService, $lockService, $roomRepo, $simulatedIngress);
@@ -3389,13 +2528,6 @@ if (Config::getBool('APP_DEBUG', false)) {
     );
 }
 
-// --- Route: Tuya Webhook (F19 — Tuya IoT push notifications) ---
-// Uses TuyaSensorIngress directly (always real, regardless of SIMULATED_MODE).
-// No auth middleware — Tuya Cloud doesn't use our API key scheme.
-$tuyaIngress          = new TuyaSensorIngress($deviceRepo);
-$tuyaWebhookController = new TuyaWebhookController($iotSessionService, $tuyaIngress);
-$router->post('/api/v1/tuya/webhook', [$tuyaWebhookController, 'ingest']);
-
 // --- Routes: QR List (CRM/F27) ---
 $router->get('/api/v1/qr', [$qrController, 'list'], $authFactory(['rooms:read']));
 
@@ -3464,7 +2596,7 @@ $router->get('/api/v1/nfc-cards/{id}',             [$nfcCardController, 'show'],
 $router->patch('/api/v1/nfc-cards/{id}',           [$nfcCardController, 'update'],          $authFactory(['nfc-cards:write']));
 $router->delete('/api/v1/nfc-cards/{id}',          [$nfcCardController, 'disable'],         $authFactory(['nfc-cards:write']));
 
-// --- Routes: Analítica del panel (F119, solo lectura, sin Tuya) ---
+// --- Routes: Analítica del panel (F119, solo lectura, sin nube) ---
 $analyticsController = new AnalyticsController($pdo);
 $router->get('/api/v1/analytics/overview',        [$analyticsController, 'overview'],      $authFactory(['rooms:read']));
 $router->get('/api/v1/analytics/live',            [$analyticsController, 'live'],          $authFactory(['rooms:read']));
@@ -3522,7 +2654,7 @@ $router->post('/timbre-api/keys',      [$timbreController, 'createKey']);
 
 // POST /almacen-api/motion — F88/RF-123.2: el worker de movimiento de cámaras
 // publica que una cámara del almacén ha detectado movimiento. Uso interno
-// (loopback/LAN, sin auth en el MVP). Solo BD local; sin cuota Tuya.
+// (loopback/LAN, sin auth en el MVP). Solo BD local; sin cuota de nube.
 $router->post(
     '/almacen-api/motion',
     function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
@@ -3600,7 +2732,7 @@ $router->post(
 
 // POST /almacen-api/switch — control manual de la luz Zigbee (F91/RF-147).
 // Misma autorización que door/open (panel LAN). Solo transporte ZIGBEE2MQTT:
-// no se usa como puerta trasera hacia Tuya. La confirmación física llega por
+// no se usa como puerta trasera hacia la nube. La confirmación física llega por
 // push; aquí solo se confirma la entrega al broker.
 $router->post(
     '/almacen-api/switch',
@@ -3660,13 +2792,12 @@ $router->post(
     }
 );
 
-// POST /almacen-api/sensors/refresh — relectura puntual bajo demanda (F75/RF-88).
-// Hace UNA lectura REST del sensor de puerta de la sala (respeta el presupuesto y
-// el backoff compartido de Tuya) y la aplica por la ingesta existente. NUNCA se
-// invoca por temporizador: solo el panel (apertura o botón "Actualizar estado").
+// POST /almacen-api/sensors/refresh — F122: Zigbee only, no cloud probe.
+// The panel may call this for compatibility; Zigbee state arrives by push, so the
+// endpoint only reports that no out-of-band read is needed.
 $router->post(
     '/almacen-api/sensors/refresh',
-    function (\App\Http\Request $request) use ($pdo, $tuyaIngress, $iotSessionService, $warehouseStateController): \App\Http\Response {
+    function (\App\Http\Request $request) use ($pdo, $warehouseStateController): \App\Http\Response {
         $body   = is_array($request->jsonBody) ? $request->jsonBody : [];
         $roomId = (int) ($body['room_id'] ?? ($request->query['room_id'] ?? 0));
 
@@ -3688,104 +2819,31 @@ $router->post(
         }
 
         $ds = $pdo->prepare(
-            "SELECT d.id, d.external_id, d.meta_json FROM devices d
+            "SELECT d.id, d.transport FROM devices d
              JOIN rooms r ON r.pack_id = d.pack_id
              WHERE r.id = :rid AND d.kind = 'PROXIMITY' LIMIT 1"
         );
         $ds->execute([':rid' => $roomId]);
         $door = $ds->fetch(\PDO::FETCH_ASSOC);
-        if ($door === false || (string) ($door['external_id'] ?? '') === '') {
+        if ($door === false) {
             return \App\Http\Response::json(200, [
                 'ok' => false, 'probed' => false, 'reason' => 'no_door_sensor',
                 'state' => $warehouseStateController->stateArray($roomId),
             ]);
         }
-        $deviceId   = (int) $door['id'];
-        $externalId = (string) $door['external_id'];
-
-        // Cooldown por dispositivo (persistido en devices.meta_json.status_probed_at).
-        $cooldown = \App\Support\Config::getInt('ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS', 1800);
-        $meta = json_decode((string) ($door['meta_json'] ?? ''), true);
-        $meta = is_array($meta) ? $meta : [];
-        $lastAt = $meta['status_probed_at'] ?? null;
-        $lastProbedTs = (is_string($lastAt) && $lastAt !== '') ? strtotime($lastAt . ' UTC') : false;
-        $cooldownActive = ($cooldown > 0 && $lastProbedTs !== false && (time() - $lastProbedTs) < $cooldown);
-
-        // F85/RF-111.2: una transición de puerta sin resolver (door_stale + evento
-        // aplicado posterior a la última sonda) justifica UNA lectura REST aunque el
-        // cooldown esté vigente. La sonda sigue respetando el presupuesto compartido.
-        $unresolvedTransition = false;
-        if ($cooldownActive) {
-            $ls = $pdo->prepare('SELECT door_state, last_door_event_at FROM iot_sessions WHERE room_id = :r LIMIT 1');
-            $ls->execute([':r' => $roomId]);
-            $lsRow = $ls->fetch(\PDO::FETCH_ASSOC) ?: [];
-            $staleSeconds = \App\Support\Config::getInt('DOOR_STALE_SECONDS', 300);
-            $staleSeconds = $staleSeconds > 0 ? $staleSeconds : 300;
-            $doorState = (string) ($lsRow['door_state'] ?? 'UNKNOWN');
-            $lastDoor = $lsRow['last_door_event_at'] ?? null;
-            $lastDoorTs = ($lastDoor !== null && $lastDoor !== '') ? strtotime((string) $lastDoor . ' UTC') : false;
-            $doorStale = ($doorState === 'UNKNOWN' || $lastDoorTs === false
-                || (time() - $lastDoorTs) > $staleSeconds);
-            $unresolvedTransition = $doorStale && $lastDoorTs !== false && $lastProbedTs !== false
-                && $lastDoorTs > $lastProbedTs;
-        }
-        if ($cooldownActive && !$unresolvedTransition) {
-            return \App\Http\Response::json(200, [
-                'ok' => true, 'probed' => false, 'reason' => 'throttled',
-                'retry_in_seconds' => max(0, $cooldown - (int) $lastProbedTs),
+        if (strtoupper((string) ($door['transport'] ?? '')) !== 'ZIGBEE2MQTT') {
+            return \App\Http\Response::json(422, [
+                'ok' => false, 'probed' => false, 'reason' => 'sensor_not_zigbee',
                 'state' => $warehouseStateController->stateArray($roomId),
             ]);
         }
 
-        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . rawurlencode($externalId) . '/status', null);
-        $http = (int) ($res['http'] ?? 0);
-        if ($http === 429) {
-            return \App\Http\Response::json(429, [
-                'ok' => false, 'probed' => false, 'reason' => 'quota',
-                'error' => $res['error'] ?? 'tuya_quota',
-                'state' => $warehouseStateController->stateArray($roomId),
-            ]);
-        }
-        if (($res['error'] ?? null) !== null || $http >= 500 || ($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, [
-                'ok' => false, 'probed' => false, 'reason' => 'unavailable',
-                'error' => $res['error'] ?? ($res['data']['msg'] ?? 'tuya_status_failed'),
-                'state' => $warehouseStateController->stateArray($roomId),
-            ]);
-        }
-
-        // Sellar la sonda aunque la aplicación falle (best-effort).
-        $meta['status_probed_at'] = gmdate('Y-m-d\TH:i:s\Z');
-        try {
-            $pdo->prepare('UPDATE devices SET meta_json = :m WHERE id = :id')
-                ->execute([':m' => json_encode($meta, JSON_UNESCAPED_UNICODE), ':id' => $deviceId]);
-        } catch (\Throwable $e) { /* best-effort */ }
-
-        $result = ['ok' => true, 'probed' => true, 'reason' => $unresolvedTransition ? 'unresolved_transition' : 'ok'];
-        try {
-            $status = [];
-            foreach (($res['data']['result'] ?? []) as $dp) {
-                if (is_array($dp) && isset($dp['code'])) {
-                    $status[] = [
-                        'code'  => (string) $dp['code'],
-                        'value' => $dp['value'] ?? null,
-                        't'     => $dp['t'] ?? null,
-                    ];
-                }
-            }
-            $event = $tuyaIngress->normalize(['devId' => $externalId, 'status' => $status]);
-            if (($event['meta']['_noop'] ?? false) === true) {
-                $result['applied'] = false;
-            } else {
-                $iotSessionService->processEvent($event, 'sensor-refresh-' . $roomId);
-                $result['applied'] = true;
-            }
-        } catch (\Throwable $e) {
-            $result['applied'] = false;
-            $result['error']   = $e->getMessage();
-        }
-        $result['state'] = $warehouseStateController->stateArray($roomId);
-        return \App\Http\Response::json(200, $result);
+        return \App\Http\Response::json(200, [
+            'ok' => true,
+            'probed' => false,
+            'reason' => 'zigbee_push',
+            'state' => $warehouseStateController->stateArray($roomId),
+        ]);
     }
 );
 
@@ -3886,131 +2944,15 @@ $router->post(
     }
 );
 
-// ── Simula: presence sensor range toggle (dev tool, no auth) ──
-// Configurable so the dev tool can target any sensor; defaults to the ZY-M100
-// bench sensor (ranges hardcoded in simula.html). Use the per-room
-// /dashboard-api/presence-calibrate endpoint for the 24G V3.
-define('SIMULA_DEVICE_ID', Config::get('SIMULA_DEVICE_ID', 'bf98d27d79685e38a2wbda'));
-
-// GET /dashboard-api/simula/status — read current far_detection & sensitivity from Tuya
-$router->get(
-    '/dashboard-api/simula/status',
-    function (\App\Http\Request $request): \App\Http\Response {
-        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . SIMULA_DEVICE_ID . '/status', null);
-        if ($res['error']) {
-            return \App\Http\Response::json(502, ['error' => $res['error']]);
-        }
-        if (($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, ['error' => $res['data']['msg'] ?? 'Tuya status API failed']);
-        }
-
-        // Parse DPs from the status array
-        $dps = [];
-        foreach (($res['data']['result'] ?? []) as $dp) {
-            $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
-        }
-        return \App\Http\Response::json(200, [
-            'far_detection'       => $dps['far_detection'] ?? null,
-            'sensitivity'         => $dps['sensitivity'] ?? null,
-            'presence_state'      => $dps['presence_state'] ?? null,
-            'target_dis_closest'  => $dps['target_dis_closest'] ?? null,
-            'mode'                => ($dps['far_detection'] ?? 0) <= 1 ? 'OFF' : 'ON',
-            // RF-30: effective presence respects /simula OFF → radius 0 ⇒ ABSENT
-            'effective_presence'  => ($dps['far_detection'] ?? 0) <= 1
-                ? 'ABSENT (radio 0)'
-                : (in_array($dps['presence_state'] ?? 'none', ['presence', 'move'], true) ? 'PRESENT' : 'ABSENT'),
-        ]);
-    }
-);
-
-// POST /dashboard-api/simula/set — set far_detection and/or sensitivity
-$router->post(
-    '/dashboard-api/simula/set',
-    function (\App\Http\Request $request): \App\Http\Response {
-        $body = $request->jsonBody ?? [];
-        $far = $body['far_detection'] ?? null;
-        $sens = $body['sensitivity'] ?? null;
-
-        if ($far === null && $sens === null) {
-            return \App\Http\Response::json(400, ['error' => 'far_detection or sensitivity required']);
-        }
-
-        $commands = [];
-        if ($far !== null) {
-            $commands[] = ['code' => 'far_detection', 'value' => (int) $far];
-        }
-        if ($sens !== null) {
-            $commands[] = ['code' => 'sensitivity', 'value' => (int) $sens];
-        }
-
-        $res = tuyaPresenceApi(
-            'POST',
-            '/v1.0/iot-03/devices/' . SIMULA_DEVICE_ID . '/commands',
-            json_encode(['commands' => $commands])
-        );
-
-        if ($res['error']) {
-            return \App\Http\Response::json(502, ['error' => $res['error']]);
-        }
-        if (($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, ['error' => $res['data']['msg'] ?? 'Tuya command failed']);
-        }
-
-        $mode = ($far !== null ? ($far <= 1 ? 'OFF' : 'ON') : 'UNKNOWN');
-        return \App\Http\Response::json(200, [
-            'ok'   => true,
-            'mode' => $mode,
-            'elapsed_ms' => $res['elapsed_ms'] ?? 0,
-        ]);
-    }
-);
-
-// POST /dashboard-api/simula/inject-presence — bypass directo (sin esperar webhook Tuya)
-// F35: cuando el slider de /simula cambia, además de configurar el sensor vía Tuya,
-// inyecta el evento de presencia directamente para que el dashboard lo refleje en <1s.
-$router->post(
-    '/dashboard-api/simula/inject-presence',
-    function (\App\Http\Request $request) use ($simulatedIngress, $iotSessionService): \App\Http\Response {
-        $body = $request->jsonBody ?? [];
-        $far  = (int)($body['far_detection'] ?? -1);
-        if ($far < 0) {
-            return \App\Http\Response::json(400, ['error' => 'far_detection required']);
-        }
-        $roomId   = (int)($body['room_id'] ?? 1);
-        $presence = $far > 1 ? 'PRESENT' : 'ABSENT';
-
-        try {
-            $event = $simulatedIngress->normalize([
-                'room_id'         => $roomId,
-                'sensor'          => 'PRESENCE',
-                'value'           => $presence,
-                'source_event_id' => 'simula-inject-' . $roomId . '-' . time(),
-            ]);
-            $result = $iotSessionService->processEvent($event, '');
-
-            return \App\Http\Response::json(202, array_merge($result, [
-                'simulated' => true,
-                'injected'  => $presence,
-            ]));
-        } catch (\Throwable $e) {
-            return \App\Http\Response::json(500, [
-                'error'   => 'inject failed: ' . $e->getMessage(),
-                'injected' => $presence,
-            ]);
-        }
-    }
-);
-
 // ── Presence-sensor calibration (per-room, LAN dashboard) ─────────────────
 // Generalizes the /simula dev tool to the PRESENCE device assigned to any room
 // (each sensor lives in its own room/pack). The live badge below reads the raw
-// Tuya DP directly (~2s polling only while the calibration modal is open) because
-// the domain presence_state only flips via webhook/push and can lag several
-// seconds. We intentionally DO NOT inject events into iot_session here to avoid
-// polluting anomalies while the technician walks in/out.
+// Zigbee DP directly while the calibration modal is open. The domain
+// presence_state only flips via push and can lag several seconds. We intentionally
+// DO NOT inject events into iot_session here to avoid polluting anomalies.
 
 // GET /dashboard-api/presence-calibrate/status?room_id=N
-// Reads far_detection, sensitivity and raw presence_state from the Tuya device.
+// Reads far_detection, sensitivity and raw presence_state from the Zigbee radar.
 $router->get(
     '/dashboard-api/presence-calibrate/status',
     function (\App\Http\Request $request) use ($pdo): \App\Http\Response {
@@ -4023,47 +2965,16 @@ $router->get(
             return \App\Http\Response::json(404, ['error' => 'La habitación no tiene sensor de presencia']);
         }
 
-        // F93/RF-156: radar Zigbee → lectura real por push (sin /get ni Tuya).
+        // F93/RF-156: radar Zigbee → lectura real por push (sin /get ni nube).
         if (($dev['transport'] ?? '') === 'ZIGBEE2MQTT') {
             $cal = new \App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService($pdo);
             return \App\Http\Response::json(200, $cal->status($roomId, $dev));
         }
 
-        $res = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
-        if ($res['error']) {
-            return \App\Http\Response::json(502, [
-                'error'   => $res['error'],
-                'device'  => ['id' => $dev['id'], 'external_id' => $dev['external_id'], 'online' => $dev['online']],
-            ]);
-        }
-        if (($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, [
-                'error'  => $res['data']['msg'] ?? 'Tuya status API failed',
-                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id'], 'online' => $dev['online']],
-            ]);
-        }
-
-        $dps = [];
-        foreach (($res['data']['result'] ?? []) as $dp) {
-            $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
-        }
-        $caps  = presenceDpCaps($dev['meta'] ?? null);
-        $state = normalizePresenceDps($dps, $caps);
-        $saved = is_array($dev['meta'] ?? null) && isset($dev['meta']['calibration'])
-            ? $dev['meta']['calibration']
-            : null;
-
-        return \App\Http\Response::json(200, array_merge([
-            'room_id' => $roomId,
-            'device'  => [
-                'id'          => $dev['id'],
-                'external_id' => $dev['external_id'],
-                'label'       => $dev['label'],
-                'online'      => $dev['online'],
-            ],
-            'dp_caps' => $caps,
-            'saved'   => $saved,      // last persisted calibration snapshot
-        ], $state));
+        return \App\Http\Response::json(422, [
+            'error' => 'sensor_not_zigbee',
+            'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
+        ]);
     }
 );
 
@@ -4118,123 +3029,9 @@ $router->post(
             }
         }
 
-        $far = isset($body['far_detection']) ? (int) $body['far_detection'] : null;
-        $sens = isset($body['sensitivity']) ? (int) $body['sensitivity'] : null;
-        // Live adjust (persist=false) writes the DPs but keeps the last saved
-        // snapshot untouched; "Guardar" sends persist=true to persist it.
-        $persist = !array_key_exists('persist', $body) || (bool) $body['persist'];
-        if ($far === null && $sens === null) {
-            return \App\Http\Response::json(400, ['error' => 'far_detection o sensitivity requeridos']);
-        }
-
-        // Validate/patch against the device's own DP capabilities (F43): the ZY-M100
-        // and the 24G V3 have different ranges (0-1000/step 10 vs 75-900/step 75).
-        $caps = presenceDpCaps($dev['meta'] ?? null);
-        if ($far !== null) {
-            if ($far < $caps['far_min'] || $far > $caps['far_max']) {
-                return \App\Http\Response::json(400, [
-                    'error' => sprintf('far_detection fuera de rango (%d-%d cm)', $caps['far_min'], $caps['far_max']),
-                ]);
-            }
-            $step = max(1, $caps['far_step']);
-            $far  = (int) (round(($far - $caps['far_min']) / $step) * $step + $caps['far_min']);
-        }
-        if ($sens !== null && ($sens < $caps['sens_min'] || $sens > $caps['sens_max'])) {
-            return \App\Http\Response::json(400, [
-                'error' => sprintf('sensitivity fuera de rango (%d-%d)', $caps['sens_min'], $caps['sens_max']),
-            ]);
-        }
-
-        // The UI only manages the MAXIMUM range; the minimum (dead zone) is always
-        // pushed to its lowest possible value so the sensor detects from right next
-        // to it (F43).
-        $nearMin = (int) $caps['near_min'];
-
-        $commands = [];
-        if ($far !== null) {
-            $commands[] = ['code' => 'far_detection', 'value' => $far];
-        }
-        if ($sens !== null) {
-            $commands[] = ['code' => 'sensitivity', 'value' => $sens];
-        }
-        // Force the dead zone to its minimum (skip on the ZY-M100 OFF case far=0).
-        if ($far === null || $far > 0) {
-            $commands[] = ['code' => 'near_detection', 'value' => $nearMin];
-        }
-
-        $res = tuyaPresenceApi(
-            'POST',
-            '/v1.0/iot-03/devices/' . $dev['external_id'] . '/commands',
-            json_encode(['commands' => $commands])
-        );
-        if ($res['error']) {
-            return \App\Http\Response::json(502, [
-                'error'  => $res['error'],
-                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
-            ]);
-        }
-        if (($res['data']['success'] ?? false) !== true) {
-            return \App\Http\Response::json(502, [
-                'error'  => $res['data']['msg'] ?? 'Tuya command failed',
-                'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
-            ]);
-        }
-
-        // Verify by read-back: Tuya ACKs the command even when the device ignores it
-        // (e.g. far <= near), and the device needs a few seconds to apply the DP.
-        // Retry the read a couple of times before concluding it was not applied.
-        $applied  = false;
-        $warning  = null;
-        $status   = null;
-        $sentNear = in_array('near_detection', array_column($commands, 'code'), true);
-        $maxAttempts = 4;
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            if ($attempt > 0) {
-                usleep(1400000); // ~1.4 s settle between reads (device takes ~4 s)
-            }
-            $rb = tuyaPresenceApi('GET', '/v1.0/iot-03/devices/' . $dev['external_id'] . '/status', null);
-            if ($rb['error'] || (($rb['data']['success'] ?? false) !== true)) {
-                $warning = 'No se pudo verificar la aplicación del valor en el sensor';
-                continue;
-            }
-            $dps = [];
-            foreach (($rb['data']['result'] ?? []) as $dp) {
-                $dps[$dp['code'] ?? ''] = $dp['value'] ?? null;
-            }
-            $status  = normalizePresenceDps($dps, $caps);
-            $applied = ($far === null  || $status['far_detection'] === $far)
-                    && ($sens === null || $status['sensitivity'] === $sens)
-                    && (!$sentNear    || $status['near_detection'] === $nearMin);
-            if ($applied) {
-                $warning = null;
-                break;
-            }
-            $warning = 'El sensor no aplicó el valor solicitado (revisa el rango máximo o el estado del dispositivo)';
-        }
-
-        // Persist the calibration snapshot only on explicit save AND only when the
-        // sensor really applied it (never claim "guardado" for an unapplied value).
-        $snap = null;
-        if ($persist && $applied && $status !== null
-            && $status['far_detection'] !== null && $status['sensitivity'] !== null) {
-            $snap = persistPresenceCalibration(
-                $pdo,
-                $dev['id'],
-                $dev['meta'],
-                (int) $status['far_detection'],
-                (int) $status['sensitivity'],
-                $status['near_detection'] !== null ? (int) $status['near_detection'] : null
-            );
-        }
-
-        return \App\Http\Response::json(200, [
-            'ok'         => true,
-            'applied'    => $applied,
-            'persisted'  => $snap !== null,
-            'saved'      => $snap,
-            'warning'    => $warning,
-            'status'     => $status,
-            'elapsed_ms' => $res['elapsed_ms'] ?? 0,
+        return \App\Http\Response::json(422, [
+            'error' => 'sensor_not_zigbee',
+            'device' => ['id' => $dev['id'], 'external_id' => $dev['external_id']],
         ]);
     }
 );

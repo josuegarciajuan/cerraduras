@@ -6,13 +6,15 @@ namespace App\Infrastructure\Gateways\Switch;
 use App\Domain\Devices\Device;
 
 /**
- * SwitchGatewayInterface: abstraction over a WiFi-controlled smart switch/relay
- * (EAWCBT-J Smart Electricity Protector via Tuya IoT Platform).
+ * SwitchGatewayInterface: abstraction over the switch/relay actuator.
+ *
+ * F122: the only real implementation is ZigbeeSwitchGateway (Zigbee2MQTT).
+ * Tuya was removed; non-Zigbee devices resolve to UnsupportedSwitchGateway.
  *
  * Both turnOn() and turnOff() return a result array:
  *   [
  *     'ok'       => bool,
- *     'provider' => 'SIMULATED' | 'TUYA',
+ *     'provider' => 'ZIGBEE2MQTT' | 'SIMULATED' | 'RETIRED',
  *     'error'    => string|null,
  *   ]
  *

@@ -19,10 +19,9 @@ use App\Support\Config;
  *      - SIMULATED_MODE=true → SimulatedLockGateway.
  *      - SIMULATED_MODE=false → use LOCK_PROVIDER.
  *
- * LOCK_PROVIDER values:
+ * LOCK_PROVIDER values (F122: TUYA removed):
  *   LOCAL     → LocalLockGateway  (no-op; ESP32 self-opens via relay)
  *   ESP32     → Esp32LockGateway  (future: calls ESP32 HTTP server)
- *   TUYA      → TuyaLockGateway   (Tuya Cloud API)
  *   SIMULATED → SimulatedLockGateway
  */
 final class LockGatewayFactory
@@ -68,11 +67,9 @@ final class LockGatewayFactory
                 return new SimulatedLockGateway();
 
             case 'TUYA':
-                if ($deviceRepo === null) {
-                    error_log('[LockGatewayFactory] TUYA provider requires DeviceRepository; falling back to LOCAL');
-                    return new LocalLockGateway();
-                }
-                return new TuyaLockGateway($deviceRepo);
+                // F122: Tuya lock support was removed. Fail safe to LOCAL.
+                error_log('[LockGatewayFactory] TUYA provider removed by F122; falling back to LOCAL');
+                return new LocalLockGateway();
 
             case 'ESP32':
                 // Future: Esp32LockGateway($deviceRepo)

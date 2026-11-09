@@ -11,10 +11,10 @@ namespace App\Domain\Devices;
  *
  * Kinds (design.md §4.3):
  *   RPI       ESP32 with QR reader + relay
- *   LOCK      Electronic lock (Tuya)
+ *   LOCK      Electronic lock (LOCAL/ESP32; the Tuya provider was removed by F122)
  *   PROXIMITY Door open/closed sensor
  *   PRESENCE  Body-presence sensor inside the room
- *   SWITCH    Smart electricity protector (EAWCBT-J via Tuya) — RF-16
+ *   SWITCH    Smart switch (Zigbee2MQTT; Tuya was removed by F122)
  *   CAMERA    IP camera (RTSP). `subtype` = EXTERIOR|INTERIOR — F60/RF-68
  */
 final class Device
@@ -43,6 +43,9 @@ final class Device
      * Explicit transport/origin (F91/RF-144.4). The stored column is nullable:
      * NULL means "not classified yet" and is presented as UNKNOWN. Transport is
      * never inferred from kind, external_id, label or pack.
+     *
+     * TUYA is kept only to read/deactivate legacy rows (F122). New devices may
+     * not be provisioned with it.
      */
     public const TRANSPORT_TUYA        = 'TUYA';
     public const TRANSPORT_ZIGBEE2MQTT = 'ZIGBEE2MQTT';
@@ -125,7 +128,23 @@ final class Device
             'transport' => $this->transport ?? self::TRANSPORT_UNKNOWN,
             'firmware_variant' => $this->firmwareVariant,
             'firmware_version' => $this->firmwareVersion,
+            'is_retired' => $this->isRetired(),
         ];
+    }
+
+    /**
+     * F122: a Tuya device retired by the platform. The row is preserved for
+     * audit/tests but it must never receive events or commands again.
+     */
+    public function isRetired(): bool
+    {
+        $retiredAt = is_array($this->meta) ? ($this->meta['retired_at'] ?? null) : null;
+        return is_string($retiredAt) && trim($retiredAt) !== '';
+    }
+
+    public function isTuyaTransport(): bool
+    {
+        return $this->transport === self::TRANSPORT_TUYA;
     }
 
     /** @return list<string> */

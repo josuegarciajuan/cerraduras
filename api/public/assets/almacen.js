@@ -35,7 +35,7 @@
     });
   }
 
-  // F91/RF-149: el piloto Zigbee no admite refresco Tuya ni usa esa ruta.
+  // F91/F122: la sala Zigbee recibe todo por push; no hay sondeo de nube.
   function isZigbeeRoom() {
     return !!(state && state.live && state.live.is_zigbee === true);
   }
@@ -85,13 +85,6 @@
       ? ('retención ' + ret.days + ' d' + (ret.disk_used_pct != null ? ' · disco ' + ret.disk_used_pct + '%' : ''))
       : 'retención: sin borrado';
 
-    var refresh = $('btn-refresh');
-    if (refresh) {
-      refresh.hidden = zigbee;
-      refresh.title = zigbee
-        ? 'No aplica: los sensores Zigbee llegan por push, sin consultas Tuya'
-        : 'Relee el estado real de los sensores (1 consulta puntual a Tuya)';
-    }
     renderEvidence();
     renderCalibration();
     renderBuffer();
@@ -849,7 +842,6 @@
   }
 
   // ---- data flow ----------------------------------------------------------
-  var firstRefreshRequested = false;
   function applyState(s) {
     var first = state === null;
     state = s;
@@ -862,53 +854,13 @@
     if (state && state.room) {
       loadAccess(false);
       if (first) { loadVisits(); }
-      if (first && !isZigbeeRoom() && !firstRefreshRequested) {
-        firstRefreshRequested = true;
-        refreshSensors(true);
-      }
     }
-    maybeRecoverDoor();
   }
 
   function pollState() {
     api('/almacen-api/state' + (ROOM_ID ? '?room_id=' + ROOM_ID : ''))
       .then(applyState)
       .catch(function () { /* keep trying */ });
-  }
-
-  // F75/RF-88: relectura puntual de sensores (UNA llamada Tuya con cooldown en
-  // servidor). No es periódica: se invoca al abrir el panel y con el botón.
-  function refreshSensors(silent) {
-    if (isZigbeeRoom()) {
-      if (!silent) { toast('Zigbee: no se consulta Tuya'); }
-      return Promise.resolve({ reason: 'zigbee_no_tuya' });
-    }
-    return api('/almacen-api/sensors/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ROOM_ID ? { room_id: ROOM_ID } : {})
-    }).then(function (r) {
-      if (r && r.state) { applyState(r.state); }
-      if (!silent) {
-        if (r && r.probed) { toast('Sensores actualizados'); }
-        else if (r && r.reason === 'throttled') { toast('Lectura reciente (cooldown)'); }
-        else { toast('Sensores: ' + ((r && r.reason) || 'sin cambios')); }
-      }
-      return r;
-    }).catch(function (e) { if (!silent) { toast('Sensores: ' + e.message); } });
-  }
-
-  // F85/RF-111.3: si el estado de puerta queda STALE (push perdido), se pide UNA
-  // relectura puntual (cooldown en servidor). NO es un temporizador: se rearma
-  // cuando la puerta deja de estar stale (llega un evento o la sonda la resuelve).
-  var doorStaleProbed = false;
-  function maybeRecoverDoor() {
-    if (isZigbeeRoom()) { return; }
-    var stale = !!(state && state.live && state.live.door_stale === true);
-    if (!stale) { doorStaleProbed = false; return; }
-    if (doorStaleProbed) { return; }
-    doorStaleProbed = true;
-    refreshSensors(true);
   }
 
   function connectSSE() {
@@ -971,8 +923,6 @@
     state = null;
     access = null;
     selectedVisitId = null;
-    firstRefreshRequested = false;
-    doorStaleProbed = false;
     pollState();
     connectSSE();
   }
@@ -984,7 +934,7 @@
     playVisit: playVisit, exitPlayback: exitPlayback, togglePlay: togglePlay,
     setSpeed: setSpeed, seekToMs: seekToMs,
     goLive: goLive, ensureCamerasLive: ensureCamerasLive,
-    refreshSensors: refreshSensors, setLight: setLight,
+    setLight: setLight,
     switchRoom: switchRoom, loadRooms: loadRooms
   };
 

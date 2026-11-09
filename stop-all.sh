@@ -13,10 +13,9 @@
 # Orden de parada (importante):
 #   1) Wrappers/supervisores primero  → evita que relancen a sus hijos.
 #      - wrappers `bash -c ... bin/<worker>.php` (exit-scan, overstay-scan,
-#        outbox-worker, anomaly-scanner, tuya-pulsar-consumer)
-#   2) Hijos después → procesos `php bin/<worker>.php`
-#      y el `node ...bin/tuya-pulsar-consumer/index.js` del consumer Pulsar
-#      (por patrón y, para huérfanos antiguos, por cwd `.../bin/tuya-pulsar-consumer`).
+#        outbox-worker, anomaly-scanner)
+#   2) Hijos después → procesos `php bin/<worker>.php`.
+#      F122: el consumer Tuya legado se deshabilita si aún existiera.
 #   3) Escalado acotado TERM → espera (STOP_WAIT_SECS) → KILL.
 #   4) Borrado de PID files en api/run/.
 #
@@ -39,8 +38,7 @@ WAIT_SECS="${STOP_WAIT_SECS:-6}"
 log() { echo "[stop-all] $*"; }
 
 # ── Workers gestionados (nombre = nombre del PID file en api/run) ─────────────
-# F44 (RF-50.2): `tuya-pulsar-consumer` ya NO se gestiona aquí con PID file; su
-# único dueño es el unit systemd `cerraduras-pulsar-consumer.service`.
+# F122: el consumer Tuya ya no existe; solo quedan los workers del proyecto.
 WORKERS="exit-scan overstay-scan outbox-worker anomaly-scanner"
 
 # ── Patrón 1: wrappers `bash -c ... bin/<worker>` (mueren PRIMERO) ────────────
@@ -50,19 +48,15 @@ WRAPPER_PATTERNS=(
   'bash -c .*bin/overstay-scan\.php'      # wrapper while-true de overstay-scan
   'bash -c .*bin/outbox-worker\.php'      # wrapper while-true de outbox-worker
   'bash -c .*bin/anomaly-scanner\.php'    # wrapper while-true de anomaly-scanner
-  'bash -c .*bin/tuya-pulsar-consumer'    # wrapper while-true del consumer Pulsar
 )
 
 # ── Patrón 2: hijos directos (mueren DESPUÉS de los wrappers) ────────────────
 #    Comentario por patrón: `php`/`node` + ruta relativa o absoluta bajo `bin/`.
-#    El `node .*bin/tuya-pulsar-consumer` solo limpia wrappers LEGADO (invocación
-#    con ruta relativa); el proceso systemd usa `index.js` y NO coincide aquí.
 CHILD_PATTERNS=(
   'php .*bin/exit-scan\.php'              # hijo php de exit-scan
   'php .*bin/overstay-scan\.php'          # hijo php de overstay-scan
   'php .*bin/outbox-worker\.php'          # hijo php de outbox-worker
   'php .*bin/anomaly-scanner\.php'        # hijo php de anomaly-scanner
-  'node .*bin/tuya-pulsar-consumer'       # consumer LEGADO con ruta relativa
 )
 
 pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
@@ -100,10 +94,9 @@ sweep_patterns() {
   done
 }
 
-# ── Consumer Pulsar (F44): vive bajo systemd, no se mata por patrón/cwd ───────
-#    Se detiene con `systemctl stop` (abajo) para no confundirlo con huérfanos.
+# ── Consumer Tuya legado (F122): se neutraliza si quedara instalado ──────────
 stop_pulsar_service() {
-  systemctl stop cerraduras-pulsar-consumer 2>/dev/null || true
+  systemctl disable --now cerraduras-pulsar-consumer 2>/dev/null || true
 }
 
 # ── PIDs que aún quedan (wrappers + hijos legacy) ────────────────────────────
@@ -170,8 +163,6 @@ fi
 for name in $WORKERS; do
   rm -f "$RUN_DIR/$name.pid"
 done
-# F44: PID file legado del consumer Pulsar (ahora gestionado por systemd).
-rm -f "$RUN_DIR/tuya-pulsar-consumer.pid"
 
 left="$(remaining_pids)"
 if [ -n "$left" ]; then

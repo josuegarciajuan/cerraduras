@@ -729,12 +729,12 @@ fi
 # =============================================================================
 block "BLOCK 11 — F8: Presence / IoT sessions"
 
-TUY_KEY=$(get_key "TUYA-BRIDGE")   # scope presence:write
+SENSOR_KEY=$(get_key "SENSOR-BRIDGE")   # scope presence:write
 ADM_KEY=$(get_key "ADMIN-CLI")     # scope presence:read
 SIM_KEY=$(get_key "SIM-CLIENT")    # scope presence:write (también válido)
 
-if [ -z "$TUY_KEY" ] || [ -z "$ADM_KEY" ]; then
-    skip "BLOCK 11 completo" "Claves TUYA-BRIDGE / ADMIN-CLI no disponibles"
+if [ -z "$SENSOR_KEY" ] || [ -z "$ADM_KEY" ]; then
+    skip "BLOCK 11 completo" "Claves SENSOR-BRIDGE / ADMIN-CLI no disponibles"
 else
 
     IDEM_PROX="pres-prox-$(date +%s)"
@@ -744,28 +744,28 @@ else
     # POST PROXIMITY=OPEN → 202
     http_test POST /api/v1/presence/events 202 \
         "POST /presence/events PROXIMITY=OPEN → 202" \
-        --key TUYA-BRIDGE \
+        --key SENSOR-BRIDGE \
         --idem "$IDEM_PROX" \
         --body "{\"room_id\":1,\"sensor\":\"PROXIMITY\",\"value\":\"OPEN\",\"occurred_at\":\"${OCC_AT}\",\"source_event_id\":\"${IDEM_PROX}\"}"
 
     # POST PRESENCE=ABSENT → 202
     http_test POST /api/v1/presence/events 202 \
         "POST /presence/events PRESENCE=ABSENT → 202" \
-        --key TUYA-BRIDGE \
+        --key SENSOR-BRIDGE \
         --idem "$IDEM_PRES" \
         --body "{\"room_id\":1,\"sensor\":\"PRESENCE\",\"value\":\"ABSENT\",\"occurred_at\":\"${OCC_AT}\",\"source_event_id\":\"${IDEM_PRES}\"}"
 
     # Idempotencia: mismo Idempotency-Key → misma respuesta 202
     http_test POST /api/v1/presence/events 202 \
         "POST /presence/events idempotente (mismo key → 202)" \
-        --key TUYA-BRIDGE \
+        --key SENSOR-BRIDGE \
         --idem "$IDEM_PROX" \
         --body "{\"room_id\":1,\"sensor\":\"PROXIMITY\",\"value\":\"OPEN\",\"occurred_at\":\"${OCC_AT}\",\"source_event_id\":\"${IDEM_PROX}\"}"
 
     # Validación: sensor inválido → 400
     http_test POST /api/v1/presence/events 400 \
         "POST /presence/events sensor inválido → 400" \
-        --key TUYA-BRIDGE \
+        --key SENSOR-BRIDGE \
         --idem "pres-bad-sensor-$(date +%s)" \
         --body '{"room_id":1,"sensor":"INVALID","value":"OPEN","occurred_at":"2026-04-28T10:00:00Z"}'
 
@@ -778,7 +778,7 @@ else
     # Room inexistente → 404
     http_test POST /api/v1/presence/events 404 \
         "POST /presence/events room_id=9999 → 404" \
-        --key TUYA-BRIDGE \
+        --key SENSOR-BRIDGE \
         --idem "pres-noroom-$(date +%s)" \
         --body '{"room_id":9999,"sensor":"PROXIMITY","value":"OPEN","occurred_at":"2026-04-28T10:00:00Z","source_event_id":"src-noroom-1"}'
 
@@ -792,7 +792,7 @@ else
         "GET /rooms/9999/presence → 404" \
         --key ADMIN-CLI
 
-fi  # TUY_KEY
+fi  # SENSOR_KEY
 
 # =============================================================================
 # BLOCK 12 — F9: Regla de salida + bloqueo rápido
@@ -1292,22 +1292,9 @@ $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
     # Ensure pack assigned (pack-based resolution after refactor)
     $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
 
-# F20: Tuya webhook (no auth — Tuya Cloud doesn't use our API keys)
-# F79 (RF-102.4): device SINTÉTICO (sin pack/sala). Antes se usaba el device real
-# de la puerta del almacén (bf4c7e7d…) y cada corrida creaba una visita fantasma
-# en `/almacen`. Sintético + roomless → 202 `room_not_found`, sin efectos.
-F20_DOOR_DEV="synth-f20-door-$(date +%s)"
-F20_PRES_DEV="synth-f20-pres-$(date +%s)"
-$MYSQL -sN -e "INSERT INTO devices (kind,external_id) VALUES ('PROXIMITY','$F20_DOOR_DEV'),('PRESENCE','$F20_PRES_DEV')" 2>/dev/null || true
-http_test POST /api/v1/tuya/webhook 202 \
-    "POST /tuya/webhook (PROXIMITY, no auth) → 202" \
-    --body '{"devId":"'"$F20_DOOR_DEV"'","status":[{"code":"doorcontact_state","value":true,"t":'"$(date +%s)"'000}]}'
-
-http_test POST /api/v1/tuya/webhook 202 \
-    "POST /tuya/webhook (PRESENCE, no auth) → 202" \
-    --body '{"devId":"'"$F20_PRES_DEV"'","status":[{"code":"presence_state","value":"presence","t":'"$(date +%s)"'000}]}'
-
-$MYSQL -sN -e "DELETE FROM devices WHERE external_id IN ('$F20_DOOR_DEV','$F20_PRES_DEV')" 2>/dev/null || true
+# F122: the Tuya webhook route was removed.
+http_test POST /api/v1/tuya/webhook 404 \
+    "POST /tuya/webhook → 404 (retirado por F122)"
 
 # F21: Public endpoints (no auth)
     http_test GET /dashboard 200 \
@@ -1365,16 +1352,6 @@ block "BLOCK 18 — F15.5: Smart Switch (EAWCBT-J)"
 # Ensure pack assigned (pack-based resolution after refactor)
 $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
 
-    # El SWITCH real ya existe (en proto2) y uniq_devices_external impide insertarlo
-    # de nuevo en el pack 5. Se mueve temporalmente al pack 5 (room 1) y se restaura
-    # al terminar el bloque.
-    SW_ORIG_PACK=$($MYSQL -sN -e "SELECT pack_id FROM devices WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby' LIMIT 1" 2>/dev/null || echo "")
-    if [ -n "$SW_ORIG_PACK" ]; then
-        $MYSQL -sN -e "UPDATE devices SET pack_id=5 WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby'" 2>/dev/null || true
-    else
-        $MYSQL -sN -e "INSERT IGNORE INTO devices (pack_id, kind, external_id, meta_json) VALUES (5, 'SWITCH', 'bfc8730a715c56c8d1paby', '{\"model\":\"EAWCBT-J\",\"dp_code\":\"switch\"}')" 2>/dev/null || true
-    fi
-
     # Ensure admin key has switches:write scope
     $MYSQL -sN -e "UPDATE api_clients SET scopes_csv = CONCAT(scopes_csv, ',switches:write') WHERE code = 'ADMIN-CLI' AND scopes_csv NOT LIKE '%switches:write%'" 2>/dev/null || true
 
@@ -1408,57 +1385,7 @@ $MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
         --key ADMIN-CLI \
         --body '{}'
 
-    # --- Real switch tests (only meaningful when SIMULATED_MODE=false) ---
-    $MYSQL -sN -e "UPDATE rooms SET simulated_override=NULL WHERE id=1" 2>/dev/null || true
-    SIM=$(php -r "require './src/Support/Autoload.php'; echo App\Support\Config::getBool('SIMULATED_MODE', true) ? 'true' : 'false';" 2>/dev/null || echo "false")
-    if [ "$SIM" = "false" ]; then
-        echo ""
-        echo "  --- Real switch tests (SIMULATED_MODE=false) ---"
-
-        http_test POST /api/v1/switches/1/off 200 \
-            "POST /switches/1/off → 200 (real Tuya, turn off first)" \
-            --key ADMIN-CLI --body '{}'
-
-        # Emitir QR y validar → el switch debe encenderse automáticamente
-        $MYSQL -sN -e "UPDATE rooms SET status='FREE', cooldown_until=NULL WHERE id=1" 2>/dev/null || true
-        $MYSQL -sN -e "UPDATE stays SET status='CLOSED' WHERE room_id=1 AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')" 2>/dev/null || true
-
-        QR_RESP=$(curl -s -X POST http://127.0.0.1:8080/api/v1/qr \
-            -H "Content-Type: application/json" \
-            -H "X-API-Key: $VB6_KEY" \
-            -H "Idempotency-Key: tsk-sw-real-$(date +%s)" \
-            -d '{"room_id":1,"duracion_minutos":60}')
-        QR_TEXT=$(echo "$QR_RESP" | php -r 'echo json_decode(file_get_contents("php://stdin"),true)["qr_text"]??"";')
-
-        if [ -n "$QR_TEXT" ] && [ "$QR_TEXT" != "" ]; then
-            RPI_ID=$($MYSQL -sN -e "SELECT d.external_id FROM devices d JOIN rooms r ON r.pack_id = d.pack_id WHERE r.id=1 AND d.kind='RPI' LIMIT 1" 2>/dev/null)
-            http_test POST /api/v1/qr/validate 200 \
-                "POST /qr/validate → 200 + switch ON (real flow)" \
-                --key RPI-DEV \
-                --body "{\"qr_text\":\"$QR_TEXT\",\"device_id\":\"${RPI_ID}\"}"
-
-            # Cerrar stay → switch debe apagarse
-            STAY_ID=$(echo "$QR_RESP" | php -r 'echo json_decode(file_get_contents("php://stdin"),true)["stay_id"]??"";')
-            if [ -n "$STAY_ID" ] && [ "$STAY_ID" != "" ]; then
-                http_test POST /api/v1/stays/$STAY_ID/close 200 \
-                    "POST /stays/$STAY_ID/close → 200 + switch OFF (real flow)" \
-                    --key ADMIN-CLI \
-                    --idem "close-sw-$STAY_ID-$(date +%s)" \
-                    --body '{"reason":"checkout"}'
-            else
-                skip "POST /stays/ID/close (real switch)" "No se pudo obtener stay_id"
-            fi
-        else
-            skip "POST /qr/validate (real switch flow)" "No se pudo emitir QR (room busy?)"
-        fi
-    else
-        skip "Real switch flow tests" "SIMULATED_MODE=true — usar tests simulados arriba"
-    fi
-
-    # Restaurar el SWITCH a su pack original
-    if [ -n "$SW_ORIG_PACK" ]; then
-        $MYSQL -sN -e "UPDATE devices SET pack_id=$SW_ORIG_PACK WHERE kind='SWITCH' AND external_id='bfc8730a715c56c8d1paby'" 2>/dev/null || true
-    fi
+    # F122: no hay switch Tuya real. Solo se prueban los caminos simulados.
 
 # ===================================================
 # BLOCK 17 — F26: Botón "Mírame" (Identify)
@@ -2310,61 +2237,16 @@ http_test GET "/dashboard-api/device-status?room_id=1" 200 \
   "GET /dashboard-api/device-status: includes battery_pct" \
   --key ADMIN-CLI
 
-# 26.2: POST /dashboard-api/battery-refresh — no device_id → 400
-http_test POST /dashboard-api/battery-refresh 400 \
-  "POST /battery-refresh: no device_id → 400" \
+# 26.2: F122 — la ruta Tuya de batería fue retirada.
+http_test POST /dashboard-api/battery-refresh 404 \
+  "POST /battery-refresh → 404 (retirado por F122)" \
   --key ADMIN-CLI \
   --body '{}'
 
-# 26.3: POST /dashboard-api/battery-refresh — non-existing device → 404
-http_test POST /dashboard-api/battery-refresh 404 \
-  "POST /battery-refresh: non-existing device → 404" \
-  --key ADMIN-CLI \
-  --body '{"device_id":99999}'
-
-# 26.4: GET /api/v1/rooms/1/live includes battery field
+# 26.3: GET /api/v1/rooms/1/live includes battery field
 http_test GET /api/v1/rooms/1/live 200 \
   "GET /rooms/1/live: battery field present" \
   --key ADMIN-CLI
-
-# 26.5: POST /battery-refresh con un PROXIMITY real (lookup dinámico, no id fijo).
-# Una sola llamada: `tuyaPresenceApi` respeta el presupuesto compartido
-# (run/tuya-quota.json), así que si la cuota está agotada responde 502 y el test
-# salta en vez de vaciarla. 404 ya no puede darse con un id resuelto de la BD.
-BATT_DEV=$($MYSQL -sN -e "SELECT id FROM devices WHERE kind='PROXIMITY' ORDER BY id LIMIT 1" 2>/dev/null)
-if [ -z "$BATT_DEV" ]; then
-  skip "POST /battery-refresh: sin dispositivo PROXIMITY — SKIP" \
-    "No hay dispositivos PROXIMITY en la BD"
-else
-  BATT_RESP=$(curl -s -w "\n%{http_code}" \
-    -H "X-API-Key: $(get_key ADMIN-CLI)" \
-    -H "Content-Type: application/json" \
-    -d "{\"device_id\":$BATT_DEV}" \
-    "http://127.0.0.1:8080/dashboard-api/battery-refresh" 2>/dev/null)
-  BATT_HTTP=$(echo "$BATT_RESP" | tail -1)
-
-  if [ "$BATT_HTTP" = "200" ]; then
-    if echo "$BATT_RESP" | grep -q '"ok":true' && echo "$BATT_RESP" | grep -q '"kind":"PROXIMITY"'; then
-      pass "POST /battery-refresh: device $BATT_DEV returns battery data"
-    else
-      fail "POST /battery-refresh: device $BATT_DEV response missing fields" \
-        "response: $(echo "$BATT_RESP" | head -1)"
-    fi
-  elif [ "$BATT_HTTP" = "502" ]; then
-    skip "POST /battery-refresh: Tuya API/cuota no disponible (HTTP 502) — SKIP" \
-      "Credenciales no configuradas o presupuesto Tuya agotado (run/tuya-quota.json)"
-  else
-    fail "POST /battery-refresh: device $BATT_DEV unexpected HTTP $BATT_HTTP" \
-      "response: $(echo "$BATT_RESP" | head -1)"
-  fi
-fi
-
-# 26.6: Verify device-status after battery-refresh (if Tuya was available)
-if [ "$BATT_HTTP" = "200" ]; then
-  http_test GET "/dashboard-api/device-status?room_id=1" 200 \
-    "GET /device-status: battery_pct present after refresh" \
-    --key ADMIN-CLI
-fi
 
 # =============================================================================
 # BLOCK 27 — F37: Panel de configuración vía system_settings
@@ -2424,7 +2306,7 @@ http_test PUT /api/v1/admin/settings 200 \
   --key ADMIN-CLI \
   --body "{\"service\":\"api\",\"settings\":[{\"key\":\"LOG_LEVEL\",\"value\":\"$ORIG_LOG_LEVEL\"}]}"
 
-# 27.6: Masked sensitive values (TUYA_ACCESS_SECRET should show value_masked)
+# 27.6: Masked sensitive values (WSVB6_API_KEY should show value_masked)
 if echo "$SETTINGS_RESP" | grep -q '"value_masked"'; then
   pass "GET /admin/settings: sensitive fields have value_masked"
 else
@@ -2699,7 +2581,7 @@ _cleanup_factory_test
 # BLOCK 30 — F39: Estado verídico de dispositivos (online/offline/sin verificar)
 # Trazabilidad: estado del panel Dispositivos (no falsear online)
 # No sondea Tuya real (no consume cuota): comprueba el contrato y que el ping
-# sin verify_tuya NO marque online a dispositivos Tuya cloud.
+# F122: sin tuya_cloud y los retirados salen como retired.
 # =============================================================================
 block "BLOCK 30 — Estado verídico de dispositivos"
 
@@ -2714,75 +2596,29 @@ else
         skip "BLOCK 30 estado verídico (room $DS_ROOM)" "La habitación con PRESENCE no tiene SWITCH en su pack"
     else
         DS_JSON=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=$DS_ROOM")
-        # Contrato F39 + F46++: un dispositivo Tuya cloud solo puede estar
-        # `online` si hay señal REAL y fresca: sonda Tuya fresca (online_probed_at
-        # dentro del TTL) o push reciente (PROXIMITY / presence_source='push' con
-        # last_seen_at fresco). Un `offline` exige sonda fresca (nunca se inventa).
+        # F122: no debe existir tuya_cloud; los retirados deben salir como retired.
         DS_RESULT=$(echo "$DS_JSON" | python3 -c "
-import sys, json, datetime
-def parse_utc(s):
-    if not s: return None
-    s=str(s).strip().replace('T',' ')
-    if s.endswith('Z'): s=s[:-1]
-    s=s.split('.')[0]
-    try: return datetime.datetime.strptime(s,'%Y-%m-%d %H:%M:%S')
-    except Exception: return None
-def fresh(ts,secs,now): return ts is not None and 0 <= (now-ts).total_seconds() <= secs
+import sys, json
 try:
     d=json.load(sys.stdin)
 except Exception as e:
     print('ERR '+str(e)); sys.exit(0)
-now=datetime.datetime.utcnow()
 devs=d.get('devices') or []
 states=set(x.get('state') for x in devs)
-valid=states <= {'online','offline','unknown'}
-cnt_sum = (d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
+valid=states <= {'online','offline','unknown','retired'}
+cnt_sum=(d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
 bad=[]
 for x in devs:
-    if not x.get('tuya_cloud'): continue
-    on=x.get('online')
-    if on is True:
-        meta=x.get('meta') or {}
-        is_push=(x.get('kind')=='PROXIMITY') or (meta.get('presence_source')=='push')
-        probe_ok=fresh(parse_utc(x.get('online_probed_at')),600,now)
-        push_ok=is_push and fresh(parse_utc(x.get('last_seen_at')),600,now)
-        if not (probe_ok or push_ok): bad.append(str(x.get('id'))+':online_sin_senal')
-    elif on is False and not fresh(parse_utc(x.get('online_probed_at')),600,now):
-        bad.append(str(x.get('id'))+':offline_sin_sonda')
+    if 'tuya_cloud' in x: bad.append(str(x.get('id'))+':tuya_cloud')
+    if x.get('is_retired') and x.get('state')!='retired': bad.append(str(x.get('id'))+':retired_state')
 ok=valid and cnt_sum and not bad
 print(('OK ' if ok else 'FAIL ')+('valid='+str(valid)+' sum='+str(cnt_sum)+' bad='+str(bad)+' states='+str(sorted(states))))
 " 2>/dev/null)
         case "$DS_RESULT" in
-            OK*) pass "device-status: estados verídicos (online/offline/unknown) coherentes en room $DS_ROOM" ;;
-            FAIL*) fail "device-status: estados verídicos en room $DS_ROOM" "${DS_RESULT#FAIL }" ;;
+            OK*) pass "device-status: estados Zigbee/ESP32/retired coherentes en room $DS_ROOM" ;;
+            FAIL*) fail "device-status: estados en room $DS_ROOM" "${DS_RESULT#FAIL }" ;;
             *)     fail "device-status: parse en room $DS_ROOM" "${DS_RESULT:-respuesta vacía}" ;;
         esac
-
-        # Ping sin verify_tuya: Tuya cloud NO debe marcarse online (ni consumir cuota)
-        TUYA_IDS=$(echo "$DS_JSON" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-print(','.join(str(x['id']) for x in (d.get('devices') or []) if x.get('tuya_cloud')))
-")
-        if [ -z "$TUYA_IDS" ]; then
-            skip "ping-all-devices sin verify_tuya (Tuya)" "No hay dispositivos Tuya cloud en la room"
-        else
-            IDS_JSON=$(echo "$TUYA_IDS" | python3 -c "import sys; ids=[int(x) for x in sys.stdin.read().replace(chr(10),'').split(',') if x.strip()]; print(ids)" 2>/dev/null)
-            PING_JSON=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "{\"device_ids\":$IDS_JSON}")
-            PING_OK=$(echo "$PING_JSON" | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin); rs=d.get('results') or []
-except Exception as e:
-    print('0'); sys.exit(0)
-print('1' if rs and all(r.get('state')=='unknown' and r.get('online') is None and r.get('checked_via')=='TUYA' for r in rs) else '0')
-")
-            if [ "$PING_OK" = "1" ]; then
-                pass "ping-all-devices sin verify_tuya: Tuya cloud se reporta 'sin verificar' (no online, sin cuota)"
-            else
-                fail "ping-all-devices sin verify_tuya: Tuya cloud NO debe marcarse online" "$PING_JSON"
-            fi
-        fi
     fi
 fi
 
@@ -3376,23 +3212,6 @@ fi
 # =============================================================================
 block "BLOCK 35 — F44: tiempo real de sensores y presencia bajo demanda"
 
-# ── 35.0 Unit JS: consumer dinámico + resync (sin red/BD) ───────────────────
-F44_CONSUMER_JS="tests/Unit/tuya-pulsar-consumer.test.js"
-if [ -f "$F44_CONSUMER_JS" ]; then
-    F44_C_OUT=$(node "$F44_CONSUMER_JS" 2>&1)
-    F44_C_RC=$?
-    F44_C_SUM=$(echo "$F44_C_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
-    [ -z "$F44_C_SUM" ] && F44_C_SUM="exit=$F44_C_RC"
-    if [ "$F44_C_RC" -eq 0 ]; then
-        pass "JS: tuya-pulsar-consumer.test.js ($F44_C_SUM)"
-    else
-        fail "JS: tuya-pulsar-consumer.test.js" \
-            "$F44_C_SUM — $(echo "$F44_C_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
-    fi
-else
-    skip "JS: tuya-pulsar-consumer.test.js" "fichero no encontrado"
-fi
-
 # ── 35.0b Unit JS: prueba de paseo (RF-52.4, sin red/BD) ───────────────────
 F44_WALK_JS="tests/Unit/cal-walktest.test.js"
 if [ -f "$F44_WALK_JS" ]; then
@@ -3534,23 +3353,6 @@ fi
 # Trazabilidad: RF-53, RF-54, RF-55, RF-56 · contracts.md Anexo F47 · TSK-F47-08
 # =============================================================================
 block "BLOCK 36 — F47: latencia, robustez de recepción y arranque consistente"
-
-# ── 36.0 Unit JS: helpers de la sonda de latencia (sin red/BD/cuota) ───────
-F47_PROBE_JS="tests/Unit/latency-probe.test.js"
-if [ -f "$F47_PROBE_JS" ]; then
-    F47_P_OUT=$(node "$F47_PROBE_JS" 2>&1)
-    F47_P_RC=$?
-    F47_P_SUM=$(echo "$F47_P_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
-    [ -z "$F47_P_SUM" ] && F47_P_SUM="exit=$F47_P_RC"
-    if [ "$F47_P_RC" -eq 0 ]; then
-        pass "JS: latency-probe.test.js ($F47_P_SUM)"
-    else
-        fail "JS: latency-probe.test.js" \
-            "$F47_P_SUM — $(echo "$F47_P_OUT" | grep -iE 'FAIL|❌' | head -3 | tr '\n' ' ')"
-    fi
-else
-    skip "JS: latency-probe.test.js" "fichero no encontrado"
-fi
 
 # ── 36.1 Arranque consistente: pool del API sin divergencia (RF-55) ────────
 if [ -f ../start-all.sh ]; then
@@ -3747,12 +3549,11 @@ print('OK' if not miss else 'FAIL missing='+str(miss))
     esac
 fi
 
-# 39.2 Consumer rastrea SWITCH (guard de fuente)
-if grep -q "TRACKED_KINDS" bin/tuya-pulsar-consumer/index.js 2>/dev/null \
-   && grep -q "SWITCH" bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
-    pass "F50: consumer rastrea SWITCH (TRACKED_KINDS)"
+# 39.2 F122: el consumer Tuya ya no existe.
+if [ ! -e bin/tuya-pulsar-consumer/index.js ]; then
+    pass "F122: consumer Tuya eliminado"
 else
-    fail "F50: consumer no rastrea SWITCH" "revisa bin/tuya-pulsar-consumer/index.js"
+    fail "F122: consumer Tuya presente" "bin/tuya-pulsar-consumer/index.js"
 fi
 
 # 39.3 /live del SWITCH expone state/state_at (room con SWITCH)
@@ -4465,10 +4266,10 @@ if [ "$SERVER_UP" = true ]; then
     else
         fail "F79: guard motor SIMULATED/resync" "ausente en WarehouseRecordingService"
     fi
-    if grep -q "_source = 'resync'\|_source = \"resync\"" "$PROJECT_DIR/bin/tuya-pulsar-consumer/index.js" 2>/dev/null; then
-        pass "F79: consumer marca resync (_source)"
+    if [ ! -e "$PROJECT_DIR/bin/tuya-pulsar-consumer/index.js" ]; then
+        pass "F122: consumer Tuya eliminado (sin resync de nube)"
     else
-        fail "F79: consumer marca resync" "ausente en tuya-pulsar-consumer/index.js"
+        fail "F122: consumer Tuya presente" "$PROJECT_DIR/bin/tuya-pulsar-consumer/index.js"
     fi
 
     # 44.6 F79 (RF-102.3): visits oculta NO_SHOW DOOR-only por defecto.
@@ -4898,21 +4699,11 @@ else
     fail "F72: croquis-logic" "$F72_JS no encontrado"
 fi
 
-# 50.0b Consumer: sin polling periódico de cuota Tuya (Node; sin servidor)
-F72C_JS="tests/Unit/tuya-pulsar-consumer.test.js"
-if [ -f "$F72C_JS" ]; then
-    F72C_OUT=$(node "$F72C_JS" 2>&1)
-    F72C_RC=$?
-    F72C_SUM=$(echo "$F72C_OUT" | grep -oE '[0-9]+ passed, [0-9]+ failed' | tail -1)
-    [ -z "$F72C_SUM" ] && F72C_SUM="exit=$F72C_RC"
-    if [ "$F72C_RC" -eq 0 ]; then
-        pass "F72/F74: tuya-pulsar-consumer ($F72C_SUM)"
-    else
-        fail "F72/F74: tuya-pulsar-consumer" \
-            "$F72C_SUM — $(echo "$F72C_OUT" | grep -iE 'FAIL|error|❌' | head -3 | tr '\n' ' ')"
-    fi
+# 50.0b F122: consumer Tuya eliminado.
+if [ ! -e tests/Unit/tuya-pulsar-consumer.test.js ] && [ ! -e bin/tuya-pulsar-consumer/index.js ]; then
+    pass "F122: sin consumer ni tests de Tuya"
 else
-    fail "F72/F74: tuya-pulsar-consumer" "$F72C_JS no encontrado"
+    fail "F122: restos de consumer Tuya" "revisa bin/tuya-pulsar-consumer"
 fi
 
 # 50.1 Estáticos: estado persistente y AUSENCIA de polling periódico Tuya
@@ -4921,10 +4712,10 @@ if ! grep -q 'DOOR_STALE_SECONDS' public/assets/croquis-logic.js 2>/dev/null; th
 else
     fail "F72: DOOR_STALE_SECONDS" "sigue presente en croquis-logic.js"
 fi
-if ! grep -qE 'periodicDoorResyncDue|DOOR_RESYNC_MS|resyncDoorPeriodic' bin/tuya-pulsar-consumer/index.js 2>/dev/null; then
-    pass "F74: consumer SIN resync periódico que gaste cuota Tuya"
+if [ ! -e bin/tuya-pulsar-consumer/index.js ]; then
+    pass "F74/F122: consumer Tuya eliminado (sin resync periódico)"
 else
-    fail "F74: resync periódico" "sigue presente en el consumer"
+    fail "F74: consumer Tuya presente" "bin/tuya-pulsar-consumer/index.js"
 fi
 if ! grep -q 'CONSUMER_DOOR_RESYNC_MS' .env.example 2>/dev/null; then
     pass "F74: .env.example SIN CONSUMER_DOOR_RESYNC_MS"
@@ -6275,7 +6066,7 @@ try:
 except Exception as e:
     print('ERR '+str(e)); sys.exit(0)
 devs=d.get('devices') or []
-valid={'online','offline','unknown'}
+valid={'online','offline','unknown','retired'}
 bad=[]
 zig=0; cams=0
 for x in devs:
@@ -6285,14 +6076,14 @@ for x in devs:
     t=str(x.get('transport') or '').upper()
     if t=='ZIGBEE2MQTT':
         zig+=1
-        if x.get('tuya_cloud') is not False:
-            bad.append(str(x.get('id'))+':zigbee_tuya_cloud')
+        if 'tuya_cloud' in x:
+            bad.append(str(x.get('id'))+':tuya_cloud')
         if (x.get('integration_status') or {}).get('status')=='operational' and st!='online':
             bad.append(str(x.get('id'))+':zigbee_operational_no_online')
     if x.get('kind')=='CAMERA':
         cams+=1
-        if x.get('tuya_cloud') is not False:
-            bad.append(str(x.get('id'))+':camera_tuya_cloud')
+        if 'tuya_cloud' in x:
+            bad.append(str(x.get('id'))+':tuya_cloud')
 cnt=(d.get('online') or 0)+(d.get('offline') or 0)+(d.get('unknown') or 0)==(d.get('total') or 0)
 if zig<1 or cams<1:
     bad.append('pack_sin_zigbee_o_camara')
@@ -6313,7 +6104,7 @@ print(','.join(str(x['id']) for x in (d.get('devices') or []) if str(x.get('tran
     if [ -z "$F92_ZIG_IDS" ]; then
         skip "F92 ping Zigbee" "Sin dispositivos Zigbee en la sala"
     else
-        F92_ZIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_ZIG_IDS'.split(',')], 'verify_tuya': True, 'verify_cameras': False}))")
+        F92_ZIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_ZIG_IDS'.split(',')], 'verify_cameras': False}))")
         F92_ZIG_PING=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "$F92_ZIG_BODY")
         F92_ZIG_RESULT=$(echo "$F92_ZIG_PING" | python3 -c "
 import sys,json
@@ -6340,7 +6131,7 @@ print(','.join(str(x['id']) for x in (d.get('devices') or []) if x.get('kind')==
     if [ -z "$F92_CAM_IDS" ]; then
         skip "F92 ping cámara" "Sin cámaras en la sala"
     else
-        F92_CAM_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_CAM_IDS'.split(',')], 'verify_tuya': False, 'verify_cameras': True}))")
+        F92_CAM_BODY=$(python3 -c "import json,sys; print(json.dumps({'device_ids':[int(x) for x in '$F92_CAM_IDS'.split(',')], 'verify_cameras': True}))")
         F92_CAM_PING=$(curl -s -X POST "${API_BASE}/dashboard-api/ping-all-devices" -H 'Content-Type: application/json' -d "$F92_CAM_BODY")
         F92_CAM_RESULT=$(echo "$F92_CAM_PING" | python3 -c "
 import sys,json
@@ -9202,6 +8993,75 @@ if [ "$SERVER_UP" = true ]; then
     fi
 else
     skip "F120 HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
+# BLOCK 90 — F122: retirada completa de Tuya
+# =============================================================================
+block "BLOCK 90 — F122: retirada completa de Tuya"
+
+# 90.1 Sin ficheros ni clases Tuya en código ejecutable.
+F122_FILES=$(find src public bin -iname '*tuya*' -print 2>/dev/null | grep -v node_modules || true)
+if [ -z "$F122_FILES" ]; then
+    pass "F122: sin ficheros Tuya en src/public/bin"
+else
+    fail "F122: ficheros Tuya presentes" "$F122_FILES"
+fi
+
+# 90.2 Sin marcadores de integración de nube en código.
+F122_MARKERS=$(grep -RInE "TUYA_ACCESS|openapi\.tuya|tuyaPresenceApi|TuyaSensorIngress|TuyaSwitchGateway|TuyaLockGateway|tuya-pulsar-consumer"     src public bin start-all.sh stop-all.sh 2>/dev/null | grep -v node_modules || true)
+if [ -z "$F122_MARKERS" ]; then
+    pass "F122: sin integración de nube Tuya en código"
+else
+    fail "F122: marcadores Tuya en código" "$(echo "$F122_MARKERS" | head -5)"
+fi
+
+# 90.3 Webhook eliminado.
+if command -v curl >/dev/null 2>&1; then
+    F122_WH=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${API_BASE}/api/v1/tuya/webhook" -H 'Content-Type: application/json' -d '{}' 2>/dev/null)
+    if [ "$F122_WH" = "404" ]; then
+        pass "F122: POST /tuya/webhook → 404"
+    else
+        fail "F122: webhook Tuya responde $F122_WH (esperado 404)"
+    fi
+fi
+
+# 90.4 device-status sin tuya_cloud.
+F122_DS=$(curl -s "${API_BASE}/dashboard-api/device-status?room_id=1" 2>/dev/null)
+if [ -n "$F122_DS" ]; then
+    if echo "$F122_DS" | grep -q '"tuya_cloud"'; then
+        fail "F122: device-status aún expone tuya_cloud"
+    else
+        pass "F122: device-status sin tuya_cloud"
+    fi
+fi
+
+# 90.5 Baja lógica aplicada y dispositivo local intacto.
+F122_RETIRED=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices WHERE JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.retired_at')) IS NOT NULL" 2>/dev/null || echo 0)
+F122_LOCAL=$($MYSQL -sN -e "SELECT COUNT(*) FROM devices WHERE external_id='relay-local-proto2' AND JSON_EXTRACT(meta_json,'\$.retired_at') IS NULL" 2>/dev/null || echo 0)
+if [ "${F122_RETIRED:-0}" -ge 5 ] && [ "${F122_LOCAL:-0}" = "1" ]; then
+    pass "F122: 5 devices Tuya retirados y el relé local intacto"
+else
+    fail "F122: baja lógica" "retired=$F122_RETIRED local=$F122_LOCAL"
+fi
+
+# 90.6 Consumer Tuya deshabilitado (si hay systemd).
+if command -v systemctl >/dev/null 2>&1; then
+    F122_PULSAR=$(systemctl is-active cerraduras-pulsar-consumer 2>/dev/null || true)
+    if [ "$F122_PULSAR" != "active" ]; then
+        pass "F122: consumer Tuya inactivo"
+    else
+        fail "F122: consumer Tuya activo" "systemctl is-active cerraduras-pulsar-consumer"
+    fi
+fi
+
+# 90.7 .env sin credenciales Tuya (si existe).
+if [ -f .env ]; then
+    if grep -q '^TUYA_ACCESS_ID=' .env 2>/dev/null; then
+        fail "F122: TUYA_ACCESS_ID sigue en api/.env"
+    else
+        pass "F122: api/.env sin credenciales Tuya"
+    fi
 fi
 
 # =============================================================================

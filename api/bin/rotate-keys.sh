@@ -37,14 +37,14 @@ echo "Generando claves..."
 VB6_MAIN_KEY=$(openssl rand -hex 24)
 RPI_DEV_KEY=$(openssl rand -hex 24)
 ADMIN_CLI_KEY=$(openssl rand -hex 24)
-TUYA_BRIDGE_KEY=$(openssl rand -hex 24)
+SENSOR_BRIDGE_KEY=$(openssl rand -hex 24)
 SIM_CLIENT_KEY=$(openssl rand -hex 24)
 VB6_BRIDGE_KEY=$(openssl rand -hex 24)
 
 echo "  VB6-MAIN:    ${VB6_MAIN_KEY:0:16}..."
 echo "  RPI-DEV:     ${RPI_DEV_KEY:0:16}..."
 echo "  ADMIN-CLI:   ${ADMIN_CLI_KEY:0:16}..."
-echo "  TUYA-BRIDGE: ${TUYA_BRIDGE_KEY:0:16}..."
+echo "  SENSOR-BRIDGE: ${SENSOR_BRIDGE_KEY:0:16}..."
 echo "  SIM-CLIENT:  ${SIM_CLIENT_KEY:0:16}..."
 echo "  VB6-BRIDGE:  ${VB6_BRIDGE_KEY:0:16}..."
 
@@ -54,7 +54,7 @@ echo "  VB6-BRIDGE:  ${VB6_BRIDGE_KEY:0:16}..."
 H_VB6_MAIN=$(echo -n "$VB6_MAIN_KEY" | sha256sum | awk '{print $1}')
 H_RPI_DEV=$(echo -n "$RPI_DEV_KEY" | sha256sum | awk '{print $1}')
 H_ADMIN_CLI=$(echo -n "$ADMIN_CLI_KEY" | sha256sum | awk '{print $1}')
-H_TUYA_BRIDGE=$(echo -n "$TUYA_BRIDGE_KEY" | sha256sum | awk '{print $1}')
+H_SENSOR_BRIDGE=$(echo -n "$SENSOR_BRIDGE_KEY" | sha256sum | awk '{print $1}')
 H_SIM_CLIENT=$(echo -n "$SIM_CLIENT_KEY" | sha256sum | awk '{print $1}')
 H_VB6_BRIDGE=$(echo -n "$VB6_BRIDGE_KEY" | sha256sum | awk '{print $1}')
 
@@ -102,7 +102,7 @@ update_client() {
 update_client "VB6-MAIN"     "$H_VB6_MAIN"
 update_client "RPI-DEV"      "$H_RPI_DEV"
 update_client "ADMIN-CLI"    "$H_ADMIN_CLI"
-update_client "TUYA-BRIDGE"  "$H_TUYA_BRIDGE"
+update_client "SENSOR-BRIDGE" "$H_SENSOR_BRIDGE"
 update_client "SIM-CLIENT"   "$H_SIM_CLIENT"
 update_client "VB6-BRIDGE"   "$H_VB6_BRIDGE"
 
@@ -115,7 +115,7 @@ cat > "$PROJECT_DIR/api/seeds/dev_api_keys.txt" <<EOF
 VB6-MAIN	$VB6_MAIN_KEY
 RPI-DEV	$RPI_DEV_KEY
 ADMIN-CLI	$ADMIN_CLI_KEY
-TUYA-BRIDGE	$TUYA_BRIDGE_KEY
+SENSOR-BRIDGE	$SENSOR_BRIDGE_KEY
 SIM-CLIENT	$SIM_CLIENT_KEY
 VB6-BRIDGE	$VB6_BRIDGE_KEY
 EOF

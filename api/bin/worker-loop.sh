@@ -17,7 +17,7 @@
 #   outbox-worker    php bin/outbox-worker.php   30s
 #   anomaly-scanner  php bin/anomaly-scanner.php  5s
 #
-# F78/RF-101: NO hay poller de Tuya. La presencia llega por push (consumer
+# F122: Tuya retirado. La presencia llega por push de Zigbee2MQTT.
 # Pulsar) y los sensores se refrescan bajo demanda desde la API.
 # =============================================================================
 set -u

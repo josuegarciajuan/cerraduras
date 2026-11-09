@@ -286,6 +286,13 @@ final class DeviceService
 
     private function validateTransport(?string $transport): void
     {
+        if (strtoupper(trim((string) $transport)) === Device::TRANSPORT_TUYA) {
+            throw new UnprocessableException(
+                'tuya_transport_removed',
+                'Tuya devices are retired; only Zigbee2MQTT/local transports are accepted',
+                ['field' => 'transport']
+            );
+        }
         if (Device::isValidTransport($transport)) {
             return;
         }

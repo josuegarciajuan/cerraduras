@@ -16,7 +16,7 @@ use App\Support\Errors\NotFoundException;
  *   GET  /api/v1/rooms/{id}/presence  scope: presence:read   (TSK-093)
  *
  * The POST endpoint delegates payload normalisation to a SensorIngressInterface
- * implementation (Simulated or Tuya, resolved by SensorIngressFactory at wiring
+ * implementation (F122: SimulatedSensorIngress; real signals come from Zigbee)
  * time) and hands the canonical event to IotSessionService.
  *
  * Idempotency is enforced at the middleware level (Idempotency-Key required,
