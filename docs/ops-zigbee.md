@@ -243,5 +243,5 @@ Los logs de Zigbee2MQTT están en CET (UTC+1); la API y la BD en UTC.
 - Poner los flags a `false` y ejecutar `bash stop-all.sh`.
 - Para desactivar un dispositivo, retirar su entrada del mapa y reiniciar ingress/spool.
 - No se borran el spool ni la auditoría.
-- Para volver a Tuya en una sala existente, restaurar su configuración; `almacenZigbee`
-  es una sala nueva y no tiene equivalente Tuya.
+- **No hay rollback a Tuya** (F122). El rollback es restaurar el backup Zigbee y
+  volver a la versión anterior del código. `almacenZigbee` no tiene equivalente Tuya.

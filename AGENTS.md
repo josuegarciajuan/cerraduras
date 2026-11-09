@@ -1,20 +1,30 @@
 Este proyecto sigue metodología Spec Driven Development.
 
-## ⛔ Regla inquebrantable — NUNCA pollear Tuya en continuo
+## ⛔ Regla inquebrantable — Tuya retirado; nunca reintroducirlo
 
-**No debe existir NINGÚN proceso que sondee en bucle la API REST de Tuya.** La cuota de
-IoT Core se factura por llamada; un poller de fondo la agota en horas (incidente 2026-09-17:
-~1.400 llamadas/hora por una puerta atascada). Esto incluye `start-all.sh`, systemd, cron,
-workers y diagnósticos manuales que se dejen corriendo.
+**Desde F122 no existe integración Tuya alguna.** No debe aparecer ningún consumer, webhook,
+credencial, sonda REST, poller ni `setInterval`/`while` que llame a Tuya o a su nube.
 
-- La presencia llega **por push** (consumer `tuya-pulsar-consumer`, sin cuota).
-- Las sondas REST son **solo bajo demanda** (acción explícita del usuario) y con el
-  presupuesto compartido `api/run/tuya-quota.json`.
-- Prohibido reintroducir `tuya-presence-poller.js`, `presence-poller-manager.sh`, el unit
-  `cerraduras-presence-poller` o cualquier `setInterval`/`while` que llame a Tuya.
-- Si un sensor no llega por push, se amplía la **regla de mensajes** de Tuya, no se añade poller.
-- Regresión automática: BLOCK 35 del runner (marcadores F78) y guardia en `start-all.sh`.
-- Detalle e histórico: `design.md` §42 (F78 / RF-101).
+- La presencia y la luz llegan **por push de Zigbee2MQTT** (ingress + spool locales).
+- La cerradura usa `LOCAL`/`ESP32`; `SIMULATED` solo para tests/demo.
+- Prohibido reintroducir `tuya-pulsar-consumer`, `tuya-presence-poller.js`,
+  `presence-poller-manager.sh`, el unit `cerraduras-pulsar-consumer` o scripts `bin/tuya-*`.
+- Regresión automática: `BLOCK 90` del runner, `TuyaRetirementTest` y guardia en `start-all.sh`.
+- Detalle e histórico: `design.md` (F122) y `AGENTS.md` F122.
+
+## Estado vigente — Tuya retirado (F122)
+
+**Desde F122 no se usa Tuya en absoluto.** Sensores y luz van por Zigbee2MQTT;
+la cerradura es LOCAL/ESP32; `SIMULATED` solo para tests/demo.
+
+- Prohibido reintroducir `tuya-pulsar-consumer`, webhook Tuya, credenciales
+  `TUYA_ACCESS_*`, scripts `bin/tuya-*` o cualquier sonda REST a Tuya.
+- Las fases F44, F46, F47, F50, F70, F74, F75, F76, F78, F86, F88, F92, F93,
+  F95 y F112 se conservan como **histórico**; en lo relativo a Tuya están
+  superadas por F122.
+- Los devices Tuya legacy quedan `transport='TUYA'` + `meta.retired_at`, sin
+  borrar filas ni tocar packs/salas.
+- Verificación: `BLOCK 90` del runner y migración `0147`.
 
 ## Diagnóstico de la luz Zigbee (F112)
 
@@ -219,6 +229,8 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F118 Monigote del dashboard por sensores + ficha** | **BLOCK 33 + `croquis-logic.test.js`** | **Implementado (código); prueba física QR/ficha pendiente** |
 | **F119 Panel CRM v2 + analítica de uso** | **BLOCK 88 + `PanelV2UiTest`** | **Implementado; regresión 1129/0/16; validación visual pendiente del operador** |
 | **F120 Panel CRM v2.1 (anomalías legibles, ocupaciones, almacén, demo)** | **BLOCK 89 + `PanelV21Test`/`AnomalyReopenTest`** | **Implementado; migraciones 0145/0146 aplicadas; demo DEMO-* creada; regresión 1156/3/19 (3 fallos ambientales: gate Apache y perfil radar)** |
+
+| **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1114,6 +1126,21 @@ para Tuya cloud.
 - **Rollback**: `presence_mode_override=NULL` vuelve a `camera_fusion`.
 - **Verificación**: `croquis-logic.test.js` (73 checks) +
   `RadarPresenceDecisionTest.php` (48 checks) + prueba física A/B pendiente.
+
+### F122 — Retirada completa de Tuya (RF-331…RF-337)
+
+- **Alcance**: se elimina toda la integración Tuya (sensores, switch y cerradura):
+  consumer Pulsar, webhook, gateways, helpers de cuota, rutas, scripts, UI y docs.
+- **Única vía**: Zigbee2MQTT para sensores/luz; LOCAL/ESP32 para cerradura;
+  SIMULATED solo tests/demo.
+- **Datos**: migración `0147` marca los 5 devices Tuya como `transport='TUYA'`
+  + `meta.retired_at`; no se borran filas ni se tocan packs/salas.
+- **Histórico**: `provider='TUYA'` se conserva en `presence_events`/`access_events`.
+- **Contratos**: se eliminan `/api/v1/tuya/webhook`, `/dashboard-api/tuya-quota`,
+  `/dashboard-api/battery-refresh` y `/dashboard-api/simula/*`.
+- **Verificación**: `TuyaRetirementTest`, `DeviceLivenessServiceTest`,
+  `SwitchGatewayFactoryZigbeeTest` y `BLOCK 90`.
+- **Operación**: `start-all.sh` deshabilita `cerraduras-pulsar-consumer` si existe.
 
 ## Operaciones
 

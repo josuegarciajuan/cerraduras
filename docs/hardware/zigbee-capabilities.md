@@ -1,7 +1,7 @@
 # Capacidades reales de los dispositivos Zigbee del banco — oficina
 
 > **Fecha**: 2026-10-26 · **Estado**: investigación y documentación; **no** hay integración
-> en producción ni cambios en el flujo Tuya.
+> en producción ni cambios en el flujo Zigbee.
 > **Banco**: nodo `oficina` (172.16.51.242), proyecto Compose `zigbee-local` en
 > `/opt/cerraduras-zigbee`. Mosquitto 2.0.22 y Zigbee2MQTT 2.14.2, publicados solo en loopback.
 > **Coordinador**: SONOFF Dongle-M EFR32MG24 (Ethernet/PoE, 172.16.51.215:6638), EmberZNet
@@ -479,7 +479,7 @@ mensaje y en el tamaño del payload, no en el broker.
   Validar con sala vacía (falsos positivos) y con persona inmóvil (detección estática).
 - **Descartar** por ahora: `target_distance` como única señal de presencia; `/get`/interview
   remoto de la puerta; cualquier polling; OTA (no hay actualización).
-- **No tocar** el flujo Tuya actual: esta caracterización es local y no habilita el worker ni
+- **No tocar** el flujo Zigbee: esta caracterización es local y no habilita el worker ni
   cambia `start-all.sh`/`stop-all.sh`/systemd.
 
 ---

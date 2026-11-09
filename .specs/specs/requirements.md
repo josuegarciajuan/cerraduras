@@ -9,6 +9,70 @@
 
 ---
 
+# Fase 122: Retirada completa de Tuya — Zigbee como única vía
+
+## Contexto
+
+Tuya deja de usarse por completo: sensores, switch de luz y cerradura. La única
+fuente real de sensores y luz es Zigbee2MQTT; la cerradura es LOCAL/ESP32 y
+SIMULATED queda solo para tests/demo. Esta fase supersede las afirmaciones de
+coexistencia temporal de F90/F91 y las fases históricas de push/sonda Tuya.
+
+## RF-331: Única vía de sensores y actuadores
+
+- **RF-331.1**: `ZIGBEE2MQTT` es la única fuente de sensores (PROXIMITY/PRESENCE)
+  y del switch de luz.
+- **RF-331.2**: la cerradura usa `LOCAL` o `ESP32`; `SIMULATED` solo para tests.
+- **RF-331.3**: no se admiten altas ni cambios con `transport=TUYA`.
+
+## RF-332: Sin integración de nube Tuya
+
+- **RF-332.1**: no existe consumer Pulsar, webhook, credenciales, SDK ni llamada
+  REST a Tuya en el código ejecutable.
+- **RF-332.2**: no existe poller, sonda periódica ni temporizador de cuota.
+- **RF-332.3**: el arranque deshabilita cualquier unit o proceso Tuya legado.
+
+## RF-333: Baja lógica de dispositivos legacy
+
+- **RF-333.1**: los devices Tuya se marcan `transport='TUYA'`,
+  `meta.retired_at` y `presence_source='disabled'` cuando aplica.
+- **RF-333.2**: no se borran filas, no se cambian packs ni el mapping
+  `room → pack → device`.
+- **RF-333.3**: un device retirado nunca se sondea ni recibe comandos; se
+  muestra como `retired`.
+
+## RF-334: Contratos retirados
+
+- **RF-334.1**: se elimina `POST /api/v1/tuya/webhook`.
+- **RF-334.2**: se eliminan `/dashboard-api/tuya-quota`,
+  `/dashboard-api/battery-refresh` y `/dashboard-api/simula/*`.
+- **RF-334.3**: `device-status` deja de exponer `tuya_cloud`; `ping-all-devices`
+  no acepta `verify_tuya`.
+- **RF-334.4**: `almacen-api/sensors/refresh` responde `zigbee_push` o
+  `sensor_not_zigbee`.
+
+## RF-335: Auditoría histórica
+
+- **RF-335.1**: `presence_events.provider='TUYA'` y
+  `access_events.provider='TUYA'` se conservan y siguen siendo legibles.
+- **RF-335.2**: la analítica no se rompe por la retirada.
+
+## RF-336: UI y operación
+
+- **RF-336.1**: `/dashboard`, `/panel` y `/almacen` no muestran cuotas, sondas,
+  calibración ni etiquetas Tuya.
+- **RF-336.2**: la documentación operativa vigente describe solo Zigbee.
+- **RF-336.3**: los runbooks y material PoC Tuya se eliminan o marcan obsoletos.
+
+## RF-337: Verificación
+
+- **RF-337.1**: nueva migración `0147` idempotente de baja lógica.
+- **RF-337.2**: unit de retirada y guardia `BLOCK 90` que falla si Tuya
+  reaparece en código, rutas, servicios, entorno o UI.
+- **RF-337.3**: regresión completa sin fallos nuevos.
+
+---
+
 # Fase 99: Reactivar llaves desactivadas
 
 **Motivo**: en `/llaves` una llave desactivada no ofrecía ninguna acción para

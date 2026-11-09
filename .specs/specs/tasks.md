@@ -7,6 +7,51 @@
 
 ---
 
+# Fase 122: Retirada completa de Tuya
+
+## TSK-122.00: Especificación
+
+**Trazabilidad**: RF-331..RF-337
+
+- [x] Documentar requisitos, diseño, contratos y tareas.
+
+## TSK-122.01: Baja lógica
+
+**Trazabilidad**: RF-333
+
+- [x] Migración `0147_retire_tuya_devices.sql`.
+- [x] `Device::isRetired()` + `isTuyaTransport()`.
+
+## TSK-122.02: Ingesta
+
+**Trazabilidad**: RF-332
+
+- [x] Eliminar webhook, ingress Tuya y consumer Pulsar.
+- [x] Eliminar scripts `bin/tuya-*`.
+
+## TSK-122.03: Actuadores
+
+**Trazabilidad**: RF-331
+
+- [x] Eliminar `TuyaSwitchGateway` y `TuyaLockGateway`.
+- [x] Fallback fail-closed `UnsupportedSwitchGateway`.
+
+## TSK-122.04: API y UI
+
+**Trazabilidad**: RF-334, RF-336
+
+- [x] Retirar helpers y rutas de nube.
+- [x] Retirar etiquetas/cuotas/botones Tuya.
+
+## TSK-122.05: Verificación
+
+**Trazabilidad**: RF-337
+
+- [x] Unit de retirada y `BLOCK 90`.
+- [ ] Regresión completa en el cierre de la fase.
+
+---
+
 # Fase 99: Reactivar llaves desactivadas
 
 ## TSK-99.00: Especificación
