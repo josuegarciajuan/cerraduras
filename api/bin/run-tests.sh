@@ -1348,44 +1348,26 @@ fi  # end SERVER_UP
 # BLOCK 18 — F15.5: Smart Switch EAWCBT-J (RF-16)
 # Trazabilidad: TSK-SW12
 # ===================================================
-block "BLOCK 18 — F15.5: Smart Switch (EAWCBT-J)"
-# Ensure pack assigned (pack-based resolution after refactor)
-$MYSQL -sN -e "UPDATE rooms SET pack_id=5 WHERE id=1" 2>/dev/null || true
+block "BLOCK 18 — F15.5: Smart Switch (Zigbee)"
 
-    # Ensure admin key has switches:write scope
-    $MYSQL -sN -e "UPDATE api_clients SET scopes_csv = CONCAT(scopes_csv, ',switches:write') WHERE code = 'ADMIN-CLI' AND scopes_csv NOT LIKE '%switches:write%'" 2>/dev/null || true
-
-    # GET /rooms/1/switches
-    http_test GET '/api/v1/rooms/1/switches' 200 \
-        "GET /rooms/1/switches → 200" \
-        --key ADMIN-CLI
-
-    # GET /rooms/1/live (must include switch data)
-    http_test GET '/api/v1/rooms/1/live' 200 \
-        "GET /rooms/1/live → 200 (includes switch data)" \
-        --key ADMIN-CLI
-
-    # --- Simulated switch tests (always work) ---
-    # Set room 1 to simulated_override=true for simulated switch tests
-    $MYSQL -sN -e "UPDATE rooms SET simulated_override=1 WHERE id=1" 2>/dev/null || true
-
-    http_test POST /api/v1/switches/1/on 200 \
-        "POST /switches/1/on → 200 (simulated)" \
-        --key ADMIN-CLI \
-        --body '{}'
-
-    http_test POST /api/v1/switches/1/off 200 \
-        "POST /switches/1/off → 200 (simulated)" \
-        --key ADMIN-CLI \
-        --body '{}'
-
-    # POST /switches/999/on → 404 (no switch for room 999)
-    http_test POST /api/v1/switches/999/on 404 \
-        "POST /switches/999/on → 404 (no switch)" \
-        --key ADMIN-CLI \
-        --body '{}'
-
-    # F122: no hay switch Tuya real. Solo se prueban los caminos simulados.
+# F122: use a room whose pack has a real Zigbee SWITCH, in simulated mode.
+SW_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id=r.pack_id AND d.kind='SWITCH' WHERE d.transport='ZIGBEE2MQTT' ORDER BY r.id LIMIT 1" 2>/dev/null)
+if [ -z "$SW_ROOM" ]; then
+    skip "BLOCK 18 switch" "no hay sala con SWITCH Zigbee"
+else
+    $MYSQL -sN -e "UPDATE rooms SET simulated_override=1 WHERE id=$SW_ROOM" 2>/dev/null || true
+    http_test GET "/api/v1/rooms/$SW_ROOM/switches" 200 \
+        "GET /rooms/$SW_ROOM/switches → 200" --key ADMIN-CLI
+    http_test GET "/api/v1/rooms/$SW_ROOM/live" 200 \
+        "GET /rooms/$SW_ROOM/live → 200 (switch data)" --key ADMIN-CLI
+    http_test POST "/api/v1/switches/$SW_ROOM/on" 200 \
+        "POST /switches/$SW_ROOM/on → 200 (simulated)" --key ADMIN-CLI --body '{}'
+    http_test POST "/api/v1/switches/$SW_ROOM/off" 200 \
+        "POST /switches/$SW_ROOM/off → 200 (simulated)" --key ADMIN-CLI --body '{}'
+    http_test POST "/api/v1/switches/999/on" 404 \
+        "POST /switches/999/on → 404 (no switch)" --key ADMIN-CLI --body '{}'
+    $MYSQL -sN -e "UPDATE rooms SET simulated_override=NULL WHERE id=$SW_ROOM" 2>/dev/null || true
+fi
 
 # ===================================================
 # BLOCK 17 — F26: Botón "Mírame" (Identify)
@@ -2759,7 +2741,7 @@ try:
     d = json.load(sys.stdin)
 except Exception as e:
     print('ERR ' + str(e)); sys.exit(0)
-keys = ['exit-scan','overstay-scan','outbox-worker','anomaly-scanner','pulsar-consumer']
+keys = ['exit-scan','overstay-scan','outbox-worker','anomaly-scanner']
 missing = [k for k in keys if k not in d]
 bad = []
 for k in keys:
@@ -2781,7 +2763,7 @@ for k in keys:
 print('OK' if not missing and not bad else 'FAIL missing=' + str(missing) + ' bad=' + str(bad))
 " 2>/dev/null)
     case "$F41_SS_RES" in
-        OK*)   pass "F41 system-status: 5 workers con expected/instances/pids/healthy/degraded" ;;
+        OK*)   pass "F41 system-status: 4 workers con expected/instances/pids/healthy/degraded" ;;
         FAIL*) fail "F41 system-status: esquema §5" "${F41_SS_RES#FAIL }" ;;
         *)     fail "F41 system-status: parse" "${F41_SS_RES:-respuesta vacía}" ;;
     esac
@@ -3278,25 +3260,13 @@ print('OK' if isinstance(ew, int) and isinstance(ec, int) and ew > 0 and ec > 0 
     fi
 fi
 
-# ── 35.3 system-status: instancia única del consumer Pulsar ────────────────
-if [ "$SERVER_UP" != true ]; then
-    skip "F44 pulsar-consumer instancia única" "servidor HTTP no disponible"
-else
+# ── 35.3 F122: el consumer Pulsar ya no existe ───────────────────────────────
+if [ "$SERVER_UP" = true ]; then
     F44_SS=$(curl -s --max-time 5 "${API_BASE}/dashboard-api/system-status" 2>/dev/null)
-    F44_INST=$(echo "$F44_SS" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception as e:
-    print('ERR ' + str(e)); sys.exit(0)
-v = d.get('pulsar-consumer') or {}
-inst = v.get('instances'); exp = v.get('expected')
-print('OK' if inst == 1 and exp == 1 else ('FAIL instances=%s expected=%s' % (inst, exp)))
-" 2>/dev/null)
-    if [ "$F44_INST" = "OK" ]; then
-        pass "F44: pulsar-consumer con instancia única (instances=1)"
+    if echo "$F44_SS" | grep -q '"pulsar-consumer"'; then
+        fail "F122: system-status aún expone pulsar-consumer"
     else
-        fail "F44: el consumer Pulsar debe tener 1 sola instancia" "$F44_INST"
+        pass "F122: system-status sin consumer Pulsar"
     fi
 fi
 
@@ -3578,15 +3548,11 @@ fi
 # 39.4 Webhook: dispositivo sin sala → 202 room_not_found (N10, no 500)
 F50_DEVID="synth-roomless-$(date +%s)"
 $MYSQL -sN -e "INSERT INTO devices (kind,external_id) VALUES ('PROXIMITY','$F50_DEVID')" 2>/dev/null || true
-F50_WH=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE}/api/v1/tuya/webhook" \
-    -H 'Content-Type: application/json' \
-    -d "{\"devId\":\"$F50_DEVID\",\"status\":[{\"code\":\"doorcontact_state\",\"value\":true,\"t\":$(date +%s)000}]}" 2>/dev/null)
-F50_WH_HTTP=$(echo "$F50_WH" | tail -1)
-$MYSQL -sN -e "DELETE FROM devices WHERE external_id='$F50_DEVID'" 2>/dev/null || true
-if [ "$F50_WH_HTTP" = "202" ] && echo "$F50_WH" | grep -q '"discard_reason":"room_not_found"'; then
-    pass "F50: webhook sin sala → 202 room_not_found (no 500)"
+F50_WH_HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${API_BASE}/api/v1/tuya/webhook" -H 'Content-Type: application/json' -d '{}' 2>/dev/null)
+if [ "$F50_WH_HTTP" = "404" ]; then
+    pass "F122: webhook Tuya eliminado (404)"
 else
-    fail "F50: webhook room_not_found" "HTTP=$F50_WH_HTTP respuesta=$(echo "$F50_WH" | head -1 | head -c 200)"
+    fail "F122: webhook Tuya" "HTTP=$F50_WH_HTTP"
 fi
 
 # =============================================================================
@@ -4835,9 +4801,7 @@ block "BLOCK 52 — F75/F76: Refresco de sensores del almacén (sin polling)"
 # 52.0 Estáticos: ruta, panel, env, presencia con contexto y snapshot de tests
 for F75_MARK in \
     "public/index.php:/almacen-api/sensors/refresh" \
-    "public/assets/almacen.js:refreshSensors" \
-    "public/almacen.html:btn-refresh" \
-    ".env.example:ALMACEN_SENSOR_REFRESH_COOLDOWN_SECONDS" \
+    "public/index.php:zigbee_push" \
     "src/Domain/Presence/SensorEventDecision.php:warehousePresence" \
     "src/Domain/Presence/IotSessionService.php:warehousePresenceContext" \
     "src/Domain/Warehouse/WarehouseRecordingService.php:activeEnteredVisitAt" \
@@ -5297,10 +5261,8 @@ for F85_MARK in \
     "src/Domain/Warehouse/WarehouseRecordingService.php:warehouse_reentry_context_seconds" \
     "src/Domain/Warehouse/WarehouseRecordingService.php:reentry_seconds" \
     "bin/warehouse-recorder.php:busyDevices" \
-    "public/index.php:unresolved_transition" \
     "public/index.php:warehouseDoorOpenService->request" \
-    "public/almacen.html:f-discards" \
-    "public/assets/almacen.js:doorStaleProbed"; do
+    "public/almacen.html:f-discards"; do
     F85_FILE="${F85_MARK%%:*}"
     F85_NEEDLE="${F85_MARK#*:}"
     if grep -q "$F85_NEEDLE" "$F85_FILE" 2>/dev/null; then
@@ -6157,9 +6119,9 @@ if [ -f src/Domain/Devices/DeviceLivenessService.php ] && [ -f src/Domain/Device
 else
     fail "F92: clases de liveness" "faltan DeviceLivenessService/CameraReachabilityProbe"
 fi
-if grep -q "deviceIsTuyaCloud(\['kind' => \$dev->kind, 'transport' => \$dev->transport\])" public/index.php \
+if grep -q "CATEGORY_RETIRED" src/Domain/Devices/DeviceLivenessService.php \
     && grep -q "applyAvailability" src/Infrastructure/Gateways/Sensor/ZigbeeMqttEventProcessor.php; then
-    pass "F92: clasificación por transporte y availability cableadas"
+    pass "F92/F122: clasificación por transporte y availability cableadas"
 else
     fail "F92: cableado" "falta guardia de transporte/availability"
 fi
@@ -9089,7 +9051,7 @@ fi
 block "BLOCK 91 — F122: retirada completa de Tuya"
 
 # 90.1 Sin ficheros ni clases Tuya en código ejecutable.
-F122_FILES=$(find src public bin -iname '*tuya*' -print 2>/dev/null | grep -v node_modules || true)
+F122_FILES=$(find src public bin -type f -iname '*tuya*' -print 2>/dev/null | grep -v node_modules || true)
 if [ -z "$F122_FILES" ]; then
     pass "F122: sin ficheros Tuya en src/public/bin"
 else
