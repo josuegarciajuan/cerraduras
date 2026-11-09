@@ -15,7 +15,7 @@ use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Rooms\Room;
 use App\Infrastructure\Gateways\Switch\SimulatedSwitchGateway;
 use App\Infrastructure\Gateways\Switch\SwitchGatewayFactory;
-use App\Infrastructure\Gateways\Switch\TuyaSwitchGateway;
+use App\Infrastructure\Gateways\Switch\UnsupportedSwitchGateway;
 use App\Infrastructure\Gateways\Switch\ZigbeeSwitchGateway;
 
 final class FakeRepoForSwitchFactory implements DeviceRepositoryInterface
@@ -56,7 +56,7 @@ $repo->device = $zigbee;
 check('Zigbee transport selects ZigbeeSwitchGateway', SwitchGatewayFactory::make($room, $repo, $zigbee) instanceof ZigbeeSwitchGateway);
 
 $repo->device = $tuya;
-check('Tuya/unknown transport keeps TuyaSwitchGateway', SwitchGatewayFactory::make($room, $repo, $tuya) instanceof TuyaSwitchGateway);
+check('Tuya/unknown transport is unsupported (no cloud fallback)', SwitchGatewayFactory::make($room, $repo, $tuya) instanceof UnsupportedSwitchGateway);
 
 $simRoom = new Room(15, 'sim', 1, 99, 'FREE', true, null);
 check('simulated_override still selects SimulatedSwitchGateway', SwitchGatewayFactory::make($simRoom, $repo, $zigbee) instanceof SimulatedSwitchGateway);

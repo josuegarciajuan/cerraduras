@@ -47,31 +47,36 @@ function check(string $name, array $expected, array $got): void
     fail($name, 'expected=' . json_encode($expected) . ' got=' . json_encode($got));
 }
 
-// ── Categorías ─────────────────────────────────────────────────────────────
+// ── Categorías (F122: Tuya retirado) ────────────────────────────────────────
 check(
-    'Zigbee PROXIMITY no es Tuya cloud',
-    ['zigbee', false],
-    [$svc->category(['kind' => 'PROXIMITY', 'transport' => 'ZIGBEE2MQTT']), $svc->isTuyaCloud(['kind' => 'PROXIMITY', 'transport' => 'ZIGBEE2MQTT'])]
+    'Zigbee PROXIMITY es zigbee',
+    ['zigbee'],
+    [$svc->category(['kind' => 'PROXIMITY', 'transport' => 'ZIGBEE2MQTT'])]
 );
 check(
-    'TUYA PROXIMITY sí es Tuya cloud',
-    ['tuya', true],
-    [$svc->category(['kind' => 'PROXIMITY', 'transport' => 'TUYA']), $svc->isTuyaCloud(['kind' => 'PROXIMITY', 'transport' => 'TUYA'])]
+    'TUYA PROXIMITY queda retirado',
+    ['retired'],
+    [$svc->category(['kind' => 'PROXIMITY', 'transport' => 'TUYA'])]
 );
 check(
     'Cámara tiene categoría propia',
-    ['camera', false],
-    [$svc->category(['kind' => 'CAMERA', 'transport' => null]), $svc->isTuyaCloud(['kind' => 'CAMERA', 'transport' => null])]
+    ['camera'],
+    [$svc->category(['kind' => 'CAMERA', 'transport' => null])]
 );
 check(
-    'Legacy NULL PROXIMITY conserva Tuya',
-    ['tuya', true],
-    [$svc->category(['kind' => 'PROXIMITY', 'transport' => null]), $svc->isTuyaCloud(['kind' => 'PROXIMITY', 'transport' => null])]
+    'Legacy NULL PROXIMITY sin marca queda other (no se sondea)',
+    ['other'],
+    [$svc->category(['kind' => 'PROXIMITY', 'transport' => null])]
 );
 check(
     'Legacy NULL RPI es local',
-    ['local', false],
-    [$svc->category(['kind' => 'RPI', 'transport' => null]), $svc->isTuyaCloud(['kind' => 'RPI', 'transport' => null])]
+    ['local'],
+    [$svc->category(['kind' => 'RPI', 'transport' => null])]
+);
+check(
+    'retired_at fuerza categoría retirada',
+    ['retired'],
+    [$svc->category(['kind' => 'PRESENCE', 'transport' => null, 'meta' => ['retired_at' => '2026-11-09T00:00:00Z']])]
 );
 
 // ── Cámara ────────────────────────────────────────────────────────────────
@@ -186,34 +191,23 @@ check(
     ], $now)
 );
 
-// ── Tuya legacy ───────────────────────────────────────────────────────────
+// ── Tuya retirado ──────────────────────────────────────────────────────────
 check(
-    'Tuya legacy PROXIMITY con push fresco → online',
-    ['state' => 'online', 'online' => true, 'source' => 'tuya_push', 'reason' => null],
+    'Tuya legacy PROXIMITY con push fresco → retired',
+    ['state' => 'retired', 'online' => null, 'source' => 'retired', 'reason' => 'tuya_retired'],
     $svc->resolve([
         'kind' => 'PROXIMITY',
-        'transport' => null,
+        'transport' => 'TUYA',
         'last_seen_at' => ago($now, 30),
     ], $now)
 );
 check(
-    'Tuya legacy PRESENCE sin push ni sonda → unknown',
-    ['state' => 'unknown', 'online' => null, 'source' => 'tuya_probe', 'reason' => 'no_signal'],
+    'Tuya retirado con retired_at → retired',
+    ['state' => 'retired', 'online' => null, 'source' => 'retired', 'reason' => 'tuya_retired'],
     $svc->resolve([
         'kind' => 'PRESENCE',
         'transport' => null,
-        'online_state' => null,
-        'online_probed_at' => null,
-    ], $now)
-);
-check(
-    'Tuya sonda fresca offline → offline',
-    ['state' => 'offline', 'online' => false, 'source' => 'tuya_probe', 'reason' => null],
-    $svc->resolve([
-        'kind' => 'PRESENCE',
-        'transport' => 'TUYA',
-        'online_state' => 0,
-        'online_probed_at' => ago($now, 10),
+        'meta' => ['retired_at' => '2026-11-09T00:00:00Z'],
     ], $now)
 );
 
