@@ -58,6 +58,9 @@ final class Anomaly
     public ?string $acknowledgedBy;
     public ?string $dismissedAt;
     public ?string $dismissedBy;
+    public ?string $reopenedAt;
+    public ?string $reopenedBy;
+    public ?string $reopenReason;
     public string $createdAt;
     public string $updatedAt;
 
@@ -79,7 +82,10 @@ final class Anomaly
         ?string $dismissedBy,
         string  $createdAt,
         string  $updatedAt,
-        ?string $roomCode = null
+        ?string $roomCode = null,
+        ?string $reopenedAt = null,
+        ?string $reopenedBy = null,
+        ?string $reopenReason = null
     ) {
         $this->id              = $id;
         $this->roomId          = $roomId;
@@ -93,6 +99,9 @@ final class Anomaly
         $this->acknowledgedBy  = $acknowledgedBy;
         $this->dismissedAt     = $dismissedAt;
         $this->dismissedBy     = $dismissedBy;
+        $this->reopenedAt      = $reopenedAt;
+        $this->reopenedBy      = $reopenedBy;
+        $this->reopenReason    = $reopenReason;
         $this->createdAt       = $createdAt;
         $this->updatedAt       = $updatedAt;
         $this->roomCode        = $roomCode;
@@ -127,6 +136,33 @@ final class Anomaly
         $this->dismissedBy = 'system';
     }
 
+    /**
+     * Reopen a manually dismissed anomaly (DISMISSED → OPEN).
+     *
+     * Keeps the previous acknowledge/dismiss audit fields intact; the reopen
+     * trail lives in separate columns. Auto-dismissed anomalies cannot be
+     * reopened because their condition was resolved by the system.
+     *
+     * @throws \RuntimeException if not DISMISSED or if dismissed by system
+     */
+    public function reopen(string $actor, string $reason, string $now): void
+    {
+        if ($this->status !== self::STATUS_DISMISSED) {
+            throw new \RuntimeException("Anomaly {$this->id} is not DISMISSED (current: {$this->status})");
+        }
+        if ($this->dismissedBy === 'system') {
+            throw new \RuntimeException("Anomaly {$this->id} was auto-dismissed and cannot be reopened");
+        }
+        $reason = trim($reason);
+        if ($reason === '') {
+            throw new \RuntimeException('A reopen reason is required');
+        }
+        $this->status       = self::STATUS_OPEN;
+        $this->reopenedAt   = $now;
+        $this->reopenedBy   = $actor;
+        $this->reopenReason = mb_substr($reason, 0, 255);
+    }
+
     /** @return array<string,mixed> */
     public function toArray(): array
     {
@@ -144,6 +180,9 @@ final class Anomaly
             'acknowledged_by' => $this->acknowledgedBy,
             'dismissed_at'    => $this->dismissedAt,
             'dismissed_by'    => $this->dismissedBy,
+            'reopened_at'     => $this->reopenedAt,
+            'reopened_by'     => $this->reopenedBy,
+            'reopen_reason'   => $this->reopenReason,
             'created_at'      => $this->createdAt,
             'updated_at'      => $this->updatedAt,
         ];

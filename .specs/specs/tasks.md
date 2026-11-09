@@ -11779,3 +11779,24 @@ pendientes.
 - [x] TSK-F119-11: `PanelV2UiTest` + BLOCK 88 del runner.
 - [x] TSK-F119-12: regresión completa (1129/0/16) y validación Playwright.
 - [ ] TSK-F119-13: prueba de aceptación visual con el operador.
+
+## F120 — Panel CRM v2.1: operación vinculada y calidad
+
+- [x] TSK-F120-01: migración `0145` de auditoría de reapertura.
+- [x] TSK-F120-02: `Anomaly::reopen` + servicio + endpoint + tests.
+- [x] TSK-F120-03: catálogo de anomalías y componente de información accesible.
+- [x] TSK-F120-04: aplicar etiquetas/tooltips en todos los listados y drawers.
+- [x] TSK-F120-05: migración `0146` TIPO_NORMAL → STANDARD y limpieza.
+- [x] TSK-F120-06: acciones por espacio y `?room=` en `/sensores`.
+- [x] TSK-F120-07: contrato de ocupaciones unificadas y tests.
+- [x] TSK-F120-08: listado de ocupaciones con duración y medio de acceso.
+- [x] TSK-F120-09: corregir QR, deudas, accesos y cierre de estancias.
+- [x] TSK-F120-10: expediente de estancia y deep links.
+- [x] TSK-F120-11: actualizar módulo F38 y drawer de trabajador.
+- [x] TSK-F120-12: analítica de almacén con filtro, resumen y detalle de visita.
+- [x] TSK-F120-13: logs de eventos físicos y decisiones del almacén.
+- [x] TSK-F120-14: infraestructura común de formularios y selects.
+- [x] TSK-F120-15: accesibilidad, móvil y refinamiento visual F119.
+- [x] TSK-F120-16: fixture demo idempotente y purga.
+- [x] TSK-F120-17: operación de reapertura inicial de anomalías manuales.
+- [x] TSK-F120-18: `PanelV2UiTest` + BLOCK 89 + regresión completa.

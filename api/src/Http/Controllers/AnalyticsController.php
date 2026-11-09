@@ -402,6 +402,16 @@ final class AnalyticsController
             [':id' => $id, ':from' => $from, ':to' => $to]
         );
 
+        $visits = $this->rows(
+            "SELECT v.id, v.room_id, r.code AS room_code, v.entry_trigger, v.outcome,
+                    v.created_at, v.entered_at, v.exited_at,
+                    (SELECT COUNT(*) FROM camera_recordings cr WHERE cr.visit_id = v.id) AS recordings
+             FROM warehouse_visits v LEFT JOIN rooms r ON r.id = v.room_id
+             WHERE v.worker_id = :id AND v.created_at BETWEEN :from AND :to
+             ORDER BY v.created_at DESC LIMIT 50",
+            [':id' => $id, ':from' => $from, ':to' => $to]
+        );
+
         $totals = [
             'sessions' => count($sessions),
             'minutes' => array_sum(array_map(static fn($s) => (int) $s['duration_minutes'], $sessions)),
@@ -419,6 +429,7 @@ final class AnalyticsController
             'heatmap' => $heat,
             'keys' => $keys,
             'key_events' => $keyEvents,
+            'visits' => $visits,
             'current_room' => $this->currentRoomForWorker($id),
         ]);
     }
@@ -895,36 +906,242 @@ final class AnalyticsController
         ]);
     }
 
+    public function occupations(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $kind   = strtolower(trim((string) ($request->query('kind') ?? '')));
+        $status = trim((string) ($request->query('status') ?? ''));
+        $roomId = (int) ($request->query('room_id') ?? 0);
+        $q      = trim((string) ($request->query('q') ?? ''));
+
+        $sql = "SELECT * FROM (
+            SELECT 'stay' AS kind, s.id AS id, s.room_id, r.code AS room_code,
+                   rt.name AS room_type, s.status AS status,
+                   NULL AS worker_id, NULL AS worker_name,
+                   s.duracion_minutos AS reserved_minutes,
+                   CASE WHEN s.first_entry_at IS NULL THEN NULL
+                        ELSE TIMESTAMPDIFF(MINUTE, s.first_entry_at,
+                             COALESCE(s.closed_at, s.exit_detected_at, UTC_TIMESTAMP(3))) END AS real_minutes,
+                   s.reserved_at AS reserved_at,
+                   s.first_entry_at AS entered_at,
+                   COALESCE(s.exit_detected_at, s.closed_at) AS exited_at,
+                   s.closed_at AS closed_at,
+                   CASE WHEN EXISTS (SELECT 1 FROM qr_credentials q WHERE q.stay_id = s.id)
+                        THEN 'QR_STAY' ELSE 'UNKNOWN' END AS access_medium,
+                   COALESCE(s.first_entry_at, s.reserved_at, s.created_at) AS sort_at
+            FROM stays s
+            LEFT JOIN rooms r ON r.id = s.room_id
+            LEFT JOIN room_types rt ON rt.id = r.room_type_id
+            WHERE COALESCE(s.first_entry_at, s.reserved_at, s.created_at) BETWEEN :from1 AND :to1
+            UNION ALL
+            SELECT 'worker' AS kind, ws.id AS id, ws.room_id, r.code AS room_code,
+                   rt.name AS room_type,
+                   CASE WHEN ws.exited_at IS NULL THEN 'INSIDE' ELSE 'OUTSIDE' END AS status,
+                   w.id AS worker_id, w.name AS worker_name,
+                   NULL AS reserved_minutes,
+                   TIMESTAMPDIFF(MINUTE, ws.entered_at, COALESCE(ws.exited_at, UTC_TIMESTAMP(3))) AS real_minutes,
+                   NULL AS reserved_at,
+                   ws.entered_at AS entered_at,
+                   ws.exited_at AS exited_at,
+                   ws.exited_at AS closed_at,
+                   CASE
+                       WHEN EXISTS (SELECT 1 FROM key_access_events k WHERE k.worker_session_id = ws.id AND k.result = 'OK' AND k.credential_type = 'NFC') THEN 'NFC'
+                       WHEN EXISTS (SELECT 1 FROM key_access_events k WHERE k.worker_session_id = ws.id AND k.result = 'OK' AND k.credential_type = 'QR') THEN 'QR_KEY'
+                       WHEN EXISTS (SELECT 1 FROM access_events ae WHERE ae.worker_session_id = ws.id) THEN 'WORKER_QR'
+                       ELSE 'UNKNOWN' END AS access_medium,
+                   ws.entered_at AS sort_at
+            FROM worker_sessions ws
+            JOIN workers w ON w.id = ws.worker_id
+            LEFT JOIN rooms r ON r.id = ws.room_id
+            LEFT JOIN room_types rt ON rt.id = r.room_type_id
+            WHERE ws.entered_at BETWEEN :from2 AND :to2
+        ) x WHERE 1=1";
+
+        $params = [':from1' => $from, ':to1' => $to, ':from2' => $from, ':to2' => $to];
+        if ($kind === 'stay' || $kind === 'worker') {
+            $sql .= ' AND x.kind = :kind';
+            $params[':kind'] = $kind;
+        }
+        if ($status !== '') {
+            $sql .= ' AND x.status = :status';
+            $params[':status'] = $status;
+        }
+        if ($roomId > 0) {
+            $sql .= ' AND x.room_id = :room_id';
+            $params[':room_id'] = $roomId;
+        }
+        if ($q !== '') {
+            $sql .= ' AND (x.room_code LIKE :q1 OR x.worker_name LIKE :q2)';
+            $params[':q1'] = '%' . $q . '%';
+            $params[':q2'] = '%' . $q . '%';
+        }
+        $sql .= ' ORDER BY x.sort_at DESC LIMIT 300';
+
+        $items = $this->rows($sql, $params);
+        $summary = ['total' => count($items), 'stays' => 0, 'workers' => 0, 'inside' => 0, 'overstay' => 0];
+        foreach ($items as $it) {
+            if ($it['kind'] === 'stay') { $summary['stays']++; } else { $summary['workers']++; }
+            if ($it['status'] === 'INSIDE') { $summary['inside']++; }
+            if ($it['status'] === 'OVERSTAY') { $summary['overstay']++; }
+        }
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'items' => $items,
+            'summary' => $summary,
+        ]);
+    }
+
+    public function occupationDetail(Request $request): Response
+    {
+        $kind = strtolower((string) $request->routeParam('kind'));
+        $id   = (int) $request->routeParam('id');
+        $timeline = [];
+
+        if ($kind === 'stay') {
+            $occupation = $this->row(
+                'SELECT s.*, r.code AS room_code, rt.name AS room_type
+                 FROM stays s
+                 LEFT JOIN rooms r ON r.id = s.room_id
+                 LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE s.id = :id LIMIT 1',
+                [':id' => $id]
+            );
+            if ($occupation === null) {
+                return Response::json(404, ['error' => ['code' => 'occupation_not_found', 'message' => 'Stay not found']]);
+            }
+            $qr = $this->rows(
+                'SELECT id, jti, issued_at, expires_at, first_used_at, valid_until, consumed_at, revoked_at
+                 FROM qr_credentials WHERE stay_id = :id ORDER BY issued_at DESC',
+                [':id' => $id]
+            );
+            $debts = $this->rows(
+                'SELECT id, exceso_minutos, amount_eur_snapshot, status, attempts, last_error, created_at
+                 FROM debts WHERE stay_id = :id ORDER BY created_at DESC',
+                [':id' => $id]
+            );
+            $accesses = $this->rows(
+                'SELECT id, kind, result, reason, provider, occurred_at, correlation_id
+                 FROM access_events WHERE stay_id = :id ORDER BY occurred_at DESC LIMIT 100',
+                [':id' => $id]
+            );
+            $anomalies = $this->rows(
+                'SELECT id, anomaly_type, severity, status, detected_at
+                 FROM anomalies WHERE stay_id = :id ORDER BY detected_at DESC LIMIT 50',
+                [':id' => $id]
+            );
+            foreach ($qr as $row) { $timeline[] = ['at' => $row['issued_at'], 'kind' => 'qr', 'label' => 'QR emitido', 'detail' => substr((string) $row['jti'], 0, 8)]; }
+            foreach ($accesses as $row) { $timeline[] = ['at' => $row['occurred_at'], 'kind' => 'access', 'label' => $row['kind'], 'detail' => $row['result'] . ($row['reason'] ? ' · ' . $row['reason'] : '')]; }
+            foreach ($debts as $row) { $timeline[] = ['at' => $row['created_at'], 'kind' => 'debt', 'label' => 'Deuda', 'detail' => $row['exceso_minutos'] . ' min · ' . $row['status']]; }
+            foreach ($anomalies as $row) { $timeline[] = ['at' => $row['detected_at'], 'kind' => 'anomaly', 'label' => 'Anomalía ' . $row['anomaly_type'], 'detail' => $row['severity'] . ' · ' . $row['status']]; }
+            $occupation['real_minutes'] = $occupation['first_entry_at'] === null ? null
+                : max(0, (int) round((strtotime((string) ($occupation['closed_at'] ?? $occupation['exit_detected_at'] ?? 'now')) - strtotime((string) $occupation['first_entry_at'])) / 60));
+            return Response::json(200, [
+                'kind' => 'stay', 'occupation' => $occupation, 'qr' => $qr,
+                'debts' => $debts, 'accesses' => $accesses, 'anomalies' => $anomalies,
+                'timeline' => $this->sortTimeline($timeline),
+            ]);
+        }
+
+        if ($kind === 'worker') {
+            $occupation = $this->row(
+                'SELECT ws.*, w.name AS worker_name, r.code AS room_code, rt.name AS room_type
+                 FROM worker_sessions ws
+                 JOIN workers w ON w.id = ws.worker_id
+                 LEFT JOIN rooms r ON r.id = ws.room_id
+                 LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE ws.id = :id LIMIT 1',
+                [':id' => $id]
+            );
+            if ($occupation === null) {
+                return Response::json(404, ['error' => ['code' => 'occupation_not_found', 'message' => 'Worker session not found']]);
+            }
+            $keys = $this->rows(
+                'SELECT id, key_id, credential_type, result, reason, occurred_at
+                 FROM key_access_events WHERE worker_session_id = :id ORDER BY occurred_at DESC LIMIT 100',
+                [':id' => $id]
+            );
+            $accesses = $this->rows(
+                'SELECT id, kind, result, reason, provider, occurred_at
+                 FROM access_events WHERE worker_session_id = :id ORDER BY occurred_at DESC LIMIT 100',
+                [':id' => $id]
+            );
+            $visits = $this->rows(
+                'SELECT id, entry_trigger, outcome, created_at, entered_at, exited_at
+                 FROM warehouse_visits WHERE worker_session_id = :id ORDER BY created_at DESC LIMIT 50',
+                [':id' => $id]
+            );
+            foreach ($accesses as $row) { $timeline[] = ['at' => $row['occurred_at'], 'kind' => 'access', 'label' => $row['kind'], 'detail' => $row['result']]; }
+            foreach ($keys as $row) { $timeline[] = ['at' => $row['occurred_at'], 'kind' => 'key', 'label' => 'Llave ' . $row['credential_type'], 'detail' => $row['result'] . ($row['reason'] ? ' · ' . $row['reason'] : '')]; }
+            foreach ($visits as $row) { $timeline[] = ['at' => $row['created_at'], 'kind' => 'visit', 'label' => 'Visita ' . $row['entry_trigger'], 'detail' => $row['outcome']]; }
+            $occupation['real_minutes'] = max(0, (int) round((strtotime((string) ($occupation['exited_at'] ?? 'now')) - strtotime((string) $occupation['entered_at'])) / 60));
+            return Response::json(200, [
+                'kind' => 'worker', 'occupation' => $occupation, 'keys' => $keys,
+                'accesses' => $accesses, 'visits' => $visits,
+                'timeline' => $this->sortTimeline($timeline),
+            ]);
+        }
+
+        return Response::json(400, ['error' => ['code' => 'invalid_kind', 'message' => 'kind must be stay or worker']]);
+    }
+
+    /** @param list<array<string,mixed>> $items */
+    private function sortTimeline(array $items): array
+    {
+        usort($items, static fn ($a, $b) => strcmp((string) $b['at'], (string) $a['at']));
+        return array_slice($items, 0, 100);
+    }
+
     public function warehouse(Request $request): Response
     {
         [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
-        $offset = $this->tzOffset();
+        $offset  = $this->tzOffset();
+        $roomId  = (int) ($request->query('room_id') ?? 0);
+        $roomSql = $roomId > 0 ? ' AND room_id = :room_id' : '';
+        $vRoomSql = $roomId > 0 ? ' AND v.room_id = :room_id' : '';
+        $base    = [':from' => $from, ':to' => $to];
+        $params  = $base + ($roomId > 0 ? [':room_id' => $roomId] : []);
 
         $byTrigger = $this->rows(
             'SELECT entry_trigger, COUNT(*) AS c FROM warehouse_visits
-             WHERE created_at BETWEEN :from AND :to GROUP BY entry_trigger ORDER BY c DESC',
-            [':from' => $from, ':to' => $to]
+             WHERE created_at BETWEEN :from AND :to' . $roomSql . '
+             GROUP BY entry_trigger ORDER BY c DESC',
+            $params
         );
         $byOutcome = $this->rows(
             'SELECT outcome, COUNT(*) AS c FROM warehouse_visits
-             WHERE created_at BETWEEN :from AND :to GROUP BY outcome ORDER BY c DESC',
-            [':from' => $from, ':to' => $to]
+             WHERE created_at BETWEEN :from AND :to' . $roomSql . '
+             GROUP BY outcome ORDER BY c DESC',
+            $params
         );
         $topWorkers = $this->rows(
             'SELECT w.id, w.name, COUNT(*) AS visits,
                     SUM(CASE WHEN v.outcome = "ENTERED" THEN 1 ELSE 0 END) AS entered
              FROM warehouse_visits v JOIN workers w ON w.id = v.worker_id
-             WHERE v.created_at BETWEEN :from AND :to AND v.worker_id IS NOT NULL
+             WHERE v.created_at BETWEEN :from AND :to AND v.worker_id IS NOT NULL' . $vRoomSql . '
              GROUP BY w.id, w.name ORDER BY visits DESC LIMIT 10',
-            [':from' => $from, ':to' => $to]
+            $params
         );
+
+        $visitSummary = $this->row(
+            'SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN outcome = "ENTERED" THEN 1 ELSE 0 END) AS entered,
+                    SUM(CASE WHEN outcome = "NO_SHOW" THEN 1 ELSE 0 END) AS no_show,
+                    SUM(CASE WHEN outcome = "NOISE" THEN 1 ELSE 0 END) AS noise,
+                    AVG(CASE WHEN entered_at IS NOT NULL AND exited_at IS NOT NULL
+                        THEN TIMESTAMPDIFF(SECOND, entered_at, exited_at) END) AS avg_seconds
+             FROM warehouse_visits
+             WHERE created_at BETWEEN :from AND :to' . $roomSql,
+            $params
+        ) ?: [];
+
         $recordings = [];
         foreach ($this->rows(
             'SELECT status, COUNT(*) AS c, COALESCE(SUM(size_bytes), 0) AS bytes,
                     COALESCE(SUM(duration_s), 0) AS seconds
-             FROM camera_recordings WHERE requested_at BETWEEN :from AND :to
+             FROM camera_recordings WHERE requested_at BETWEEN :from AND :to' . $roomSql . '
              GROUP BY status',
-            [':from' => $from, ':to' => $to]
+            $params
         ) as $row) {
             $recordings[(string) $row['status']] = [
                 'count' => (int) $row['c'],
@@ -932,33 +1149,196 @@ final class AnalyticsController
                 'seconds' => (int) $row['seconds'],
             ];
         }
+
         $series = [];
         foreach ($this->rows(
-            "SELECT DATE(CONVERT_TZ(created_at, '+00:00', :tz)) AS d, COUNT(*) AS c
-             FROM warehouse_visits WHERE created_at BETWEEN :from AND :to GROUP BY d ORDER BY d",
-            [':from' => $from, ':to' => $to, ':tz' => $offset]
+            'SELECT DATE(CONVERT_TZ(created_at, \'+00:00\', :tz)) AS d, COUNT(*) AS c
+             FROM warehouse_visits WHERE created_at BETWEEN :from AND :to' . $roomSql . '
+             GROUP BY d ORDER BY d',
+            $params + [':tz' => $offset]
         ) as $row) {
             $series[(string) $row['d']] = (int) $row['c'];
         }
+
         $recent = $this->rows(
             'SELECT v.id, v.room_id, r.code AS room_code, v.worker_id, w.name AS worker_name,
-                    v.entry_trigger, v.outcome, v.created_at, v.entered_at, v.exited_at
+                    v.worker_session_id, v.entry_trigger, v.outcome, v.created_at,
+                    v.entered_at, v.exited_at,
+                    (SELECT COUNT(*) FROM camera_recordings cr WHERE cr.visit_id = v.id) AS recordings,
+                    (SELECT COALESCE(SUM(cr.size_bytes), 0) FROM camera_recordings cr WHERE cr.visit_id = v.id) AS recording_bytes
              FROM warehouse_visits v
              LEFT JOIN rooms r ON r.id = v.room_id
              LEFT JOIN workers w ON w.id = v.worker_id
-             WHERE v.created_at BETWEEN :from AND :to
+             WHERE v.created_at BETWEEN :from AND :to' . $vRoomSql . '
              ORDER BY v.created_at DESC LIMIT 100',
-            [':from' => $from, ':to' => $to]
+            $params
         );
+
+        $rooms = $this->rows(
+            "SELECT r.id, r.code, rt.name AS room_type
+             FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+             WHERE rt.code IN ('ALMACEN_BEBIDAS', 'TIMBRADO')
+             ORDER BY r.code ASC"
+        );
+
+        $cameraParams = $roomId > 0 ? [':room_id' => $roomId] : [];
+        $cameraSql = $roomId > 0
+            ? "SELECT COUNT(*) AS total,
+                      SUM(CASE WHEN d.online_state = 1 THEN 1 ELSE 0 END) AS online,
+                      SUM(CASE WHEN d.online_state = 0 THEN 1 ELSE 0 END) AS offline,
+                      SUM(CASE WHEN d.online_state IS NULL THEN 1 ELSE 0 END) AS unknown
+               FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+               WHERE d.kind = 'CAMERA' AND r.id = :room_id"
+            : "SELECT COUNT(*) AS total,
+                      SUM(CASE WHEN online_state = 1 THEN 1 ELSE 0 END) AS online,
+                      SUM(CASE WHEN online_state = 0 THEN 1 ELSE 0 END) AS offline,
+                      SUM(CASE WHEN online_state IS NULL THEN 1 ELSE 0 END) AS unknown
+               FROM devices WHERE kind = 'CAMERA'";
+        $cameras = $this->row($cameraSql, $cameraParams) ?: [];
 
         return Response::json(200, [
             'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'room_id' => $roomId ?: null,
+            'rooms' => $rooms,
+            'cameras' => [
+                'total' => (int) ($cameras['total'] ?? 0),
+                'online' => (int) ($cameras['online'] ?? 0),
+                'offline' => (int) ($cameras['offline'] ?? 0),
+                'unknown' => (int) ($cameras['unknown'] ?? 0),
+            ],
+            'visit_summary' => [
+                'total' => (int) ($visitSummary['total'] ?? 0),
+                'entered' => (int) ($visitSummary['entered'] ?? 0),
+                'no_show' => (int) ($visitSummary['no_show'] ?? 0),
+                'noise' => (int) ($visitSummary['noise'] ?? 0),
+                'avg_seconds' => $visitSummary['avg_seconds'] === null ? null : (int) round((float) $visitSummary['avg_seconds']),
+            ],
             'by_trigger' => $byTrigger,
             'by_outcome' => $byOutcome,
             'top_workers' => $topWorkers,
             'recordings' => $recordings,
             'series' => $this->fillDaily($fromLocal, $days, $series, 0),
             'recent' => $recent,
+        ]);
+    }
+
+    public function warehouseVisitDetail(Request $request): Response
+    {
+        $id = (int) $request->routeParam('id');
+        $visit = $this->row(
+            'SELECT v.*, r.code AS room_code, rt.name AS room_type, w.name AS worker_name
+             FROM warehouse_visits v
+             LEFT JOIN rooms r ON r.id = v.room_id
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             LEFT JOIN workers w ON w.id = v.worker_id
+             WHERE v.id = :id LIMIT 1',
+            [':id' => $id]
+        );
+        if ($visit === null) {
+            return Response::json(404, ['error' => ['code' => 'visit_not_found', 'message' => 'Visit not found']]);
+        }
+        $recordings = $this->rows(
+            'SELECT cr.id, cr.device_id, cr.position, cr.episode, cr.`trigger`, cr.status,
+                    cr.requested_at, cr.started_at, cr.stopped_at, cr.duration_s, cr.size_bytes,
+                    cr.error, d.label AS device_label
+             FROM camera_recordings cr
+             LEFT JOIN devices d ON d.id = cr.device_id
+             WHERE cr.visit_id = :id ORDER BY cr.requested_at ASC',
+            [':id' => $id]
+        );
+        return Response::json(200, ['visit' => $visit, 'recordings' => $recordings]);
+    }
+
+    public function warehouseLogs(Request $request): Response
+    {
+        [$from, $to, $days, $granularity, $fromLocal, $toLocal] = $this->range($request);
+        $roomId = (int) ($request->query('room_id') ?? 0);
+        $kind   = strtolower(trim((string) ($request->query('kind') ?? '')));
+        $applied = trim((string) ($request->query('applied') ?? ''));
+
+        $items = [];
+        if ($kind === '' || $kind === 'door' || $kind === 'presence') {
+            $where = ['pe.occurred_at BETWEEN :from AND :to'];
+            $params = [':from' => $from, ':to' => $to];
+            if ($roomId > 0) { $where[] = 'pe.room_id = :room_id'; $params[':room_id'] = $roomId; }
+            if ($kind === 'door') { $where[] = "pe.sensor = 'PROXIMITY'"; }
+            if ($kind === 'presence') { $where[] = "pe.sensor = 'PRESENCE'"; }
+            if ($applied === '1' || $applied === '0') {
+                $where[] = 'pe.applied = :applied';
+                $params[':applied'] = (int) $applied;
+            }
+            foreach ($this->rows(
+                'SELECT pe.id, pe.room_id, r.code AS room_code, pe.sensor, pe.value,
+                        pe.applied, pe.discard_reason, pe.occurred_at, pe.received_at,
+                        pe.provider, pe.meta_json
+                 FROM presence_events pe LEFT JOIN rooms r ON r.id = pe.room_id
+                 WHERE ' . implode(' AND ', $where) . '
+                 ORDER BY pe.occurred_at DESC LIMIT 300',
+                $params
+            ) as $row) {
+                $meta = [];
+                if (!empty($row['meta_json'])) {
+                    $decoded = json_decode((string) $row['meta_json'], true);
+                    $meta = is_array($decoded) ? $decoded : [];
+                }
+                $items[] = [
+                    'id' => (int) $row['id'],
+                    'type' => 'sensor',
+                    'kind' => $row['sensor'] === 'PROXIMITY' ? 'door' : 'presence',
+                    'label' => $row['sensor'] === 'PROXIMITY'
+                        ? ('Puerta ' . strtolower((string) $row['value']))
+                        : ('Presencia ' . strtolower((string) $row['value'])),
+                    'value' => $row['value'],
+                    'applied' => $row['applied'] === null ? null : (bool) $row['applied'],
+                    'discard_reason' => $row['discard_reason'],
+                    'room_id' => (int) $row['room_id'],
+                    'room_code' => $row['room_code'],
+                    'provider' => $row['provider'],
+                    'occurred_at' => $row['occurred_at'],
+                    'source' => $meta['source'] ?? null,
+                ];
+            }
+        }
+
+        if ($kind === '' || $kind === 'light') {
+            $where = ['sce.requested_at BETWEEN :from AND :to'];
+            $params = [':from' => $from, ':to' => $to];
+            if ($roomId > 0) { $where[] = 'sce.room_id = :room_id'; $params[':room_id'] = $roomId; }
+            if ($applied === '1') { $where[] = 'sce.publish_ok = 1'; }
+            if ($applied === '0') { $where[] = '(sce.publish_ok = 0 OR sce.publish_ok IS NULL)'; }
+            foreach ($this->rows(
+                'SELECT sce.id, sce.room_id, r.code AS room_code, sce.action, sce.publish_ok,
+                        sce.verdict, sce.diagnosis, sce.requested_at, sce.published_at,
+                        sce.reported_state, sce.reported_at, sce.origin
+                 FROM switch_command_evidence sce LEFT JOIN rooms r ON r.id = sce.room_id
+                 WHERE ' . implode(' AND ', $where) . '
+                 ORDER BY sce.requested_at DESC LIMIT 200',
+                $params
+            ) as $row) {
+                $items[] = [
+                    'id' => (int) $row['id'],
+                    'type' => 'light',
+                    'kind' => 'light',
+                    'label' => 'Luz ' . ($row['action'] === 'on' ? 'encendida' : 'apagada'),
+                    'value' => $row['action'],
+                    'applied' => $row['publish_ok'] === null ? null : (bool) $row['publish_ok'],
+                    'discard_reason' => $row['diagnosis'],
+                    'room_id' => (int) $row['room_id'],
+                    'room_code' => $row['room_code'],
+                    'provider' => $row['origin'],
+                    'occurred_at' => $row['requested_at'],
+                    'source' => $row['verdict'],
+                ];
+            }
+        }
+
+        usort($items, static fn ($a, $b) => strcmp((string) $b['occurred_at'], (string) $a['occurred_at']));
+        $items = array_slice($items, 0, 400);
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d'), 'to' => $toLocal->format('Y-m-d'), 'days' => $days],
+            'items' => $items,
+            'meta' => ['count' => count($items)],
         ]);
     }
 
@@ -1079,6 +1459,12 @@ final class AnalyticsController
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    private function row(string $sql, array $params = []): ?array
+    {
+        $rows = $this->rows($sql, $params);
+        return $rows[0] ?? null;
     }
 
     private function ageSeconds(?string $sqlDate, int $now): ?int

@@ -218,6 +218,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F116 Apertura remota real desde `/timbre`** | **BLOCK 86 + units F116** | **Implementado (código); OTA `CERRADURA 2.7-ota` y prueba física pendientes** |
 | **F118 Monigote del dashboard por sensores + ficha** | **BLOCK 33 + `croquis-logic.test.js`** | **Implementado (código); prueba física QR/ficha pendiente** |
 | **F119 Panel CRM v2 + analítica de uso** | **BLOCK 88 + `PanelV2UiTest`** | **Implementado; regresión 1129/0/16; validación visual pendiente del operador** |
+| **F120 Panel CRM v2.1 (anomalías legibles, ocupaciones, almacén, demo)** | **BLOCK 89 + `PanelV21Test`/`AnomalyReopenTest`** | **Implementado; migraciones 0145/0146 aplicadas; demo DEMO-* creada; regresión 1156/3/19 (3 fallos ambientales: gate Apache y perfil radar)** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1204,3 +1205,35 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `PanelV2UiTest` (52), BLOCK 88 y regresión
   **1129 passed, 0 failed, 16 skipped**; Playwright desktop/móvil sin errores.
 
+
+
+### F120 — Panel CRM v2.1: operación vinculada y calidad
+
+- **Anomalías**: catálogo canónico A1–A8 en `panel/assets/anomaly-info.js`. El
+  listado muestra título + explicación accesible (hover/foco/toque) y el código
+  como dato secundario. Aplica a analítica, drawers, dashboard y búsqueda.
+- **Reapertura**: `POST /api/v1/anomalies/{id}/reopen` con motivo obligatorio y
+  auditoría (`reopened_at/by/reason`, migración `0145`). Solo descartes manuales.
+  `bin/panel-reopen-dismissed.php --apply` reabre los históricos manuales.
+- **Tipos**: migración `0146` fusiona `TIPO_NORMAL` en `STANDARD` y migra roles,
+  overrides, llaves, franjas y eventos. Tipos actuales: `STANDARD`,
+  `ALMACEN_BEBIDAS`, `TIMBRADO`.
+- **Espacios**: cada fila ofrece Ver detalle, Ver panel
+  (`/dashboard|/almacen|/timbre?room=`) y Calibrar (`/sensores?room=`).
+- **Ocupaciones**: Estancias unifica `stays` y `worker_sessions`
+  (`/api/v1/analytics/occupations`), con medio de acceso, duración reservada vs
+  real y expediente con QR/deudas/accesos/anomalías/visitas.
+- **QR/deudas/accesos**: estados F51 reales, estados canónicos de deuda,
+  filtros efectivos y enlaces cruzados. Cierre de estancia con Idempotency-Key.
+- **Almacén**: filtro por almacén, cámaras online/offline, visitas por resultado,
+  grabaciones por estado, detalle de visita y logs de puerta/presencia/luz.
+- **F38**: alta de trabajador carga roles; el drawer enlaza sesiones, llaves,
+  accesos y visitas.
+- **Deep links**: `#ro?room=`, `#st?stay=`, `#an?anomaly=`, `#ana?visit=`.
+- **Datos demo**: `php api/bin/panel-demo-fixture.php --create|--purge` crea las
+  salas `DEMO-STANDARD`, `DEMO-ALMACEN`, `DEMO-TIMBRADO` con datos marcados
+  `DEMO_F120`, sin packs ni automatizaciones.
+- **Sin cuota**: cero pollers y cero llamadas a Tuya.
+- **Verificación**: units `AnomalyReopenTest` (17), `PanelV21Test` (50), BLOCK 89.
+  Regresión: **1156 passed, 3 failed, 19 skipped**; los 3 fallos son ambientales
+  (2 requieren el gate Apache de `/panel` y 1 es el perfil de radar previo).

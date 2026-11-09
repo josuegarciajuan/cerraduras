@@ -10,6 +10,7 @@
   var baseCrm = window.crm;
   var F = window.PanelFormat;
   var C = window.PanelCharts;
+  var AI = window.AnomalyInfo || { catalog: {}, info: function () { return { title: '', desc: '', action: '' }; }, title: function (x) { return x; }, severityLabel: function (x) { return x; }, stateLabel: function (x) { return x; }, cell: function (x) { return x; } };
 
   var TITLES = {
     db: ['Dashboard', 'Resumen operativo en tiempo real'],
@@ -58,6 +59,13 @@
     o.roomQ = '';
     o.roomStatusFilter = '';
     o.stayStatusFilter = '';
+    o.occupations = null;
+    o.occupationFilters = { kind: '', status: '', room_id: '', q: '' };
+    o.warehouseLogs = null;
+    o.warehouseVisit = null;
+    o.whRoomId = '';
+    o.whLogKind = '';
+    o.whLogApplied = '';
     o.accessResultFilter = '';
     o.drawer = { show: false, title: '', subtitle: '', content: '', footer: '' };
     o._v2Timer = null;
@@ -97,6 +105,41 @@
       return '<div class="table-wrap"><table><thead><tr>' + head.map(function (h) { return '<th>' + F.escape(h) + '</th>'; }).join('')
         + '</tr></thead><tbody>' + body + '</tbody></table></div>';
     };
+    o.roomTypeCode = function (roomId) {
+      var room = (this.rooms || []).find(function (r) { return r.id === roomId; });
+      if (!room) return null;
+      var t = (this.roomTypes || []).find(function (x) { return x.id === room.room_type_id; });
+      return t ? String(t.code || '').toUpperCase() : null;
+    };
+    o.panelUrlForRoom = function (roomId) {
+      var code = this.roomTypeCode(roomId);
+      if (code === 'ALMACEN_BEBIDAS') return '/almacen?room=' + roomId;
+      if (code === 'TIMBRADO') return '/timbre?room=' + roomId;
+      return '/dashboard?room=' + roomId;
+    };
+    o.panelLabelForRoom = function (roomId) {
+      var code = this.roomTypeCode(roomId);
+      if (code === 'ALMACEN_BEBIDAS') return 'Ver almacén';
+      if (code === 'TIMBRADO') return 'Ver timbre';
+      return 'Ver dashboard';
+    };
+    o.occupationLabel = function (kind) { return kind === 'worker' ? 'Empleado' : 'Huésped'; };
+    o.accessMediumLabel = function (m) {
+      return {
+        QR_STAY: 'QR de estancia',
+        QR_KEY: 'QR de llave',
+        NFC: 'Ficha NFC',
+        WORKER_QR: 'QR maestro',
+        UNKNOWN: 'No identificado'
+      }[m] || 'No identificado';
+    };
+    o.openEntity = function (kind, id) {
+      if (kind === 'room') { this.nav('ro'); this.openRoomDrawer(id); return; }
+      if (kind === 'stay') { this.openOccupationDrawer('stay', id); return; }
+      if (kind === 'worker') { this.nav('w'); this.openWorkerDrawer(id); return; }
+      if (kind === 'anomaly') { this.nav('an'); this.openAnomalyDrawer(id); return; }
+      if (kind === 'visit') { this.openWarehouseVisit(id); return; }
+    };
     o.v2Badge = function (status, label) { return F.badge(status, label); };
     o.v2Avatar = function (name) {
       return '<span class="avatar" style="width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;background:#e8efff;color:var(--accent);font-weight:700;font-size:10.5px;flex:none">'
@@ -109,10 +152,8 @@
       try { await baseInit.call(this); } catch (e) { return; }
       this.bindGlobalKeys();
       this.startLiveClock();
-      var initial = (location.hash || '').replace('#', '');
-      if (initial && TITLES[initial] && initial !== this.p) {
-        this.nav(initial);
-      }
+      this.bindFocusRestore();
+      await this.applyHash();
       await this.refreshAll();
       this._v2Timer = setInterval(function () {
         if (document.hidden) return;
@@ -129,9 +170,69 @@
         }
         if (e.key === 'Escape') o.drawer.show = false;
       });
-      window.addEventListener('hashchange', function () {
-        var p = (location.hash || '').replace('#', '');
-        if (p && TITLES[p] && p !== o.p) o.nav(p);
+      window.addEventListener('hashchange', function () { o.applyHash(); });
+    };
+
+    o.parseHash = function () {
+      var raw = String(location.hash || '').replace(/^#/, '');
+      var parts = raw.split('?');
+      var query = {};
+      if (parts[1]) {
+        try { new URLSearchParams(parts[1]).forEach(function (v, k) { query[k] = v; }); } catch (e) { query = {}; }
+      }
+      return { page: parts[0] || '', query: query };
+    };
+
+    o.setHash = function (page, params) {
+      var qs = [];
+      Object.keys(params || {}).forEach(function (k) {
+        if (params[k] !== '' && params[k] != null) qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+      });
+      var hash = '#' + page + (qs.length ? '?' + qs.join('&') : '');
+      if (location.hash !== hash) history.replaceState(null, '', hash);
+    };
+
+    o.applyHash = async function () {
+      var h = this.parseHash();
+      var page = h.page;
+      if (!page || !TITLES[page]) return;
+      if (page !== this.p) this.nav(page);
+      var q = h.query;
+      if (q.room) this.openRoomDrawer(parseInt(q.room, 10));
+      else if (q.stay) this.openOccupationDrawer('stay', parseInt(q.stay, 10));
+      else if (q.occ && String(q.occ).indexOf(':') > 0) {
+        var occ = String(q.occ).split(':');
+        this.openOccupationDrawer(occ[0] === 'worker' ? 'worker' : 'stay', parseInt(occ[1], 10));
+      }
+      else if (q.worker) this.openWorkerDrawer(parseInt(q.worker, 10));
+      else if (q.anomaly) this.openAnomalyDrawer(parseInt(q.anomaly, 10));
+      else if (q.visit) this.openWarehouseVisit(parseInt(q.visit, 10));
+    };
+
+    o.bindFocusRestore = function () {
+      if (!this.$watch) return;
+      var that = this;
+      this.$watch('drawer.show', function (open) {
+        if (open) {
+          that._focusBefore = document.activeElement;
+          setTimeout(function () {
+            var el = document.querySelector('.drawer [aria-label="Cerrar detalle"]');
+            if (el) el.focus();
+          }, 30);
+        } else if (that._focusBefore && that._focusBefore.focus) {
+          that._focusBefore.focus();
+        }
+      });
+      this.$watch('modal.show', function (open) {
+        if (open) {
+          that._focusBeforeModal = document.activeElement;
+          setTimeout(function () {
+            var el = document.querySelector('.modal [autofocus], .modal input, .modal select, .modal button');
+            if (el) el.focus();
+          }, 30);
+        } else if (that._focusBeforeModal && that._focusBeforeModal.focus) {
+          that._focusBeforeModal.focus();
+        }
       });
     };
 
@@ -154,6 +255,7 @@
       if (this.p === 'an') await this.loadAnomalyAnalyticsV2();
       if (this.p === 'dv' || this.p === 'pk') await this.loadDeviceAnalyticsV2();
       if (this.p === 'mon') await this.loadWarehouseAnalyticsV2();
+      if (this.p === 'st') await this.loadOccupationsV2();
     };
 
     o.setDays = function (days) {
@@ -209,8 +311,19 @@
       catch (e) { this.deviceAnalytics = null; }
     };
     o.loadWarehouseAnalyticsV2 = async function () {
-      try { this.warehouseAnalytics = await this.api('/api/v1/analytics/warehouse?days=' + this.analyticsDays); }
-      catch (e) { this.warehouseAnalytics = null; }
+      try {
+        this.warehouseAnalytics = await this.api('/api/v1/analytics/warehouse?days=' + this.analyticsDays
+          + (this.whRoomId ? '&room_id=' + encodeURIComponent(this.whRoomId) : ''));
+      } catch (e) { this.warehouseAnalytics = null; }
+      this.loadWarehouseLogsV2();
+    };
+    o.loadWarehouseLogsV2 = async function () {
+      try {
+        this.warehouseLogs = await this.api('/api/v1/analytics/warehouse/logs?days=' + this.analyticsDays
+          + (this.whRoomId ? '&room_id=' + encodeURIComponent(this.whRoomId) : '')
+          + (this.whLogKind ? '&kind=' + encodeURIComponent(this.whLogKind) : '')
+          + (this.whLogApplied !== '' ? '&applied=' + encodeURIComponent(this.whLogApplied) : ''));
+      } catch (e) { this.warehouseLogs = null; }
     };
     o.loadKeysAnalyticsV2 = async function () {
       try { this.keysAnalytics = await this.api('/api/v1/analytics/keys?days=' + this.analyticsDays); }
@@ -232,8 +345,8 @@
       if (group === 'keys') { this.nav('ky'); return; }
       if (group === 'devices') { this.nav('dv'); return; }
       if (group === 'packs') { this.nav('pk'); return; }
-      if (group === 'anomalies') { this.nav('an'); return; }
-      if (group === 'stays') { this.nav('st'); return; }
+      if (group === 'anomalies') { this.nav('an'); this.openAnomalyDrawer(item.id); return; }
+      if (group === 'stays') { this.nav('st'); this.openOccupationDrawer('stay', item.id); return; }
     };
 
     /* ── Navegación y render ───────────────────────────────────────── */
@@ -242,8 +355,9 @@
       this.p = p;
       this.drawer.show = false;
       this.sidebarOpen = false;
-      if (location.hash !== '#' + p) history.replaceState(null, '', '#' + p);
+      if (this.parseHash().page !== p) history.replaceState(null, '', '#' + p);
       baseNav.call(this, p);
+      if (p === 'st') this.loadOccupationsV2();
       if (p === 'db') this.refreshAll();
       if (p === 'ana') this.refreshAll();
       if (p === 'w') this.loadWorkersAnalyticsV2();
@@ -372,7 +486,7 @@
 
       var anomalyItems = (a.anomaly_summary || []).map(function (s) {
         var colors = { CRITICAL: '#b91c1c', HIGH: '#dc2626', MEDIUM: '#d97706', LOW: '#64748b' };
-        return { label: s.severity, value: s.count, color: colors[s.severity] || '#64748b' };
+        return { label: AI.severityLabel(s.severity), value: s.count, color: colors[s.severity] || '#64748b' };
       });
       var anomalyCard = this.v2Card('Anomalías abiertas', 'Por severidad', ''
         + (anomalyItems.some(function (x) { return x.value > 0; })
@@ -449,8 +563,9 @@
        ═══════════════════════════════════════════════════════════════ */
     o.analyticsPageV2 = function () {
       var tabs = [['resumen', 'Resumen'], ['workers', 'Trabajadores'], ['rooms', 'Habitaciones'], ['accesses', 'Accesos'], ['anomalies', 'Anomalías'], ['devices', 'Dispositivos'], ['warehouse', 'Almacén']];
-      var tabBar = '<div class="tabs">' + tabs.map(function (t) {
-        return '<div class="tab' + (this.analyticsTab === t[0] ? ' act' : '') + '" @click="analyticsTab=\'' + t[0] + '\';loadAnalyticsV2();loadWorkersAnalyticsV2();loadRoomsAnalyticsV2();loadAccessAnalyticsV2();loadAnomalyAnalyticsV2();loadDeviceAnalyticsV2();loadWarehouseAnalyticsV2()">' + t[1] + '</div>';
+      var tabBar = '<div class="tabs" role="tablist" aria-label="Secciones de analítica">' + tabs.map(function (t) {
+        var act = this.analyticsTab === t[0];
+        return '<button type="button" role="tab" aria-selected="' + (act ? 'true' : 'false') + '" class="tab' + (act ? ' act' : '') + '" @click="analyticsTab=\'' + t[0] + '\';loadAnalyticsV2();loadWorkersAnalyticsV2();loadRoomsAnalyticsV2();loadAccessAnalyticsV2();loadAnomalyAnalyticsV2();loadDeviceAnalyticsV2();loadWarehouseAnalyticsV2()">' + t[1] + '</button>';
       }.bind(this)).join('') + '</div>';
 
       var body = '';
@@ -594,8 +709,8 @@
       var series = d.series || [];
       var rows = (d.recent || []).slice(0, 40).map(function (a) {
         return '<tr><td>#' + a.id + '</td><td><span class="badge badge-soft">' + F.escape(a.room_code || '—') + '</span></td>'
-          + '<td>' + F.escape(a.anomaly_type) + '</td><td>' + F.badge(a.severity) + '</td>'
-          + '<td>' + F.badge(a.status) + '</td><td class="small">' + F.dateTime(a.detected_at) + '</td></tr>';
+          + '<td>' + AI.cell(a.anomaly_type) + '</td><td>' + F.badge(a.severity, AI.severityLabel(a.severity)) + '</td>'
+          + '<td>' + F.badge(a.status, AI.stateLabel(a.status)) + '</td><td class="small">' + F.dateTime(a.detected_at) + '</td></tr>';
       });
       return '<div class="kpi-grid">'
         + this.v2Kpi('Total', F.number((d.by_status ? Object.values(d.by_status).reduce(function (a, b) { return a + b; }, 0) : 0)), 'detectadas', '#2563eb', '⚠️')
@@ -640,20 +755,47 @@
       var d = this.warehouseAnalytics;
       if (!d) return '<div class="skeleton skeleton-card"></div>';
       var trig = (d.by_trigger || []).map(function (x) { return { label: x.entry_trigger, value: x.c, color: x.entry_trigger === 'QR' ? '#2563eb' : (x.entry_trigger === 'DOOR' ? '#0d9488' : '#7c3aed') }; });
-      var out = (d.by_outcome || []).map(function (x) { return { label: x.outcome, value: x.c, color: x.outcome === 'ENTERED' ? '#16a34a' : (x.outcome === 'NO_SHOW' ? '#64748b' : '#d97706') }; });
+      var out = (d.by_outcome || []).map(function (x) { return { label: AI.stateLabel(x.outcome), value: x.c, color: x.outcome === 'ENTERED' ? '#16a34a' : (x.outcome === 'NO_SHOW' ? '#64748b' : '#d97706') }; });
       var rec = d.recordings || {};
-      var recTotal = 0, recBytes = 0;
-      Object.keys(rec).forEach(function (k) { recTotal += rec[k].count; recBytes += rec[k].bytes; });
+      var recTotal = 0, recBytes = 0, recSeconds = 0;
+      Object.keys(rec).forEach(function (k) { recTotal += rec[k].count; recBytes += rec[k].bytes; recSeconds += rec[k].seconds; });
       var series = d.series || [];
+      var vs = d.visit_summary || {};
+      var cam = d.cameras || {};
+      var roomOpts = '<option value="">Todos los almacenes</option>' + (d.rooms || []).map(function (r) {
+        return '<option value="' + r.id + '"' + (String(this.whRoomId) === String(r.id) ? ' selected' : '') + '>' + F.escape(r.code) + ' · ' + F.escape(r.room_type || '') + '</option>';
+      }.bind(this)).join('');
       var rows = (d.recent || []).slice(0, 40).map(function (v) {
-        return '<tr><td>#' + v.id + '</td><td>' + F.escape(v.room_code || '—') + '</td><td>' + F.escape(v.worker_name || '—') + '</td>'
-          + '<td>' + F.escape(v.entry_trigger) + '</td><td>' + F.badge(v.outcome) + '</td><td class="small">' + F.dateTime(v.created_at) + '</td></tr>';
+        return '<tr><td><button class="link-cell" @click="openWarehouseVisit(' + v.id + ')">#' + v.id + '</button></td>'
+          + '<td>' + F.escape(v.room_code || '—') + '</td><td>' + F.escape(v.worker_name || 'Anónimo') + '</td>'
+          + '<td>' + F.escape(v.entry_trigger) + '</td><td>' + F.badge(v.outcome, AI.stateLabel(v.outcome)) + '</td>'
+          + '<td class="small">' + (v.entered_at ? F.dateTime(v.entered_at) : '—') + '</td>'
+          + '<td>' + (v.recordings || 0) + ' · ' + F.bytes(v.recording_bytes || 0) + '</td>'
+          + '<td class="small">' + F.dateTime(v.created_at) + '</td></tr>';
       });
-      return '<div class="kpi-grid">'
-        + this.v2Kpi('Visitas', F.number((d.by_outcome || []).reduce(function (a, x) { return a + x.c; }, 0)), 'en el periodo', '#2563eb', '📦')
-        + this.v2Kpi('Entradas', F.number((d.by_outcome || []).reduce(function (a, x) { return a + (x.outcome === 'ENTERED' ? x.c : 0); }, 0)), 'confirmadas', '#16a34a', '✅')
-        + this.v2Kpi('Sin entrada', F.number((d.by_outcome || []).reduce(function (a, x) { return a + (x.outcome === 'NO_SHOW' ? x.c : 0); }, 0)), 'descartadas', '#64748b', '🚫')
-        + this.v2Kpi('Grabaciones', recTotal, F.bytes(recBytes), '#7c3aed', '🎥')
+      var recRows = Object.keys(rec).map(function (k) {
+        return '<tr><td>' + F.badge(k === 'SAVED' ? 'SYNCED' : k, { RECORDING: 'Grabando', SAVED: 'Guardada', DISCARDED: 'Descartada', FAILED: 'Fallida', PENDING: 'Pendiente' }[k] || k) + '</td>'
+          + '<td>' + rec[k].count + '</td><td>' + F.seconds(rec[k].seconds) + '</td><td>' + F.bytes(rec[k].bytes) + '</td></tr>';
+      });
+      var logs = (this.warehouseLogs && this.warehouseLogs.items) || [];
+      var logRows = logs.slice(0, 120).map(function (e) {
+        var applied = e.applied === null ? '<span class="muted">—</span>' : (e.applied ? '<span class="badge badge-ok">Aplicado</span>' : '<span class="badge badge-danger">Descartado</span>');
+        return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
+          + '<td>' + F.escape(e.room_code || '—') + '</td>'
+          + '<td><span class="entity-chip">' + F.escape(e.kind) + '</span></td>'
+          + '<td><b>' + F.escape(e.label || e.value || '—') + '</b>' + (e.source ? '<div class="small muted">' + F.escape(e.source) + '</div>' : '') + '</td>'
+          + '<td>' + applied + '</td><td class="small muted">' + F.escape(e.discard_reason || '') + '</td></tr>';
+      });
+      return '<div class="fbar"><select x-model="whRoomId" @change="loadWarehouseAnalyticsV2()">' + roomOpts + '</select>'
+        + '<button class="btn btn-o" @click="loadWarehouseAnalyticsV2()">Aplicar</button>'
+        + '<a class="btn btn-o" href="' + (this.whRoomId ? ('/almacen?room=' + this.whRoomId) : '/almacen') + '" target="_blank" rel="noopener">Abrir /almacen</a></div>'
+        + '<div class="kpi-grid">'
+        + this.v2Kpi('Visitas', F.number(vs.total || 0), 'en el periodo', '#2563eb', '📦')
+        + this.v2Kpi('Entradas', F.number(vs.entered || 0), 'confirmadas', '#16a34a', '✅')
+        + this.v2Kpi('Ruido / sin entrada', F.number((vs.noise || 0) + (vs.no_show || 0)), 'descartadas', '#64748b', '🚫')
+        + this.v2Kpi('Estancia media', vs.avg_seconds != null ? F.seconds(vs.avg_seconds) : '—', 'dentro', '#d97706', '⏱️')
+        + this.v2Kpi('Cámaras online', (cam.online || 0) + '/' + (cam.total || 0), (cam.offline || 0) + ' offline · ' + (cam.unknown || 0) + ' sin verificar', '#0ea5e9', '🎥')
+        + this.v2Kpi('Grabaciones', recTotal, F.bytes(recBytes), '#7c3aed', '🎬')
         + '</div>'
         + '<div class="grid-2">'
         + this.v2Card('Disparador', 'Cómo empezó la visita', '<div class="donut-wrap">' + C.donut(trig, { size: 170, stroke: 18 }) + '</div>')
@@ -661,9 +803,44 @@
         + '</div>'
         + '<div class="grid-2" style="margin-top:16px">'
         + this.v2Card('Visitas por día', 'Evolución', C.bars(series.map(function (x) { return x.label; }), [{ name: 'Visitas', values: series.map(function (x) { return x.value; }), color: '#0d9488' }], { height: 220, legend: false }))
-        + this.v2Card('Trabajadores', 'Más visitas', this.v2Rank((d.top_workers || []).map(function (w) { return { id: w.id, name: w.name, visits: w.visits }; }), 'name', 'visits', 'openWorkerDrawer'))
+        + this.v2Card('Grabaciones','Por estado (periodo)', this.v2Table(['Estado', 'Clips', 'Duración', 'Tamaño'], recRows, 'Sin grabaciones'))
         + '</div>'
-        + '<div style="margin-top:16px">' + this.v2Card('Visitas recientes', 'Máximo 40', this.v2Table(['ID', 'Sala', 'Trabajador', 'Disparador', 'Resultado', 'Fecha'], rows, 'Sin visitas')) + '</div>';
+        + '<div style="margin-top:16px">' + this.v2Card('Visitas recientes', 'Máximo 40 · clic para ver y reproducir', this.v2Table(['ID', 'Sala', 'Trabajador', 'Disparador', 'Resultado', 'Entrada', 'Grabaciones', 'Inicio'], rows, 'Sin visitas')) + '</div>'
+        + '<div style="margin-top:16px">' + this.v2Card('Eventos físicos y decisiones',
+          'Puerta, presencia y luz · sin payloads técnicos',
+          '<div class="fbar"><select x-model="whLogKind" @change="loadWarehouseLogsV2()"><option value="">Todos los eventos</option><option value="door">Puerta</option><option value="presence">Presencia</option><option value="light">Luz</option></select>'
+          + '<select x-model="whLogApplied" @change="loadWarehouseLogsV2()"><option value="">Aplicados y descartados</option><option value="1">Solo aplicados</option><option value="0">Solo descartados</option></select>'
+          + '<button class="btn btn-o btn-sm" @click="loadWarehouseLogsV2()">Actualizar</button></div>'
+          + this.v2Table(['Fecha', 'Sala', 'Tipo', 'Evento', 'Decisión', 'Motivo'], logRows, 'Sin eventos en el periodo')) + '</div>';
+    };
+
+    o.openWarehouseVisit = async function (id) {
+      this.setHash('ana', { visit: id });
+      this.drawer = { show: true, title: 'Visita #' + id, subtitle: 'Cargando…', content: '<div class="skeleton skeleton-card"></div>', footer: '' };
+      try {
+        var d = await this.api('/api/v1/analytics/warehouse/visits/' + id);
+        var v = d.visit || {};
+        this.drawer.title = 'Visita #' + id + ' · ' + (v.room_code || '');
+        this.drawer.subtitle = (v.room_type || '') + ' · ' + AI.stateLabel(v.outcome || '') + ' · ' + F.escape(v.entry_trigger || '');
+        var recs = (d.recordings || []).map(function (r) {
+          return '<tr><td>' + F.escape(r.position || '—') + '</td><td>' + F.escape(r.episode || '—') + '</td>'
+            + '<td>' + F.badge(r.status === 'SAVED' ? 'SYNCED' : r.status, { RECORDING: 'Grabando', SAVED: 'Guardada', DISCARDED: 'Descartada', FAILED: 'Fallida', PENDING: 'Pendiente' }[r.status] || r.status) + '</td>'
+            + '<td>' + (r.duration_s != null ? F.seconds(r.duration_s) : '—') + '</td><td>' + F.bytes(r.size_bytes || 0) + '</td>'
+            + '<td class="small">' + F.dateTime(r.requested_at) + '</td><td class="small muted">' + F.escape(r.error || '') + '</td></tr>';
+        });
+        this.drawer.content = '<div class="kpi-grid">'
+          + this.v2Kpi('Sala', F.escape(v.room_code || '—'), v.room_type || '', '#2563eb', '🚪')
+          + this.v2Kpi('Trabajador', F.escape(v.worker_name || 'Anónimo'), v.worker_session_id ? ('Sesión #' + v.worker_session_id) : 'sin sesión', '#7c3aed', '👤')
+          + this.v2Kpi('Entrada', v.entered_at ? F.dateTime(v.entered_at) : '—', v.entry_trigger || '', '#16a34a', '➡️')
+          + this.v2Kpi('Salida', v.exited_at ? F.dateTime(v.exited_at) : '—', v.outcome || '', '#0ea5e9', '⬅️')
+          + '</div>'
+          + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Grabaciones</h3><p>' + (d.recordings || []).length + ' clips</p></div><div class="card-body">'
+          + this.v2Table(['Cámara', 'Episodio', 'Estado', 'Duración', 'Tamaño', 'Solicitada', 'Error'], recs, 'Sin grabaciones registradas') + '</div></div>';
+        this.drawer.footer = '<button class="btn btn-o" @click="drawer.show=false">Cerrar</button>'
+          + '<a class="btn btn-p" href="/almacen?room=' + (v.room_id || '') + '" target="_blank" rel="noopener">Abrir /almacen</a>';
+      } catch (e) {
+        this.drawer.content = '<div class="empty"><h2>No se pudo cargar</h2><p>' + F.escape(e.message) + '</p></div>';
+      }
     };
 
     /* ═══════════════════════════════════════════════════════════════
@@ -728,7 +905,7 @@
       var dailyLabels = (d.daily || []).map(function (x) { return x.label; });
       var perRoom = (d.per_room || []).map(function (r) { return { id: r.room_id, label: r.room_code, minutes: r.minutes, sessions: r.sessions }; });
       var sessions = (d.sessions || []).slice(0, 30).map(function (s) {
-        return '<tr><td><b>' + F.escape(s.room_code || '—') + '</b></td><td class="small">' + F.dateTime(s.entered_at) + '</td>'
+        return '<tr><td><button class="link-cell" @click="openRoomDrawer(' + s.room_id + ')"><b>' + F.escape(s.room_code || '—') + '</b></button></td><td class="small">' + F.dateTime(s.entered_at) + '</td>'
           + '<td class="small">' + (s.exited_at ? F.dateTime(s.exited_at) : '<span class="badge badge-live"><i></i>Activo</span>') + '</td>'
           + '<td>' + F.duration(s.duration_minutes) + '</td><td class="small muted">' + F.escape(s.exit_kind || '—') + '</td></tr>';
       });
@@ -739,6 +916,12 @@
       var keyEvents = (d.key_events || []).slice(0, 12).map(function (e) {
         return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td><td>' + F.escape(e.room_code || '—') + '</td>'
           + '<td>' + F.escape(e.key_label || '—') + '</td><td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
+      });
+      var visits = (d.visits || []).map(function (v) {
+        return '<tr><td><button class="link-cell" @click="openWarehouseVisit(' + v.id + ')">#' + v.id + '</button></td>'
+          + '<td>' + F.escape(v.room_code || '—') + '</td><td>' + F.escape(v.entry_trigger) + '</td>'
+          + '<td>' + F.badge(v.outcome, AI.stateLabel(v.outcome)) + '</td><td>' + (v.recordings || 0) + '</td>'
+          + '<td class="small">' + F.dateTime(v.created_at) + '</td></tr>';
       });
       var heat = d.heatmap || {};
       var matrix = [1, 2, 3, 4, 5, 6, 7].map(function (dw) {
@@ -764,7 +947,9 @@
         + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Llaves</h3></div><div class="card-body">'
         + this.v2Table(['Etiqueta', 'Tipo', 'Estado', 'Validez', 'Usos', 'Deneg.'], keys, 'Sin llaves') + '</div></div>'
         + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Últimos accesos con llave</h3></div><div class="card-body">'
-        + this.v2Table(['Fecha', 'Sala', 'Llave', 'Resultado', 'Motivo'], keyEvents, 'Sin accesos') + '</div></div>';
+        + this.v2Table(['Fecha', 'Sala', 'Llave', 'Resultado', 'Motivo'], keyEvents, 'Sin accesos') + '</div></div>'
+        + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Visitas de almacén</h3><p>' + visits.length + ' visitas</p></div><div class="card-body">'
+        + this.v2Table(['Visita', 'Sala', 'Disparador', 'Resultado', 'Grabaciones', 'Fecha'], visits, 'Sin visitas de almacén') + '</div></div>';
     };
 
     /* ═══════════════════════════════════════════════════════════════
@@ -781,12 +966,19 @@
         return '<option value="' + s + '"' + (this.roomStatusFilter === s ? ' selected' : '') + '>' + F.escape(m[0]) + '</option>';
       }.bind(this)).join('');
       var rows = items.map(function (r) {
-        return '<tr><td><strong>' + F.escape(r.code) + '</strong><div class="small muted">' + F.escape(r.room_type || '—') + '</div></td>'
+        var panelUrl = this.panelUrlForRoom(r.id);
+        return '<tr><td><button class="link-cell" @click="openRoomDrawer(' + r.id + ')"><strong>' + F.escape(r.code) + '</strong></button><div class="small muted">' + F.escape(r.room_type || '—') + '</div></td>'
           + '<td>' + F.badge(r.status) + '</td><td>' + (r.pack_name || '<span class="muted">—</span>') + '</td>'
-          + '<td>' + (r.sessions || 0) + '</td><td>' + (r.accesses || 0) + '</td><td>' + (r.anomalies || 0) + '</td>'
+          + '<td><button class="link-cell" @click="openRoomOccupations(' + r.id + ')">' + (r.sessions || 0) + '</button></td>'
+          + '<td><button class="link-cell" @click="nav(\'ac\')">' + (r.accesses || 0) + '</button></td>'
+          + '<td><button class="link-cell" @click="openRoomAnomalies(' + r.id + ')">' + (r.anomalies || 0) + '</button></td>'
           + '<td class="small">' + F.relative(r.last_access_at) + '</td>'
-          + '<td style="white-space:nowrap"><button class="btn btn-o btn-sm" @click="openRoomDrawer(' + r.id + ')">Ver</button> '
-          + '<button class="btn btn-o btn-sm" @click="openRoomForm(' + r.id + ')">Editar</button></td></tr>';
+          + '<td><div class="row-actions">'
+          + '<button class="btn btn-o btn-sm" @click="openRoomDrawer(' + r.id + ')">Ver</button> '
+          + '<a class="btn btn-o btn-sm" href="' + panelUrl + '" target="_blank" rel="noopener">' + F.escape(this.panelLabelForRoom(r.id)) + '</a> '
+          + '<a class="btn btn-o btn-sm" href="/sensores?room=' + r.id + '">Calibrar</a> '
+          + '<button class="btn btn-o btn-sm" @click="openRoomForm(' + r.id + ')">Editar</button>'
+          + '</div></td></tr>';
       }.bind(this)).join('');
       var tiles = (this.live && this.live.rooms ? this.live.rooms : []).map(function (r) {
         var m = F.statusMeta(r.status);
@@ -805,7 +997,20 @@
         + this.v2Table(['Sala', 'Estado', 'Pack', 'Sesiones', 'Accesos', 'Anomalías', 'Último', ''], rows, 'Sin habitaciones');
     };
 
+    o.openRoomOccupations = function (roomId) {
+      this.nav('st');
+      this.occupationFilters.room_id = String(roomId);
+      this.loadOccupationsV2();
+    };
+
+    o.openRoomAnomalies = function (roomId) {
+      this.nav('an');
+      this.anomalyFilters.room_id = String(roomId);
+      this.loadAnomalies();
+    };
+
     o.openRoomDrawer = async function (id) {
+      this.setHash('ro', { room: id });
       this.drawer = { show: true, title: 'Habitación', subtitle: 'Cargando…', content: '<div class="skeleton skeleton-card"></div>', footer: '' };
       try {
         var d = await this.api('/api/v1/analytics/rooms/' + id + '?days=' + this.analyticsDays);
@@ -875,61 +1080,195 @@
     /* ═══════════════════════════════════════════════════════════════
        ESTANCIAS / QR / DEUDAS
        ═══════════════════════════════════════════════════════════════ */
+    o.loadOccupationsV2 = async function () {
+      var f = this.occupationFilters || {};
+      var params = ['days=' + this.analyticsDays];
+      if (f.kind) params.push('kind=' + encodeURIComponent(f.kind));
+      if (f.status) params.push('status=' + encodeURIComponent(f.status));
+      if (f.room_id) params.push('room_id=' + encodeURIComponent(f.room_id));
+      if (f.q) params.push('q=' + encodeURIComponent(f.q));
+      try { this.occupations = await this.api('/api/v1/analytics/occupations?' + params.join('&')); }
+      catch (e) { this.occupations = null; }
+    };
+
     o.stayPageV2 = function () {
-      var stays = this.stays || [];
-      var rows = stays.map(function (s) {
-        var room = this.roomCodeById(s.room_id);
-        return '<tr><td>#' + s.id + '</td><td><b>' + F.escape(room) + '</b></td><td>' + F.badge(s.status) + '</td>'
-          + '<td>' + F.duration(s.duracion_minutos) + '</td><td class="small">' + F.dateTime(s.reserved_at) + '</td>'
-          + '<td class="small">' + (s.first_entry_at ? F.dateTime(s.first_entry_at) : '—') + '</td>'
-          + '<td class="small">' + (s.closed_at ? F.dateTime(s.closed_at) : '—') + '</td>'
-          + '<td><button class="btn btn-o btn-sm" @click="closeStay(' + s.id + ')" ' + (s.status === 'CLOSED' || s.status === 'CANCELED' ? 'disabled' : '') + '>Cerrar</button></td></tr>';
+      var d = this.occupations;
+      var f = this.occupationFilters || {};
+      var items = d ? (d.items || []) : [];
+      var s = d ? (d.summary || {}) : {};
+      var roomOpts = '<option value="">Todas las salas</option>' + (this.rooms || []).map(function (r) {
+        return '<option value="' + r.id + '"' + (String(f.room_id) === String(r.id) ? ' selected' : '') + '>' + F.escape(r.code) + '</option>';
+      }).join('');
+      var rows = items.map(function (o) {
+        var kindBadge = '<span class="entity-chip">' + (o.kind === 'worker' ? '👤 Empleado' : '🎫 Huésped') + '</span>';
+        var person = o.kind === 'worker' ? F.escape(o.worker_name || '—') : '<span class="muted">Huésped</span>';
+        var reserved = o.kind === 'worker' ? '<span class="muted">No aplica</span>' : F.duration(o.reserved_minutes);
+        var real = o.real_minutes == null ? '<span class="muted">—</span>' : F.duration(o.real_minutes);
+        return '<tr><td>' + kindBadge + '<div class="small muted">#' + o.id + '</div></td>'
+          + '<td><button class="link-cell" @click="openRoomDrawer(' + o.room_id + ')"><strong>' + F.escape(o.room_code || '—') + '</strong></button>'
+          + '<div class="small muted">' + F.escape(o.room_type || '') + '</div></td>'
+          + '<td>' + person + '</td>'
+          + '<td>' + F.badge(o.status, AI.stateLabel(o.status)) + '</td>'
+          + '<td><span class="entity-chip">' + F.escape(this.accessMediumLabel(o.access_medium)) + '</span></td>'
+          + '<td><div class="duration-pair"><span>Reservada: ' + reserved + '</span><small>Real: ' + real + '</small></div></td>'
+          + '<td class="small">' + F.dateTime(o.entered_at || o.reserved_at) + '</td>'
+          + '<td class="small">' + (o.exited_at ? F.dateTime(o.exited_at) : (o.status === 'INSIDE' ? '<span class="badge badge-live"><i></i>Dentro</span>' : '—')) + '</td>'
+          + '<td><div class="row-actions"><button class="btn btn-o btn-sm" @click="openOccupationDrawer(\'' + o.kind + '\',' + o.id + ')">Expediente</button>'
+          + (o.kind === 'stay' && o.status !== 'CLOSED' && o.status !== 'CANCELED' ? ' <button class="btn btn-o btn-sm" @click="closeStayV2(' + o.id + ')">Cerrar</button>' : '')
+          + '</div></td></tr>';
       }.bind(this)).join('');
-      return '<div class="ph"><div><h1>Estancias</h1><p>' + stays.length + ' ciclos registrados</p></div></div>'
+
+      return '<div class="ph"><div><h1>Estancias</h1><p>Huéspedes y empleados · duración reservada vs real · últimos ' + this.analyticsDays + ' días</p></div></div>'
         + '<div class="kpi-grid">'
-        + this.v2Kpi('Total', stays.length, 'estancias', '#2563eb', '⏱️')
-        + this.v2Kpi('Activas', stays.filter(function (s) { return ['RESERVED', 'OCCUPIED', 'OVERSTAY'].indexOf(s.status) >= 0; }).length, 'en curso', '#16a34a', '🟢')
-        + this.v2Kpi('Excedidas', stays.filter(function (s) { return s.status === 'OVERSTAY'; }).length, 'revisar', '#dc2626', '⚠️')
-        + this.v2Kpi('Cerradas', stays.filter(function (s) { return s.status === 'CLOSED'; }).length, 'finalizadas', '#64748b', '✅')
+        + this.v2Kpi('Ocupaciones', F.number(s.total || 0), 'en el periodo', '#2563eb', '⏱️')
+        + this.v2Kpi('Huéspedes', F.number(s.stays || 0), 'estancias', '#0ea5e9', '🎫')
+        + this.v2Kpi('Empleados', F.number(s.workers || 0), 'sesiones', '#7c3aed', '👤')
+        + this.v2Kpi('Excedidas', F.number(s.overstay || 0), 'revisar', '#dc2626', '⚠️')
         + '</div>'
-        + '<div class="fbar"><select x-model="stayStatusFilter"><option value="">Todos los estados</option><option>RESERVED</option><option>OCCUPIED</option><option>OVERSTAY</option><option>EXITED</option><option>CLOSED</option><option>CANCELED</option></select></div>'
-        + this.v2Table(['ID', 'Sala', 'Estado', 'Duración', 'Reservada', 'Entrada', 'Cierre', ''], rows, 'Sin estancias');
+        + '<div class="fbar">'
+        + '<input class="grow" type="search" placeholder="Buscar sala o empleado…" x-model="occupationFilters.q" @keydown.enter="loadOccupationsV2()">'
+        + '<select x-model="occupationFilters.kind" @change="loadOccupationsV2()"><option value="">Todos los tipos</option><option value="stay">Huéspedes</option><option value="worker">Empleados</option></select>'
+        + '<select x-model="occupationFilters.status" @change="loadOccupationsV2()"><option value="">Todos los estados</option><option value="RESERVED">Reservada</option><option value="OCCUPIED">Ocupada</option><option value="OVERSTAY">Excedida</option><option value="EXITED">Salida</option><option value="CLOSED">Cerrada</option><option value="CANCELED">Cancelada</option><option value="INSIDE">Dentro (empleado)</option><option value="OUTSIDE">Fuera (empleado)</option></select>'
+        + '<select x-model="occupationFilters.room_id" @change="loadOccupationsV2()">' + roomOpts + '</select>'
+        + '<button class="btn btn-o" @click="loadOccupationsV2()">Aplicar</button>'
+        + '<button class="btn btn-o" @click="occupationFilters={kind:\'\',status:\'\',room_id:\'\',q:\'\'};loadOccupationsV2()">Limpiar</button>'
+        + '</div>'
+        + this.v2Table(['Ocupación', 'Sala', 'Persona', 'Estado', 'Acceso', 'Duración', 'Entrada', 'Salida', ''], rows, 'Sin ocupaciones en el periodo');
+    };
+
+    o.closeStayV2 = function (id) {
+      var that = this;
+      var occ = ((this.occupations && this.occupations.items) || []).find(function (x) { return x.kind === 'stay' && x.id === id; });
+      var label = occ ? ('la estancia #' + id + ' de la sala ' + occ.room_code) : ('la estancia #' + id);
+      if (!confirm('¿Cerrar ' + label + '?')) return;
+      var key = 'stay-close-' + id + '-' + Date.now();
+      this.api('/api/v1/stays/' + id + '/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ reason: 'checkout' })
+      }).then(function () { that.loadOccupationsV2(); that.toastOk('Estancia cerrada'); })
+        .catch(function (e) { that.toastErr(e.message); });
+    };
+
+    o.openOccupationDrawer = async function (kind, id) {
+      this.setHash('st', kind === 'stay' ? { stay: id } : { occ: kind + ':' + id });
+      this.drawer = { show: true, title: kind === 'worker' ? 'Sesión de empleado' : 'Estancia', subtitle: 'Cargando…', content: '<div class="skeleton skeleton-card"></div>', footer: '' };
+      try {
+        var d = await this.api('/api/v1/analytics/occupations/' + encodeURIComponent(kind) + '/' + id + '?days=' + this.analyticsDays);
+        var o = d.occupation || {};
+        this.drawer.title = kind === 'worker'
+          ? ((o.worker_name || 'Empleado') + ' · ' + (o.room_code || ''))
+          : ('Estancia #' + id + ' · ' + (o.room_code || ''));
+        this.drawer.subtitle = (o.room_type || '') + ' · ' + AI.stateLabel(o.status || '');
+        this.drawer.content = this.renderOccupationDrawer(d);
+        this.drawer.footer = '<button class="btn btn-o" @click="drawer.show=false">Cerrar</button>'
+          + '<button class="btn btn-o" @click="openRoomDrawer(' + (o.room_id || 0) + ')">Ver sala</button>';
+      } catch (e) {
+        this.drawer.content = '<div class="empty"><h2>No se pudo cargar</h2><p>' + F.escape(e.message) + '</p></div>';
+      }
+    };
+
+    o.renderOccupationDrawer = function (d) {
+      var o = d.occupation || {};
+      var tl = (d.timeline || []).map(function (t) {
+        return '<li><span class="tl-dot"></span><div class="tl-body"><strong>' + F.escape(t.label || '—') + '</strong>'
+          + '<small>' + F.dateTime(t.at) + (t.detail ? ' · ' + F.escape(t.detail) : '') + '</small></div></li>';
+      }).join('');
+      var qr = (d.qr || []).map(function (q) {
+        return '<tr><td class="mono small">' + F.escape(String(q.jti || '').slice(0, 14)) + '…</td>'
+          + '<td>' + F.badge(q.revoked_at ? 'REVOKED' : (q.expires_at && F.toDate(q.expires_at) < new Date() ? 'EXPIRED' : (q.first_used_at ? 'ACTIVE' : 'PENDING')), q.first_used_at ? 'En uso' : 'Emitido') + '</td>'
+          + '<td class="small">' + F.dateTime(q.issued_at) + '</td><td class="small">' + F.dateTime(q.valid_until || q.expires_at) + '</td></tr>';
+      });
+      var debts = (d.debts || []).map(function (x) {
+        return '<tr><td>#' + x.id + '</td><td>' + x.exceso_minutos + ' min</td><td>' + F.badge(x.status, AI.stateLabel(x.status)) + '</td><td class="small">' + F.dateTime(x.created_at) + '</td></tr>';
+      });
+      var anomalies = (d.anomalies || []).map(function (x) {
+        return '<tr><td>#' + x.id + '</td><td>' + AI.cell(x.anomaly_type) + '</td><td>' + F.badge(x.severity, AI.severityLabel(x.severity)) + '</td><td>' + F.badge(x.status, AI.stateLabel(x.status)) + '</td></tr>';
+      });
+      var keys = (d.keys || []).map(function (x) {
+        return '<tr><td class="small">' + F.dateTime(x.occurred_at) + '</td><td>' + F.escape(x.credential_type || '—') + '</td><td>' + F.badge(x.result) + '</td><td class="small muted">' + F.escape(x.reason || '') + '</td></tr>';
+      });
+      var visits = (d.visits || []).map(function (x) {
+        return '<tr><td><button class="link-cell" @click="openWarehouseVisit(' + x.id + ')">#' + x.id + '</button></td><td>' + F.escape(x.entry_trigger) + '</td><td>' + F.badge(x.outcome, AI.stateLabel(x.outcome)) + '</td><td class="small">' + F.dateTime(x.created_at) + '</td></tr>';
+      });
+      var reserved = o.reserved_minutes == null ? 'No aplica' : F.duration(o.reserved_minutes);
+      var real = o.real_minutes == null ? '—' : F.duration(o.real_minutes);
+      return '<div class="kpi-grid">'
+        + this.v2Kpi('Estado', AI.stateLabel(o.status || ''), o.room_code || '', '#2563eb', '🚪')
+        + this.v2Kpi('Duración reservada', reserved, o.kind === 'worker' ? 'sesión de empleado' : 'contratada', '#0ea5e9', '🗓️')
+        + this.v2Kpi('Duración real', real, o.first_entry_at || o.entered_at ? 'desde la entrada' : 'sin entrada', '#d97706', '⏱️')
+        + this.v2Kpi('Acceso', this.accessMediumLabel(o.access_medium || (d.kind === 'stay' ? 'QR_STAY' : 'UNKNOWN')), 'medio registrado', '#7c3aed', '🔑')
+        + '</div>'
+        + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Cronología</h3><p>Más reciente primero</p></div><div class="card-body">'
+        + (tl ? '<ul class="timeline">' + tl + '</ul>' : '<p class="muted small">Sin eventos registrados.</p>') + '</div></div>'
+        + (qr.length ? '<div class="card" style="margin-top:12px"><div class="card-head"><h3>QR de la estancia</h3></div><div class="card-body">' + this.v2Table(['JTI', 'Estado', 'Emitido', 'Válido hasta'], qr, '') + '</div></div>' : '')
+        + (debts.length ? '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Deudas</h3></div><div class="card-body">' + this.v2Table(['ID', 'Exceso', 'Estado', 'Creada'], debts, '') + '</div></div>' : '')
+        + (anomalies.length ? '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Anomalías</h3></div><div class="card-body">' + this.v2Table(['ID', 'Tipo', 'Severidad', 'Estado'], anomalies, '') + '</div></div>' : '')
+        + (keys.length ? '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Accesos con llave</h3></div><div class="card-body">' + this.v2Table(['Fecha', 'Credencial', 'Resultado', 'Motivo'], keys, '') + '</div></div>' : '')
+        + (visits.length ? '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Visitas de almacén</h3></div><div class="card-body">' + this.v2Table(['Visita', 'Disparador', 'Resultado', 'Fecha'], visits, '') + '</div></div>' : '');
+    };
+
+    o.qrState = function (q) {
+      var now = new Date();
+      var valid = q.valid_until ? F.toDate(q.valid_until) : null;
+      var arrival = q.expires_at ? F.toDate(q.expires_at) : null;
+      if (q.revoked_at) return { status: 'REVOKED', label: 'Revocado' };
+      if (valid && valid < now) return { status: 'EXPIRED', label: 'Caducado' };
+      if (!q.first_used_at && arrival && arrival < now) return { status: 'EXPIRED', label: 'Caducado para llegada' };
+      if (q.first_used_at) return { status: 'ACTIVE', label: 'En uso' };
+      return { status: 'RESERVED', label: 'Emitido · sin usar' };
     };
 
     o.qrPageV2 = function () {
       var qrs = this.qrs || [];
       var rows = qrs.map(function (q) {
-        var status = q.revoked_at ? 'REVOKED' : (q.consumed_at ? 'CLOSED' : (q.expires_at && F.toDate(q.expires_at) < new Date() ? 'EXPIRED' : (q.first_used_at ? 'OCCUPIED' : 'ACTIVE')));
+        var st = this.qrState(q);
         return '<tr><td class="mono small">' + F.escape(String(q.jti || '').slice(0, 18)) + '…</td>'
-          + '<td><b>' + F.escape(q.room_code || q.room_id) + '</b></td><td>#' + (q.stay_id || '—') + '</td>'
-          + '<td>' + F.badge(status) + '</td><td class="small">' + F.dateTime(q.issued_at) + '</td>'
-          + '<td class="small">' + (q.valid_until ? F.dateTime(q.valid_until) : '—') + '</td>'
-          + '<td><button class="btn btn-o btn-sm" @click="copyText(\'' + F.escape(q.jti || '') + '\')">Copiar</button></td></tr>';
-      });
+          + '<td><button class="link-cell" @click="openRoomDrawer(' + q.room_id + ')"><strong>' + F.escape(q.room_code || ('#' + q.room_id)) + '</strong></button></td>'
+          + '<td>' + (q.stay_id ? '<button class="link-cell" @click="openOccupationDrawer(\'stay\',' + q.stay_id + ')">#' + q.stay_id + '</button>' : '<span class="muted">—</span>') + '</td>'
+          + '<td>' + F.badge(st.status, st.label) + '</td><td class="small">' + F.dateTime(q.issued_at) + '</td>'
+          + '<td class="small">' + (q.valid_until ? F.dateTime(q.valid_until) : F.dateTime(q.expires_at)) + '</td>'
+          + '<td><button class="btn btn-o btn-sm" @click="openOccupationDrawer(\'stay\',' + (q.stay_id || 0) + ')" ' + (q.stay_id ? '' : 'disabled') + '>Ver estancia</button></td></tr>';
+      }.bind(this));
+      var now = new Date();
+      var active = qrs.filter(function (q) { return !q.revoked_at && (!q.valid_until || F.toDate(q.valid_until) >= now); }).length;
       return '<div class="ph"><div><h1>QRs</h1><p>' + qrs.length + ' credenciales emitidas</p></div></div>'
         + '<div class="kpi-grid">'
         + this.v2Kpi('Total', qrs.length, 'emitidos', '#2563eb', '🎫')
-        + this.v2Kpi('Activos', qrs.filter(function (q) { return !q.consumed_at && !q.revoked_at; }).length, 'utilizables', '#16a34a', '🟢')
-        + this.v2Kpi('Usados', qrs.filter(function (q) { return !!q.consumed_at; }).length, 'consumidos', '#0ea5e9', '✅')
+        + this.v2Kpi('Utilizables', active, 'no caducados ni revocados', '#16a34a', '🟢')
+        + this.v2Kpi('En uso', qrs.filter(function (q) { return !!q.first_used_at && !q.revoked_at; }).length, 'primer uso registrado', '#0ea5e9', '✅')
         + this.v2Kpi('Revocados', qrs.filter(function (q) { return !!q.revoked_at; }).length, 'invalidados', '#dc2626', '⛔')
         + '</div>'
-        + this.v2Table(['JTI', 'Sala', 'Estancia', 'Estado', 'Emitido', 'Validez', ''], rows, 'Sin QRs');
+        + this.v2Table(['JTI', 'Sala', 'Estancia', 'Estado', 'Emitido', 'Válido hasta', ''], rows, 'Sin QRs');
     };
 
     o.debtPageV2 = function () {
       var debts = this.debts || [];
+      var labels = {
+        PENDING_SYNC: 'Pendiente de envío',
+        SYNCING: 'Enviando',
+        SYNCED: 'Sincronizada',
+        FAILED: 'Error de sincronización'
+      };
+      var retryable = function (st) { return st === 'PENDING_SYNC' || st === 'FAILED'; };
       var rows = debts.map(function (d) {
-        return '<tr><td>#' + d.id + '</td><td>#' + (d.stay_id || '—') + '</td><td>' + F.escape(this.roomCodeById(d.room_id)) + '</td>'
+        return '<tr><td>#' + d.id + '</td>'
+          + '<td>' + (d.stay_id ? '<button class="link-cell" @click="openOccupationDrawer(\'stay\',' + d.stay_id + ')">#' + d.stay_id + '</button>' : '<span class="muted">—</span>') + '</td>'
+          + '<td><button class="link-cell" @click="openRoomDrawer(' + d.room_id + ')"><strong>' + F.escape(this.roomCodeById(d.room_id)) + '</strong></button></td>'
           + '<td><b>' + (d.exceso_minutos || 0) + ' min</b></td><td>' + (d.amount_eur_snapshot != null ? Number(d.amount_eur_snapshot).toFixed(2) + ' €' : '—') + '</td>'
-          + '<td>' + F.badge(d.status) + '</td><td>' + (d.attempts || 0) + '</td><td class="small">' + F.dateTime(d.created_at) + '</td>'
-          + '<td><button class="btn btn-o btn-sm" @click="resyncDebt(' + d.id + ')">Reintentar</button></td></tr>';
+          + '<td>' + F.badge(d.status, labels[d.status] || d.status) + '</td><td>' + (d.attempts || 0) + '</td>'
+          + '<td class="small">' + F.dateTime(d.created_at) + (d.last_error ? '<div class="form-error">' + F.escape(d.last_error) + '</div>' : '') + '</td>'
+          + '<td><div class="row-actions">' + (retryable(d.status)
+            ? '<button class="btn btn-o btn-sm" @click="resyncDebt(' + d.id + ')">Reintentar</button>'
+            : '<span class="muted small">No requiere acción</span>') + '</div></td></tr>';
       }.bind(this)).join('');
+      var pending = debts.filter(function (d) { return d.status === 'PENDING_SYNC' || d.status === 'SYNCING'; }).length;
       return '<div class="ph"><div><h1>Deudas</h1><p>' + debts.length + ' registros de exceso</p></div></div>'
         + '<div class="kpi-grid">'
         + this.v2Kpi('Total', debts.length, 'deudas', '#2563eb', '💰')
-        + this.v2Kpi('Pendientes', debts.filter(function (d) { return d.status === 'PENDING'; }).length, 'por sincronizar', '#d97706', '🟡')
+        + this.v2Kpi('Pendientes', pending, 'de envío', '#d97706', '🟡')
         + this.v2Kpi('Sincronizadas', debts.filter(function (d) { return d.status === 'SYNCED'; }).length, 'en VB6', '#16a34a', '✅')
-        + this.v2Kpi('Exceso total', debts.reduce(function (a, d) { return a + (d.exceso_minutos || 0); }, 0) + ' min', 'acumulado', '#dc2626', '⏱️')
+        + this.v2Kpi('Con error', debts.filter(function (d) { return d.status === 'FAILED'; }).length, 'revisar', '#dc2626', '⛔')
         + '</div>'
         + this.v2Table(['ID', 'Estancia', 'Sala', 'Exceso', 'Importe', 'Estado', 'Intentos', 'Creada', ''], rows, 'Sin deudas');
     };
@@ -1045,35 +1384,51 @@
        ═══════════════════════════════════════════════════════════════ */
     o.accessesPageV2 = function () {
       var a = this.accessAnalytics;
+      var f = this.accessFilters || {};
+      var filtered = !!(f.worker_id || f.key_id || f.result || f.from || f.to);
       var rows;
-      if (a) {
+      if (filtered) {
+        rows = (this.keyAccesses || []).map(function (e) {
+          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
+            + '<td>' + (e.room_code ? '<button class="link-cell" @click="openRoomDrawer(' + e.room_id + ')">' + F.escape(e.room_code) + '</button>' : '—') + '</td>'
+            + '<td>' + F.escape(e.credential_type === 'QR' ? 'QR de llave' : (e.credential_type === 'NFC' ? 'Ficha NFC' : (e.credential_type || '—'))) + '</td>'
+            + '<td>' + (e.worker_id ? '<button class="link-cell" @click="openWorkerDrawer(' + e.worker_id + ')">' + F.escape(e.worker_name || ('#' + e.worker_id)) + '</button>' : (e.owner_type === 'ROLE' ? 'Rol compartido' : '—')) + '</td>'
+            + '<td>' + F.escape(e.key_label || '—') + '</td><td>' + F.badge(e.result) + '</td>'
+            + '<td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
+        }.bind(this));
+      } else if (a) {
         rows = (a.recent || []).map(function (e) {
           return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
-            + '<td>' + (e.room_code ? '<span class="badge badge-soft">' + F.escape(e.room_code) + '</span>' : '—') + '</td>'
-            + '<td>' + F.escape(e.type || '—') + '</td><td>' + (e.worker_name ? F.escape(e.worker_name) : '—') + '</td>'
-            + '<td>' + (e.key_label ? F.escape(e.key_label) : '—') + '</td><td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
+            + '<td>' + (e.room_code ? '<button class="link-cell" @click="openRoomDrawer(' + e.room_id + ')">' + F.escape(e.room_code) + '</button>' : '—') + '</td>'
+            + '<td>' + F.escape(e.type || '—') + '</td>'
+            + '<td>' + (e.worker_name ? F.escape(e.worker_name) : '<span class="muted">—</span>') + '</td>'
+            + '<td>' + (e.key_label ? F.escape(e.key_label) : '<span class="muted">—</span>') + '</td>'
+            + '<td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
         });
       } else {
         rows = (this.keyAccesses || []).map(function (e) {
-          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td><td>' + F.escape(e.room_code || '—') + '</td>'
-            + '<td>' + F.escape(e.credential_type || '—') + '</td><td>' + F.escape(e.worker_name || (e.owner_type === 'ROLE' ? 'Rol compartido' : '—')) + '</td>'
+          return '<tr><td class="small">' + F.dateTime(e.occurred_at) + '</td>'
+            + '<td>' + F.escape(e.room_code || '—') + '</td><td>' + F.escape(e.credential_type || '—') + '</td>'
+            + '<td>' + F.escape(e.worker_name || (e.owner_type === 'ROLE' ? 'Rol compartido' : '—')) + '</td>'
             + '<td>' + F.escape(e.key_label || '—') + '</td><td>' + F.badge(e.result) + '</td><td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
         });
       }
       var s = a ? a.summary : null;
-      return '<div class="ph"><div><h1>Accesos</h1><p>Intentos concedidos y denegados</p></div></div>'
+      return '<div class="ph"><div><h1>Accesos</h1><p>Intentos concedidos y denegados' + (filtered ? ' · filtros activos' : '') + '</p></div></div>'
         + '<div class="kpi-grid">'
         + this.v2Kpi('Total', s ? F.number(s.total) : (this.keyAccesses || []).length, 'intentos', '#2563eb', '📜')
         + this.v2Kpi('Concedidos', s ? F.number(s.ok) : '—', s ? F.pct(s.success_rate) : '', '#16a34a', '✅')
         + this.v2Kpi('Denegados', s ? F.number(s.fail) : '—', 'revisar', '#dc2626', '⛔')
         + this.v2Kpi('Tasa de éxito', s ? F.pct(s.success_rate) : '—', 'global', '#0ea5e9', '📈')
         + '</div>'
-        + (a && a.series ? this.v2Card('Evolución', 'Accesos y llaves', C.bars(a.series.map(function (x) { return x.label; }), [
+        + (a && a.series && !filtered ? this.v2Card('Evolución', 'Accesos y llaves', C.bars(a.series.map(function (x) { return x.label; }), [
           { name: 'Accesos', values: a.series.map(function (x) { return x.accesses; }), color: '#2563eb' },
           { name: 'Llaves', values: a.series.map(function (x) { return x.keys; }), color: '#0d9488' }
         ], { height: 220 })) : '')
-        + '<div class="fbar" style="margin-top:16px"><select id="ac_worker" @change="setAccessFilter(\'worker_id\',$event.target.value)"><option value="">Todos los trabajadores</option>' + (this.workers || []).map(function (w) { return '<option value="' + w.id + '">' + F.escape(w.name) + '</option>'; }).join('') + '</select>'
-        + '<select @change="setAccessFilter(\'result\',$event.target.value)"><option value="">Todos</option><option value="OK">Concedidos</option><option value="FAIL">Denegados</option></select>'
+        + '<div class="fbar" style="margin-top:16px"><select id="ac_worker" @change="setAccessFilter(\'worker_id\',$event.target.value)"><option value="">Todos los trabajadores</option>' + (this.workers || []).map(function (w) { return '<option value="' + w.id + '"' + (String(f.worker_id) === String(w.id) ? ' selected' : '') + '>' + F.escape(w.name) + '</option>'; }).join('') + '</select>'
+        + '<select @change="setAccessFilter(\'result\',$event.target.value)"><option value="">Todos</option><option value="OK"' + (f.result === 'OK' ? ' selected' : '') + '>Concedidos</option><option value="FAIL"' + (f.result === 'FAIL' ? ' selected' : '') + '>Denegados</option></select>'
+        + '<input type="datetime-local" @change="setAccessFilter(\'from\',$event.target.value)" title="Desde" value="' + F.escape(f.from || '') + '">'
+        + '<input type="datetime-local" @change="setAccessFilter(\'to\',$event.target.value)" title="Hasta" value="' + F.escape(f.to || '') + '">'
         + '<button class="btn btn-o btn-sm" @click="clearAccessFilters()">Limpiar</button></div>'
         + this.v2Table(['Fecha', 'Sala', 'Tipo', 'Trabajador', 'Llave', 'Resultado', 'Motivo'], rows, 'Sin accesos');
     };
@@ -1161,33 +1516,104 @@
        ═══════════════════════════════════════════════════════════════ */
     o.anomalyPageV2 = function () {
       var a = this.anomalyAnalytics;
-      var f = this.anomalyFilters || { status: 'OPEN', type: '', severity: '' };
-      var cat = this.ANOMALY_CATALOG || [];
+      var f = this.anomalyFilters || { status: 'OPEN', type: '', severity: '', room_id: '' };
+      var cat = AI.catalog;
       var rows = (this.anomalies || []).map(function (x) {
-        return '<tr><td>#' + x.id + '</td><td><b>' + F.escape(x.room_code || this.roomCodeById(x.room_id)) + '</b></td>'
-          + '<td title="' + F.escape((cat.find(function (c) { return c.code === x.anomaly_type; }) || {}).desc || '') + '">' + F.escape(x.anomaly_type) + '</td>'
-          + '<td>' + F.badge(x.severity) + '</td><td>' + F.badge(x.status) + '</td><td class="small">' + F.dateTime(x.detected_at) + '</td>'
-          + '<td style="white-space:nowrap">' + (x.status === 'OPEN'
-            ? '<button class="btn btn-p btn-xs" @click="acknowledgeAnomaly(' + x.id + ')">✓</button> <button class="btn btn-d btn-xs" @click="dismissAnomaly(' + x.id + ')">Descartar</button>'
-            : '<span class="muted small">' + F.escape(x.acknowledged_by || '—') + '</span>') + '</td></tr>';
+        var actions = '';
+        if (x.status === 'OPEN') {
+          actions = '<button class="btn btn-p btn-xs" @click="acknowledgeAnomaly(' + x.id + ')">Reconocer</button> '
+            + '<button class="btn btn-o btn-xs" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
+        } else if (x.status === 'ACKNOWLEDGED') {
+          actions = '<button class="btn btn-o btn-xs" @click="dismissAnomaly(' + x.id + ')">Descartar</button>';
+        } else if (x.status === 'DISMISSED' && x.dismissed_by !== 'system') {
+          actions = '<button class="btn btn-o btn-xs" @click="reopenAnomaly(' + x.id + ')">Reabrir incidencia</button>';
+        } else if (x.status === 'DISMISSED') {
+          actions = '<span class="muted small">Resuelta automáticamente</span>';
+        }
+        return '<tr><td><button class="link-cell" @click="openAnomalyDrawer(' + x.id + ')">#' + x.id + '</button></td>'
+          + '<td><button class="link-cell" @click="openRoomDrawer(' + x.room_id + ')"><strong>' + F.escape(x.room_code || this.roomCodeById(x.room_id)) + '</strong></button></td>'
+          + '<td>' + AI.cell(x.anomaly_type) + '</td>'
+          + '<td>' + F.badge(x.severity, AI.severityLabel(x.severity)) + '</td>'
+          + '<td>' + F.badge(x.status, AI.stateLabel(x.status)) + '</td><td class="small">' + F.dateTime(x.detected_at) + '</td>'
+          + '<td><div class="row-actions">' + actions + '</div></td></tr>';
       }.bind(this));
       var sevItems = a ? ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(function (s) {
         var colors = { CRITICAL: '#b91c1c', HIGH: '#dc2626', MEDIUM: '#d97706', LOW: '#64748b' };
-        return { label: s, value: (a.by_severity || {})[s] || 0, color: colors[s] };
+        return { label: AI.severityLabel(s), value: (a.by_severity || {})[s] || 0, color: colors[s] };
       }) : [];
+      var roomOpts = '<option value="">Todas las salas</option>' + (this.rooms || []).map(function (r) {
+        return '<option value="' + r.id + '"' + (String(f.room_id) === String(r.id) ? ' selected' : '') + '>' + F.escape(r.code) + '</option>';
+      }).join('');
       return '<div class="ph"><div><h1>Anomalías</h1><p>' + (this.anomalies || []).length + ' en la vista · ' + (this.anomalyCount || 0) + ' pendientes</p></div></div>'
         + '<div class="kpi-grid">'
         + this.v2Kpi('Pendientes', (a ? (a.by_status || {}).OPEN : this.anomalyCount) || 0, 'abiertas', '#dc2626', '🔴')
         + this.v2Kpi('Críticas', a ? ((a.by_severity || {}).CRITICAL || 0) : 0, 'prioridad máxima', '#b91c1c', '🚨')
-        + this.v2Kpi('Reconocidas', a ? ((a.by_status || {}).ACKNOWLEDGED || 0) : 0, 'en seguimiento', '#d97706', '👁️')
+        + this.v2Kpi('En seguimiento', a ? ((a.by_status || {}).ACKNOWLEDGED || 0) : 0, 'reconocidas', '#d97706', '👁️')
         + this.v2Kpi('Tiempo medio', a && a.mtta_minutes != null ? F.duration(a.mtta_minutes) : '—', 'hasta reconocer', '#2563eb', '⏱️')
         + '</div>'
         + (a ? '<div class="grid-2">' + this.v2Card('Severidad', 'Distribución', '<div class="donut-wrap">' + C.donut(sevItems, { size: 170, stroke: 18, centerLabel: String((a.by_status || {}).OPEN || 0), centerSub: 'abiertas' }) + '</div>')
           + this.v2Card('Evolución', 'Anomalías por día', C.bars((a.series || []).map(function (x) { return x.label; }), [{ name: 'Anomalías', values: (a.series || []).map(function (x) { return x.value; }), color: '#dc2626' }], { height: 200, legend: false })) + '</div>' : '')
-        + '<div class="fbar" style="margin-top:16px"><select @change="anomalyFilters.type=$event.target.value;loadAnomalies()"><option value="">Todos los tipos</option>' + cat.map(function (c) { return '<option value="' + c.code + '">' + c.code + ' — ' + F.escape(c.name) + '</option>'; }).join('') + '</select>'
-        + '<select @change="anomalyFilters.severity=$event.target.value;loadAnomalies()"><option value="">Todas las severidades</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>'
-        + '<select @change="anomalyFilters.status=$event.target.value;loadAnomalies()"><option value="OPEN"' + (f.status === 'OPEN' ? ' selected' : '') + '>Pendientes</option><option value="ACKNOWLEDGED">Reconocidas</option><option value="DISMISSED">Histórico</option><option value="ALL">Todas</option></select></div>'
+        + '<div class="fbar" style="margin-top:16px">'
+        + '<select @change="anomalyFilters.type=$event.target.value;loadAnomalies()"><option value="">Todos los tipos</option>' + Object.keys(cat).map(function (code) { return '<option value="' + code + '"' + (f.type === code ? ' selected' : '') + '>' + F.escape(cat[code].title) + '</option>'; }).join('') + '</select>'
+        + '<select @change="anomalyFilters.severity=$event.target.value;loadAnomalies()"><option value="">Todas las severidades</option>' + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(function (s) { return '<option value="' + s + '"' + (f.severity === s ? ' selected' : '') + '>' + AI.severityLabel(s) + '</option>'; }).join('') + '</select>'
+        + '<select @change="anomalyFilters.status=$event.target.value;loadAnomalies()"><option value="OPEN"' + (f.status === 'OPEN' ? ' selected' : '') + '>Pendientes</option><option value="ACKNOWLEDGED"' + (f.status === 'ACKNOWLEDGED' ? ' selected' : '') + '>En seguimiento</option><option value="DISMISSED"' + (f.status === 'DISMISSED' ? ' selected' : '') + '>Resueltas/descartadas</option><option value="ALL"' + (f.status === 'ALL' ? ' selected' : '') + '>Todas</option></select>'
+        + '<select @change="anomalyFilters.room_id=$event.target.value;loadAnomalies()">' + roomOpts + '</select>'
+        + '<button class="btn btn-o" @click="anomalyFilters={status:\'OPEN\',type:\'\',severity:\'\',room_id:\'\'};loadAnomalies()">Limpiar</button>'
+        + '</div>'
         + this.v2Table(['ID', 'Sala', 'Tipo', 'Severidad', 'Estado', 'Detectada', ''], rows, 'Sin anomalías');
+    };
+
+    o.openAnomalyDrawer = async function (id) {
+      this.setHash('an', { anomaly: id });
+      this.drawer = { show: true, title: 'Anomalía #' + id, subtitle: 'Cargando…', content: '<div class="skeleton skeleton-card"></div>', footer: '' };
+      try {
+        var a = await this.api('/api/v1/anomalies/' + id);
+        var meta = AI.info(a.anomaly_type);
+        this.drawer.title = meta.title;
+        this.drawer.subtitle = 'Anomalía ' + a.anomaly_type + ' · ' + AI.severityLabel(a.severity) + ' · ' + AI.stateLabel(a.status);
+        var ctx = a.context_data && Object.keys(a.context_data).length
+          ? '<pre class="mono small" style="white-space:pre-wrap;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;padding:10px">' + F.escape(JSON.stringify(a.context_data, null, 2)) + '</pre>'
+          : '<p class="muted small">Sin contexto adicional.</p>';
+        this.drawer.content = '<div class="card"><div class="card-head"><h3>Qué significa</h3></div><div class="card-body">'
+          + '<p>' + F.escape(meta.desc) + '</p><p class="small muted" style="margin-top:6px">' + F.escape(meta.action) + '</p></div></div>'
+          + '<div class="kpi-grid" style="margin-top:12px">'
+          + this.v2Kpi('Sala', F.escape(a.room_code || a.room_id), 'origen', '#2563eb', '🚪')
+          + this.v2Kpi('Detectada', F.dateTime(a.detected_at), 'UTC→local', '#d97706', '🕐')
+          + this.v2Kpi('Estancia', a.stay_id ? ('#' + a.stay_id) : 'Sin vínculo', 'relación durable', '#7c3aed', '🔗')
+          + this.v2Kpi('Estado', AI.stateLabel(a.status), a.reopened_at ? 'reabierta' : 'actual', '#0ea5e9', 'ℹ️')
+          + '</div>'
+          + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Auditoría</h3></div><div class="card-body">'
+          + '<p class="small">Reconocida: <b>' + (a.acknowledged_at ? F.dateTime(a.acknowledged_at) + ' · ' + F.escape(a.acknowledged_by || '') : '—') + '</b></p>'
+          + '<p class="small">Descartada: <b>' + (a.dismissed_at ? F.dateTime(a.dismissed_at) + ' · ' + F.escape(a.dismissed_by || '') : '—') + '</b></p>'
+          + '<p class="small">Reabierta: <b>' + (a.reopened_at ? F.dateTime(a.reopened_at) + ' · ' + F.escape(a.reopened_by || '') + ' · ' + F.escape(a.reopen_reason || '') : '—') + '</b></p>'
+          + '</div></div>'
+          + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Contexto</h3></div><div class="card-body">' + ctx + '</div></div>';
+        var footer = '<button class="btn btn-o" @click="drawer.show=false">Cerrar</button>'
+          + '<button class="btn btn-o" @click="openRoomDrawer(' + a.room_id + ')">Ver sala</button>';
+        if (a.stay_id) footer += '<button class="btn btn-o" @click="openOccupationDrawer(\'stay\',' + a.stay_id + ')">Ver estancia</button>';
+        if (a.status === 'OPEN') footer += '<button class="btn btn-p" @click="acknowledgeAnomaly(' + a.id + ')">Reconocer</button>';
+        if (a.status !== 'DISMISSED') footer += '<button class="btn btn-o" @click="dismissAnomaly(' + a.id + ')">Descartar</button>';
+        if (a.status === 'DISMISSED' && a.dismissed_by !== 'system') footer += '<button class="btn btn-p" @click="reopenAnomaly(' + a.id + ')">Reabrir incidencia</button>';
+        this.drawer.footer = footer;
+      } catch (e) {
+        this.drawer.content = '<div class="empty"><h2>No se pudo cargar</h2><p>' + F.escape(e.message) + '</p></div>';
+      }
+    };
+
+    o.reopenAnomaly = function (id) {
+      var reason = window.prompt('Motivo de la reapertura (obligatorio):', '');
+      if (reason == null) return;
+      reason = String(reason).trim();
+      if (!reason) { this.toastErr('El motivo es obligatorio'); return; }
+      var that = this;
+      this.api('/api/v1/anomalies/' + id + '/reopen', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason, actor: (this.user && (this.user.username || this.user.display_name)) || 'admin' })
+      }).then(function () {
+        that.toastOk('Incidencia reabierta');
+        that.loadAnomalies(); that.loadAnomalySummary(); that.loadAnomalyAnalyticsV2();
+        that.drawer.show = false;
+      }).catch(function (e) { that.toastErr(e.message); });
     };
 
     /* ═══════════════════════════════════════════════════════════════

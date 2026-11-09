@@ -76,6 +76,19 @@ final class AnomalyController
     }
 
     /**
+     * GET /api/v1/anomalies/{id}
+     */
+    public function show(Request $request): Response
+    {
+        $id = (int) $request->routeParam('id');
+        $anomaly = $this->anomalyService->findById($id);
+        if ($anomaly === null) {
+            return Response::json(404, ['error' => ['code' => 'anomaly_not_found', 'message' => 'Anomaly not found']]);
+        }
+        return Response::json(200, $anomaly->toArray());
+    }
+
+    /**
      * POST /api/v1/anomalies/{id}/acknowledge
      */
     public function acknowledge(Request $request): Response
@@ -95,6 +108,50 @@ final class AnomalyController
             return Response::json(409, [
                 'error' => [
                     'code'    => 'anomaly_not_open',
+                    'message' => $e->getMessage(),
+                ],
+            ]);
+        }
+    }
+
+    /**
+     * POST /api/v1/anomalies/{id}/reopen
+     *
+     * Reopens a manually dismissed anomaly with an audit reason.
+     */
+    public function reopen(Request $request): Response
+    {
+        $id   = (int) $request->routeParam('id');
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $actor  = trim((string) ($body['actor'] ?? 'admin')) ?: 'admin';
+        $reason = trim((string) ($body['reason'] ?? ''));
+
+        if ($reason === '') {
+            return Response::json(400, [
+                'error' => [
+                    'code'    => 'reason_required',
+                    'message' => 'Reopen reason is required',
+                ],
+            ]);
+        }
+
+        try {
+            $anomaly = $this->anomalyService->reopen($id, $actor, $reason);
+            return Response::json(200, [
+                'ok'      => true,
+                'anomaly' => $anomaly->toArray(),
+            ]);
+        } catch (\RuntimeException $e) {
+            $notFound = str_contains($e->getMessage(), 'not found');
+            if ($notFound) {
+                return Response::json(404, [
+                    'error' => ['code' => 'anomaly_not_found', 'message' => $e->getMessage()],
+                ]);
+            }
+            $auto = str_contains($e->getMessage(), 'auto-dismissed');
+            return Response::json(409, [
+                'error' => [
+                    'code'    => $auto ? 'anomaly_auto_dismissed' : 'anomaly_not_dismissed',
                     'message' => $e->getMessage(),
                 ],
             ]);
