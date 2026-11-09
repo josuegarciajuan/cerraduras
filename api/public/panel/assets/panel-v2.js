@@ -1494,14 +1494,18 @@
     o.crmUserPageV2 = function () {
       var users = this.crmUsers || [];
       var rows = users.map(function (u) {
+        var actions = u.role === 'key_manager'
+          ? '<a class="btn btn-o btn-sm" href="/llaves" target="_blank" rel="noopener">Ver panel llaves</a>'
+          : '<span class="muted">—</span>';
         return '<tr><td><div class="row">' + this.v2Avatar(u.display_name || u.username) + '<div><strong>' + F.escape(u.display_name || u.username) + '</strong><div class="small muted">' + F.escape(u.username) + '</div></div></div></td>'
           + '<td><span class="badge badge-soft">' + F.escape(u.role) + '</span></td>'
           + '<td>' + (u.active ? '<span class="badge badge-ok">Activo</span>' : '<span class="badge badge-danger">Inactivo</span>') + '</td>'
-          + '<td class="small">' + F.relative(u.last_login_at) + '</td></tr>';
+          + '<td class="small">' + F.relative(u.last_login_at) + '</td>'
+          + '<td><div class="row-actions">' + actions + '</div></td></tr>';
       }.bind(this));
       return '<div class="ph"><div><h1>Usuarios</h1><p>' + users.length + ' cuentas CRM</p></div>'
         + '<div class="page-actions"><button class="btn btn-p" @click="openCrmUserForm()">+ Nuevo usuario</button></div></div>'
-        + this.v2Table(['Usuario', 'Rol', 'Estado', 'Último acceso'], rows, 'Sin usuarios');
+        + this.v2Table(['Usuario', 'Rol', 'Estado', 'Último acceso', ''], rows, 'Sin usuarios');
     };
 
     o.apiClientPageV2 = function () {

@@ -85,6 +85,13 @@ foreach ($jsNeedles as $needle) {
     str_contains($js, $needle) ? passV2("UI v2 implementa {$needle}") : failV2("UI v2 sin {$needle}");
 }
 
+str_contains($js, "u.role === 'key_manager'")
+    ? passV2('Usuarios: botón de panel de llaves para key_manager')
+    : failV2('Usuarios: falta el botón de panel de llaves para key_manager');
+str_contains($js, 'href="/llaves"')
+    ? passV2('Usuarios: enlace portable a /llaves')
+    : failV2('Usuarios: el enlace a /llaves no es portable');
+
 $charts  = (string) @file_get_contents($panel . '/assets/charts.js');
 $format  = (string) @file_get_contents($panel . '/assets/format.js');
 str_contains($charts, 'window.PanelCharts') ? passV2('charts.js expone PanelCharts') : failV2('charts.js sin PanelCharts');
