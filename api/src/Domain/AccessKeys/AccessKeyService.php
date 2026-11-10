@@ -16,6 +16,7 @@ use App\Domain\Workers\WorkerSession;
 use App\Domain\Workers\WorkerSessionRepositoryInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
 use App\Support\Clock;
+use App\Support\Config;
 use App\Support\Errors\ConflictException;
 use App\Support\Errors\ForbiddenException;
 use App\Support\Errors\NotFoundException;
@@ -674,37 +675,62 @@ final class AccessKeyService
         // trabajador; el movimiento del timbrado es la auditoría.
         $trackWorkerSession = WorkerSessionPolicy::tracksSessions($roomType?->code);
 
-        $workerSessionId = null;
+        // F123/RF-338: las llaves de acceso nunca devuelven `already_inside`.
+        // Si el trabajador ya está dentro, se reutiliza su sesión; si la sesión
+        // es demasiado antigua, se cierra como AUTO y se abre una nueva.
+        $gateway = LockGatewayFactory::make($room);
+        $reusedSession = null;
         if ($key['owner_type'] === 'WORKER' && $trackWorkerSession) {
-            $workerId = (int) $key['worker_id'];
-            foreach ($this->sessions->findActiveForWorker($workerId) as $session) {
-                if ($session->roomId === $room->id) {
-                    throw new ConflictException(
-                        'already_inside',
-                        'Worker already has an active session in this room',
-                        ['worker_id' => $workerId, 'room_id' => $room->id]
-                    );
-                }
+            $staleSeconds = Config::getInt(
+                'WORKER_SESSION_STALE_SECONDS',
+                WorkerSessionReusePolicy::DEFAULT_STALE_SECONDS
+            ) ?? WorkerSessionReusePolicy::DEFAULT_STALE_SECONDS;
+            $decision = WorkerSessionReusePolicy::decide(
+                $this->sessions->findActiveForWorker((int) $key['worker_id']),
+                $room->id,
+                time(),
+                $staleSeconds
+            );
+            $reusedSession = $decision['session'];
+
+            if ($decision['action'] === 'stale' && $reusedSession !== null) {
+                $staleSession = $reusedSession;
+                $reusedSession = null;
+                $staleCloseAt = Clock::nowUtc()->format('Y-m-d H:i:s.v');
+                $this->sessions->close($staleSession->id, WorkerSession::EXIT_KIND_AUTO, $staleCloseAt);
+                $this->writeWorkerExitEvent(
+                    $room->id,
+                    $staleSession,
+                    'stale',
+                    $gateway->getProvider(),
+                    $correlationId
+                );
             }
         }
 
-        $gateway = LockGatewayFactory::make($room);
         $openResult = $gateway->open($room->id);
         $gwProvider = $this->normaliseProvider((string) ($openResult['provider'] ?? $provider));
 
+        $workerSessionId = null;
+        $sessionReused  = false;
         if ($key['owner_type'] === 'WORKER' && $trackWorkerSession) {
-            $nowStr = Clock::nowUtc()->format('Y-m-d H:i:s.v');
-            $workerSessionId = $this->sessions->insert(new WorkerSession(
-                0,
-                (int) $key['worker_id'],
-                $room->id,
-                $nowStr,
-                null,
-                null,
-                $correlationId,
-                '',
-                ''
-            ));
+            if ($reusedSession !== null) {
+                $workerSessionId = $reusedSession->id;
+                $sessionReused  = true;
+            } else {
+                $nowStr = Clock::nowUtc()->format('Y-m-d H:i:s.v');
+                $workerSessionId = $this->sessions->insert(new WorkerSession(
+                    0,
+                    (int) $key['worker_id'],
+                    $room->id,
+                    $nowStr,
+                    null,
+                    null,
+                    $correlationId,
+                    '',
+                    ''
+                ));
+            }
         }
 
         $this->recordAccess([
@@ -729,6 +755,9 @@ final class AccessKeyService
             'key_label' => $key['label'],
             'owner_type'=> $key['owner_type'],
         ];
+        if ($sessionReused) {
+            $meta['session_reused'] = true;
+        }
         if ($key['worker_id'] !== null) {
             $meta['worker_id'] = (int) $key['worker_id'];
         }
@@ -787,12 +816,44 @@ final class AccessKeyService
             'worker_id'    => $key['worker_id'],
             'role_id'      => $key['role_id'],
             'worker_session_id' => $workerSessionId,
+            'session_reused'    => $sessionReused,
             'room_id'      => $room->id,
             'room_type_id' => $room->roomTypeId,
             'room_type'    => $roomType?->name,
             'action'       => 'open',
             'reason'       => null,
         ];
+    }
+
+    /**
+     * F123/RF-339: audit the automatic closure of a stale worker session.
+     */
+    private function writeWorkerExitEvent(
+        int $roomId,
+        WorkerSession $session,
+        string $reason,
+        string $provider,
+        string $correlationId
+    ): void {
+        try {
+            $this->accessEvents->insert(
+                $roomId,
+                null,
+                AccessEvent::KIND_WORKER_EXIT,
+                AccessEvent::RESULT_OK,
+                null,
+                $provider,
+                $correlationId,
+                [
+                    'exit_kind' => WorkerSession::EXIT_KIND_AUTO,
+                    'worker_id' => $session->workerId,
+                    'reason'    => $reason,
+                ],
+                $session->id
+            );
+        } catch (\Throwable $e) {
+            error_log('[AccessKeyService] worker exit event failed: ' . $e->getMessage());
+        }
     }
 
     /** @return array<string,mixed> */

@@ -420,9 +420,17 @@ function crm(){return{
   // ── WORKERS PAGE ──
   workersPage(){
     let that=this;
+    let sessionsHtml='';
+    if(this.workersInside.length){
+      sessionsHtml='<h3 style="font-size:14px;margin:14px 0 8px">Sesiones abiertas</h3><table><tr><th>Trabajador</th><th>Sala</th><th>Entrada</th><th>Duración</th><th></th></tr>'
+        +this.workersInside.map(function(wi){
+          let entered=wi.entered_at?new Date(wi.entered_at+'Z').toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit'}):'—';
+          return '<tr><td>'+that.esc(wi.worker.name)+'</td><td>'+that.esc(wi.room.code)+'</td><td>'+entered+'</td><td>'+(wi.duration_minutes||0)+'m</td><td><button class="btn btn-o btn-sm" @click="closeWorkerSession('+wi.session_id+')">⏹ Cerrar sesión</button></td></tr>';
+        }).join('')+'</table>';
+    }
     return'<div class="ph"><h1>🧹 Trabajadores</h1><p>'+this.workers.length+' · <button class="btn btn-p btn-sm" @click="openWorkerForm()">+ Nuevo</button></p>'
       +(this.workerAlerts.length>0?'<div style="margin-bottom:12px">'+this.workerAlerts.map(function(a){return'<div style="padding:4px 8px;background:rgba(224,85,106,.15);border-radius:6px;font-size:12px;margin:3px 0">'+a.msg+'</div>'}).join('')+'</div>':'')
-      +'</div><table><tr><th>Nombre</th><th>Rol</th><th>Activo</th><th>Ubicación</th><th>Último acceso</th><th>Hoy</th><th></th></tr>'
+      +'</div>'+sessionsHtml+'<table><tr><th>Nombre</th><th>Rol</th><th>Activo</th><th>Ubicación</th><th>Último acceso</th><th>Hoy</th><th></th></tr>'
       +this.workers.map(function(w){
         let activeBadge=w.active?'<span style="color:var(--success);font-weight:700">✅</span>':'<span style="color:var(--danger)">❌</span>';
         let room=w.current_room?that.esc(w.current_room.code):'<span class="dim">—</span>';
@@ -460,6 +468,15 @@ function crm(){return{
   deactivateWorker(id){
     if(!confirm('¿Desactivar trabajador? Su QR dejará de funcionar.'))return;
     let that=this;this.api('/api/v1/workers/'+id,{method:'DELETE'}).then(function(){that.loadWorkers();if(that.loadWorkersAnalyticsV2)that.loadWorkersAnalyticsV2();that.toastOk('Desactivado')}).catch(function(e){that.toastErr(e.message)});
+  },
+
+  closeWorkerSession(id){
+    if(!id)return;
+    if(!confirm('¿Cerrar la sesión de trabajador en esta sala?'))return;
+    let that=this;
+    this.api('/api/v1/workers/sessions/'+id+'/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:'manual_panel'})})
+      .then(function(){that.loadWorkers();that.loadWorkersInside();that.computeWorkerAlerts();that.toastOk('Sesión cerrada')})
+      .catch(function(e){that.toastErr(e.message)});
   },
 
   regenerateWorkerQr(id){

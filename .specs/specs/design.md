@@ -26704,3 +26704,58 @@ completa sin fallos.
 
 `PanelFiltersTest`, extensión de `PanelV2UiTest`, BLOCK 90 del runner,
 `node --check`, `php -l` y regresión completa.
+
+## F123 — Llaves siempre abren + sesiones autocurables
+
+### Decisión
+
+Una llave de acceso (`key_type=QR|NFC`, `owner_type=WORKER`) es una credencial
+reutilizable: no debe quedar bloqueada por una sesión de trabajador abierta.
+El bloqueo `already_inside` se conserva únicamente para el QR maestro de
+trabajador (`POST /api/v1/workers/qr/validate`), que modela un check-in.
+
+### Flujo de AccessKeyService
+
+1. Se mantienen las comprobaciones de estado, vigencia, trabajador, sala y
+   permisos por tipo.
+2. `WorkerSessionReusePolicy::decide()` recibe las sesiones activas del
+   trabajador y la sala:
+   - `none`: no hay sesión en esa sala.
+   - `reuse`: hay una sesión reciente; se usa su `id`.
+   - `stale`: la sesión supera `WORKER_SESSION_STALE_SECONDS` (def. 43200); se
+     cierra con `AUTO` y se escribe `WORKER_EXIT` (motivo `stale`).
+3. Se abre el gateway (`LockGatewayFactory`).
+4. Si no hay sesión reutilizable se crea una nueva; si se reutilizó, no se
+   inserta otra.
+5. La respuesta añade `session_reused: bool`; `worker_session_id` contiene la
+   sesión reutilizada o la nueva. Los eventos `QR_VALIDATE`/`OPEN` incluyen
+   `session_reused` en su `meta_json` cuando aplica.
+
+### Cierre manual
+
+`WorkerService::closeSession()`:
+- `findById` → 404 si no existe.
+- Si `exited_at` es `NULL`: `close(id, AUTO, now)` + evento `WORKER_EXIT` con
+  `meta.reason` y `worker_session_id`.
+- Si ya estaba cerrada: no escribe otro evento y devuelve
+  `already_closed=true`.
+- El controlador expone `POST /api/v1/workers/sessions/{id}/close` con
+  `workers:write`.
+
+### Panel
+
+`GET /api/v1/workers/inside` añade `session_id`; `GET /api/v1/workers/{id}`
+añade `current_room.session_id`. La vista Trabajadores muestra una tabla de
+sesiones abiertas con el botón **Cerrar sesión**, que llama al endpoint manual.
+No hay polling nuevo: `workers/inside` ya se consulta en el ciclo del panel.
+
+### Configuración
+
+`WORKER_SESSION_STALE_SECONDS` (entero, segundos, def. 43200; `0` desactiva).
+No se añade migración ni columna.
+
+### Verificación
+
+`WorkerSessionReusePolicyTest` (8 casos), `WorkerTest`, BLOCK 69 del runner
+ampliado (reuso, una sola sesión, 409 del QR maestro auditado, cierre manual
+idempotente, autocierre por TTL) y regresión completa.

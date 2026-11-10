@@ -164,4 +164,24 @@ final class WorkerController
             'data' => $this->service->getWorkersInside(),
         ]);
     }
+
+    /**
+     * POST /api/v1/workers/sessions/{id}/close
+     *
+     * F123/RF-340: manual close of an active worker session. Idempotent.
+     */
+    public function closeSession(Request $request): Response
+    {
+        $sessionId = (int) $request->routeParam('id');
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $reason = isset($body['reason']) ? trim((string) $body['reason']) : 'manual';
+        if ($reason === '') {
+            $reason = 'manual';
+        }
+        $correlationId = (string) $request->attr('correlation_id', '');
+
+        return Response::json(200, [
+            'data' => $this->service->closeSession($sessionId, $reason, $correlationId),
+        ]);
+    }
 }
