@@ -9114,6 +9114,49 @@ if [ -f .env ]; then
     fi
 fi
 
+# 90.8 Rutas genéricas del dashboard restauradas (F122.1): habitaciones.
+F122_ROOMS_CODE=$(curl -s -o /tmp/f122-rooms.json -w '%{http_code}' --max-time 10 "${API_BASE}/dashboard-api/rooms" 2>/dev/null)
+F122_ROOMS_OK=$(python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/f122-rooms.json'))
+except Exception:
+    print('bad_json')
+    raise SystemExit
+if not isinstance(d, list):
+    print('not_array')
+elif not d:
+    print('empty')
+elif not all(isinstance(x, dict) and 'id' in x and 'code' in x for x in d):
+    print('missing_fields')
+else:
+    print('ok')
+" 2>/dev/null)
+if [ "$F122_ROOMS_CODE" = "200" ] && [ "$F122_ROOMS_OK" = "ok" ]; then
+    pass "F122: /dashboard-api/rooms → 200 con habitaciones (id+code)"
+else
+    fail "F122: /dashboard-api/rooms" "http=$F122_ROOMS_CODE json=$F122_ROOMS_OK"
+fi
+rm -f /tmp/f122-rooms.json
+
+# 90.9 Rutas genéricas del dashboard restauradas (F122.1): mírame.
+F122_MIRAME_CODE=$(curl -s -o /tmp/f122-mirame.json -w '%{http_code}' --max-time 10 "${API_BASE}/dashboard-api/mirame" 2>/dev/null)
+F122_MIRAME_OK=$(python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/f122-mirame.json'))
+except Exception:
+    print('bad_json')
+    raise SystemExit
+print('ok' if isinstance(d, list) else 'not_array')
+" 2>/dev/null)
+if [ "$F122_MIRAME_CODE" = "200" ] && [ "$F122_MIRAME_OK" = "ok" ]; then
+    pass "F122: /dashboard-api/mirame → 200 con array JSON"
+else
+    fail "F122: /dashboard-api/mirame" "http=$F122_MIRAME_CODE json=$F122_MIRAME_OK"
+fi
+rm -f /tmp/f122-mirame.json
+
 # =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================

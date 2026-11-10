@@ -11858,3 +11858,9 @@ pendientes.
 - [x] TSK-F121-08: filtros del monitor (sala, tipo de evento, resultado).
 - [x] TSK-F121-09: `PanelFiltersTest` + extensión de tests existentes.
 - [x] TSK-F121-10: BLOCK 90 del runner y regresión completa.
+
+## F122.1 — Restaurar rutas no-Tuya del dashboard
+
+- [x] TSK-F122.1-01: restaurar `GET /dashboard-api/rooms` (selector de habitaciones, almacén, timbre y cameras-live).
+- [x] TSK-F122.1-02: restaurar `GET /dashboard-api/mirame`.
+- [x] TSK-F122.1-03: guardia en `TuyaRetirementTest` y BLOCK 91 del runner.
