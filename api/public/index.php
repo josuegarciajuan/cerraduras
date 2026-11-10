@@ -746,6 +746,54 @@ $router->delete(
 
 // --- Dashboard internal API (no auth — LAN/MVP) ---
 
+// GET /dashboard-api/rooms — list all rooms with code + status + pack info
+$router->get(
+    '/dashboard-api/rooms',
+    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
+        $pdo = $pdoProvider();
+        $rows = $pdo->query(
+            "SELECT r.id, r.code, r.status, r.pack_id, r.room_type_id,
+                    rt.code AS room_type_code, rt.name AS room_type_name,
+                    dp.name AS pack_name
+             FROM rooms r
+             LEFT JOIN device_packs dp ON dp.id = r.pack_id
+             LEFT JOIN room_types rt ON rt.id = r.room_type_id
+             ORDER BY r.code ASC"
+        )->fetchAll(\PDO::FETCH_ASSOC);
+
+        return \App\Http\Response::json(200, $rows ?: []);
+    }
+);
+
+// GET /dashboard-api/mirame — list RPI devices with is_identified=1 (auto-expire 15s)
+$router->get(
+    '/dashboard-api/mirame',
+    function (\App\Http\Request $request) use ($pdoProvider): \App\Http\Response {
+        $pdo = $pdoProvider();
+        // Auto-clean stale identified flags (>30s old, e.g. WiFi lost before sending state:false)
+        $pdo->exec(
+            "UPDATE devices SET is_identified = 0 WHERE kind = 'RPI' AND is_identified = 1 AND (identified_at IS NULL OR identified_at <= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 SECOND))"
+        );
+        $rows = $pdo->query(
+            "SELECT d.id, d.external_id, d.label, d.pack_id, d.meta_json, d.is_identified, d.identified_at,
+                    r.id as room_id, r.code as room_code,
+                    dp.name as pack_name, dp.code as pack_code
+             FROM devices d
+             LEFT JOIN rooms r ON r.pack_id = d.pack_id
+             LEFT JOIN device_packs dp ON dp.id = d.pack_id
+             WHERE d.kind = 'RPI' AND d.is_identified = 1
+               AND d.identified_at > DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 15 SECOND)
+             ORDER BY d.identified_at DESC"
+        )->fetchAll(\PDO::FETCH_ASSOC);
+        // Decode meta_json for clients
+        foreach ($rows as &$row) {
+            $row['meta'] = !empty($row['meta_json']) ? json_decode($row['meta_json'], true) : null;
+            unset($row['meta_json']);
+        }
+        return \App\Http\Response::json(200, $rows);
+    }
+);
+
 /** @var list<string> Dispositivos que comparten hardware ESP32 (sin nube). */
 const DEVICE_KIND_ESP32 = ['RPI', 'SCANNER', 'LOCK'];
 /** Cuántos segundos conserva una verificación de conectividad antes de caducar. */

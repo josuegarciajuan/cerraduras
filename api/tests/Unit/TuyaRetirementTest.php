@@ -72,5 +72,17 @@ str_contains($sql, 'retired_at') && !str_contains($sql, 'DELETE') && !str_contai
     ? ok('migración 0147 es baja lógica y no toca packs')
     : ko('migración 0147', 'revisa retired_at/DELETE/pack_id');
 
+// 7. Non-Tuya dashboard routes survive F122 (F122.1).
+$index = (string) file_get_contents($root . '/public/index.php');
+$missingRoutes = [];
+foreach (["'/dashboard-api/rooms'", "'/dashboard-api/mirame'"] as $route) {
+    if (!str_contains($index, $route)) {
+        $missingRoutes[] = $route;
+    }
+}
+$missingRoutes === []
+    ? ok('rutas no-Tuya del dashboard presentes (rooms, mirame)')
+    : ko('rutas no-Tuya del dashboard ausentes', implode(', ', $missingRoutes));
+
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);
