@@ -7230,8 +7230,105 @@ fi
 
 http_test POST /api/v1/keys/validate 200 "F96: llave individual abre e identifica trabajador" --key RPI-DEV \
   --body "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
-http_test POST /api/v1/keys/validate 409 "F96: llave individual ya dentro → 409" --key RPI-DEV \
-  --body "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+
+if grep -q "/api/v1/workers/sessions/" public/panel/index.html 2>/dev/null; then
+  pass "F123: el panel incluye el cierre manual de sesión"
+else
+  fail "F123: el panel incluye el cierre manual de sesión" "endpoint ausente en panel/index.html"
+fi
+
+if [ -n "$F96_W_ID" ]; then
+  F96_WMASTER=$(echo "$F96_W_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('data',{}).get('qr_token',''))" 2>/dev/null)
+
+  # F123/RF-338: la segunda lectura no devuelve already_inside; reutiliza sesión.
+  F96_REUSE=$(curl -s -w '\n%{http_code}' -X POST \
+    -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
+    -d "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+    "${API_BASE}/api/v1/keys/validate")
+  F96_REUSE_CODE=$(printf '%s' "$F96_REUSE" | tail -1)
+  F96_REUSE_BODY=$(printf '%s' "$F96_REUSE" | sed '$d')
+  if [ "$F96_REUSE_CODE" = "200" ] \
+     && printf '%s' "$F96_REUSE_BODY" | grep -q '"allow":true' \
+     && printf '%s' "$F96_REUSE_BODY" | grep -q '"session_reused":true'; then
+    pass "F123: segunda lectura de llave reutiliza la sesión (200)"
+  else
+    fail "F123: segunda lectura de llave" "HTTP $F96_REUSE_CODE $(printf '%s' "$F96_REUSE_BODY" | head -c 300)"
+  fi
+
+  F96_ACTIVE=$($MYSQL -sN -e "SELECT COUNT(*) FROM worker_sessions WHERE worker_id=$F96_W_ID AND room_id=1 AND exited_at IS NULL" 2>/dev/null)
+  [ "${F96_ACTIVE:-0}" = "1" ] && pass "F123: una sola sesión activa tras dos lecturas" \
+    || fail "F123: una sola sesión activa tras dos lecturas" "got ${F96_ACTIVE:-?}"
+
+  # F123/RF-341: el QR maestro conserva el 409 y ahora queda auditado.
+  if [ -n "$F96_WMASTER" ]; then
+    http_test POST /api/v1/workers/qr/validate 409 "F123: QR maestro sigue bloqueando already_inside" --key RPI-DEV \
+      --body "{\"token\":\"$F96_WMASTER\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}"
+    F96_DENIED=$($MYSQL -sN -e "SELECT COUNT(*) FROM access_events WHERE room_id=1 AND kind='DENIED' AND reason='already_inside' AND occurred_at >= UTC_TIMESTAMP(3) - INTERVAL 2 MINUTE" 2>/dev/null)
+    [ "${F96_DENIED:-0}" -ge 1 ] && pass "F123: already_inside del QR maestro auditado" \
+      || fail "F123: already_inside del QR maestro auditado" "got ${F96_DENIED:-0}"
+  else
+    skip "F123: QR maestro" "sin token maestro"
+  fi
+
+  # F123/RF-340: cierre manual idempotente y auditado.
+  F96_SID=$($MYSQL -sN -e "SELECT id FROM worker_sessions WHERE worker_id=$F96_W_ID AND room_id=1 AND exited_at IS NULL ORDER BY id DESC LIMIT 1" 2>/dev/null)
+  if [ -n "$F96_SID" ]; then
+    http_test POST "/api/v1/workers/sessions/$F96_SID/close" 200 \
+      "F123: cierre manual de sesión" --key ADMIN-CLI --body '{"reason":"runner"}'
+    F96_CLOSE2=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $(get_key ADMIN-CLI)" \
+      -H 'Content-Type: application/json' -d '{"reason":"runner"}' \
+      "${API_BASE}/api/v1/workers/sessions/$F96_SID/close")
+    F96_CLOSE2_CODE=$(printf '%s' "$F96_CLOSE2" | tail -1)
+    F96_CLOSE2_BODY=$(printf '%s' "$F96_CLOSE2" | sed '$d')
+    if [ "$F96_CLOSE2_CODE" = "200" ] && printf '%s' "$F96_CLOSE2_BODY" | grep -q '"already_closed":true'; then
+      pass "F123: cierre manual es idempotente"
+    else
+      fail "F123: cierre manual idempotente" "HTTP $F96_CLOSE2_CODE $(printf '%s' "$F96_CLOSE2_BODY" | head -c 300)"
+    fi
+    F96_EXIT_AUD=$($MYSQL -sN -e "SELECT COUNT(*) FROM access_events WHERE kind='WORKER_EXIT' AND worker_session_id=$F96_SID AND occurred_at >= UTC_TIMESTAMP(3) - INTERVAL 2 MINUTE" 2>/dev/null)
+    [ "${F96_EXIT_AUD:-0}" -ge 1 ] && pass "F123: cierre manual auditado (WORKER_EXIT)" \
+      || fail "F123: cierre manual auditado" "got ${F96_EXIT_AUD:-0}"
+  else
+    skip "F123: cierre manual" "sin sesión activa"
+  fi
+
+  # Tras cerrar, una nueva lectura crea una sesión nueva.
+  F96_R3=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $(get_key RPI-DEV)" \
+    -H 'Content-Type: application/json' \
+    -d "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+    "${API_BASE}/api/v1/keys/validate")
+  F96_R3_CODE=$(printf '%s' "$F96_R3" | tail -1)
+  F96_R3_BODY=$(printf '%s' "$F96_R3" | sed '$d')
+  if [ "$F96_R3_CODE" = "200" ] && printf '%s' "$F96_R3_BODY" | grep -q '"session_reused":false'; then
+    pass "F123: tras cierre manual la nueva lectura crea sesión"
+  else
+    fail "F123: tras cierre manual" "HTTP $F96_R3_CODE $(printf '%s' "$F96_R3_BODY" | head -c 300)"
+  fi
+
+  # F123/RF-339: una sesión de más de 12 h se cierra AUTO y se crea otra.
+  F96_SID2=$($MYSQL -sN -e "SELECT id FROM worker_sessions WHERE worker_id=$F96_W_ID AND room_id=1 AND exited_at IS NULL ORDER BY id DESC LIMIT 1" 2>/dev/null)
+  if [ -n "$F96_SID2" ]; then
+    $MYSQL -e "UPDATE worker_sessions SET entered_at=UTC_TIMESTAMP(3) - INTERVAL 13 HOUR WHERE id=$F96_SID2" >/dev/null 2>&1 || true
+    F96_STALE=$(curl -s -w '\n%{http_code}' -X POST -H "X-API-Key: $(get_key RPI-DEV)" \
+      -H 'Content-Type: application/json' \
+      -d "{\"qr_text\":\"$F96_WTOKEN\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}" \
+      "${API_BASE}/api/v1/keys/validate")
+    F96_STALE_CODE=$(printf '%s' "$F96_STALE" | tail -1)
+    F96_STALE_BODY=$(printf '%s' "$F96_STALE" | sed '$d')
+    F96_STALE_KIND=$($MYSQL -sN -e "SELECT exit_kind FROM worker_sessions WHERE id=$F96_SID2" 2>/dev/null)
+    F96_ACTIVE2=$($MYSQL -sN -e "SELECT COUNT(*) FROM worker_sessions WHERE worker_id=$F96_W_ID AND room_id=1 AND exited_at IS NULL" 2>/dev/null)
+    if [ "$F96_STALE_CODE" = "200" ] && printf '%s' "$F96_STALE_BODY" | grep -q '"session_reused":false' \
+       && [ "$F96_STALE_KIND" = "AUTO" ] && [ "${F96_ACTIVE2:-0}" = "1" ]; then
+      pass "F123: sesión vieja se cierra AUTO y se crea una nueva"
+    else
+      fail "F123: sesión vieja" "HTTP $F96_STALE_CODE kind=$F96_STALE_KIND activas=${F96_ACTIVE2:-?}"
+    fi
+  else
+    skip "F123: sesión vieja" "sin sesión activa"
+  fi
+else
+  skip "F123: llaves siempre abren" "sin trabajador de prueba"
+fi
 
 # Ficha asignada a llave
 if [ -n "$F96_CARD_ID" ]; then

@@ -11864,3 +11864,15 @@ pendientes.
 - [x] TSK-F122.1-01: restaurar `GET /dashboard-api/rooms` (selector de habitaciones, almacén, timbre y cameras-live).
 - [x] TSK-F122.1-02: restaurar `GET /dashboard-api/mirame`.
 - [x] TSK-F122.1-03: guardia en `TuyaRetirementTest` y BLOCK 91 del runner.
+
+## F123 — Llaves de acceso sin bloqueo + sesiones autocurables
+
+- [x] TSK-F123-01: `WorkerSessionReusePolicy` (decide none/reuse/stale) + unit test.
+- [x] TSK-F123-02: `AccessKeyService` reutiliza la sesión y responde `session_reused`; sin `already_inside`.
+- [x] TSK-F123-03: autocierre por `WORKER_SESSION_STALE_SECONDS` con `WORKER_EXIT (AUTO, stale)`.
+- [x] TSK-F123-04: `WorkerQrService` mantiene el 409 del QR maestro y lo audita.
+- [x] TSK-F123-05: `WorkerService::closeSession` + `POST /workers/sessions/{id}/close` idempotente y auditado.
+- [x] TSK-F123-06: `session_id` aditivo en `/workers/inside` y `current_room`.
+- [x] TSK-F123-07: tabla de sesiones abiertas y botón «Cerrar sesión» en `/panel`.
+- [x] TSK-F123-08: `.env.example`, `requirements/design/contracts` y AGENTS.
+- [x] TSK-F123-09: BLOCK 69 del runner ampliado + regresión completa.

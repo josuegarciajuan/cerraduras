@@ -13890,3 +13890,39 @@ ficticio y cualquier sondeo periódico a Tuya.
 
 **Fuera de alcance:** nuevas migraciones, cambios en el modelo de datos y
 cualquier automatización que consulte Tuya.
+
+## F123 — Llaves de acceso sin bloqueo + sesiones autocurables (RF-339…RF-343)
+
+**Motivo:** una ficha NFC o un QR de llave de `WORKER` devolvía
+`409 already_inside` cuando el trabajador ya tenía una sesión abierta en la
+sala. Si el sensor no cerraba la sesión (por ejemplo, en una sala sin estancia
+de huésped y con presencia Zigbee descartada por F48), la llave quedaba
+bloqueada indefinidamente. El QR del dashboard sí abría porque usa el flujo de
+huésped.
+
+- **RF-339 (llaves siempre abren):** `/api/v1/qr/validate` y
+  `/api/v1/keys/validate` con una llave de titular `WORKER` **nunca** devuelven
+  `already_inside`. Si existe una sesión activa del trabajador en la sala, se
+  reutiliza (`session_reused=true`) y se abre la puerta. No se duplica la
+  sesión. La respuesta es aditiva; el resto de campos no cambia.
+- **RF-340 (sesión caducada):** una sesión activa con antigüedad mayor o igual
+  que `WORKER_SESSION_STALE_SECONDS` (def. 43200 s = 12 h) se cierra como
+  `exit_kind=AUTO` con un evento `WORKER_EXIT` (motivo `stale`) antes de crear
+  una sesión nueva. `0` desactiva el autocierre.
+- **RF-341 (QR maestro):** `/api/v1/workers/qr/validate` conserva el
+  `409 already_inside` (RF-W3.5) y ahora escribe un `access_events` `DENIED`
+  con motivo `already_inside` y `worker_session_id` (RF-171.3).
+- **RF-342 (cierre manual):** `POST /api/v1/workers/sessions/{id}/close`
+  (scope `workers:write`) cierra una sesión activa como `AUTO`, con motivo
+  opcional, evento `WORKER_EXIT` y comportamiento idempotente si ya estaba
+  cerrada. No requiere migración.
+- **RF-343 (panel):** `/panel` muestra las sesiones abiertas con un botón
+  **Cerrar sesión**. `GET /api/v1/workers/inside` y
+  `GET /api/v1/workers/{id}` exponen `session_id` de forma aditiva.
+
+**Fuera de alcance:** cambiar la detección de salida por sensores, alterar F48
+o F114, reintroducir Tuya o añadir polling.
+
+**Trazabilidad:** `WorkerSessionReusePolicy`, `AccessKeyService`,
+`WorkerQrService`, `WorkerService`, `WorkerController`, `panel/index.html`,
+`WorkerSessionReusePolicyTest`, BLOCK 69 del runner (ampliado).

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Workers;
 
+use App\Domain\Locks\AccessEvent;
+use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Support\Clock;
 use App\Support\Errors\NotFoundException;
@@ -21,19 +23,22 @@ final class WorkerService
     private WorkerSessionRepositoryInterface $sessionRepo;
     private QrTokenizer $tokenizer;
     private RoomRepositoryInterface $roomRepo;
+    private ?AccessEventRepositoryInterface $accessEvents;
 
     public function __construct(
         WorkerRepositoryInterface $repo,
         WorkerRoleRepositoryInterface $roleRepo,
         WorkerSessionRepositoryInterface $sessionRepo,
         QrTokenizer $tokenizer,
-        RoomRepositoryInterface $roomRepo
+        RoomRepositoryInterface $roomRepo,
+        ?AccessEventRepositoryInterface $accessEvents = null
     ) {
         $this->repo        = $repo;
         $this->roleRepo    = $roleRepo;
         $this->sessionRepo = $sessionRepo;
         $this->tokenizer   = $tokenizer;
         $this->roomRepo    = $roomRepo;
+        $this->accessEvents = $accessEvents;
     }
 
     /**
@@ -138,6 +143,56 @@ final class WorkerService
     }
 
     /**
+     * F123/RF-340: close an active worker session manually (idempotent).
+     *
+     * Used by the CRM panel when a sensor misses the exit and the worker needs
+     * to scan again immediately. Writes WORKER_EXIT with exit_kind=AUTO.
+     *
+     * @return array{session:array<string,mixed>|null, already_closed:bool}
+     */
+    public function closeSession(int $sessionId, string $reason = 'manual', string $correlationId = ''): array
+    {
+        $session = $this->sessionRepo->findById($sessionId);
+        if ($session === null) {
+            throw new NotFoundException('Worker session not found', ['session_id' => $sessionId]);
+        }
+
+        $alreadyClosed = $session->exitedAt !== null;
+        if (!$alreadyClosed) {
+            $closedAt = Clock::nowUtc()->format('Y-m-d H:i:s.v');
+            $this->sessionRepo->close($sessionId, WorkerSession::EXIT_KIND_AUTO, $closedAt);
+
+            if ($this->accessEvents !== null) {
+                try {
+                    $this->accessEvents->insert(
+                        $session->roomId,
+                        null,
+                        AccessEvent::KIND_WORKER_EXIT,
+                        AccessEvent::RESULT_OK,
+                        null,
+                        'LOCAL',
+                        $correlationId,
+                        [
+                            'exit_kind' => WorkerSession::EXIT_KIND_AUTO,
+                            'worker_id' => $session->workerId,
+                            'reason'    => $reason !== '' ? $reason : 'manual',
+                        ],
+                        $sessionId
+                    );
+                } catch (\Throwable $e) {
+                    error_log('[WorkerService] worker exit event failed: ' . $e->getMessage());
+                }
+            }
+        }
+
+        $fresh = $this->sessionRepo->findById($sessionId);
+        return [
+            'session'        => $fresh !== null ? $fresh->toArray() : null,
+            'already_closed' => $alreadyClosed,
+        ];
+    }
+
+    /**
      * Regenerate the master QR token (revokes previous one).
      */
     public function regenerateQr(int $id): array
@@ -186,7 +241,12 @@ final class WorkerService
         }
         $room = $this->roomRepo->findById($sessions[0]->roomId);
         return $room !== null
-            ? ['id' => $room->id, 'code' => $room->code]
+            ? [
+                'id'         => $room->id,
+                'code'       => $room->code,
+                'session_id' => $sessions[0]->id,
+                'entered_at' => $sessions[0]->enteredAt,
+            ]
             : null;
     }
 
@@ -238,6 +298,7 @@ final class WorkerService
                 : 0;
 
             return [
+                'session_id' => $ws->id,
                 'worker' => [
                     'id'   => $worker->id,
                     'name' => $worker->name,

@@ -1187,12 +1187,14 @@ $workerRoleController = new WorkerRoleController($workerRoleService);
 
 // --- F38: Workers ---
 $workerSessionRepo   = new WorkerSessionRepository($pdo);
+$accessEventRepo     = new AccessEventRepository($pdo);
 $workerService       = new WorkerService(
     $workerRepoForRoles,
     $workerRoleRepo,
     $workerSessionRepo,
     $qrTokenizer,
-    $roomRepo
+    $roomRepo,
+    $accessEventRepo
 );
 $workerController    = new WorkerController($workerService);
 
@@ -2022,8 +2024,6 @@ $qrIssueService = new QrIssueService(
     $roomCycleResetter
 );
 
-$accessEventRepo  = new AccessEventRepository($pdo);
-
 // --- F38: Worker QR Validate ---
 // F62/RF-69: per-worker ALLOW/DENY exception wins over the role grant.
 $workerRoomOverrideRepo = new WorkerRoomOverrideRepository($pdo);
@@ -2611,6 +2611,7 @@ $router->delete('/api/v1/worker-roles/{id}', [$workerRoleController, 'delete'], 
 // --- Routes: Workers (F38) ---
 // GET /workers/inside MUST come before /workers/{id} to avoid route collision
 $router->get('/api/v1/workers/inside',       [$workerController, 'inside'],        $authFactory(['workers:read']));
+$router->post('/api/v1/workers/sessions/{id}/close', [$workerController, 'closeSession'], $authFactory(['workers:write']));
 $router->get('/api/v1/workers',              [$workerController, 'list'],          $authFactory(['workers:read']));
 $router->post('/api/v1/workers',             [$workerController, 'create'],        $authFactory(['workers:write']));
 $router->get('/api/v1/workers/{id}',         [$workerController, 'show'],          $authFactory(['workers:read']));

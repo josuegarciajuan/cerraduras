@@ -231,6 +231,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F120 Panel CRM v2.1 (anomalías legibles, ocupaciones, almacén, demo)** | **BLOCK 89 + `PanelV21Test`/`AnomalyReopenTest`** | **Implementado; migraciones 0145/0146 aplicadas; demo DEMO-* creada; regresión 1156/3/19 (3 fallos ambientales: gate Apache y perfil radar)** |
 
 | **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
+| **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1264,3 +1265,30 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: units `AnomalyReopenTest` (17), `PanelV21Test` (50), BLOCK 89.
   Regresión: **1156 passed, 3 failed, 19 skipped**; los 3 fallos son ambientales
   (2 requieren el gate Apache de `/panel` y 1 es el perfil de radar previo).
+
+### F123 — Llaves siempre abren + sesiones autocurables (RF-339…RF-343)
+
+- **Motivo**: una ficha NFC o un QR de llave `WORKER` devolvía `409
+  already_inside` si el trabajador ya tenía sesión abierta en la sala. Si el
+  sensor no cerraba la sesión (sala sin estancia y presencia Zigbee descartada
+  por F48), la llave quedaba bloqueada para siempre. El QR de huésped del
+  dashboard no pasaba por esa comprobación y sí abría.
+- **Llaves (RF-339)**: `/api/v1/qr/validate` y `/api/v1/keys/validate` con
+  llave `WORKER` no devuelven `already_inside`; reutilizan la sesión activa
+  (`session_reused=true`) y no duplican filas. `WorkerSessionReusePolicy`
+  decide `none|reuse|stale`.
+- **TTL (RF-340)**: `WORKER_SESSION_STALE_SECONDS` (def. 43200; `0` desactiva)
+  cierra una sesión vieja como `AUTO` con `WORKER_EXIT` (motivo `stale`) antes
+  de crear otra.
+- **QR maestro (RF-341)**: `/api/v1/workers/qr/validate` conserva el 409
+  `already_inside` (RF-W3.5) y ahora escribe `access_events DENIED` con
+  `worker_session_id`.
+- **Cierre manual (RF-342)**: `POST /api/v1/workers/sessions/{id}/close`
+  (`workers:write`), idempotente, con `WORKER_EXIT` y `meta.reason`.
+- **Panel (RF-343)**: tabla de sesiones abiertas en Trabajadores con botón
+  «Cerrar sesión»; `workers/inside` y `current_room` exponen `session_id`.
+- **Sin migración, sin Tuya y sin polling nuevo.**
+- **Verificación**: `WorkerSessionReusePolicyTest` (8), `WorkerTest`,
+  BLOCK 69 del runner ampliado (reuso, una sola sesión, 409 del QR maestro
+  auditado, cierre manual idempotente, autocierre por TTL) y regresión completa.
+  Pendiente la prueba física y la corrida de regresión en esta sesión.

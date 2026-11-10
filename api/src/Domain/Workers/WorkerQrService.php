@@ -143,6 +143,17 @@ final class WorkerQrService
             $activeSessions = $this->sessionRepo->findActiveForWorker($workerId);
             foreach ($activeSessions as $as) {
                 if ($as->roomId === $roomId) {
+                    // F123/RF-341: el 409 del QR maestro también debe quedar
+                    // auditado (RF-171.3); antes solo se veía en el log.
+                    $this->writeDenied(
+                        $roomId,
+                        null,
+                        'already_inside',
+                        $provider,
+                        $correlationId,
+                        ['worker_id' => $workerId, 'worker_session_id' => $as->id, 'device_id' => $deviceId],
+                        $as->id
+                    );
                     throw new ApiException(
                         409,
                         'already_inside',
@@ -223,7 +234,8 @@ final class WorkerQrService
         string $reason,
         string $provider,
         string $correlationId,
-        ?array $meta = null
+        ?array $meta = null,
+        ?int $workerSessionId = null
     ): void {
         try {
             $this->accessEvents->insert(
@@ -231,7 +243,8 @@ final class WorkerQrService
                 AccessEvent::KIND_DENIED,
                 AccessEvent::RESULT_FAIL,
                 $reason, $provider, $correlationId,
-                $meta
+                $meta,
+                $workerSessionId
             );
         } catch (\Throwable $e) {
             error_log('[WorkerQrService] Failed to write DENIED event: ' . $e->getMessage());

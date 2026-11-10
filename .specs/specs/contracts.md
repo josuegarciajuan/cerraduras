@@ -16686,3 +16686,66 @@ Se añade `room_id` (int, opcional) al filtrado existente.
 - `GET /api/v1/admin/access-events?room_id=&kind=&result=&limit=&cursor=`
 
 Todos mantienen sus scopes actuales y sus respuestas existentes.
+
+## F123 — Llaves de acceso sin bloqueo + sesiones autocurables
+
+Cambios aditivos; el QR maestro conserva su contrato.
+
+### Validación de llaves
+
+`POST /api/v1/qr/validate` y `POST /api/v1/keys/validate` con una llave de
+titular `WORKER` (token `sub=key` o `ficha_code`) responden `200` aunque el
+trabajador tenga una sesión activa en la sala:
+
+```json
+{
+  "allow": true,
+  "key_id": 468,
+  "owner_type": "WORKER",
+  "worker_id": 172,
+  "worker_session_id": 723,
+  "session_reused": true,
+  "room_id": 12,
+  "room_type_id": 2,
+  "action": "open",
+  "reason": null
+}
+```
+
+- `session_reused=true` indica que se reutilizó la sesión existente.
+- El error `already_inside` **ya no aplica** a llaves de acceso; sigue en
+  `/api/v1/workers/qr/validate` (409).
+- `WORKER_SESSION_STALE_SECONDS` (def. 43200) cierra una sesión vieja como
+  `AUTO` antes de abrir. No hay cambio de forma en la respuesta.
+
+### Cierre manual de sesión
+
+```
+POST /api/v1/workers/sessions/{id}/close
+Header: X-API-Key: <ADMIN-CLI>
+Body: {"reason": "manual_panel"}
+Response 200:
+{
+  "data": {
+    "session": { "id": 723, "worker_id": 172, "room_id": 12,
+                 "entered_at": "...", "exited_at": "...",
+                 "exit_kind": "AUTO", ... },
+    "already_closed": false
+  }
+}
+```
+
+- Idempotente: una segunda llamada devuelve `already_closed=true` con la misma
+  sesión cerrada.
+- Escribe `access_events(kind=WORKER_EXIT, worker_session_id=...)` con
+  `meta.reason`.
+- Scope `workers:write`; 404 si la sesión no existe.
+
+### Lecturas aditivas
+
+- `GET /api/v1/workers/inside`: cada elemento añade `session_id`.
+- `GET /api/v1/workers/{id}` y `GET /api/v1/workers`: `current_room` añade
+  `session_id` y `entered_at`.
+- El QR maestro (`/api/v1/workers/qr/validate`) mantiene el 409
+  `already_inside` y ahora deja un `access_events` `DENIED` con motivo
+  `already_inside` y `worker_session_id`.
