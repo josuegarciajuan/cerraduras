@@ -11957,3 +11957,15 @@ pendientes.
 - [x] TSK-F125.1.1-02: `ZigbeeRadarCalibrationPersistTest` (reflexión + PDO falso, sin driver SQLite).
 - [x] TSK-F125.1.1-03: ampliar BLOCK 97 y verificar que no hay warning/TypeError.
 - [x] TSK-F125.1.1-04: regresión completa y despliegue.
+
+## F125.1.2 — Perfil MQTT por dispositivo
+
+- [x] TSK-F125.1.2-01: `config/zigbee-mqtt-profiles.json` sin secretos.
+- [x] TSK-F125.1.2-02: `ZigbeeMqttProfile` (perfil, validación, env, describe) + unit.
+- [x] TSK-F125.1.2-03: integración del perfil en `ZigbeeRadarCalibrationService`.
+- [x] TSK-F125.1.2-04: integración en `ZigbeeSwitchGateway` (publish y probe).
+- [x] TSK-F125.1.2-05: `bin/zigbee-mqtt-profile.php` con backup y confirmación.
+- [x] TSK-F125.1.2-06: tests de perfil, radar y switch; BLOCK 98.
+- [x] TSK-F125.1.2-07: documentar perfiles y separación dev/producción.
+- [ ] TSK-F125.1.2-08: asignar `mqtt_profile=dev` al dispositivo 1339 y smoke.
+- [ ] TSK-F125.1.2-09: regresión completa y verificación de producción 1884.

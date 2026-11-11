@@ -235,6 +235,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; regresión 1210/0/14; prueba física pendiente** |
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 | **F125.1 Calibración guiada del radar** | **BLOCK 97 + `RadarGuidedCalibrationTest`/`radar-wizard.test.js`** | **Implementado (código); prueba física completa pendiente** |
+| **F125.1.2 Perfil MQTT por dispositivo** | **BLOCK 98 + `ZigbeeMqttProfileTest`/`ZigbeeRadarCalibrationProfileTest`** | **Implementado (código); pendiente asignar perfil dev y regresión** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
@@ -1373,6 +1374,31 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarGuidedCalibrationTest` (49), `radar-wizard.test.js`
   (28), `RadarStudioStoreTest` (12) y BLOCK 97 del runner. Pendiente la prueba
   física completa y la regresión final.
+
+### F125.1.2 — Perfil MQTT por dispositivo (RF-362…RF-365)
+
+- **Motivo**: la API usaba el `.env` global (producción, 1884) para publicar
+  todas las órdenes Zigbee. El radar de DEVELOPMENTROOM está en el broker de
+  desarrollo (1886); sus cambios nunca se confirmaban y la UI daba
+  `not_confirmed`.
+- **Perfil**: `devices.meta_json.mqtt_profile`. Sin perfil → `.env` (1884).
+  `dev` → 1886, usuario `zigbee2mqtt-dev` y fichero de credenciales dev.
+- **Config**: `config/zigbee-mqtt-profiles.json` sin contraseñas; solo puerto,
+  usuario y ruta. Se valida puerto, usuario, ruta absoluta existente y
+  allowlist (`/etc/cerraduras/`, `api/run/`). Perfil desconocido → fallo
+  cerrado, no se publica.
+- **Publicadores**: `ZigbeeRadarCalibrationService` y `ZigbeeSwitchGateway`
+  pasan el entorno del dispositivo al proceso hijo. Sin overrides se conserva
+  exactamente el comportamiento anterior.
+- **Operación**: `bin/zigbee-mqtt-profile.php` diagnostica, hace dry-run,
+  aplica o limpia el perfil con backup y `--confirm`. Solo el dispositivo 1339
+  se marca como `dev`.
+- **Impacto**: producción (437/438/439) sigue en 1884 y su control no cambia;
+  DEV (1339) usa 1886. Lectura/ingest intactos; reinicio breve de la API.
+- **Sin migración, sin `.env` global, sin Tuya y sin pollers nuevos.**
+- **Verificación**: `ZigbeeMqttProfileTest` (27),
+  `ZigbeeRadarCalibrationProfileTest` (10), `ZigbeeSwitchGatewayTest` (23) y
+  BLOCK 98. Pendiente asignar el perfil dev y regresión completa.
 
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 

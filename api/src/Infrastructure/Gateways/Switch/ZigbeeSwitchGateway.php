@@ -5,6 +5,7 @@ namespace App\Infrastructure\Gateways\Switch;
 
 use App\Domain\Devices\Device;
 use App\Domain\Devices\DeviceRepositoryInterface;
+use App\Infrastructure\Zigbee\ZigbeeMqttProfile;
 use App\Support\Config;
 use Closure;
 
@@ -28,14 +29,17 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
 
     /** @var Closure(string):array{ok:bool,error:?string}|null */
     private ?Closure $reader;
+    private ?string $profileConfigFile;
 
     public function __construct(
         private DeviceRepositoryInterface $devices,
         ?Closure $publisher = null,
-        ?Closure $reader = null
+        ?Closure $reader = null,
+        ?string $profileConfigFile = null
     ) {
         $this->publisher = $publisher;
         $this->reader = $reader;
+        $this->profileConfigFile = $profileConfigFile;
     }
 
     public function turnOn(int $roomId, array $ctx = []): array
@@ -97,9 +101,15 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
             return ['ok' => false, 'provider' => self::PROVIDER, 'error' => 'invalid_topic'];
         }
         try {
+            $env = ZigbeeMqttProfile::envForDevice(is_array($device->meta) ? $device->meta : [], $this->profileConfigFile);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'provider' => self::PROVIDER, 'error' => $e->getMessage()];
+        }
+
+        try {
             $result = $this->reader !== null
-                ? ($this->reader)($topic)
-                : $this->runReader($topic);
+                ? ($this->reader)($topic, $env)
+                : $this->runReader($topic, $env);
         } catch (\Throwable $e) {
             return ['ok' => false, 'provider' => self::PROVIDER, 'error' => $e->getMessage()];
         }
@@ -113,7 +123,7 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
         return preg_replace('/\/set$/', '/get', $this->setTopic($device)) ?? '';
     }
 
-    private function runReader(string $topic): array
+    private function runReader(string $topic, array $env = []): array
     {
         $apiDir = dirname(__DIR__, 4);
         $helper = $apiDir . '/bin/zigbee-ingress/read-state.js';
@@ -123,7 +133,8 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
         $node = (string) (Config::get('ZIGBEE_NODE_BIN', 'node') ?? 'node');
         $timeout = (int) (Config::get('ZIGBEE_SWITCH_TIMEOUT_SECONDS', '5') ?? 5);
         $process = proc_open([$node, $helper, $topic, (string) max(1, $timeout)],
-            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $apiDir);
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $apiDir,
+            ZigbeeMqttProfile::childEnv($env));
         if (!is_resource($process)) {
             return ['ok' => false, 'error' => 'read_process_failed'];
         }
@@ -167,9 +178,15 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
         $payload = self::payloadForState($state);
 
         try {
+            $env = ZigbeeMqttProfile::envForDevice(is_array($device->meta) ? $device->meta : [], $this->profileConfigFile);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'provider' => self::PROVIDER, 'error' => $e->getMessage()];
+        }
+
+        try {
             $result = $this->publisher !== null
-                ? ($this->publisher)($topic, $payload)
-                : $this->runPublisher($topic, $payload);
+                ? ($this->publisher)($topic, $payload, $env)
+                : $this->runPublisher($topic, $payload, $env);
         } catch (\Throwable $e) {
             return ['ok' => false, 'provider' => self::PROVIDER, 'error' => $e->getMessage()];
         }
@@ -189,7 +206,7 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
     }
 
     /** @return array{ok:bool,error:?string} */
-    private function runPublisher(string $topic, string $payload): array
+    private function runPublisher(string $topic, string $payload, array $env = []): array
     {
         $apiDir = dirname(__DIR__, 4);
         $helper = $apiDir . '/bin/zigbee-ingress/publish.js';
@@ -207,7 +224,8 @@ final class ZigbeeSwitchGateway implements SwitchGatewayInterface
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
         ];
-        $process = proc_open([$node, $helper, $topic, $payload, (string) $timeout], $descriptors, $pipes, $apiDir);
+        $process = proc_open([$node, $helper, $topic, $payload, (string) $timeout], $descriptors, $pipes, $apiDir,
+            ZigbeeMqttProfile::childEnv($env));
         if (!is_resource($process)) {
             return ['ok' => false, 'error' => 'publish_process_failed'];
         }

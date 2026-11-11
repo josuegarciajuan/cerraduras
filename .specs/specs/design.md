@@ -27121,3 +27121,43 @@ el cliente consulta el estado local cada 1,5 s mientras la pestaña está visibl
 en el merge de F125.1 y provocaba un `TypeError` al aplicar un perfil que ya
 coincidía con el radar. El test de regresión usa reflexión sobre la firma y un
 PDO falso para no depender de SQLite.
+
+## F125.1.2 — Perfil MQTT por dispositivo
+
+### Resolución
+
+`App\Infrastructure\Zigbee\ZigbeeMqttProfile` lee `meta.mqtt_profile`:
+
+- ausente/`default` → `env=[]` (hereda `.env`, 1884);
+- `dev` → `ZIGBEE_MQTT_PORT=1886`, `ZIGBEE_MQTT_USERNAME=zigbee2mqtt-dev`,
+  `ZIGBEE_MQTT_PASSWORD_FILE=/etc/cerraduras/zigbee-dev-mqtt.pass`.
+
+El fichero `config/zigbee-mqtt-profiles.json` contiene solo perfiles, puerto,
+usuario y ruta de credenciales. Se validan puerto, usuario, ruta absoluta
+existente y allowlist (`/etc/cerraduras/`, `api/run/`). Un perfil desconocido
+lanza `unknown_mqtt_profile`.
+
+### Publicadores
+
+`runPublisher()`/`runReader()` reciben `array $env`; si hay overrides,
+`proc_open` recibe `array_merge(getenv(), overrides)`; si no, `null` para
+conservar el comportamiento actual. El helper Node ya prioriza `process.env`
+sobre `.env`. El mismo mecanismo se aplica al radar y al gateway de la luz.
+
+### Datos y operación
+
+Solo el dispositivo `1339` (`DEVELOPMENTROOM`) lleva `"mqtt_profile":"dev"`.
+`bin/zigbee-mqtt-profile.php` permite diagnosticar (`--json`), hacer dry-run,
+aplicar (`--apply --confirm`) y limpiar (`--clear --apply --confirm`), con
+backup en `api/run/`.
+
+### Impacto
+
+Producción (437/438/439) no tiene perfil → sigue en 1884 y sus comandos no
+cambian. DEV (1339) usa 1886. La lectura/ingest no se toca. El reinicio de la
+API es breve; el ingress/spool no se reinicia.
+
+### Verificación
+
+`ZigbeeMqttProfileTest` (27), `ZigbeeRadarCalibrationProfileTest` (10),
+`ZigbeeSwitchGatewayTest` (23) y BLOCK 98. Regresión completa.

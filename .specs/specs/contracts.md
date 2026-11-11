@@ -17055,3 +17055,56 @@ Errores: `409 step_locked`, `409 step_not_started`, `409 not_awaiting_decision`,
 
 Persistencia final: `devices.meta_json.calibration.source =
 "radar-studio-guided-v1"` con `wizard` (resumen de pasos, paseo y sensibilidad).
+
+## F125.1.2 — Perfil MQTT por dispositivo
+
+### Metadatos
+
+`devices.meta_json.mqtt_profile` (string opcional):
+
+- ausente o `"default"`: usar `.env` (producción, 1884);
+- `"dev"`: usar el perfil `dev` de `config/zigbee-mqtt-profiles.json`.
+
+### Fichero de perfiles
+
+`api/config/zigbee-mqtt-profiles.json`:
+
+```json
+{
+  "version": 1,
+  "profiles": {
+    "dev": {
+      "port": 1886,
+      "username": "zigbee2mqtt-dev",
+      "password_file": "/etc/cerraduras/zigbee-dev-mqtt.pass"
+    }
+  }
+}
+```
+
+Sin contraseñas. `password_file` debe ser absoluto, existente y estar bajo
+`/etc/cerraduras/` o `api/run/`. Claves desconocidas → perfil inválido.
+
+### Diagnóstico
+
+```bash
+php bin/zigbee-mqtt-profile.php --device=1339 --json
+php bin/zigbee-mqtt-profile.php --device=1339 --set-profile=dev --dry-run
+php bin/zigbee-mqtt-profile.php --device=1339 --set-profile=dev --apply --confirm
+php bin/zigbee-mqtt-profile.php --device=1339 --clear --apply --confirm
+```
+
+El JSON devuelve `device`, `room`, `label`, `current_profile`,
+`target_profile`, `applied`, `dry_run`, `backup` y `resolved` (host, port,
+username, password_file, password_file_exists, env_keys). Nunca imprime la
+contraseña.
+
+### Errores
+
+`unknown_mqtt_profile`, `mqtt_profile_invalid`,
+`mqtt_profile_invalid_port`, `mqtt_profile_invalid_username`,
+`mqtt_profile_invalid_password_file`, `mqtt_profile_password_file_missing`,
+`mqtt_profile_password_file_path`, `mqtt_profiles_config_missing`,
+`mqtt_profiles_config_invalid`.
+
+El fallo de resolución impide publicar; no se cae al broker por defecto.

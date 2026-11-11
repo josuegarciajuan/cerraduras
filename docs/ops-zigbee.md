@@ -245,3 +245,47 @@ Los logs de Zigbee2MQTT están en CET (UTC+1); la API y la BD en UTC.
 - No se borran el spool ni la auditoría.
 - **No hay rollback a Tuya** (F122). El rollback es restaurar el backup Zigbee y
   volver a la versión anterior del código. `almacenZigbee` no tiene equivalente Tuya.
+
+## F125.1.2 — Perfil MQTT por dispositivo (DEV vs producción)
+
+Hay dos brokers locales en el VPS:
+
+| Puerto | Origen | Uso |
+|---|---|---|
+| `127.0.0.1:1884` | túnel de producción | `almacen-zb-puerta`, `almacen-zb-presencia`, `almacen-zb-luz` |
+| `127.0.0.1:1886` | túnel de oficina/dev | `dev-zb-presencia` (DEVELOPMENTROOM) |
+
+La API usa el `.env` (1884) por defecto. Un dispositivo puede declarar
+`meta.mqtt_profile` para usar otro perfil. El fichero
+`api/config/zigbee-mqtt-profiles.json` no contiene contraseñas, solo puerto,
+usuario y ruta al fichero de credenciales:
+
+```json
+{
+  "version": 1,
+  "profiles": {
+    "dev": {
+      "port": 1886,
+      "username": "zigbee2mqtt-dev",
+      "password_file": "/etc/cerraduras/zigbee-dev-mqtt.pass"
+    }
+  }
+}
+```
+
+- `devices.meta_json.mqtt_profile` ausente o `default` → `.env` (producción).
+- `dev` → perfil dev (1886), sin tocar `.env` ni el control de producción.
+- Un perfil desconocido o inválido impide publicar (fallo cerrado).
+
+Diagnóstico y asignación:
+
+```bash
+php api/bin/zigbee-mqtt-profile.php --device=1339 --json
+php api/bin/zigbee-mqtt-profile.php --device=1339 --set-profile=dev --dry-run
+php api/bin/zigbee-mqtt-profile.php --device=1339 --set-profile=dev --apply --confirm
+php api/bin/zigbee-mqtt-profile.php --device=1339 --clear --apply --confirm
+```
+
+El script guarda un backup del `meta_json` anterior en `api/run/` y nunca
+imprime la contraseña. Los dispositivos de producción no se tocan y siguen
+resolviendo al perfil `default` (1884).
