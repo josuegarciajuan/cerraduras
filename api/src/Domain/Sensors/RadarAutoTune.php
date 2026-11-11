@@ -170,7 +170,9 @@ final class RadarAutoTune
         }
 
         if ($moves === 0 && $presents === 0) {
-            return ['value' => min(9, $currentInt + 2), 'reason' => 'no_motion_no_presence', 'confidence' => 'medium', 'stats' => $stats];
+            // Sin evidencia no se sube la sensibilidad: en una sala vacía eso
+            // solo aumentaría los falsos positivos. La UI pide moverse.
+            return ['value' => null, 'reason' => 'no_motion_no_presence', 'confidence' => 'low', 'stats' => $stats];
         }
         if ($moves > 0 && $latest !== 'PRESENT' && $transitions === 0) {
             return ['value' => min(9, $currentInt + 2), 'reason' => 'motion_without_presence', 'confidence' => 'high', 'stats' => $stats];

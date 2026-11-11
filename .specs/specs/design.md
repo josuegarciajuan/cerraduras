@@ -26858,7 +26858,8 @@ se inventa evidencia.
 
 - Sensibilidad: ventana de 15 s; si hay ecos y presencia → mantener (o bajar a
   8 si está al máximo y la tasa es alta); si hay ecos sin presencia → subir 2;
-  si hay presencia sin ecos → subir 1; si no hay nada → subir 2 (tope 9).
+  si hay presencia sin ecos → subir 1; si no hay nada → **sin sugerencia**
+  (falta evidencia; nunca se sube a ciegas en una sala vacía).
 - Reposo: solo empieza con el radar en `ABSENT`; 60 s sin `PRESENT` nuevos =
   `clear`. Un `PRESENT` = `detected` y reduce el alcance 0,30 m (máx. 6 rondas).
 - Reentrada: se marca estando fuera; exige un `PRESENT` con marcador distinto
