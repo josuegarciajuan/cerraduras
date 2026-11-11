@@ -11967,5 +11967,5 @@ pendientes.
 - [x] TSK-F125.1.2-05: `bin/zigbee-mqtt-profile.php` con backup y confirmación.
 - [x] TSK-F125.1.2-06: tests de perfil, radar y switch; BLOCK 98.
 - [x] TSK-F125.1.2-07: documentar perfiles y separación dev/producción.
-- [ ] TSK-F125.1.2-08: asignar `mqtt_profile=dev` al dispositivo 1339 y smoke.
-- [ ] TSK-F125.1.2-09: regresión completa y verificación de producción 1884.
+- [x] TSK-F125.1.2-08: asignar `mqtt_profile=dev` al dispositivo 1339 y smoke.
+- [x] TSK-F125.1.2-09: regresión completa (1315/0/14) y producción 1884 verificada.
