@@ -9296,7 +9296,8 @@ else
     fail "F124: QR maestro enciende la luz solo si el cerrojo abre" "falta la llamada o la guarda"
 fi
 
-if grep -q "turnOnForCredentialOpen" "$F124_INDEX"; then
+if grep -q "F124: excluye almacén/timbrado" "$F124_INDEX" \
+   && grep -q "RF-16/F124" "$F124_INDEX"; then
     pass "F124: wiring del encendido por credencial en index.php"
 else
     fail "F124: wiring del encendido por credencial en index.php" "no se pasa la dependencia"
