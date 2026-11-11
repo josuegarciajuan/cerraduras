@@ -11950,3 +11950,10 @@ pendientes.
 - [x] TSK-F125.1-08: persistencia final con `source=radar-studio-guided-v1`.
 - [x] TSK-F125.1-09: BLOCK 97 del runner y documentación.
 - [ ] TSK-F125.1-10: prueba física completa (a ojo, paseo, sensibilidad, fuera/dentro/fuera).
+
+## F125.1.1 — Corrección de `persistCalibration` con `$extra`
+
+- [x] TSK-F125.1.1-01: declarar `array $extra = []` en la firma de `persistCalibration()`.
+- [x] TSK-F125.1.1-02: `ZigbeeRadarCalibrationPersistTest` (reflexión + PDO falso, sin driver SQLite).
+- [x] TSK-F125.1.1-03: ampliar BLOCK 97 y verificar que no hay warning/TypeError.
+- [x] TSK-F125.1.1-04: regresión completa y despliegue.

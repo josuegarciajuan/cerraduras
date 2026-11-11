@@ -14140,3 +14140,12 @@ antiguas de autoajuste (se conservan en «Avanzado»).
 **Trazabilidad:** `RadarGuidedCalibration`, `RadarStudioController`,
 `RadarStudioStore`, `radar-wizard.js`, `radar-studio.js`, `sensores.html`,
 `RadarGuidedCalibrationTest`, `radar-wizard.test.js` y BLOCK 97.
+
+### F125.1.1 — Corrección de `persistCalibration` con `$extra`
+
+- **RF-361.1:** `persistCalibration()` declara `array $extra = []` y fusiona el
+  resumen del wizard en la calibración persistida sin perder los valores
+  numéricos. Sin `$extra`, el comportamiento es el anterior.
+- Afecta a la ruta idempotente de `/radar/profile`, a la sensibilidad ya
+  aplicada, al cierre del reposo exterior y al guardado final del wizard.
+- **Trazabilidad:** `ZigbeeRadarCalibrationPersistTest` y BLOCK 97.
