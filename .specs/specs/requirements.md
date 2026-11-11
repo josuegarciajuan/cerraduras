@@ -14175,3 +14175,24 @@ mover dispositivos entre brokers.
 **Trazabilidad:** `ZigbeeMqttProfile`, `ZigbeeRadarCalibrationService`,
 `ZigbeeSwitchGateway`, `bin/zigbee-mqtt-profile.php`,
 `ZigbeeMqttProfileTest`, `ZigbeeRadarCalibrationProfileTest`, BLOCK 98.
+
+## F125.1.3 — Indicador visual de detección (RF-366…RF-368)
+
+**Motivo:** en Radar Studio la presencia se veía solo en un pill pequeño y en
+el brillo del croquis; el operador necesitaba mirar con atención para saber si
+el radar le estaba detectando.
+
+- **RF-366 (banner grande):** encima del croquis se muestra un banner a todo el
+  ancho con icono, título, subtítulo y edad del último reporte.
+- **RF-367 (estados):** verde **TE DETECTA** con `PRESENT`; ámbar
+  **MOVIMIENTO SIN PRESENCIA** con ecos DP9 sin `PRESENT`; rojo **NO TE
+  DETECTA** con `ABSENT` sin movimiento; gris **SIN DATOS** con `stale` o sin
+  reportes. El color no es la única señal (icono + texto).
+- **RF-368 (croquis):** el croquis mantiene el glow verde y el anillo ámbar, y
+  añade un anillo/halo rojo tenue cuando no detecta y gris cuando no hay datos.
+
+**Fuera de alcance:** cambios de backend, migraciones, Tuya o polling nuevo.
+
+**Trazabilidad:** `detectionModel`/`buildSvg` en `radar-scope.js`,
+`renderDetection` en `radar-studio.js`, `#radarDetection` en `sensores.html`,
+`radar-scope.test.js` y BLOCK 97.

@@ -123,6 +123,7 @@
   }
 
   function renderError(message) {
+    renderDetection(null);
     var host = $('scopeSvg');
     if (host) host.innerHTML = '<div class="scope-empty">No se pudo leer el radar: ' + esc(message) + '</div>';
     var chips = $('studioChips');
@@ -148,6 +149,7 @@
   function render() {
     if (!S.scope || !S.scope.scope) { renderError('sin datos'); return; }
     var sc = S.scope.scope;
+    renderDetection(sc);
     renderChips(sc);
     var host = $('scopeSvg');
     if (host && window.RadarScope) host.innerHTML = window.RadarScope.buildSvg(currentScope() || sc);
@@ -157,17 +159,31 @@
     renderActive(sc);
   }
 
+  function renderDetection(sc) {
+    var banner = $('radarDetection');
+    if (!banner) return;
+    var model = (window.RadarScope && window.RadarScope.detectionModel)
+      ? window.RadarScope.detectionModel(sc)
+      : { tone: 'dim', icon: '…', title: 'SIN DATOS', subtitle: 'Sin datos del radar.', ageSeconds: null };
+    banner.className = 'detect-banner ' + (model.tone || 'dim');
+    var icon = $('detectIcon');
+    if (icon) icon.textContent = model.icon || '…';
+    var title = $('detectTitle');
+    if (title) title.textContent = model.title || 'SIN DATOS';
+    var sub = $('detectSub');
+    if (sub) sub.textContent = model.subtitle || '';
+    var age = $('detectAge');
+    if (age) age.textContent = model.ageSeconds != null ? 'hace ' + Math.round(model.ageSeconds) + ' s' : '—';
+  }
+
   function renderChips(sc) {
     var host = $('studioChips');
     if (!host) return;
-    var visual = window.RadarScope ? window.RadarScope.presenceVisual(sc) : { label: '—', tone: 'dim', state: 'UNKNOWN' };
     var dev = S.scope.device || {};
     var settings = sc.settings || {};
     var age = sc.raw && sc.raw.age_seconds != null ? sc.raw.age_seconds + ' s' : '—';
     var mode = sc.presence_mode || '—';
     var chest = [
-      '<span class="pill ' + (visual.tone === 'ok' ? 'ok' : visual.tone === 'warn' ? 'warn' : visual.tone === 'bad' ? 'bad' : 'dim') + '">'
-        + esc(visual.label) + '</span>',
       '<span class="pill ' + (dev.health === 'online' ? 'ok' : dev.health === 'stale' ? 'warn' : 'dim') + '">'
         + esc(dev.label || 'RADAR') + ' · ' + esc(dev.health || '—') + '</span>',
       '<span class="pill dim">último push ' + esc(age) + '</span>',

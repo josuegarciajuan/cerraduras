@@ -9735,6 +9735,15 @@ else
     skip "F125.1: wizard HTTP" "servidor no disponible"
 fi
 
+# F125.1.3: banner grande de detección
+if grep -qF 'radarDetection' public/sensores.html 2>/dev/null \
+   && grep -qF 'detectionModel' public/assets/radar-scope.js 2>/dev/null \
+   && grep -qF 'renderDetection' public/assets/radar-studio.js 2>/dev/null; then
+    pass "F125.1.3: banner de detección"
+else
+    fail "F125.1.3: banner de detección" "falta markup o render"
+fi
+
 # =============================================================================
 # BLOCK 98 — F125.1.2: perfil MQTT por dispositivo
 # Trazabilidad: F125.1.2 · requirements.md §F125.1.2 · design.md §F125.1.2

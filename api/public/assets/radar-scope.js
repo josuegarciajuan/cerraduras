@@ -89,6 +89,52 @@
     return { state: 'UNKNOWN', label: 'SIN DATOS', tone: 'warn', motion: false };
   }
 
+  /**
+   * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
+   * Verde = TE DETECTA; ámbar = movimiento sin presencia; rojo = NO TE DETECTA;
+   * gris = SIN DATOS.
+   */
+  function detectionModel(scope) {
+    var visual = presenceVisual(scope);
+    var raw = (scope && scope.raw) || {};
+    var stats = (scope && scope.stats) || {};
+    var age = raw.age_seconds != null
+      ? Number(raw.age_seconds)
+      : (stats.last_age_s != null ? Number(stats.last_age_s) : null);
+    var lastDistance = null;
+    var series = (scope && scope.series) || [];
+    if (series.length) {
+      var d = Number(series[series.length - 1].distance_m);
+      if (isFinite(d) && d > 0) lastDistance = d;
+    }
+    if (visual.state === 'PRESENT') {
+      return {
+        state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
+        subtitle: 'Presencia confirmada' + (lastDistance != null ? ' · último eco ' + lastDistance.toFixed(2) + ' m' : ''),
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (visual.state === 'MOTION') {
+      return {
+        state: 'MOTION', tone: 'warn', icon: '≈', title: 'MOVIMIENTO SIN PRESENCIA',
+        subtitle: 'El radar ve ecos, pero no ha confirmado presencia.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (visual.state === 'ABSENT') {
+      return {
+        state: 'ABSENT', tone: 'bad', icon: '✕', title: 'NO TE DETECTA',
+        subtitle: 'Sin presencia ni movimiento reciente.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    return {
+      state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
+      subtitle: 'El radar no envía reportes recientes.',
+      ageSeconds: age, lastDistance: lastDistance
+    };
+  }
+
   function histogram(series, binM) {
     var bins = {};
     var max = 0;
@@ -179,6 +225,14 @@
       parts.push('<circle cx="200" cy="200" r="' + Math.min(RADIUS, maxRange * ppm).toFixed(2) + '" fill="none" stroke="#00e676" stroke-width="3" opacity="0.9"/>');
     } else if (visual.state === 'MOTION') {
       parts.push('<circle class="scope-motion" cx="200" cy="200" r="' + (Math.min(RADIUS, maxRange * ppm) - 4).toFixed(2) + '" fill="none" stroke="#ff9100" stroke-width="3" opacity="0.9"/>');
+    } else if (visual.state === 'ABSENT') {
+      var absentR = Math.min(RADIUS, maxRange * ppm + 6);
+      parts.push('<circle cx="200" cy="200" r="' + absentR.toFixed(2) + '" fill="none" stroke="#ff5252" stroke-width="2" stroke-opacity="0.35" stroke-dasharray="4 7"/>');
+      parts.push('<circle cx="200" cy="200" r="18" fill="none" stroke="#ff5252" stroke-width="2" stroke-opacity="0.30"/>');
+    } else if (visual.state === 'STALE' || visual.state === 'UNKNOWN') {
+      var staleR = Math.min(RADIUS, maxRange * ppm + 6);
+      parts.push('<circle cx="200" cy="200" r="' + staleR.toFixed(2) + '" fill="none" stroke="#8a8aa0" stroke-width="2" stroke-opacity="0.30" stroke-dasharray="4 7"/>');
+      parts.push('<circle cx="200" cy="200" r="18" fill="none" stroke="#8a8aa0" stroke-width="2" stroke-opacity="0.25"/>');
     }
 
     // Sensor.
@@ -207,6 +261,7 @@
     scaleFor: scaleFor,
     pxPerM: pxPerM,
     presenceVisual: presenceVisual,
+    detectionModel: detectionModel,
     histogram: histogram,
     buildSvg: buildSvg
   };

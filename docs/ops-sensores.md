@@ -468,3 +468,16 @@ alcance automáticamente. Al terminar, el resumen queda guardado en
 
 Los controles antiguos de autoalcance, sensibilidad, reposo y reentrada siguen
 disponibles en **Avanzado (diagnóstico)**.
+
+### F125.1.3 — Banner de detección en Radar Studio
+
+Radar Studio muestra un banner grande encima del croquis:
+
+- **Verde · TE DETECTA**: el radar confirma presencia.
+- **Ámbar · MOVIMIENTO SIN PRESENCIA**: hay ecos de distancia, pero no presencia.
+- **Rojo · NO TE DETECTA**: sin presencia ni movimiento reciente.
+- **Gris · SIN DATOS**: el radar no envía reportes.
+
+El croquis mantiene el glow verde/ámbar y añade un anillo/halo rojo tenue cuando
+no detecta y gris cuando no hay datos. No hay cambios de backend ni de polling:
+se actualiza con el estado que ya consulta Radar Studio.
