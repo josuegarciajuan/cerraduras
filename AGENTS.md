@@ -234,6 +234,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
 | **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; regresión 1210/0/14; prueba física pendiente** |
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
+| **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1343,3 +1344,25 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarAutoTuneTest` (39), `RadarScopeTest` (25),
   `RadarStudioStoreTest` (6), `radar-scope.test.js` (30) y BLOCK 93 del runner.
   Pendiente la prueba física de paseo/reposo/reentrada y la regresión completa.
+### F126 — Control remoto de habitaciones (RF-360…RF-372)
+
+- **Motivo**: el panel no permitía operar luz, cerradura ni liberar el ciclo
+  desde el listado; el dashboard solo tenía el reset.
+- **Estado**: `RoomControlStatusService` + `RoomRemoteUnlockService` +
+  `RoomResetService` + `RoomControlController`; el reset se comparte con
+  `QrTestController`.
+- **API**: `GET /api/v1/rooms/controls`, `GET /api/v1/rooms/{id}/status`,
+  `GET /api/v1/rooms/{id}/light`, `POST /api/v1/rooms/{id}/light/{on|off}`,
+  `POST /api/v1/rooms/{id}/unlock` y `POST /api/v1/rooms/{id}/reset`.
+- **Fachada LAN**: `/dashboard-api/rooms/...` reutiliza la misma lógica; no
+  permite forzar el cooldown.
+- **Apertura**: `LockService` en salas normales; `WarehouseDoorOpenService` en
+  `ALMACEN_BEBIDAS`/`TIMBRADO`. La confirmación física es del sensor.
+- **Reset**: QR, estancias, deudas/outbox, IoT/cooldown y luz OFF. Sin QR
+  nuevo.
+- **UI**: panel con reserva/ocupación/puerta/luz, botones `💡 🔓 🧾 🔄`,
+  operativas seguras, almacén y OTA; dashboard con barra de control y modal de
+  estado.
+- **Sin migración, sin Tuya y sin pollers nuevos.**
+- **Verificación**: `RoomControlTest`, `ResetCleanupTest`, BLOCK 94 y regresión
+  completa. Pendiente la prueba física de luz/apertura.

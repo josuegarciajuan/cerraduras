@@ -11903,3 +11903,16 @@ pendientes.
 - [x] TSK-F125-10: BLOCK 93 del runner (estático + unit + scope HTTP).
 - [ ] TSK-F125-11: prueba física de paseo, reposo y reentrada en el radar real.
 - [ ] TSK-F125-12: corrida de regresión completa y validación visual del operador.
+## F126 — Control remoto de habitaciones
+
+- [x] TSK-F126-01: `RoomResetService` extraído y `QrTestController` delegando.
+- [x] TSK-F126-02: `RoomControlStatusService` (estado individual y resumen).
+- [x] TSK-F126-03: `RoomRemoteUnlockService` (lock local vs puerta remota).
+- [x] TSK-F126-04: `RoomControlController` + rutas v1 y fachada dashboard.
+- [x] TSK-F126-05: panel con columnas de estado y acciones por fila.
+- [x] TSK-F126-06: drawer de control remoto, operativas seguras y refresco.
+- [x] TSK-F126-07: dashboard con barra de control y modal de estado.
+- [x] TSK-F126-08: almacén en el drawer (cámaras, grabación, visitas y directo).
+- [x] TSK-F126-09: OTA por sala (estado, actualizar, variante y cancelar).
+- [x] TSK-F126-10: `RoomControlTest` + `ResetCleanupTest` (estado, reset, UI, almacén y OTA).
+- [x] TSK-F126-11: BLOCK 94 del runner y regresión completa.

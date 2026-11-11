@@ -9400,6 +9400,76 @@ else
     skip "F125: scope HTTP" "servidor o radar no disponible"
 fi
 
+
+# =============================================================================
+# BLOCK 94 — F126: control remoto de habitaciones
+# Trazabilidad: RF-360..RF-372, TSK-F126-04/11
+# =============================================================================
+block "BLOCK 94 — F126: control remoto de habitaciones"
+
+F126_CODE="F126-TEST-$$"
+F126_ADMIN_KEY=$(get_key "ADMIN-CLI")
+F126_ROOM_ID=""
+if [ -z "$F126_ADMIN_KEY" ]; then
+    skip "F126 completo" "clave ADMIN-CLI no disponible"
+else
+    F126_CREATE=$(curl -s -X POST "${API_BASE}/api/v1/rooms" \
+        -H "X-API-Key: $F126_ADMIN_KEY" -H "Content-Type: application/json" \
+        -d "{\"code\":\"$F126_CODE\",\"room_type_id\":$ROOM_TYPE_PRIMARY}" 2>/dev/null)
+    F126_ROOM_ID=$(printf '%s' "$F126_CREATE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null)
+    if [ -z "$F126_ROOM_ID" ]; then
+        fail "F126: crear sala temporal" "$(printf '%s' "$F126_CREATE" | head -c 300)"
+    else
+        pass "F126: sala temporal creada (id=$F126_ROOM_ID)"
+
+        http_test GET "/api/v1/rooms/$F126_ROOM_ID/status" 200 \
+            "F126: GET /rooms/{id}/status" --key ADMIN-CLI
+        http_test GET "/api/v1/rooms/$F126_ROOM_ID/light" 200 \
+            "F126: GET /rooms/{id}/light" --key ADMIN-CLI
+        http_test GET "/api/v1/rooms/controls" 200 \
+            "F126: GET /rooms/controls" --key ADMIN-CLI
+        http_test POST "/api/v1/rooms/$F126_ROOM_ID/light/on" 404 \
+            "F126: luz sin SWITCH → 404" --key ADMIN-CLI --body '{}'
+        http_test POST "/api/v1/rooms/$F126_ROOM_ID/unlock" 200 \
+            "F126: POST /rooms/{id}/unlock" --key ADMIN-CLI \
+            --idem "f126-unlock-$F126_ROOM_ID-$(date +%s)" --body '{"reason":"run-tests"}'
+        http_test POST "/api/v1/rooms/$F126_ROOM_ID/reset" 422 \
+            "F126: reset sin confirm → 422" --key ADMIN-CLI --body '{}'
+
+        F126_RESET=$(curl -s -X POST "${API_BASE}/api/v1/rooms/$F126_ROOM_ID/reset" \
+            -H "X-API-Key: $F126_ADMIN_KEY" -H "Content-Type: application/json" \
+            -d '{"confirm":true}' 2>/dev/null)
+        F126_RESET_CODE=$(printf '%s' "$F126_RESET" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",""), d.get("summary",{}).get("iot_cycle_reset",""))' 2>/dev/null)
+        if [ "$F126_RESET_CODE" = "FREE True" ]; then
+            pass "F126: reset confirmado deja la sala FREE y limpia el ciclo"
+        else
+            fail "F126: reset confirmado" "respuesta=$(printf '%s' "$F126_RESET" | head -c 300)"
+        fi
+
+        http_test GET "/dashboard-api/rooms/controls" 200 \
+            "F126: dashboard controls"
+        http_test GET "/dashboard-api/rooms/$F126_ROOM_ID/status" 200 \
+            "F126: dashboard status"
+        http_test POST "/dashboard-api/rooms/$F126_ROOM_ID/light" 400 \
+            "F126: dashboard luz con estado inválido → 400" \
+            --body '{"state":"BAD"}'
+        http_test POST "/dashboard-api/rooms/$F126_ROOM_ID/reset" 422 \
+            "F126: dashboard reset sin confirm → 422" --body '{}'
+
+        # La apertura deja access_events: limpiar las tablas hijas antes de borrar.
+        db_exec "DELETE FROM access_events WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM key_access_events WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM qr_credentials WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM debts WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM worker_sessions WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM stays WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM anomalies WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM iot_sessions WHERE room_id=$F126_ROOM_ID;
+                 DELETE FROM rooms WHERE id=$F126_ROOM_ID;" >/dev/null 2>&1 || true
+        pass "F126: sala temporal eliminada"
+    fi
+fi
+
 # =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================

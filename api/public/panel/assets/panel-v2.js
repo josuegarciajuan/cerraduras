@@ -62,6 +62,10 @@
     o.workerQ = '';
     o.roomQ = '';
     o.roomStatusFilter = '';
+    o.roomControls = {};
+    o.roomControlsList = [];
+    o.roomStatus = null;
+    o.roomActionBusy = {};
     o.stayStatusFilter = '';
     o.occupations = null;
     o.occupationFilters = { kind: '', status: '', room_id: '', q: '' };
@@ -214,6 +218,7 @@
       this._v2Timer = setInterval(function () {
         if (document.hidden) return;
         this.loadLiveV2();
+        if (this.p === 'ro') this.loadRoomControlsV2();
       }.bind(this), 20000);
     };
 
@@ -353,6 +358,32 @@
           + (this.roomQ ? '&q=' + encodeURIComponent(this.roomQ) : '')
           + (this.roomStatusFilter ? '&status=' + encodeURIComponent(this.roomStatusFilter) : ''));
       } catch (e) { this.roomsAnalytics = null; }
+      await this.loadRoomControlsV2();
+    };
+
+    // F126 — resumen remoto por sala para el listado y los botones.
+    o.loadRoomControlsV2 = async function () {
+      try {
+        var d = await this.api('/api/v1/rooms/controls');
+        this.roomControlsList = (d && d.items) || [];
+        var map = {};
+        for (var i = 0; i < this.roomControlsList.length; i++) {
+          map[this.roomControlsList[i].room_id] = this.roomControlsList[i];
+        }
+        this.roomControls = map;
+      } catch (e) {
+        this.roomControlsList = [];
+        this.roomControls = {};
+      }
+    };
+    o.roomControl = function (id) { return this.roomControls ? this.roomControls[id] : null; };
+    o.roomLightText = function (id) {
+      var c = this.roomControl(id);
+      if (!c || !c.light || !c.light.installed) return '—';
+      return c.light.state || 'UNKNOWN';
+    };
+    o.roomActionLabel = function (label, busy) {
+      return busy ? '⏳ ' + label : label;
     };
     o.loadAccessAnalyticsV2 = async function () {
       var f = this.accessFilters || {};
@@ -1107,17 +1138,37 @@
       }.bind(this)).join('');
       var rows = items.map(function (r) {
         var panelUrl = this.panelUrlForRoom(r.id);
-        return '<tr><td><button class="link-cell" @click="openRoomDrawer(' + r.id + ')"><strong>' + F.escape(r.code) + '</strong></button><div class="small muted">' + F.escape(r.room_type || '—') + '</div></td>'
-          + '<td>' + F.badge(r.status) + '</td><td>' + (r.pack_name || '<span class="muted">—</span>') + '</td>'
-          + '<td><button class="link-cell" @click="openRoomOccupations(' + r.id + ')">' + (r.sessions || 0) + '</button></td>'
-          + '<td><button class="link-cell" @click="nav(\'ac\')">' + (r.accesses || 0) + '</button></td>'
-          + '<td><button class="link-cell" @click="openRoomAnomalies(' + r.id + ')">' + (r.anomalies || 0) + '</button></td>'
-          + '<td class="small">' + F.relative(r.last_access_at) + '</td>'
+        var ctl = this.roomControl(r.id) || {};
+        var res = ctl.reservation || {};
+        var occ = ctl.occupancy || {};
+        var door = ctl.door || {};
+        var light = ctl.light || {};
+        var caps = ctl.capabilities || {};
+        var reserveText = res.active
+          ? (F.statusMeta(res.status || 'RESERVED')[0] + (res.started ? ' · iniciada' : ' · pendiente'))
+          : '<span class="muted">Libre</span>';
+        var insideText = (occ.guest_inside ? '👤' : '') + (occ.workers_inside ? ' 🧹' + occ.workers_inside : '');
+        if (!insideText) insideText = '<span class="muted">—</span>';
+        var doorText = door.state && door.state !== 'UNKNOWN'
+          ? (F.badge(door.state === 'OPEN' ? 'OVERSTAY' : 'FREE', door.state === 'OPEN' ? 'Abierta' : 'Cerrada') + (door.stale ? ' <span class="small muted">sin datos</span>' : ''))
+          : '<span class="muted">—</span>';
+        var lightText = light.installed
+          ? F.badge(light.state === 'ON' ? 'online' : 'offline', light.state || 'UNKNOWN')
+          : '<span class="muted">—</span>';
+        return '<tr><td><button class="link-cell" @click="openRoomDrawer(' + r.id + ')"><strong>' + F.escape(r.code) + '</strong></button><div class="small muted">' + F.escape(r.room_type || '—') + (r.pack_name ? ' · ' + F.escape(r.pack_name) : '') + '</div></td>'
+          + '<td>' + F.badge(r.status) + '</td>'
+          + '<td class="small">' + reserveText + '</td>'
+          + '<td class="small">' + insideText + '</td>'
+          + '<td class="small">' + doorText + '</td>'
+          + '<td class="small">' + lightText + '</td>'
+          + '<td><button class="link-cell" @click="openRoomAnomalies(' + r.id + ')">' + (ctl.anomalies_open || 0) + '</button></td>'
           + '<td><div class="row-actions">'
-          + '<button class="btn btn-o btn-sm" @click="openRoomDrawer(' + r.id + ')">Ver</button> '
-          + '<a class="btn btn-o btn-sm" href="' + panelUrl + '" target="_blank" rel="noopener">' + F.escape(this.panelLabelForRoom(r.id)) + '</a> '
-          + '<a class="btn btn-o btn-sm" href="/sensores?room=' + r.id + '">Calibrar</a> '
-          + '<button class="btn btn-o btn-sm" @click="openRoomForm(' + r.id + ')">Editar</button>'
+          + (caps.light ? '<button class="btn btn-o btn-sm" title="Encender/apagar luz" @click="toggleRoomLight(' + r.id + ')" ' + (this.roomBusy(r.id, 'light') ? 'disabled' : '') + '>💡</button> ' : '')
+          + (caps.unlock ? '<button class="btn btn-o btn-sm" title="Abrir cerradura" @click="openRoomLock(' + r.id + ')" ' + (this.roomBusy(r.id, 'lock') ? 'disabled' : '') + '>🔓</button> ' : '')
+          + '<button class="btn btn-o btn-sm" title="Ver estado completo" @click="openRoomDrawer(' + r.id + ')">🧾</button> '
+          + '<button class="btn btn-d btn-sm" title="Liberar/resetear" @click="resetRoomCycle(' + r.id + ')" ' + (this.roomBusy(r.id, 'reset') ? 'disabled' : '') + '>🔄</button> '
+          + '<button class="btn btn-o btn-sm" title="Editar" @click="openRoomForm(' + r.id + ')">✎</button> '
+          + '<a class="btn btn-o btn-sm" title="Calibrar sensores" href="/sensores?room=' + r.id + '">Calibrar</a>'
           + '</div></td></tr>';
       }.bind(this)).join('');
       var tiles = (this.live && this.live.rooms ? this.live.rooms : []).map(function (r) {
@@ -1134,7 +1185,7 @@
         + '</div>'
         + (tiles ? '<div class="card" style="margin-bottom:16px"><div class="card-head"><h3>Mapa en vivo</h3><p>Estado actual</p></div><div class="card-body"><div class="room-grid">' + tiles + '</div></div></div>' : '')
         + '<div class="fbar"><input class="grow" type="search" placeholder="Buscar sala o tipo…" x-model="roomQ" @keydown.enter="loadRoomsAnalyticsV2()"><select x-model="roomStatusFilter" @change="loadRoomsAnalyticsV2()">' + statusOpts + '</select><button class="btn btn-o" @click="loadRoomsAnalyticsV2()">Aplicar</button></div>'
-        + this.v2Table(['Sala', 'Estado', 'Pack', 'Sesiones', 'Accesos', 'Anomalías', 'Último', ''], rows, 'Sin habitaciones');
+        + this.v2Table(['Sala', 'Estado', 'Reserva', 'Dentro', 'Puerta', 'Luz', 'Anomalías', 'Acciones'], rows, 'Sin habitaciones');
     };
 
     o.openRoomOccupations = function (roomId) {
@@ -1149,12 +1200,208 @@
       this.loadAnomalies();
     };
 
+    // ── F126 — acciones remotas ──────────────────────────────────────
+    o.roomBusy = function (id, key) {
+      var k = id + ':' + key;
+      return !!(this.roomActionBusy && this.roomActionBusy[k]);
+    };
+    o.setRoomBusy = function (id, key, value) {
+      if (!this.roomActionBusy) this.roomActionBusy = {};
+      this.roomActionBusy[id + ':' + key] = !!value;
+    };
+    o.reloadRoomControlV2 = async function (id) {
+      await this.loadRoomControlsV2();
+      if (this.drawer.show && this.roomStatus && Number(this.roomStatus.room && this.roomStatus.room.id) === Number(id)) {
+        try {
+          this.roomStatus = await this.api('/api/v1/rooms/' + id + '/status');
+          if (this.roomDetailData) this.drawer.content = this.renderRoomDrawer(this.roomDetailData);
+        } catch (e) { /* keep old */ }
+      }
+    };
+    o.toggleRoomLight = async function (id) {
+      if (this.roomBusy(id, 'light')) return;
+      var c = this.roomControl(id);
+      var target = (c && c.light && c.light.state === 'ON') ? 'off' : 'on';
+      this.setRoomBusy(id, 'light', true);
+      try {
+        var r = await this.api('/api/v1/rooms/' + id + '/light/' + target, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        });
+        this.toastOk('Luz ' + target.toUpperCase() + (r.confirmed ? ' confirmada' : ' enviada; esperando confirmación'));
+        await this.reloadRoomControlV2(id);
+      } catch (e) { this.toastErr('Luz: ' + e.message); }
+      this.setRoomBusy(id, 'light', false);
+    };
+    o.openRoomLock = async function (id) {
+      if (this.roomBusy(id, 'lock')) return;
+      if (!confirm('¿Abrir la cerradura de la sala ahora?')) return;
+      this.setRoomBusy(id, 'lock', true);
+      try {
+        var body = { reason: 'panel_manual' };
+        try {
+          await this.api('/api/v1/rooms/' + id + '/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'room-unlock-' + id + '-' + Date.now() },
+            body: JSON.stringify(body)
+          });
+          this.toastOk('Apertura solicitada');
+        } catch (e) {
+          if (e.code === 'room_cooldown' && this.user && this.user.role === 'admin'
+            && confirm('La sala está en anti-reentrada. ¿Forzar la apertura?')) {
+            await this.api('/api/v1/rooms/' + id + '/unlock', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'room-unlock-force-' + id + '-' + Date.now() },
+              body: JSON.stringify({ reason: 'panel_force', override_cooldown: true })
+            });
+            this.toastOk('Apertura forzada solicitada');
+          } else { throw e; }
+        }
+        await this.reloadRoomControlV2(id);
+      } catch (e) { this.toastErr('Apertura: ' + e.message); }
+      this.setRoomBusy(id, 'lock', false);
+    };
+    o.resetRoomCycle = async function (id) {
+      if (this.roomBusy(id, 'reset')) return;
+      if (!confirm('¿Liberar la sala? Se cierran estancias, se revoca el QR, se limpian deudas y se apaga la luz.')) return;
+      this.setRoomBusy(id, 'reset', true);
+      try {
+        var r = await this.api('/api/v1/rooms/' + id + '/reset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true })
+        });
+        var s = (r && r.summary) || {};
+        this.toastOk('Sala liberada · estancias ' + (s.stays_closed || 0) + ' · QR ' + (s.qr_revoked || 0));
+        await this.reloadRoomControlV2(id);
+        if (this.drawer.show) await this.openRoomDrawer(id);
+      } catch (e) { this.toastErr('Reset: ' + e.message); }
+      this.setRoomBusy(id, 'reset', false);
+    };
+    o.closeRoomStay = async function (id) {
+      var st = this.roomStatus && Number(this.roomStatus.room && this.roomStatus.room.id) === Number(id) ? this.roomStatus : null;
+      if (!st) { try { st = await this.api('/api/v1/rooms/' + id + '/status'); } catch (e) { this.toastErr(e.message); return; } }
+      var stay = st.reservation || {};
+      if (!stay.active || !stay.id) { this.toastErr('La sala no tiene una estancia activa'); return; }
+      if (!confirm('¿Cerrar la estancia #' + stay.id + '?')) return;
+      try {
+        await this.api('/api/v1/stays/' + stay.id + '/close', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'panel_manual' })
+        });
+        this.toastOk('Estancia cerrada');
+        await this.reloadRoomControlV2(id);
+        if (this.drawer.show) await this.openRoomDrawer(id);
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.revokeRoomQr = async function (id) {
+      var st = this.roomStatus && Number(this.roomStatus.room && this.roomStatus.room.id) === Number(id) ? this.roomStatus : null;
+      if (!st) { try { st = await this.api('/api/v1/rooms/' + id + '/status'); } catch (e) { this.toastErr(e.message); return; } }
+      var jti = st.qr && st.qr.jti;
+      if (!jti) { this.toastErr('No hay QR activo'); return; }
+      if (!confirm('¿Revocar el QR activo de esta sala?')) return;
+      try {
+        await this.api('/api/v1/qr/' + encodeURIComponent(jti) + '/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'panel_manual' })
+        });
+        this.toastOk('QR revocado');
+        await this.reloadRoomControlV2(id);
+        if (this.drawer.show) await this.openRoomDrawer(id);
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.setRoomOperationalState = async function (id, status) {
+      var labels = { FREE: 'Libre', CLEANING: 'Limpieza', OUT_OF_SERVICE: 'Fuera de servicio' };
+      if (!confirm('¿Marcar la sala como ' + (labels[status] || status) + '?')) return;
+      try {
+        await this.api('/api/v1/rooms/' + id + '/state', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: status })
+        });
+        this.toastOk('Estado actualizado');
+        await this.reloadRoomControlV2(id);
+        if (this.drawer.show) await this.openRoomDrawer(id);
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.pingRoomDevices = async function (id) {
+      var st = this.roomStatus && Number(this.roomStatus.room && this.roomStatus.room.id) === Number(id) ? this.roomStatus : null;
+      if (!st) { try { st = await this.api('/api/v1/rooms/' + id + '/status'); } catch (e) { this.toastErr(e.message); return; } }
+      var ids = (st.devices || []).map(function (d) { return d.id; });
+      if (!ids.length) { this.toastErr('La sala no tiene dispositivos'); return; }
+      try {
+        var r = await this.api('/dashboard-api/ping-all-devices', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_ids: ids, verify_cameras: true })
+        });
+        var online = (r.results || []).filter(function (x) { return x.state === 'online'; }).length;
+        this.toastOk('Comprobados ' + ids.length + ' dispositivos · ' + online + ' online');
+        await this.reloadRoomControlV2(id);
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.identifyRoom = async function (id) {
+      var st = this.roomStatus && Number(this.roomStatus.room && this.roomStatus.room.id) === Number(id) ? this.roomStatus : null;
+      if (!st) { try { st = await this.api('/api/v1/rooms/' + id + '/status'); } catch (e) { this.toastErr(e.message); return; } }
+      var rpi = (st.devices || []).find(function (d) { return d.kind === 'RPI'; });
+      if (!rpi) { this.toastErr('La sala no tiene un ESP32'); return; }
+      try {
+        await this.api('/api/v1/devices/identify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ external_id: rpi.external_id, state: true })
+        });
+        this.toastOk('Localizando ' + (rpi.label || 'ESP32') + '…');
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.pauseRoomAutomation = async function (id, action) {
+      if (!confirm('¿' + (action === 'pause' ? 'Pausar' : 'Reanudar') + ' las automatizaciones de esta sala?')) return;
+      try {
+        await this.api('/dashboard-api/sensores/v2/automation/pause', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room_id: id, action: action })
+        });
+        this.toastOk(action === 'pause' ? 'Automatizaciones pausadas' : 'Automatizaciones reanudadas');
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.setRoomCamera = async function (roomId, cameraId, field, value) {
+      try {
+        var body = {};
+        body[field] = value;
+        await this.api('/almacen-api/cameras/' + cameraId, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        await this.api('/almacen-api/cameras/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        this.toastOk('Cámara actualizada');
+        await this.reloadRoomControlV2(roomId);
+        if (this.drawer.show) await this.openRoomDrawer(roomId);
+      } catch (e) { this.toastErr(e.message); }
+    };
+    o.updateRoomFirmware = async function (roomId, deviceId, variant) {
+      var body = variant ? { variant: variant } : { upgrade: true };
+      var msg = variant ? ('¿Cambiar la variante a ' + variant + '?') : '¿Actualizar a la última versión publicada?';
+      if (!confirm(msg)) return;
+      try {
+        await this.api('/api/v1/devices/' + deviceId + '/firmware-update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        this.toastOk('Operación OTA solicitada');
+        await this.reloadRoomControlV2(roomId);
+        if (this.drawer.show) await this.openRoomDrawer(roomId);
+      } catch (e) { this.toastErr(this.deviceSaveError ? this.deviceSaveError(e) : e.message); }
+    };
+    o.cancelRoomFirmware = async function (roomId, operationId) {
+      if (!operationId || !confirm('¿Cancelar la actualización de firmware en curso?')) return;
+      try {
+        await this.api('/api/v1/firmware-operations/' + operationId + '/cancel', { method: 'POST' });
+        this.toastOk('Actualización cancelada');
+        await this.reloadRoomControlV2(roomId);
+        if (this.drawer.show) await this.openRoomDrawer(roomId);
+      } catch (e) { this.toastErr(this.deviceSaveError ? this.deviceSaveError(e) : e.message); }
+    };
+
     o.openRoomDrawer = async function (id) {
       this.setHash('ro', { room: id });
       this.drawer = { show: true, title: 'Habitación', subtitle: 'Cargando…', content: '<div class="skeleton skeleton-card"></div>', footer: '' };
       try {
         var d = await this.api('/api/v1/analytics/rooms/' + id + '?days=' + this.analyticsDays);
         this.roomDetailData = d;
+        this.roomStatus = await this.api('/api/v1/rooms/' + id + '/status');
         this.drawer.title = 'Sala ' + d.room.code;
         this.drawer.subtitle = (d.room.room_type || '—') + ' · ' + F.statusMeta(d.room.status)[0];
         this.drawer.content = this.renderRoomDrawer(d);
@@ -1163,6 +1410,106 @@
       } catch (e) {
         this.drawer.content = '<div class="empty"><h2>No se pudo cargar</h2><p>' + F.escape(e.message) + '</p></div>';
       }
+    };
+
+    o.renderRoomRemoteCard = function (id) {
+      var s = this.roomStatus;
+      if (!s || Number(s.room && s.room.id) !== Number(id)) {
+        return '<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>Control remoto</h3></div><div class="card-body"><span class="muted">Cargando estado remoto…</span></div></div>';
+      }
+      var res = s.reservation || {};
+      var occ = s.occupancy || {};
+      var door = s.door || {};
+      var light = s.light || {};
+      var lock = s.lock || {};
+      var qr = s.qr || {};
+      var stayText = res.active
+        ? (F.statusMeta(res.status || 'RESERVED')[0] + (res.started ? ' · iniciada' : ' · sin empezar'))
+        : 'Sin reserva';
+      var timeText = res.active
+        ? (res.remaining_minutes != null ? (res.remaining_minutes + ' min restantes') : '—')
+        : '—';
+      if (res.active && res.overstay_minutes > 0) timeText = res.overstay_minutes + ' min de exceso';
+      var people = [];
+      if (occ.guest_inside) people.push('huésped');
+      if (occ.workers_inside_count) people.push(occ.workers_inside_count + ' trabajador(es)');
+      var peopleText = people.length ? people.join(' · ') : 'nadie dentro';
+      return '<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>Control remoto</h3><p>Estado verídico por sensores y dispositivos</p></div><div class="card-body">'
+        + '<div class="kpi-grid" style="margin-bottom:12px">'
+        + this.v2Kpi('Reserva', stayText, timeText, res.started ? '#16a34a' : '#2563eb', '📅')
+        + this.v2Kpi('Dentro', peopleText, 'presencia ' + (occ.presence_state || 'UNKNOWN') + (occ.presence_stale ? ' · sin datos' : ''), occ.any_inside ? '#16a34a' : '#64748b', '👤')
+        + this.v2Kpi('Puerta', door.state || 'UNKNOWN', door.stale ? 'sin datos frescos' : (door.age_seconds != null ? door.age_seconds + ' s' : '—'), door.state === 'OPEN' ? '#dc2626' : '#0ea5e9', '🚪')
+        + this.v2Kpi('Luz', light.installed ? (light.state || 'UNKNOWN') : 'Sin luz', light.pending_confirmation ? 'pendiente de confirmar' : (light.state_at || '—'), light.state === 'ON' ? '#eab308' : '#64748b', '💡')
+        + '</div>'
+        + '<div class="row-actions" style="flex-wrap:wrap;gap:6px">'
+        + (s.capabilities && s.capabilities.light
+          ? '<button class="btn btn-o btn-sm" @click="toggleRoomLight(' + id + ')" ' + (this.roomBusy(id, 'light') ? 'disabled' : '') + '>💡 ' + (light.state === 'ON' ? 'Apagar' : 'Encender') + '</button>'
+          : '')
+        + (s.capabilities && s.capabilities.unlock
+          ? '<button class="btn btn-o btn-sm" @click="openRoomLock(' + id + ')" ' + (this.roomBusy(id, 'lock') ? 'disabled' : '') + '>🔓 Abrir</button>'
+          : '')
+        + '<button class="btn btn-d btn-sm" @click="resetRoomCycle(' + id + ')" ' + (this.roomBusy(id, 'reset') ? 'disabled' : '') + '>🔄 Liberar / reset</button>'
+        + '<button class="btn btn-o btn-sm" @click="pingRoomDevices(' + id + ')">📡 Comprobar dispositivos</button>'
+        + '<button class="btn btn-o btn-sm" @click="identifyRoom(' + id + ')">📍 Identificar</button>'
+        + '</div>'
+        + '<div class="row-actions" style="flex-wrap:wrap;gap:6px;margin-top:6px">'
+        + '<button class="btn btn-o btn-sm" @click="closeRoomStay(' + id + ')" ' + (!res.active ? 'disabled' : '') + '>⏹ Cerrar estancia</button>'
+        + '<button class="btn btn-o btn-sm" @click="revokeRoomQr(' + id + ')" ' + (!qr.jti ? 'disabled' : '') + '>🎫 Revocar QR</button>'
+        + '<button class="btn btn-o btn-sm" @click="setRoomOperationalState(' + id + ',\'CLEANING\')">🧹 Limpieza</button>'
+        + '<button class="btn btn-o btn-sm" @click="setRoomOperationalState(' + id + ',\'OUT_OF_SERVICE\')">🚫 Fuera de servicio</button>'
+        + '<button class="btn btn-o btn-sm" @click="setRoomOperationalState(' + id + ',\'FREE\')">🔓 Libre</button>'
+        + '<button class="btn btn-o btn-sm" @click="pauseRoomAutomation(' + id + ',\'pause\')">⏸ Pausar automatizaciones</button>'
+        + '<button class="btn btn-o btn-sm" @click="pauseRoomAutomation(' + id + ',\'resume\')">▶ Reanudar</button>'
+        + '</div>'
+        + '<div class="small muted" style="margin-top:8px">QR: ' + F.escape(qr.state || 'sin QR') + (qr.jti ? ' · ' + F.escape(String(qr.jti).slice(0, 12)) + '…' : '') + ' · Cerradura: ' + (lock.installed ? 'disponible' : 'no instalada') + (lock.cooldown_active ? ' · anti-reentrada activa' : '') + '</div>'
+        + '</div></div>';
+    };
+
+    o.renderRoomWarehouse = function (id) {
+      var wh = this.roomStatus && this.roomStatus.warehouse;
+      if (!wh) return '';
+      var cams = (wh.cameras || []).map(function (c) {
+        return '<tr><td><b>' + F.escape(c.label || c.position) + '</b><div class="small muted">' + F.escape(c.position) + '</div></td>'
+          + '<td>' + F.badge(c.enabled ? 'online' : 'offline', c.enabled ? 'Encendida' : 'Apagada') + '</td>'
+          + '<td>' + F.badge(c.recording ? 'RECORDING' : (c.record_enabled ? 'SAVED' : 'DISCARDED'), c.recording ? 'Grabando' : (c.record_enabled ? 'Lista' : 'Sin grabar')) + '</td>'
+          + '<td class="small">' + F.relative(c.last_motion_at) + '</td>'
+          + '<td><div class="row-actions"><button class="btn btn-o btn-xs" @click="setRoomCamera(' + id + ',' + c.id + ',\'enabled\',' + (!c.enabled) + ')">' + (c.enabled ? 'Apagar' : 'Encender') + '</button> '
+          + '<button class="btn btn-o btn-xs" @click="setRoomCamera(' + id + ',' + c.id + ',\'record_enabled\',' + (!c.record_enabled) + ')">' + (c.record_enabled ? 'No grabar' : 'Grabar') + '</button></div></td></tr>';
+      });
+      return '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Almacén</h3><p>' + F.escape(wh.state || 'IDLE') + ' · ' + (wh.cameras || []).length + ' cámaras</p></div><div class="card-body">'
+        + this.v2Table(['Cámara', 'Estado', 'Grabación', 'Movimiento', ''], cams, 'Sin cámaras')
+        + '<div class="row-actions" style="margin-top:8px"><a class="btn btn-o btn-sm" href="/almacen?room=' + id + '" target="_blank" rel="noopener">Ver almacén en directo</a>'
+        + '<button class="btn btn-o btn-sm" @click="openRoomLock(' + id + ')">🔓 Abrir puerta remota</button></div>'
+        + '</div></div>';
+    };
+
+    o.renderRoomFirmware = function (id) {
+      var fw = this.roomStatus && this.roomStatus.firmware;
+      if (!fw || !(fw.devices || []).length) return '';
+      var releases = fw.releases || [];
+      var rows = (fw.devices || []).map(function (d) {
+        var op = d.operation;
+        var active = op && !op.finished_at && ['WAITING', 'ACCEPTED', 'DOWNLOADING', 'APPLYING'].indexOf(op.status) >= 0;
+        var variants = [];
+        releases.forEach(function (r) {
+          if (variants.indexOf(r.variant) < 0) variants.push(r.variant);
+        });
+        var variantBtns = variants.filter(function (v) { return v !== d.variant; }).map(function (v) {
+          return '<button class="btn btn-o btn-xs" @click="updateRoomFirmware(' + id + ',' + d.device_id + ',\'' + F.escape(v) + '\')">' + F.escape(v) + '</button>';
+        }).join(' ');
+        return '<tr><td><b>' + F.escape(d.label || d.external_id) + '</b><div class="small muted">' + F.escape(d.external_id) + '</div></td>'
+          + '<td>' + F.escape(d.variant || '—') + '<div class="small muted">' + F.escape(d.version || 'sin versión') + '</div></td>'
+          + '<td>' + (d.ota_capable ? F.badge('online', 'OTA') : F.badge('unknown', 'Cable')) + '</td>'
+          + '<td class="small">' + (op ? (F.escape(op.status) + (op.progress_pct != null ? ' · ' + op.progress_pct + '%' : '')) : '—') + '</td>'
+          + '<td><div class="row-actions">'
+          + '<button class="btn btn-o btn-xs" @click="updateRoomFirmware(' + id + ',' + d.device_id + ')" ' + (!d.ota_capable || active ? 'disabled' : '') + '>Actualizar</button> '
+          + variantBtns
+          + (active && op ? ' <button class="btn btn-d btn-xs" @click="cancelRoomFirmware(' + id + ',' + op.id + ')">Cancelar</button>' : '')
+          + '</div></td></tr>';
+      });
+      return '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Firmware de la sala</h3><p>OTA por dispositivo ESP</p></div><div class="card-body">'
+        + this.v2Table(['Dispositivo', 'Variante / versión', 'OTA', 'Operación', ''], rows, 'Sin dispositivos ESP')
+        + '</div></div>';
     };
 
     o.renderRoomDrawer = function (d) {
@@ -1191,7 +1538,8 @@
           + '<td>' + F.escape(x.kind) + '</td><td>' + F.badge(online) + '</td><td>' + (x.battery_pct != null ? x.battery_pct + '%' : '—') + '</td>'
           + '<td class="small">' + F.escape(x.transport || '—') + '</td><td class="small">' + F.escape(x.firmware_version || '—') + '</td></tr>';
       });
-      return '<div class="kpi-grid">'
+      return this.renderRoomRemoteCard(r.id)
+        + '<div class="kpi-grid">'
         + this.v2Kpi('Estado', F.statusMeta(r.status)[0], r.pack_name || 'Sin pack', F.statusMeta(r.status)[1], '🚪')
         + this.v2Kpi('Sesiones', (d.sessions || []).length, 'en el periodo', '#2563eb', '👤')
         + this.v2Kpi('Accesos', (d.accesses || []).length, 'en el periodo', '#0ea5e9', '📷')
@@ -1214,7 +1562,9 @@
         + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Anomalías</h3></div><div class="card-body">'
         + this.v2Table(['ID', 'Tipo', 'Severidad', 'Estado', 'Detectada'], anomalies, 'Sin anomalías') + '</div></div>'
         + '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Dispositivos</h3></div><div class="card-body">'
-        + this.v2Table(['Dispositivo', 'Tipo', 'Conexión', 'Batería', 'Transporte', 'Firmware'], devices, 'Sin dispositivos') + '</div></div>';
+        + this.v2Table(['Dispositivo', 'Tipo', 'Conexión', 'Batería', 'Transporte', 'Firmware'], devices, 'Sin dispositivos') + '</div></div>'
+        + this.renderRoomWarehouse(r.id)
+        + this.renderRoomFirmware(r.id);
     };
 
     /* ═══════════════════════════════════════════════════════════════

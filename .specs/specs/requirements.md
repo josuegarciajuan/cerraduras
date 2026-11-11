@@ -13999,3 +13999,56 @@ migraciones de datos y modificaciones del wizard de verificación existente.
 `RadarStudioStore`, `radar-scope.js`, `radar-studio.js`, `sensores.html`,
 `RadarAutoTuneTest`, `RadarScopeTest`, `RadarStudioStoreTest`,
 `radar-scope.test.js`, BLOCK 93 del runner.
+## F126 — Control remoto de habitaciones (RF-360…RF-372)
+
+**Motivo:** el panel lista las habitaciones pero no permite operar la luz, la
+cerradura ni liberar el ciclo desde el propio listado. El dashboard solo ofrece
+el reset. Se necesita una vista remota única, por sala, con estado verídico y
+acciones auditables, sin reintroducir Tuya ni añadir pollers.
+
+- **RF-360 (estado de sala):** una llamada devuelve sala, reserva, inicio
+  real, tiempo restante/exceso, presencia, trabajadores dentro, puerta, luz,
+  cerradura, QR, dispositivos, firmware, anomalías y deuda. Incluye
+  `capabilities` para que la UI deshabilite acciones no disponibles.
+- **RF-361 (listado masivo):** el panel obtiene un resumen por sala en una sola
+  llamada para pintar estado y botones sin N+1.
+- **RF-362 (luz):** estado real por push (`switch_state`), última orden,
+  pendiente de confirmación y error. Encender y apagar usan el transporte
+  Zigbee existente; sin dispositivo, `installed=false`.
+- **RF-363 (abrir cerradura):** la acción unificada usa `LockService` en salas
+  normales y `WarehouseDoorOpenService` en `ALMACEN_BEBIDAS`/`TIMBRADO`.
+  Respeta el cooldown; solo `locks:override` puede forzarlo. En el dashboard no
+  se expone el forzado.
+- **RF-364 (reset):** misma semántica que el reset actual: revoca QR, cierra
+  estancias, elimina deudas y outbox asociado, limpia IoT/cooldown y apaga la
+  luz. No crea QR nuevo. Devuelve contadores de lo realizado.
+- **RF-365 (panel):** el listado muestra estado de reserva, ocupación, puerta,
+  luz y anomalías, con acciones por fila y en el drawer. Toda acción destructiva
+  pide confirmación y refresca el estado.
+- **RF-366 (dashboard):** barra de control con luz, apertura y reset, además del
+  estado ampliado. Mantiene el acceso LAN sin sesión CRM.
+- **RF-367 (operativas seguras):** desde el panel se puede cerrar la estancia,
+  revocar el QR, cambiar el estado de la sala, comprobar dispositivos,
+  identificar y pausar automatizaciones reutilizando endpoints existentes.
+- **RF-368 (almacén):** el estado incluye cámaras, grabación, visitas recientes
+  y movimiento. El panel permite encender/apagar cámaras, activar/desactivar
+  grabación, sincronizar go2rtc y abrir la puerta remota.
+- **RF-369 (firmware):** el panel muestra variante, versión, capacidad OTA,
+  releases y operación activa por dispositivo RPI de la sala; permite actualizar,
+  cambiar variante y cancelar reutilizando los endpoints F100.
+- **RF-370 (seguridad):** las rutas canónicas usan los scopes existentes
+  (`rooms:read`, `switches:write`, `locks:open`, `rooms:state`). La fachada
+  `/dashboard-api` mantiene la política LAN del dashboard y no permite forzar
+  cooldown.
+- **RF-371 (compatibilidad):** las rutas previas (`/switches`, `/locks`,
+  `/dashboard-api/rooms/reset`) siguen funcionando y delegan en la misma lógica.
+- **RF-372 (sin cuota):** sin Tuya, sin polling periódico nuevo y sin
+  migraciones. La confirmación física de luz y puerta sigue llegando por push.
+
+**Fuera de alcance:** automatizaciones programadas, cambios de calibración,
+borrado de historial y control de dispositivos no presentes en el pack.
+
+**Trazabilidad:** `RoomControlStatusService`, `RoomRemoteUnlockService`,
+`RoomResetService`, `RoomControlController`, `panel-v2.js`, `dashboard.html`,
+`RoomControlStatusTest`, `RoomResetServiceTest`, `RoomControlUiTest`,
+`RoomControlTest`, `ResetCleanupTest`, BLOCK 94 del runner.
