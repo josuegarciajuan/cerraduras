@@ -11929,3 +11929,11 @@ pendientes.
 - [x] TSK-F127-08: eliminar secretos hardcodeados de guía y herramienta.
 - [x] TSK-F127-09: `DashboardSessionTest`, `F127ApiUnificationTest` y extensión de QR.
 - [x] TSK-F127-10: BLOCK 95 del runner y regresión completa.
+
+## F128 — Control de sala por código real
+
+- [x] TSK-F128-01: resolver único `resolveRoomId()` en `RoomControlController`.
+- [x] TSK-F128-02: rutas `/api/v1/rooms/by-code/{code}/...` para status/luz/unlock/reset.
+- [x] TSK-F128-03: misma lógica, scopes e idempotencia que las rutas por `{id}`.
+- [x] TSK-F128-04: `F128ByCodeRoutesTest` + BLOCK 96.
+- [x] TSK-F128-05: documentación y compatibilidad.
