@@ -16749,3 +16749,87 @@ Response 200:
 - El QR maestro (`/api/v1/workers/qr/validate`) mantiene el 409
   `already_inside` y ahora deja un `access_events` `DENIED` con motivo
   `already_inside` y `worker_session_id`.
+
+---
+
+# Fase 124: Control remoto de habitaciones
+
+## `GET /api/v1/rooms/controls`
+
+- Scope: `rooms:read`.
+- Respuesta `200`:
+  `{ "items": [ { "room_id", "code", "status", "room_type", "pack_name",
+  "reservation": {"active","status","started","overstay"},
+  "occupancy": {"guest_inside","workers_inside"},
+  "door": {"state","stale"}, "light": {"installed","state","state_at"},
+  "anomalies_open", "capabilities": {"light","unlock","reset"} } ],
+  "server_ts" }`.
+- Sin N+1: una sola llamada para el listado.
+
+## `GET /api/v1/rooms/{id}/status`
+
+- Scope: `rooms:read`.
+- `200` con `room`, `reservation`, `occupancy`, `door`, `light`, `lock`,
+  `qr`, `devices`, `firmware`, `warehouse` (solo almacén/timbrado),
+  `anomalies`, `debt`, `capabilities`, `server_ts`.
+- `404 room_not_found`.
+
+## `GET /api/v1/rooms/{id}/light`
+
+- Scope: `rooms:read`.
+- `200 { "room_id", "light": { "installed", "transport", "state",
+  "state_at", "last_command", "commanded_at", "pending_confirmation",
+  "unreachable", "last_error" } }`.
+
+## `POST /api/v1/rooms/{id}/light/on` y `/off`
+
+- Scope: `switches:write`.
+- `200`/`202 { "ok", "room_id", "action":"on|off", "provider",
+  "requested_state", "confirmed", "state", "state_at", "command_id" }`.
+- `404 switch_not_found`; `409 automation_paused`; `502` si el gateway falla.
+- `202` cuando la orden se entregó pero aún no hay confirmación por push.
+
+## `POST /api/v1/rooms/{id}/unlock`
+
+- Scope: `locks:open`; `Idempotency-Key` obligatoria.
+- Cuerpo: `{ "reason"?: string, "override_cooldown"?: bool }`.
+- `override_cooldown=true` exige `locks:override`.
+- `200 { "room_id", "mode":"lock|remote", "result":"ok", "provider",
+  "queued", "already_open", "deduplicated" }`.
+- `403 cooldown`; `409 remote_open_unavailable|lock_not_configured`;
+  `404 room_not_found`.
+
+## `POST /api/v1/rooms/{id}/reset`
+
+- Scope: `rooms:state`.
+- Cuerpo: `{ "confirm": true }`.
+- `200 { "ok":true, "room_id", "status":"FREE",
+  "summary": { "qr_revoked", "stays_closed", "debts_deleted",
+  "iot_cycle_reset", "light_off" } }`.
+- No crea QR nuevo. `422 confirm_required` sin confirmación.
+
+## Fachada dashboard
+
+- `GET /dashboard-api/rooms/controls` y `GET /dashboard-api/rooms/{id}/status`
+  devuelven las mismas formas que las canónicas.
+- `POST /dashboard-api/rooms/{id}/light` con
+  `{ "state":"ON|OFF" }` → misma respuesta que on/off.
+- `POST /dashboard-api/rooms/{id}/unlock` → misma respuesta, siempre
+  `override_cooldown=false`.
+- `POST /dashboard-api/rooms/{id}/reset` → misma respuesta.
+- `POST /dashboard-api/rooms/reset` se conserva.
+
+## Acciones reutilizadas
+
+- `POST /api/v1/stays/{id}/close`
+- `POST /api/v1/qr/{jti}/revoke`
+- `PATCH /api/v1/rooms/{id}/state`
+- `POST /dashboard-api/ping-all-devices`
+- `POST /api/v1/devices/identify`
+- `POST /dashboard-api/sensores/v2/automation/pause`
+- `GET/PATCH /almacen-api/cameras`, `POST /almacen-api/cameras/sync`
+- `GET /almacen-api/state`, `GET /almacen-api/visits`
+- `GET /api/v1/firmware/releases`
+- `GET /api/v1/devices/{id}/firmware-operations`
+- `POST /api/v1/devices/{id}/firmware-update`
+- `POST /api/v1/firmware-operations/{id}/cancel`

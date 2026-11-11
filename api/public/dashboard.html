@@ -324,6 +324,13 @@
       </div>
       <div id="pack-indicator" style="margin-top:3px;font-size:0.65rem"></div>
     </div>
+    <div id="room-actions" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+      <span id="rc-light-state" style="font-size:0.68rem;color:var(--text-dim)">💡 —</span>
+      <button class="btn btn-config" id="btn-rc-light-on" onclick="setRoomLight('ON')" style="padding:5px 10px;font-size:0.7rem">Encender</button>
+      <button class="btn btn-clear" id="btn-rc-light-off" onclick="setRoomLight('OFF')" style="padding:5px 10px;font-size:0.7rem">Apagar</button>
+      <button class="btn btn-config" id="btn-rc-unlock" onclick="openRoomLockRemote()" style="padding:5px 10px;font-size:0.7rem">🔓 Abrir</button>
+      <button class="btn" id="btn-rc-status" onclick="openRoomStatusModal()" style="padding:5px 10px;font-size:0.7rem;background:var(--surface2);color:var(--text)">📋 Estado</button>
+    </div>
   </div>
 </div>
 
@@ -342,6 +349,17 @@
       <button class="btn btn-config" id="modal-assign-btn" onclick="confirmAssignPack()">✅ Asignar</button>
     </div>
     <div id="modal-feedback" style="font-size:0.7rem;margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- ──────────────── MODAL: Estado remoto de la habitación (F124) ──────────────── -->
+<div class="modal-overlay" id="room-status-modal" role="dialog" aria-modal="true" aria-labelledby="room-status-title">
+  <div class="modal-box">
+    <h2 id="room-status-title">📋 Estado de la habitación</h2>
+    <div id="room-status-content" style="font-size:0.82rem;line-height:1.6">Cargando…</div>
+    <div class="modal-actions">
+      <button class="btn" style="background:var(--surface2);color:var(--text)" onclick="closeRoomStatusModal()">Cerrar</button>
+    </div>
   </div>
 </div>
 
@@ -1982,6 +2000,112 @@ async function clearMirame(deviceId) {
   } catch(e) { console.error('clearMirame:', e); }
 }
 
+// ── F124: control remoto desde el dashboard LAN ────────────────────────────
+let roomControlData = null;
+
+async function refreshRoomControls() {
+  try {
+    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/status`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    roomControlData = await res.json();
+    renderRoomControlBar();
+  } catch (e) {
+    roomControlData = null;
+    renderRoomControlBar();
+  }
+}
+
+function renderRoomControlBar() {
+  const light = (roomControlData && roomControlData.light) || {};
+  const label = document.getElementById('rc-light-state');
+  const on = document.getElementById('btn-rc-light-on');
+  const off = document.getElementById('btn-rc-light-off');
+  const unlock = document.getElementById('btn-rc-unlock');
+  if (label) {
+    if (!light.installed) label.textContent = '💡 Sin luz';
+    else label.textContent = '💡 ' + (light.state || 'UNKNOWN') + (light.pending_confirmation ? ' (pendiente)' : '');
+  }
+  if (on) on.disabled = !light.installed || light.state === 'ON';
+  if (off) off.disabled = !light.installed || light.state === 'OFF';
+  if (unlock) unlock.disabled = !(roomControlData && roomControlData.capabilities && roomControlData.capabilities.unlock);
+}
+
+async function setRoomLight(state) {
+  if (!currentRoomId) return;
+  try {
+    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/light`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || data?.error || ('HTTP ' + res.status));
+    showQrToast(true, 'Luz ' + state + (data.confirmed ? ' confirmada' : ' enviada; esperando confirmación'));
+    await refreshRoomControls();
+  } catch (e) { showQrToast(false, 'Luz: ' + e.message); }
+}
+
+async function openRoomLockRemote() {
+  if (!currentRoomId) return;
+  if (!confirm('¿Abrir la cerradura de esta habitación ahora?')) return;
+  try {
+    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/unlock`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'dashboard_manual' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || data?.error || ('HTTP ' + res.status));
+    showQrToast(true, data.already_open ? 'La puerta ya estaba abierta' : 'Apertura solicitada');
+    await refreshRoomControls();
+  } catch (e) { showQrToast(false, 'Apertura: ' + e.message); }
+}
+
+function openRoomStatusModal() {
+  const modal = document.getElementById('room-status-modal');
+  if (!modal) return;
+  modal.classList.add('open');
+  renderRoomStatusModal();
+  refreshRoomControls().then(renderRoomStatusModal);
+}
+
+function closeRoomStatusModal() {
+  const modal = document.getElementById('room-status-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+function fmtRoomMinutes(v) {
+  if (v === null || v === undefined) return '—';
+  return v + ' min';
+}
+
+function renderRoomStatusModal() {
+  const box = document.getElementById('room-status-content');
+  if (!box) return;
+  const d = roomControlData;
+  if (!d) { box.innerHTML = '<p style="color:var(--text-dim)">Sin datos de la habitación.</p>'; return; }
+  const r = d.room || {};
+  const res = d.reservation || {};
+  const occ = d.occupancy || {};
+  const door = d.door || {};
+  const light = d.light || {};
+  const lock = d.lock || {};
+  const qr = d.qr || {};
+  const workers = (occ.workers_inside || []).map(function (w) {
+    return '<div>🧹 ' + (w.worker_name || 'Trabajador') + ' · ' + w.duration_minutes + ' min</div>';
+  }).join('');
+  box.innerHTML =
+    '<p><strong>' + (r.code || 'Sala') + '</strong> · ' + (r.room_type || '—') + ' · ' + (r.status || '—') + '</p>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0">'
+    + '<div class="panel-card"><h3>Reserva</h3><div>' + (res.active ? ('#' + res.id + ' · ' + res.status + ' · ' + (res.started ? 'iniciada' : 'pendiente')) : 'Sin reserva') + '</div>'
+    + '<div>Restante: ' + fmtRoomMinutes(res.remaining_minutes) + (res.overstay_minutes > 0 ? ' · exceso ' + res.overstay_minutes + ' min' : '') + '</div></div>'
+    + '<div class="panel-card"><h3>Ocupación</h3><div>Huésped: ' + (occ.guest_inside ? 'sí' : 'no') + '</div><div>Presencia: ' + (occ.presence_state || 'UNKNOWN') + (occ.presence_stale ? ' (sin datos)' : '') + '</div>' + workers + '</div>'
+    + '<div class="panel-card"><h3>Puerta</h3><div>' + (door.state || 'UNKNOWN') + (door.stale ? ' · sin datos frescos' : '') + '</div><div>Última apertura: ' + (door.last_open_at || '—') + '</div></div>'
+    + '<div class="panel-card"><h3>Luz</h3><div>' + (light.installed ? (light.state || 'UNKNOWN') : 'No instalada') + '</div><div>Última orden: ' + (light.last_command || '—') + '</div></div>'
+    + '<div class="panel-card"><h3>Cerradura</h3><div>' + (lock.installed ? 'Disponible' : 'No instalada') + '</div><div>' + (lock.cooldown_active ? 'Anti-reentrada activa' : 'Sin cooldown') + '</div></div>'
+    + '<div class="panel-card"><h3>QR</h3><div>' + (qr.state || 'Sin QR') + '</div><div>' + (qr.jti ? String(qr.jti).slice(0, 18) + '…' : '—') + '</div></div>'
+    + '</div>'
+    + '<p><strong>Deuda:</strong> ' + ((d.debt && d.debt.open_count) || 0) + ' · <strong>Anomalías:</strong> ' + ((d.anomalies || []).length) + '</p>';
+}
+
 async function resetRoom() {
   if (!confirm('¿Resetear habitación '+(document.getElementById('room-selector').options[document.getElementById('room-selector').selectedIndex]?.text||'')+'? Se perderá el QR activo y la habitación volverá a estado inicial.')) return;
   const btn = document.getElementById('reset-room-btn');
@@ -2003,6 +2127,7 @@ async function resetRoom() {
         ? Choreography.emptyEpisodes(null) : null;
     _lastKnownPollingFreq = 0; _lastKnownPresence = 'UNKNOWN'; hideRadarRipples(); updatePollingIndicator(); stopIdleAnimation();
       await Promise.all([fetchRooms(), poll()]);
+      await refreshRoomControls();
       setTimeout(() => updatePackIndicator(), 200);
     } else {
       showQrToast(false, data.error || 'Error al resetear');
@@ -2156,6 +2281,8 @@ function onRoomSelect() {
   setTimeout(() => { if (!_sseConnected) startPollingFallback(); }, 2000);
   // Auto-ping devices if room has a pack
   autoPingDevicesIfRoomHasPack(currentRoomId);
+  // F124: estado remoto (luz/cerradura/capacidades) de la sala seleccionada.
+  refreshRoomControls();
 }
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -2838,9 +2965,17 @@ function updateSensorPanel(data) {
   const swEl = document.getElementById('s-switch');
   const sw = data.switch_state || {};
   const hasSwitch = sw.id;
-  const switchOn = sw.last_command === 'ON';
+  const switchOn = (sw.state === 'ON' || sw.state === 'OFF')
+    ? sw.state === 'ON'
+    : sw.last_command === 'ON';
   swEl.textContent = hasSwitch ? (switchOn ? 'ON' : 'OFF') : 'No instalado';
   swEl.className = 'value ' + (hasSwitch ? (switchOn ? 'val-yellow' : 'val-red') : 'val-orange');
+  const rcLight = document.getElementById('rc-light-state');
+  if (rcLight) {
+    rcLight.textContent = hasSwitch
+      ? ('💡 ' + (sw.state && sw.state !== 'UNKNOWN' ? sw.state : (switchOn ? 'ON' : 'OFF')))
+      : '💡 Sin luz';
+  }
 
   // F36: Battery sensor door (MC400D)
   const battEl = document.getElementById('s-battery');
@@ -3445,6 +3580,7 @@ async function init() {
       if (sel && sel.options.length > 0) sel.value = currentRoomId;
       // Auto-ping devices on page load if the selected room has a pack
       autoPingDevicesIfRoomHasPack(currentRoomId);
+      refreshRoomControls();
     }).catch(() => {});
   } catch (e) {
     console.error('init() failed:', e);
@@ -3473,6 +3609,8 @@ async function init() {
     if (sel && (document.activeElement === sel || Date.now() < _roomPickerBusyUntil)) return;
     fetchRooms();
   }, 5000);
+  // F124: refresco del estado remoto (luz/capacidades) sin tocar el SSE.
+  setInterval(() => { if (!document.hidden) refreshRoomControls(); }, 20000);
 }
 
 init();

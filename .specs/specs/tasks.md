@@ -11876,3 +11876,18 @@ pendientes.
 - [x] TSK-F123-07: tabla de sesiones abiertas y botón «Cerrar sesión» en `/panel`.
 - [x] TSK-F123-08: `.env.example`, `requirements/design/contracts` y AGENTS.
 - [x] TSK-F123-09: BLOCK 69 del runner ampliado + regresión completa.
+
+## F124 — Control remoto de habitaciones
+
+- [x] TSK-F124-01: `RoomResetService` extraído y `QrTestController` delegando.
+- [ ] TSK-F124-02: `RoomControlStatusService` (estado individual y resumen).
+- [ ] TSK-F124-03: `RoomRemoteUnlockService` (lock local vs puerta remota).
+- [ ] TSK-F124-04: `RoomControlController` + rutas v1 y fachada dashboard.
+- [ ] TSK-F124-05: panel con columnas de estado y acciones por fila.
+- [ ] TSK-F124-06: drawer de control remoto, operativas seguras y refresco.
+- [ ] TSK-F124-07: dashboard con barra de control y modal de estado.
+- [ ] TSK-F124-08: almacén en el drawer (cámaras, grabación, visitas y directo).
+- [ ] TSK-F124-09: OTA por sala (estado, actualizar, variante y cancelar).
+- [ ] TSK-F124-10: units `RoomControlStatusTest`, `RoomResetServiceTest`,
+      `RoomControlUiTest`, `WarehouseRoomActionsTest`, `FirmwareRoomActionsTest`.
+- [ ] TSK-F124-11: BLOCK 92 del runner y regresión completa.

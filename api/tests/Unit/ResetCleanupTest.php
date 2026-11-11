@@ -38,43 +38,46 @@ function readSource(string $relative): ?string
 }
 
 $controller = readSource('src/Http/Controllers/QrTestController.php');
+$resetter = readSource('src/Domain/Rooms/RoomResetService.php');
 $middleware = readSource('src/Http/Middlewares/RequestLogMiddleware.php');
 
-// ── QrTestController: real outbox table is referenced ──────────────────────
-if ($controller === null) {
-    fail('QrTestController.php legible');
+// ── F124: the shared reset service owns the cleanup ────────────────────────
+if ($resetter === null) {
+    fail('RoomResetService.php legible');
 } else {
-    if (str_contains($controller, 'outbox_vb6')) {
-        pass('QrTestController referencia outbox_vb6 (tabla real)');
+    if (str_contains($resetter, 'outbox_vb6')) {
+        pass('RoomResetService referencia outbox_vb6 (tabla real)');
     } else {
-        fail('QrTestController NO referencia outbox_vb6');
+        fail('RoomResetService NO referencia outbox_vb6');
     }
 
-    // Both reset() and roomsReset() must resolve debt ids before deleting debts.
-    $cleanupCount = substr_count($controller, 'cleanup outbox_vb6');
-    if ($cleanupCount >= 2) {
-        pass("QrTestController limpia outbox_vb6 en ambos métodos reset ({$cleanupCount})");
+    if (!str_contains($resetter, 'overstay_debts')) {
+        pass('RoomResetService ya no referencia overstay_debts (tabla inexistente)');
     } else {
-        fail("QrTestController solo limpia outbox_vb6 en {$cleanupCount} método(s), se esperaban 2");
+        fail('RoomResetService todavía referencia overstay_debts');
+    }
+
+    if (!str_contains($resetter, 'DELETE FROM outbox ')) {
+        pass('RoomResetService ya no ejecuta DELETE FROM outbox (tabla inexistente)');
+    } else {
+        fail('RoomResetService todavía ejecuta DELETE FROM outbox');
     }
 }
 
-// ── QrTestController: broken/orphan statements removed ─────────────────────
+// ── QrTestController delegates the reset instead of duplicating SQL ─────────
 if ($controller === null) {
-    fail('QrTestController.php legible (sin overstay_debts)');
+    fail('QrTestController.php legible');
 } else {
-    if (!str_contains($controller, 'overstay_debts')) {
-        pass('QrTestController ya no referencia overstay_debts (tabla inexistente)');
+    if (str_contains($controller, 'resetService()->reset($roomId)')) {
+        pass('QrTestController delega en RoomResetService');
     } else {
-        fail('QrTestController todavía referencia overstay_debts');
+        fail('QrTestController NO delega en RoomResetService');
     }
 
-    // Catch the broken `DELETE FROM outbox ` (space), without matching the
-    // legitimate `DELETE FROM outbox_vb6` (underscore).
-    if (!str_contains($controller, 'DELETE FROM outbox ')) {
-        pass('QrTestController ya no ejecuta DELETE FROM outbox (tabla inexistente)');
+    if (!str_contains($controller, 'DELETE FROM debts')) {
+        pass('QrTestController ya no duplica el borrado de deudas');
     } else {
-        fail('QrTestController todavía ejecuta DELETE FROM outbox');
+        fail('QrTestController todavía duplica el borrado de deudas');
     }
 }
 

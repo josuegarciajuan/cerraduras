@@ -10,6 +10,7 @@ use App\Support\Qr\QrTokenizer;
 use App\Domain\Devices\SwitchService;
 use App\Domain\Rooms\RoomCycleResetter;
 use App\Domain\Rooms\RoomCycleResetterInterface;
+use App\Domain\Rooms\RoomResetService;
 
 /**
  * QrTestController: endpoints del dashboard para QR de pruebas (RF-20).
@@ -27,17 +28,32 @@ final class QrTestController
     private ?QrTokenizer $qrTokenizer;
     private ?SwitchService $switchService;
     private RoomCycleResetterInterface $cycleResetter;
+    private ?RoomResetService $resetService;
 
     public function __construct(
         \PDO $pdo,
         ?QrTokenizer $qrTokenizer = null,
         ?SwitchService $switchService = null,
-        ?RoomCycleResetterInterface $cycleResetter = null
+        ?RoomCycleResetterInterface $cycleResetter = null,
+        ?RoomResetService $resetService = null
     ) {
         $this->pdo = $pdo;
         $this->qrTokenizer = $qrTokenizer;
         $this->switchService = $switchService;
         $this->cycleResetter = $cycleResetter ?? new RoomCycleResetter($pdo);
+        $this->resetService = $resetService;
+    }
+
+    private function resetService(): RoomResetService
+    {
+        if ($this->resetService === null) {
+            $this->resetService = new RoomResetService(
+                $this->pdo,
+                $this->cycleResetter,
+                $this->switchService
+            );
+        }
+        return $this->resetService;
     }
 
     /**
@@ -113,47 +129,10 @@ final class QrTestController
             return Response::json(404, ['error' => 'room_not_found']);
         }
 
-        // ── Step 1: Revoke all active QRs for this room ──
-        $this->pdo->prepare(
-            "UPDATE qr_credentials qc
-             JOIN stays s ON s.id = qc.stay_id
-             SET qc.revoked_at = UTC_TIMESTAMP(3), qc.updated_at = UTC_TIMESTAMP(3)
-             WHERE s.room_id = :rid AND qc.revoked_at IS NULL AND qc.consumed_at IS NULL"
-        )->execute([':rid' => $roomId]);
+        // F124/RF-348: reset compartido (QR, estancias, deudas, IoT y luz).
+        $this->resetService()->reset($roomId);
 
-        // ── Step 2: Close all active stays ──
-        $this->pdo->prepare(
-            "UPDATE stays SET status = 'CLOSED', closed_at = UTC_TIMESTAMP(3)
-             WHERE room_id = :rid AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')"
-        )->execute([':rid' => $roomId]);
-
-        // ── Step 3: Clean room state ──
-        $this->pdo->prepare("UPDATE rooms SET status = 'FREE' WHERE id = :rid")
-            ->execute([':rid' => $roomId]);
-
-        // ── Step 4: Clean IoT session + cooldown (F59/RF-66, pieza compartida) ──
-        $this->cycleResetter->reset($roomId);
-
-        // ── Step 5: Clean debts (and their outbox_vb6 items) ──
-        try {
-            $debtIds = $this->pdo->prepare("SELECT id FROM debts WHERE room_id = :rid");
-            $debtIds->execute([':rid' => $roomId]);
-            $ids = array_map('intval', $debtIds->fetchAll(\PDO::FETCH_COLUMN) ?: []);
-            if (!empty($ids)) {
-                $in = implode(',', $ids);
-                $this->pdo->exec("DELETE FROM outbox_vb6 WHERE topic = 'debt.created' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.debt_id')) IN ($in)");
-            }
-        } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox_vb6: ' . $e->getMessage()); }
-        try { $this->pdo->prepare("DELETE FROM debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup debts: ' . $e->getMessage()); }
-
-        // ── Step 6: Turn off the physical switch (RF-16.3: light off on stay close) ──
-        if ($this->switchService !== null) {
-            try {
-                $this->switchService->turnOff($roomId);
-            } catch (\Throwable) { /* best-effort */ }
-        }
-
-        // ── Step 7: Create new QR (reuse create logic) ──
+        // Create new QR (reuse create logic).
         return $this->doCreate($roomId, $duracionMinutos);
     }
 
@@ -173,57 +152,12 @@ final class QrTestController
             return Response::json(400, ['error' => 'room_id required']);
         }
 
-        // Verify room exists
-        $room = $this->pdo->prepare("SELECT id FROM rooms WHERE id = :rid LIMIT 1");
-        $room->execute([':rid' => $roomId]);
-        if (!$room->fetchColumn()) {
-            return Response::json(404, ['error' => 'room_not_found']);
-        }
-
-        // ── Revoke all active QRs ──
-        $this->pdo->prepare(
-            "UPDATE qr_credentials qc
-             JOIN stays s ON s.id = qc.stay_id
-             SET qc.revoked_at = UTC_TIMESTAMP(3), qc.updated_at = UTC_TIMESTAMP(3)
-             WHERE s.room_id = :rid AND qc.revoked_at IS NULL AND qc.consumed_at IS NULL"
-        )->execute([':rid' => $roomId]);
-
-        // ── Close all active stays ──
-        $this->pdo->prepare(
-            "UPDATE stays SET status = 'CLOSED', closed_at = UTC_TIMESTAMP(3)
-             WHERE room_id = :rid AND status IN ('RESERVED','OCCUPIED','EXITED','OVERSTAY')"
-        )->execute([':rid' => $roomId]);
-
-        // ── Clean room state ──
-        $this->pdo->prepare("UPDATE rooms SET status = 'FREE' WHERE id = :rid")
-            ->execute([':rid' => $roomId]);
-
-        // ── Clean IoT session + cooldown (F59/RF-66, pieza compartida) ──
-        $this->cycleResetter->reset($roomId);
-
-        // ── Clean debts (and their outbox_vb6 items) ──
-        try {
-            $debtIds = $this->pdo->prepare("SELECT id FROM debts WHERE room_id = :rid");
-            $debtIds->execute([':rid' => $roomId]);
-            $ids = array_map('intval', $debtIds->fetchAll(\PDO::FETCH_COLUMN) ?: []);
-            if (!empty($ids)) {
-                $in = implode(',', $ids);
-                $this->pdo->exec("DELETE FROM outbox_vb6 WHERE topic = 'debt.created' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.debt_id')) IN ($in)");
-            }
-        } catch (\Throwable $e) { error_log('[QrTestController] cleanup outbox_vb6: ' . $e->getMessage()); }
-        try { $this->pdo->prepare("DELETE FROM debts WHERE room_id = :rid")->execute([':rid' => $roomId]); } catch (\Throwable $e) { error_log('[QrTestController] cleanup debts: ' . $e->getMessage()); }
-
-        // ── Turn off the physical switch (RF-16.3: light off on stay close) ──
-        if ($this->switchService !== null) {
-            try {
-                $this->switchService->turnOff($roomId);
-            } catch (\Throwable) { /* best-effort */ }
-        }
-
+        $result = $this->resetService()->reset($roomId);
         return Response::json(200, [
             'ok'      => true,
             'room_id' => $roomId,
             'status'  => 'FREE',
+            'summary' => $result['summary'],
             'message' => 'Habitación reseteada. Panel en blanco.',
         ]);
     }

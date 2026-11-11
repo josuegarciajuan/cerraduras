@@ -99,6 +99,7 @@ use App\Http\Controllers\OverstayController;
 use App\Http\Controllers\PresenceController;
 use App\Http\Controllers\QrController;
 use App\Http\Controllers\QrTestController;
+use App\Http\Controllers\RoomControlController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\RoomTypeController;
 use App\Http\Controllers\SimController;
@@ -2096,6 +2097,22 @@ $warehouseDoorOpenService = new \App\Domain\Warehouse\WarehouseDoorOpenService(
     $warehouseRecordingService
 );
 
+// F124: control remoto de habitaciones (estado, luz, apertura y reset).
+$roomResetService = new \App\Domain\Rooms\RoomResetService($pdo, $roomCycleResetter, $switchService);
+$roomControlStatusService = new \App\Domain\Rooms\RoomControlStatusService($pdo);
+$roomRemoteUnlockService = new \App\Domain\Rooms\RoomRemoteUnlockService(
+    $pdo,
+    $lockService,
+    $warehouseDoorOpenService
+);
+$roomControlController = new RoomControlController(
+    $roomControlStatusService,
+    $switchService,
+    $roomRemoteUnlockService,
+    $roomResetService,
+    $deviceRepo
+);
+
 $presenceEventRepo = new PresenceEventRepository($pdo);
 // $iotSessionRepo already created above (needed by QrValidateService for dashboard)
 
@@ -2225,6 +2242,45 @@ $router->get(
     '/api/v1/rooms',
     [$roomController, 'index'],
     $authFactory(['rooms:read'])
+);
+// F124: must precede /rooms/{id} so "controls" is not read as an id.
+$router->get(
+    '/api/v1/rooms/controls',
+    [$roomControlController, 'controls'],
+    $authFactory(['rooms:read'])
+);
+$router->get(
+    '/api/v1/rooms/{id}/status',
+    [$roomControlController, 'status'],
+    $authFactory(['rooms:read'])
+);
+$router->get(
+    '/api/v1/rooms/{id}/light',
+    [$roomControlController, 'light'],
+    $authFactory(['rooms:read'])
+);
+$router->post(
+    '/api/v1/rooms/{id}/light/on',
+    [$roomControlController, 'lightOn'],
+    $authFactory(['switches:write'])
+);
+$router->post(
+    '/api/v1/rooms/{id}/light/off',
+    [$roomControlController, 'lightOff'],
+    $authFactory(['switches:write'])
+);
+$router->post(
+    '/api/v1/rooms/{id}/unlock',
+    [$roomControlController, 'unlock'],
+    array_merge(
+        $authFactory(['locks:open']),
+        [$idempotencyFactory('rooms.unlock')]
+    )
+);
+$router->post(
+    '/api/v1/rooms/{id}/reset',
+    [$roomControlController, 'reset'],
+    $authFactory(['rooms:state'])
 );
 $router->get(
     '/api/v1/rooms/{id}',
@@ -2951,6 +3007,28 @@ $router->post(
     function (\App\Http\Request $request) use ($qrTestCtrl): \App\Http\Response {
         return $qrTestCtrl->reset($request);
     }
+);
+
+// F124: control remoto de habitaciones desde el dashboard LAN.
+$router->get(
+    '/dashboard-api/rooms/controls',
+    [$roomControlController, 'dashboardControls']
+);
+$router->get(
+    '/dashboard-api/rooms/{id}/status',
+    [$roomControlController, 'dashboardStatus']
+);
+$router->post(
+    '/dashboard-api/rooms/{id}/light',
+    [$roomControlController, 'dashboardLight']
+);
+$router->post(
+    '/dashboard-api/rooms/{id}/unlock',
+    [$roomControlController, 'dashboardUnlock']
+);
+$router->post(
+    '/dashboard-api/rooms/{id}/reset',
+    [$roomControlController, 'dashboardReset']
 );
 
 // POST /dashboard-api/rooms/reset — Método B: hard reset, sin crear nuevo QR

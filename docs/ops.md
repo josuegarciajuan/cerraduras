@@ -472,3 +472,30 @@ Formato CSV: `external_id,room_code` (ej. `92f57630,101`)
 - **Requisito de entorno**: el servidor necesita `node_modules` de
   `api/bin/zigbee-ingress` y `api/run/zigbee-mqtt.pass` para los tests de
   calibración del radar; son datos de runtime, no se versionan.
+
+## Control remoto de habitaciones (F124)
+
+- **Panel**: en Habitaciones, cada fila muestra reserva, ocupación, puerta,
+  luz y anomalías, con botones `💡`, `🔓`, `🧾` y `🔄`. El drawer añade el
+  estado completo, operativas seguras, almacén y firmware.
+- **Dashboard**: barra de control junto al selector con luz, apertura,
+  estado y reset. El acceso sigue siendo LAN sin sesión CRM.
+- **API canónica**: `GET /api/v1/rooms/controls`,
+  `GET /api/v1/rooms/{id}/status`, `GET /api/v1/rooms/{id}/light`,
+  `POST /api/v1/rooms/{id}/light/{on|off}`,
+  `POST /api/v1/rooms/{id}/unlock` y `POST /api/v1/rooms/{id}/reset`.
+- **Fachada LAN**: las mismas lecturas y acciones bajo
+  `/dashboard-api/rooms/...`; `unlock` nunca fuerza el cooldown.
+- **Apertura**: salas normales usan `LockService`; `ALMACEN_BEBIDAS` y
+  `TIMBRADO` usan la cola remota del ESP32. La confirmación física sigue
+  llegando por el sensor.
+- **Reset**: cierra estancias, revoca QR, elimina deudas, limpia el ciclo IoT
+  y apaga la luz. No crea un QR nuevo.
+- **Almacén**: cámaras on/off, grabación, sincronización go2rtc, visitas y
+  directo desde el drawer de la sala.
+- **OTA**: variante, versión, capacidad, releases y operación activa por ESP;
+  actualizar, cambiar variante y cancelar desde la sala.
+- **Sin cuota**: cero llamadas a Tuya y cero pollers nuevos. Las lecturas son
+  locales y bajo demanda; el dashboard refresca el estado cada 20 s.
+- **Pruebas**: `api/tests/Unit/RoomControlTest.php`,
+  `ResetCleanupTest.php`, BLOCK 92 del runner y regresión completa.

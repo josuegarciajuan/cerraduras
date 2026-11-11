@@ -232,6 +232,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 
 | **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
+| **F124 Control remoto de habitaciones** | **BLOCK 92 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1292,3 +1293,26 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   BLOCK 69 del runner ampliado (reuso, una sola sesión, 409 del QR maestro
   auditado, cierre manual idempotente, autocierre por TTL) y regresión completa.
   Pendiente la prueba física y la corrida de regresión en esta sesión.
+
+### F124 — Control remoto de habitaciones (RF-344…RF-356)
+
+- **Motivo**: el panel no permitía operar luz, cerradura ni liberar el ciclo
+  desde el listado; el dashboard solo tenía el reset.
+- **Estado**: `RoomControlStatusService` + `RoomRemoteUnlockService` +
+  `RoomResetService` + `RoomControlController`; el reset se comparte con
+  `QrTestController`.
+- **API**: `GET /api/v1/rooms/controls`, `GET /api/v1/rooms/{id}/status`,
+  `GET /api/v1/rooms/{id}/light`, `POST /api/v1/rooms/{id}/light/{on|off}`,
+  `POST /api/v1/rooms/{id}/unlock` y `POST /api/v1/rooms/{id}/reset`.
+- **Fachada LAN**: `/dashboard-api/rooms/...` reutiliza la misma lógica; no
+  permite forzar el cooldown.
+- **Apertura**: `LockService` en salas normales; `WarehouseDoorOpenService` en
+  `ALMACEN_BEBIDAS`/`TIMBRADO`. La confirmación física es del sensor.
+- **Reset**: QR, estancias, deudas/outbox, IoT/cooldown y luz OFF. Sin QR
+  nuevo.
+- **UI**: panel con reserva/ocupación/puerta/luz, botones `💡 🔓 🧾 🔄`,
+  operativas seguras, almacén y OTA; dashboard con barra de control y modal de
+  estado.
+- **Sin migración, sin Tuya y sin pollers nuevos.**
+- **Verificación**: `RoomControlTest`, `ResetCleanupTest`, BLOCK 92 y regresión
+  completa. Pendiente la prueba física de luz/apertura.

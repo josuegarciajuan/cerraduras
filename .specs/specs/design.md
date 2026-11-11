@@ -26759,3 +26759,117 @@ No se añade migración ni columna.
 `WorkerSessionReusePolicyTest` (8 casos), `WorkerTest`, BLOCK 69 del runner
 ampliado (reuso, una sola sesión, 409 del QR maestro auditado, cierre manual
 idempotente, autocierre por TTL) y regresión completa.
+
+---
+
+# Fase 124 — Control remoto de habitaciones
+
+## Principios
+
+- Una única fuente de verdad para el estado remoto por sala.
+- Reutilizar `SwitchService`, `LockService`, `WarehouseDoorOpenService`,
+  `FirmwareOtaService` y la lógica de reset ya existente.
+- La fachada `/dashboard-api` es una capa fina sin autenticación LAN; no
+  duplica reglas ni añade privilegios.
+- Sin migración, sin Tuya y sin temporizadores de sondeo nuevos.
+
+## Servicios
+
+### `RoomResetService`
+
+Extrae el reset actual de `QrTestController` para reutilizarlo desde API,
+panel y dashboard. Devuelve contadores:
+
+- QR revocados.
+- Estancias cerradas.
+- Deudas eliminadas y elementos de outbox asociados.
+- Si se limpió el ciclo IoT/cooldown.
+- Resultado best-effort del apagado de luz.
+
+`QrTestController` mantiene sus rutas y delega en este servicio.
+
+### `RoomRemoteUnlockService`
+
+Decide el transporte:
+
+- `ALMACEN_BEBIDAS` o `TIMBRADO` → `WarehouseDoorOpenService` (cola del ESP32,
+  requiere `remote_open_capable`; el sensor confirma la apertura).
+- Resto → `LockService::open` con cooldown y override según scope.
+
+Devuelve `mode`, `result`, `provider`, `queued`, `already_open` y
+`deduplicated` cuando aplique.
+
+### `RoomControlStatusService`
+
+Construye el estado remoto y el resumen masivo. Consultas locales a BD:
+`rooms`, `room_types`, `device_packs`, `iot_sessions`, `stays`,
+`worker_sessions`, `devices`, `qr_credentials`, `anomalies`, `debts` y, solo
+si el tipo es almacén/timbrado, `warehouse_state`, `warehouse_visits`,
+`camera_recordings` y `devices.kind=CAMERA`.
+
+Campos derivados:
+
+- `reservation.started`: `first_entry_at` o `entry_confirmed_at` no nulos.
+- `reservation.remaining_minutes` / `overstay_minutes`.
+- `occupancy.guest_inside`: presencia `PRESENT` no stale o estancia con entrada
+  confirmada sin salida.
+- `light.state` desde `devices.meta_json.switch_state`; `last_command` y
+  `pending_confirmation` para distinguir orden de confirmación.
+- `lock.remote_capable` desde `RemoteDoorOpenPolicy`.
+- `capabilities`: luz instalada, cerradura disponible, reset permitido,
+  almacén/timbrado.
+
+## Controlador y rutas
+
+`RoomControlController` expone las rutas canónicas y las de dashboard. Las
+rutas de acción devuelven `room_id`, `action`, resultado y estado posterior
+cuando es barato leerlo.
+
+Rutas nuevas canónicas:
+
+- `GET /api/v1/rooms/controls`
+- `GET /api/v1/rooms/{id}/status`
+- `GET /api/v1/rooms/{id}/light`
+- `POST /api/v1/rooms/{id}/light/on|off`
+- `POST /api/v1/rooms/{id}/unlock`
+- `POST /api/v1/rooms/{id}/reset`
+
+Fachada dashboard:
+
+- `GET /dashboard-api/rooms/controls`
+- `GET /dashboard-api/rooms/{id}/status`
+- `POST /dashboard-api/rooms/{id}/light`
+- `POST /dashboard-api/rooms/{id}/unlock`
+- `POST /dashboard-api/rooms/{id}/reset`
+
+Las rutas previas se conservan. En dashboard, `unlock` fuerza siempre
+`override_cooldown=false`.
+
+## UI
+
+### Panel
+
+- Carga masiva de controles al entrar en Habitaciones y tras cada acción.
+- La tabla añade reserva, dentro, puerta, luz y anomalías; los botones de fila
+  son luz, abrir, estado y reset.
+- El drawer muestra una tarjeta de control remoto y secciones de ocupación,
+  reserva, puerta, QR, deuda, anomalías, dispositivos y firmware.
+- Menú de acciones seguras: cerrar estancia, revocar QR, estado de sala,
+  comprobar dispositivos, identificar y pausar automatizaciones.
+- Almacén: cámaras, grabación, sincronización, visitas y directo.
+- OTA: releases, operación activa, actualizar, cambiar variante y cancelar.
+
+### Dashboard
+
+- Barra junto al selector con estado de luz, encender/apagar, abrir y reset.
+- Modal de estado con los mismos datos esenciales.
+- Enlace a `/almacen?room=` para salas de almacén/timbrado.
+- Confirmación en acciones destructivas; sin override de cooldown.
+
+## Verificación
+
+- Units de estado, reset, unlock y UI.
+- BLOCK 92 del runner: estado, controles masivos, luz (SKIP si no hay switch),
+  apertura (SKIP si no hay cerradura), reset de una sala de prueba y
+  compatibilidad de rutas.
+- Regresión completa con `bash bin/run-tests.sh`.
