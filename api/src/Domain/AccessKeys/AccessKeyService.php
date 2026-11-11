@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Domain\AccessKeys;
 
 use App\Domain\Devices\DeviceRepositoryInterface;
+use App\Domain\Devices\SwitchService;
 use App\Domain\Locks\AccessEvent;
 use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
@@ -50,7 +51,8 @@ final class AccessKeyService
         private AccessEventRepositoryInterface $accessEvents,
         private QrTokenizer $tokenizer,
         private PDO $pdo,
-        private ?WarehouseRecordingServiceInterface $warehouseRecorder = null
+        private ?WarehouseRecordingServiceInterface $warehouseRecorder = null,
+        private ?SwitchService $switchService = null
     ) {
     }
 
@@ -710,6 +712,13 @@ final class AccessKeyService
 
         $openResult = $gateway->open($room->id);
         $gwProvider = $this->normaliseProvider((string) ($openResult['provider'] ?? $provider));
+
+        // F124/RF-344: encender la luz al abrir con QR de llave o ficha NFC,
+        // solo si el cerrojo abre. Best-effort: no bloquea el acceso. El
+        // almacén y el timbrado conservan su automatización propia.
+        if (!empty($openResult['ok']) && $this->switchService !== null) {
+            $this->switchService->turnOnForCredentialOpen($room->id, $roomType?->code);
+        }
 
         $workerSessionId = null;
         $sessionReused  = false;

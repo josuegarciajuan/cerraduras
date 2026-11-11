@@ -11876,3 +11876,14 @@ pendientes.
 - [x] TSK-F123-07: tabla de sesiones abiertas y botón «Cerrar sesión» en `/panel`.
 - [x] TSK-F123-08: `.env.example`, `requirements/design/contracts` y AGENTS.
 - [x] TSK-F123-09: BLOCK 69 del runner ampliado + regresión completa.
+
+## F124 — Luz al abrir por credencial
+
+- [x] TSK-F124-01: `SwitchService::turnOnForCredentialOpen` con exclusión de almacén/timbrado y best-effort.
+- [x] TSK-F124-02: `QrValidateService` enciende tras `gatewayResult.ok` (tipo resuelto).
+- [x] TSK-F124-03: `AccessKeyService` enciende tras `openResult.ok` (QR de llave y ficha NFC).
+- [x] TSK-F124-04: `WorkerQrService` enciende tras `openResult.ok` (QR maestro).
+- [x] TSK-F124-05: wiring de `RoomTypeRepository` y `SwitchService` en `index.php`.
+- [x] TSK-F124-06: unit test en `QrValidateServiceTest` (éxito, cerrojo falla, tipos excluidos).
+- [x] TSK-F124-07: BLOCK 92 del runner + requirements/design/contracts/AGENTS.
+- [ ] TSK-F124-08: regresión completa y prueba física con el sensor de puerta desconectado.

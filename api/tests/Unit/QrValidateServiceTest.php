@@ -20,6 +20,8 @@ use App\Domain\Qr\QrCredentialRepositoryInterface;
 use App\Domain\Qr\QrValidateService;
 use App\Domain\Rooms\Room;
 use App\Domain\Rooms\RoomRepositoryInterface;
+use App\Domain\Rooms\RoomType;
+use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
@@ -96,6 +98,23 @@ final class FakeRoomRepo implements RoomRepositoryInterface
     }
 }
 
+final class FakeRoomTypeRepo implements RoomTypeRepositoryInterface
+{
+    /** @param array<int,RoomType> $byId */
+    public function __construct(public array $byId = []) {}
+    public function listAll(): array { return array_values($this->byId); }
+    public function findById(int $id): ?RoomType { return $this->byId[$id] ?? null; }
+    public function findByCode(string $code): ?RoomType
+    {
+        foreach ($this->byId as $t) {
+            if ($t->code === $code) return $t;
+        }
+        return null;
+    }
+    public function insert(string $code, string $name, int $grace, int $gap, int $cooldown, int $qrWindow): int { return 0; }
+    public function update(int $id, array $fields): int { return 0; }
+}
+
 final class FakeStayRepo implements StayRepositoryInterface
 {
     /** @var array<int,Stay> */
@@ -131,6 +150,9 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
     /** @var Device[] */
     public array $devices = [];
 
+    /** F124: SWITCH device returned by findForRoomKind(). */
+    public ?Device $switchDevice = null;
+
     /** Room fake used to resolve a device's room via its pack (canonical F30). */
     public ?FakeRoomRepo $rooms = null;
 
@@ -140,9 +162,12 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
         foreach ($this->devices as $d) {
             if ($d->id === $id) return $d;
         }
-        return null;
+        return $this->switchDevice !== null && $this->switchDevice->id === $id ? $this->switchDevice : null;
     }
-    public function findForRoomKind(int $roomId, string $kind): ?Device { return null; }
+    public function findForRoomKind(int $roomId, string $kind): ?Device
+    {
+        return $kind === Device::KIND_SWITCH ? $this->switchDevice : null;
+    }
     public function findByKindAndExternalId(string $kind, string $externalId): ?Device
     {
         foreach ($this->devices as $d) {
@@ -158,7 +183,22 @@ final class FakeDeviceRepo implements DeviceRepositoryInterface
         return null;
     }
     public function insert(int $packId, string $kind, string $externalId, ?string $label, ?int $apiClientId, ?array $meta): int { return 0; }
-    public function update(int $id, array $fields, ?string $expectedStatus = null): int { return 0; }
+    public function update(int $id, array $fields, ?string $expectedStatus = null): int
+    {
+        $metaJson = $fields['meta_json'] ?? null;
+        if ($metaJson !== null) {
+            $meta = json_decode((string) $metaJson, true);
+            foreach ($this->devices as $d) {
+                if ($d->id === $id) {
+                    $d->meta = $meta;
+                }
+            }
+            if ($this->switchDevice !== null && $this->switchDevice->id === $id) {
+                $this->switchDevice->meta = $meta;
+            }
+        }
+        return 1;
+    }
     public function delete(int $id): int { return 0; }
     public function markIdentified(string $externalId, bool $state): ?Device { return null; }
     public function findIdentified(): array { return []; }
@@ -437,6 +477,75 @@ $stayRepo->activeByRoom[$roomId] = null;
 expect('stay_wrong_state', function () use ($service, $tok6) {
     $service->validate($tok6, 'rpi-101', 'test-corr-9');
 }, 'stay CLOSED → stay_wrong_state');
+
+// ============================================================================
+// F124 — La luz se enciende al abrir con QR válido (solo si el cerrojo abre)
+// ============================================================================
+$f124RoomId = 7;
+$f124StayId = 70;
+$f124Jti    = Uuid::v4();
+$f124Token  = $tk->issue($f124RoomId, $f124StayId, $f124Jti, $now, $exp);
+
+$f124Cred = new FakeCredentialRepo();
+$f124Cred->byJti[$f124Jti] = new QrCredential(70, $f124StayId, $f124RoomId, $f124Jti, 'f124',
+    '2026-04-28 09:55:00.000', '2026-04-28 10:25:00.000', null, null);
+
+$f124Rooms = new FakeRoomRepo();
+$f124Rooms->byId[$f124RoomId] = new Room($f124RoomId, '124', 1, null, Room::STATUS_RESERVED, true, null);
+
+$f124Stays = new FakeStayRepo();
+$f124Stay = new Stay($f124StayId, $f124RoomId, Stay::STATUS_RESERVED, 60,
+    '2026-04-28 09:55:00.000', null, null, null,
+    null, null, null, null, null, null, null, null, null,
+    '2026-04-28 09:55:00.000', '2026-04-28 09:55:00.000');
+$f124Stays->byId[$f124StayId] = $f124Stay;
+$f124Stays->activeByRoom[$f124RoomId] = $f124Stay;
+
+$f124Devs = new FakeDeviceRepo();
+$f124Switch = new Device(124, 124, Device::KIND_SWITCH, 'sw-124', 'Luz 124', null, ['switch_state' => 'OFF']);
+$f124Devs->switchDevice = $f124Switch;
+
+$f124Types = new FakeRoomTypeRepo([1 => new RoomType(1, 'STANDARD', 'Standard', 0, 15, 20, 30)]);
+$f124Lock   = new FakeLockGateway();
+$f124Events = new FakeAccessEventRepo();
+$f124SwitchSvc = new \App\Domain\Devices\SwitchService($f124Devs, $f124Rooms);
+$f124Service = new QrValidateService(
+    $tk, $f124Cred, $f124Rooms, $f124Devs, $f124Stays,
+    new StayStateMachine($f124Stays), $f124Lock, $f124Events,
+    null, $f124SwitchSvc, $f124Types
+);
+
+$f124Service->validate($f124Token, 'rpi-124', 'f124-ok');
+if (($f124Switch->meta['last_command'] ?? null) === 'ON') {
+    ok('F124: QR válido + cerrojo OK → luz ON');
+} else {
+    bad('F124: QR válido + cerrojo OK → luz ON', json_encode($f124Switch->meta));
+}
+
+// Si el cerrojo NO abre, la luz no debe encenderse.
+$f124Switch->meta = ['switch_state' => 'OFF'];
+$f124Jti2   = Uuid::v4();
+$f124Token2 = $tk->issue($f124RoomId, $f124StayId, $f124Jti2, $now, $exp);
+$f124Cred->byJti[$f124Jti2] = new QrCredential(71, $f124StayId, $f124RoomId, $f124Jti2, 'f124b',
+    '2026-04-28 09:55:00.000', '2026-04-28 10:25:00.000', null, null);
+$f124Lock->shouldFail = true;
+$f124Service->validate($f124Token2, 'rpi-124', 'f124-lock-fail');
+if (($f124Switch->meta['last_command'] ?? null) !== 'ON') {
+    ok('F124: QR válido + cerrojo falla → no enciende la luz');
+} else {
+    bad('F124: QR válido + cerrojo falla → no enciende la luz', json_encode($f124Switch->meta));
+}
+$f124Lock->shouldFail = false;
+
+// Los tipos especiales conservan su automatización propia.
+$f124Switch->meta = ['switch_state' => 'OFF'];
+$f124SwitchSvc->turnOnForCredentialOpen($f124RoomId, 'ALMACEN_BEBIDAS');
+$f124SwitchSvc->turnOnForCredentialOpen($f124RoomId, 'TIMBRADO');
+if (($f124Switch->meta['last_command'] ?? null) !== 'ON') {
+    ok('F124: almacén/timbrado no encienden por credencial');
+} else {
+    bad('F124: almacén/timbrado no encienden por credencial', json_encode($f124Switch->meta));
+}
 
 Clock::unfreeze();
 

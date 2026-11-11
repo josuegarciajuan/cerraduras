@@ -13926,3 +13926,36 @@ o F114, reintroducir Tuya o añadir polling.
 **Trazabilidad:** `WorkerSessionReusePolicy`, `AccessKeyService`,
 `WorkerQrService`, `WorkerService`, `WorkerController`, `panel/index.html`,
 `WorkerSessionReusePolicyTest`, BLOCK 69 del runner (ampliado).
+
+## F124 — Luz al abrir por credencial (RF-344…RF-348)
+
+**Motivo:** en las habitaciones normales la luz se enciende al llegar
+`PROXIMITY=OPEN` (F28). Si el sensor de puerta se rompe, la puerta se abre pero
+la luz no se enciende. Se añade el encendido por credencial como plan B.
+
+- **RF-344 (encendido por credencial):** al validar correctamente una
+  credencial y abrir el cerrojo (`open.ok=true`), se enciende la luz de la
+  habitación. Cubre el QR de huésped (`/api/v1/qr/validate`), el QR de llave y
+  la ficha NFC (`/api/v1/keys/validate`, también vía `/qr/validate`) y el QR
+  maestro (`/api/v1/workers/qr/validate`). El encendido por apertura física de
+  puerta se mantiene.
+- **RF-345 (independiente del sensor):** el encendido por credencial no
+  depende de ningún evento del sensor de puerta; funciona con el sensor roto o
+  sin señal.
+- **RF-346 (ámbito y condición):** solo se enciende si el cerrojo abre
+  (`gateway.open()` devuelve `ok`). Se excluyen `ALMACEN_BEBIDAS` y `TIMBRADO`,
+  que conservan su automatización propia; el resto de tipos (incluido
+  `STANDARD`) encienden.
+- **RF-347 (best-effort):** un fallo del switch no bloquea la validación ni la
+  apertura; se registra y se ignora.
+- **RF-348 (verificación):** unit test del encendido por credencial (éxito,
+  fallo de cerrojo y tipos excluidos) y BLOCK 92 del runner. Sin migración y
+  sin cambios de forma en los contratos.
+
+**Fuera de alcance:** apertura remota del timbre, apertura manual de admin
+(`/api/v1/locks/{id}/open`), cambio del apagado automático de la estancia y
+reintroducir Tuya o polling.
+
+**Trazabilidad:** `SwitchService::turnOnForCredentialOpen`, `QrValidateService`,
+`AccessKeyService`, `WorkerQrService`, `index.php`, `QrValidateServiceTest`
+(sección F124) y BLOCK 92.

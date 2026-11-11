@@ -9255,6 +9255,60 @@ fi
 rm -f /tmp/f122-mirame.json
 
 # =============================================================================
+# BLOCK 92 — F124: la luz se enciende al abrir por credencial
+# Trazabilidad: RF-344…RF-348
+# =============================================================================
+block "BLOCK 92 — F124: luz al abrir por credencial"
+
+F124_SWITCH="$PROJECT_DIR/src/Domain/Devices/SwitchService.php"
+F124_QR="$PROJECT_DIR/src/Domain/Qr/QrValidateService.php"
+F124_KEYS="$PROJECT_DIR/src/Domain/AccessKeys/AccessKeyService.php"
+F124_WORKER="$PROJECT_DIR/src/Domain/Workers/WorkerQrService.php"
+F124_INDEX="$PROJECT_DIR/public/index.php"
+F124_UNIT="$PROJECT_DIR/tests/Unit/QrValidateServiceTest.php"
+
+if grep -q "function turnOnForCredentialOpen" "$F124_SWITCH" \
+   && grep -q "ALMACEN_BEBIDAS" "$F124_SWITCH" \
+   && grep -q "TIMBRADO" "$F124_SWITCH"; then
+    pass "F124: SwitchService centraliza el encendido por credencial y excluye almacén/timbrado"
+else
+    fail "F124: SwitchService centraliza el encendido por credencial" "falta el método o la exclusión de tipos"
+fi
+
+if grep -q "turnOnForCredentialOpen" "$F124_QR" \
+   && grep -q "gatewayResult\['ok'\]" "$F124_QR"; then
+    pass "F124: QR de huésped enciende la luz solo si el cerrojo abre"
+else
+    fail "F124: QR de huésped enciende la luz solo si el cerrojo abre" "falta la llamada o la guarda"
+fi
+
+if grep -q "turnOnForCredentialOpen" "$F124_KEYS" \
+   && grep -q "openResult\['ok'\]" "$F124_KEYS"; then
+    pass "F124: QR de llave y ficha NFC encienden la luz solo si el cerrojo abre"
+else
+    fail "F124: QR de llave y ficha NFC encienden la luz solo si el cerrojo abre" "falta la llamada o la guarda"
+fi
+
+if grep -q "turnOnForCredentialOpen" "$F124_WORKER" \
+   && grep -q "openResult\['ok'\]" "$F124_WORKER"; then
+    pass "F124: QR maestro enciende la luz solo si el cerrojo abre"
+else
+    fail "F124: QR maestro enciende la luz solo si el cerrojo abre" "falta la llamada o la guarda"
+fi
+
+if grep -q "turnOnForCredentialOpen" "$F124_INDEX"; then
+    pass "F124: wiring del encendido por credencial en index.php"
+else
+    fail "F124: wiring del encendido por credencial en index.php" "no se pasa la dependencia"
+fi
+
+if grep -q "F124:" "$F124_UNIT"; then
+    pass "F124: unit test del encendido por credencial presente (BLOCK 1)"
+else
+    fail "F124: unit test del encendido por credencial presente" "falta en tests/Unit/QrValidateServiceTest.php"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile
