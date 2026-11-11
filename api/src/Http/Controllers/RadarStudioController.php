@@ -5,12 +5,14 @@ namespace App\Http\Controllers;
 
 use App\Domain\Sensors\RadarAutoTune;
 use App\Domain\Sensors\RadarDistanceReport;
+use App\Domain\Sensors\RadarFreshness;
 use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarGuidedCalibration;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Sensors\RadarScope;
 use App\Http\Request;
 use App\Http\Response;
+use App\Infrastructure\Sensors\RadarLiveService;
 use App\Infrastructure\Sensors\RadarStudioStore;
 use App\Infrastructure\Sensors\SensorContextBuilder;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
@@ -64,6 +66,24 @@ final class RadarStudioController
             return $this->runtimeError($e);
         } catch (Throwable $e) {
             return Response::json(500, ['ok' => false, 'error' => 'scope_failed', 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ── GET /dashboard-api/sensores/v2/radar/live ─────────────────────────
+
+    public function live(Request $request): Response
+    {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['ok' => false, 'error' => 'room_id_required']);
+        }
+        try {
+            $payload = (new RadarLiveService($this->pdo()))->payload($roomId);
+            return Response::json(200, $payload)->withHeader('Cache-Control', 'no-store');
+        } catch (RuntimeException $e) {
+            return $this->runtimeError($e);
+        } catch (Throwable $e) {
+            return Response::json(500, ['ok' => false, 'error' => 'live_failed', 'message' => $e->getMessage()]);
         }
     }
 
@@ -1133,6 +1153,7 @@ final class RadarStudioController
                 'window_seconds' => $window,
                 'settings_valid' => $valid,
                 'settings_invalid_reason' => ZigbeeRadarCalibrationService::settingsInvalidReason($settings),
+                'stale_seconds' => $status['stale_seconds'] ?? RadarFreshness::staleSeconds(),
                 'presence_mode' => $room['presence_mode'],
                 'door_state' => $live['door_state'] ?? null,
                 'discarded_uncorroborated' => $discarded,

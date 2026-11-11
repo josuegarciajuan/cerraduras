@@ -14196,3 +14196,40 @@ el radar le estaba detectando.
 **Trazabilidad:** `detectionModel`/`buildSvg` en `radar-scope.js`,
 `renderDetection` en `radar-studio.js`, `#radarDetection` en `sensores.html`,
 `radar-scope.test.js` y BLOCK 97.
+
+## F125.1.4 — Frescura real del radar (RF-369…RF-371)
+
+**Motivo:** el radar publica cada ~1,5 s, pero el panel lo daba por online hasta
+300 s y seguía mostrando una decisión `PRESENT_CONFIRMED` vieja.
+
+- **RF-369 (umbral de radar):** `RADAR_PRESENCE_STALE_SECONDS` (def. 30 s) se
+  aplica al health del dispositivo de presencia, al estado del radar, al banner
+  y a la liveness/integración Zigbee. La ocupación de negocio conserva su
+  umbral de 180 s.
+- **RF-370 (decisión stale):** `presence_decision` expone `age_seconds` y
+  `stale` recalculados; el dashboard muestra **SIN DATOS** en vez de `PRESENT`
+  cuando la decisión está vieja.
+- **RF-371 (coherencia):** `RoomLiveController`/`EventStreamController` marcan
+  `presence_stale` por edad y añaden `radar_stale`; el SSE del dashboard
+  reenvía el cambio al cruzar el umbral.
+
+## F125.1.5 — Radar Studio en vivo (RF-372…RF-375)
+
+- **RF-372 (canal en vivo):** `GET /radar/live` y `GET /radar/event-stream`
+  (SSE) entregan presencia, salud, ajustes, movimiento/último eco y puerta con
+  latencia de ~0,5 s.
+- **RF-373 (fallback):** si SSE falla, el cliente consulta `/radar/live` cada
+  1 s; al recuperar SSE, deja de hacer polling.
+- **RF-374 (sin recargar):** el banner, los chips y el último eco se actualizan
+  en vivo; el SVG/diagnóstico van a 1,5 s (cadencia del radar) y el wizard a
+  1,5 s.
+- **RF-375 (sin parpadeos):** render incremental, secuencias/abort de
+  peticiones, tick local de edad/stale y refresco inmediato al volver a la
+  pestaña. El roster del header se refresca cada 5 s.
+
+**Fuera de alcance:** habilitar `availability` en Zigbee2MQTT (opción de
+operación posterior), Tuya, migraciones o cambiar la ocupación de negocio.
+
+**Trazabilidad:** `RadarFreshness`, `RadarLiveService`,
+`RadarEventStreamController`, `radar-studio.js`, `sensor-wizard-v2.js`,
+`dashboard.html`, `RadarFreshnessTest`, `radar-scope.test.js`, BLOCK 99.

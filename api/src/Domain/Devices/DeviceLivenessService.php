@@ -172,7 +172,10 @@ final class DeviceLivenessService
             return $this->unknown(self::SOURCE_ZIGBEE_PUSH, 'no_signal');
         }
         $kind = strtoupper((string) ($row['kind'] ?? ''));
-        if ($kind === Device::KIND_PRESENCE && $lastSeen > $presenceStaleSeconds) {
+        $threshold = $kind === Device::KIND_PRESENCE
+            ? RadarFreshness::staleSeconds()
+            : $presenceStaleSeconds;
+        if ($kind === Device::KIND_PRESENCE && $lastSeen > $threshold) {
             return $this->unknown(self::SOURCE_ZIGBEE_PUSH, 'stale');
         }
         return $this->state(true, self::SOURCE_ZIGBEE_PUSH);

@@ -237,6 +237,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F125.1 Calibración guiada del radar** | **BLOCK 97 + `RadarGuidedCalibrationTest`/`radar-wizard.test.js`** | **Implementado (código); prueba física completa pendiente** |
 | **F125.1.2 Perfil MQTT por dispositivo** | **BLOCK 98 + `ZigbeeMqttProfileTest`/`ZigbeeRadarCalibrationProfileTest`** | **Implementado: perfil dev asignado (1339→1886), producción en 1884, regresión 1315/0/14** |
 | **F125.1.3 Indicador visual de detección** | **BLOCK 97 + `radar-scope.test.js`** | **Implementado (código); validación visual pendiente** |
+| **F125.1.4/1.5 Frescura real y Radar Studio en vivo** | **BLOCK 99 + `RadarFreshnessTest` + `/radar/live`/SSE** | **Implementado (código); validación en vivo pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
@@ -1417,6 +1418,30 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Sin backend**: se actualiza con el `/wizard` que ya se consulta cada 1,5 s.
 - **Verificación**: `radar-scope.test.js` (39), BLOCK 97 y validación visual
   pendiente.
+
+### F125.1.4/1.5 — Frescura real y Radar Studio en vivo
+
+- **Motivo**: el radar publica ~1,5 s, pero el health seguía online 300 s y la
+  decisión `PRESENT_CONFIRMED` se mostraba congelada. Radar Studio dependía de
+  un poll a `/wizard` cada 1,5 s que además evaluaba/guardaba el wizard y
+  re-renderizaba toda la vista.
+- **Frescura**: `RADAR_PRESENCE_STALE_SECONDS=30` (helper `RadarFreshness`) en
+  health del dispositivo, estado del radar, banner, liveness/integración,
+  `radar_stale` y `presence_decision.age_seconds/stale`. La ocupación de negocio
+  conserva 180 s.
+- **Dashboard**: `pd.stale`/`radar_stale` → `SIN DATOS`; no se pinta `PRESENT`
+  con una decisión vieja.
+- **En vivo**: `RadarLiveService` + `GET /radar/live` + SSE
+  `/radar/event-stream` (fingerprint 500 ms, ping 5 s, vida 60 s). Fallback a
+  poll 1 s. Scope/diagnóstico y wizard a 1,5 s.
+- **Cliente**: render incremental (banner/chips/último eco), secuencias/abort
+  para no pisar acciones, tick local de edad/stale, refresco al volver a la
+  pestaña y preflight del roster cada 5 s. Sin recargar.
+- **Sin Tuya, sin migración y sin pollers nuevos.** Availability de Zigbee2MQTT
+  queda como opción de operación posterior.
+- **Verificación**: `RadarFreshnessTest` (12), `radar-scope.test.js` (39),
+  `radar-wizard.test.js` (27), BLOCK 99 y regresión completa. Pendiente
+  validación en vivo con el radar desconectado/reconectado.
 
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 

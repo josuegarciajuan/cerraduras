@@ -19,7 +19,8 @@
     lightPhase: 'idle', lightBusy: false, lightCooldownUntil: 0, attemptData: null, pollTimer: null, pollStep: null, pollBusy: false,
     doorKey: null, radarPhaseKey: null, radarState: null, radarStateKey: null,
     lastRadarState: null, autoFinishOp: null,
-    lastSwitch: null, lastEvents: [], eventsTimer: null
+    lastSwitch: null, lastEvents: [], eventsTimer: null,
+    preflightBusy: false, preflightTimer: null
   };
 
   function $(id) { return document.getElementById(id); }
@@ -93,6 +94,7 @@
     if (S.run) S.stepId = currentStep();
     render();
     bind();
+    S.preflightTimer = setInterval(function () { refreshPreflight(); }, 5000);
     S.eventsTimer = setInterval(function () {
       if (document.hidden) return;
       if (S.run && S.run.status !== 'finished') refreshEvents();
@@ -123,6 +125,16 @@
     var exists = S.rooms.some(function (r) { return r.id === saved; });
     var fallback = S.rooms.some(function (r) { return r.id === 14; }) ? 14 : (S.rooms[0] ? S.rooms[0].id : 14);
     sel.value = String(exists ? saved : fallback);
+  }
+
+  async function refreshPreflight() {
+    if (S.preflightBusy || document.hidden) return;
+    S.preflightBusy = true;
+    try {
+      await loadPreflight();
+    } finally {
+      S.preflightBusy = false;
+    }
   }
 
   async function loadPreflight() {

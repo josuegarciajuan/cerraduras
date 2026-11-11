@@ -8,6 +8,7 @@ use App\Support\Config;
 use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\KeyEpisodePolicy;
 use App\Domain\Qr\QrWindows;
+use App\Domain\Sensors\RadarFreshness;
 use App\Support\Qr\QrTokenizer;
 
 /**
@@ -237,10 +238,12 @@ final class EventStreamController
                               OR s.last_door_event_at IS NULL
                               OR s.last_door_event_at < UTC_TIMESTAMP(3) - INTERVAL {$doorStaleSeconds} SECOND
                          THEN '1' ELSE '0' END AS c19,
-                    CASE WHEN s.presence_state = 'PRESENT'
-                              AND (s.last_presence_event_at IS NULL
-                                   OR s.last_presence_event_at < UTC_TIMESTAMP(3) - INTERVAL {$presenceStaleSeconds} SECOND)
+                    CASE WHEN s.last_presence_event_at IS NULL
+                              OR s.last_presence_event_at < UTC_TIMESTAMP(3) - INTERVAL {$presenceStaleSeconds} SECOND
                          THEN '1' ELSE '0' END AS c20,
+                    CASE WHEN s.last_presence_event_at IS NULL
+                              OR s.last_presence_event_at < UTC_TIMESTAMP(3) - INTERVAL 30 SECOND
+                         THEN '1' ELSE '0' END AS c22,
                     (SELECT MAX(id) FROM key_access_events
                       WHERE room_id = r.id AND result = 'OK') AS c21,
                     COALESCE(r.status,             '') AS c6,
@@ -339,8 +342,8 @@ final class EventStreamController
             $iotData['door_stale'] = (($iotData['door_state'] ?? 'UNKNOWN') === 'UNKNOWN')
                 || $doorAge === null
                 || $doorAge > $doorStaleSeconds;
-            $iotData['presence_stale'] = (($iotData['presence_state'] ?? 'UNKNOWN') === 'PRESENT')
-                && ($presenceAge === null || $presenceAge > $presenceStaleSeconds);
+            $iotData['presence_stale'] = $presenceAge !== null && $presenceAge > $presenceStaleSeconds;
+            $iotData['radar_stale'] = RadarFreshness::stale($iotData['last_presence_event_at'] ?? null);
 
             // Active stay
             $stayStmt = $this->pdo->prepare(
@@ -463,6 +466,7 @@ final class EventStreamController
                 'qr_status'        => $qrStatus,
                 'recent_events'    => $recentEvents,
                 'recent_presence'  => $recentPresence,
+                'presence_decision' => $this->freshRadarDecision($roomId),
                 'anomalies'        => $anomalies,
             ];
         } catch (\Throwable $e) {
@@ -662,6 +666,28 @@ final class EventStreamController
      * @param array<string,mixed> $iotData
      * @return array<string,mixed>
      */
+    private function freshRadarDecision(int $roomId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT meta_json FROM presence_events
+              WHERE room_id = :r AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+              ORDER BY id DESC LIMIT 1"
+        );
+        $stmt->execute([':r' => $roomId]);
+        $meta = json_decode((string) ($stmt->fetchColumn() ?: ''), true);
+        $decision = is_array($meta) && is_array($meta['radar_decision'] ?? null)
+            ? $meta['radar_decision'] : null;
+        if ($decision === null) {
+            return null;
+        }
+        $age = RadarFreshness::ageSeconds(
+            isset($decision['decided_at']) && is_string($decision['decided_at']) ? $decision['decided_at'] : null
+        );
+        $decision['age_seconds'] = $age;
+        $decision['stale'] = RadarFreshness::decisionStale($decision);
+        return $decision;
+    }
+
     private function latestKeyEpisode(int $roomId, array $iotData): array
     {
         $stmt = $this->pdo->prepare(

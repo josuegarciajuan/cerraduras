@@ -640,6 +640,7 @@ $radarStudio = new \App\Http\Controllers\RadarStudioController(
     dirname(__DIR__) . '/run/radar-studio'
 );
 $router->get('/dashboard-api/sensores/v2/radar/scope', [$radarStudio, 'scope']);
+$router->get('/dashboard-api/sensores/v2/radar/live', [$radarStudio, 'live']);
 $router->post('/dashboard-api/sensores/v2/radar/profile', [$radarStudio, 'profile']);
 $router->post('/dashboard-api/sensores/v2/radar/autotune', [$radarStudio, 'autotune']);
 $router->get('/dashboard-api/sensores/v2/radar/wizard', [$radarStudio, 'wizard']);
@@ -3282,6 +3283,17 @@ $router->get('/llaves/{path}',       [$keyDeskController, 'index'], [$crmSession
 
 // --- SSE event stream (F33x) — bypass middleware for direct streaming ---
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+if ($requestPath === '/dashboard-api/sensores/v2/radar/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    $roomId = (int) ($_GET['room_id'] ?? 0);
+    if ($roomId <= 0) {
+        http_response_code(400);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error' => 'room_id_required']);
+        exit(0);
+    }
+    (new \App\Http\Controllers\RadarEventStreamController($pdoProvider()))->stream($roomId);
+}
+
 if ($requestPath === '/dashboard-api/event-stream' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
     $roomId = (int) ($_GET['room_id'] ?? 1);
     if ($roomId > 0) {

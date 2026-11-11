@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Zigbee;
 
+use App\Domain\Sensors\RadarFreshness;
 use App\Support\Config;
 use PDO;
 use RuntimeException;
@@ -137,8 +138,11 @@ final class ZigbeeRadarCalibrationService
         $maximum = $this->num($settings['maximum_range'] ?? null);
         $minimum = $this->num($settings['minimum_range'] ?? null);
         $sens    = $this->num($settings['radar_sensitivity'] ?? null);
-        // F93/RF-157.3: sin push reciente no se afirma presencia ni "online".
-        $stale = $snapshot['age_seconds'] === null || $snapshot['age_seconds'] > 300;
+        // F93/RF-157.3 / F125.1.4: el radar publica cada ~1,5 s; 30 s sin
+        // mensajes ya es "sin datos". El estado de negocio de la sala se
+        // calcula aparte.
+        $staleSeconds = RadarFreshness::staleSeconds();
+        $stale = $snapshot['age_seconds'] === null || $snapshot['age_seconds'] > $staleSeconds;
         $presence = $stale ? null : $snapshot['value'];
 
         return [
@@ -152,7 +156,7 @@ final class ZigbeeRadarCalibrationService
                 // Liveness por push: sin evento reciente no se afirma "online".
                 'online'      => $snapshot['last_at'] !== null
                     && $snapshot['age_seconds'] !== null
-                    && $snapshot['age_seconds'] <= 300,
+                    && $snapshot['age_seconds'] <= $staleSeconds,
             ],
             // El panel reutiliza los mismos controles: cm para el rango máximo y
             // sensibilidad del radar. La conversión vive aquí, no en el JS.
@@ -183,6 +187,7 @@ final class ZigbeeRadarCalibrationService
             'settings_at'        => $snapshot['last_at'],
             'settings_age_seconds' => $snapshot['age_seconds'],
             'stale'              => $stale,
+            'stale_seconds'      => $staleSeconds,
             'saved'              => $saved,
         ];
     }

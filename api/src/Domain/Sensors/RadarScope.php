@@ -127,7 +127,10 @@ final class RadarScope
         }
         $rawAge = isset($raw['age_seconds']) && is_numeric($raw['age_seconds'])
             ? max(0, (int) $raw['age_seconds']) : null;
-        $stale = (bool) ($raw['stale'] ?? false) || ($rawAge !== null && $rawAge > 180);
+        $staleSeconds = isset($options['stale_seconds']) && is_numeric($options['stale_seconds'])
+            ? max(5, min(300, (int) $options['stale_seconds']))
+            : RadarFreshness::staleSeconds();
+        $stale = (bool) ($raw['stale'] ?? false) || ($rawAge !== null && $rawAge > $staleSeconds);
 
         $minimum = self::num($settings['minimum_range'] ?? null);
         $maximum = self::num($settings['maximum_range'] ?? null);
@@ -210,6 +213,7 @@ final class RadarScope
             'presence_mode' => $options['presence_mode'] ?? null,
             'door_state' => $options['door_state'] ?? null,
             'active_operation' => $options['active_operation'] ?? null,
+            'stale_seconds' => $staleSeconds,
             'server_ts' => self::iso($nowMs),
         ];
     }
