@@ -27112,3 +27112,12 @@ el cliente consulta el estado local cada 1,5 s mientras la pestaña está visibl
 
 `RadarGuidedCalibrationTest` (49), `radar-wizard.test.js` (28), ampliación de
 `RadarStudioStoreTest` (12) y BLOCK 97 del runner. Regresión completa.
+
+### F125.1.1 — `persistCalibration` con extra
+
+`ZigbeeRadarCalibrationService::persistCalibration()` acepta
+`array $extra = []`. El cuerpo fusiona `$extra` en el snapshot de calibración
+(`wizard` incluido) después de copiar los valores numéricos. La firma faltaba
+en el merge de F125.1 y provocaba un `TypeError` al aplicar un perfil que ya
+coincidía con el radar. El test de regresión usa reflexión sobre la firma y un
+PDO falso para no depender de SQLite.

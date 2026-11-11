@@ -9652,6 +9652,7 @@ for F1251_FILE in \
     src/Domain/Sensors/RadarGuidedCalibration.php \
     public/assets/radar-wizard.js \
     tests/Unit/RadarGuidedCalibrationTest.php \
+    tests/Unit/ZigbeeRadarCalibrationPersistTest.php \
     tests/Unit/radar-wizard.test.js; do
     if [ -f "$F1251_FILE" ]; then
         pass "F125.1: existe $F1251_FILE"
@@ -9715,6 +9716,11 @@ if php tests/Unit/RadarStudioStoreTest.php >/tmp/f1251-store.log 2>&1; then
     pass "F125.1: unit RadarStudioStore (wizard)"
 else
     fail "F125.1: unit RadarStudioStore (wizard)" "$(tail -3 /tmp/f1251-store.log | tr '\n' ' ')"
+fi
+if php tests/Unit/ZigbeeRadarCalibrationPersistTest.php >/tmp/f1251-persist.log 2>&1; then
+    pass "F125.1.1: unit persistCalibration (extra)"
+else
+    fail "F125.1.1: unit persistCalibration (extra)" "$(tail -3 /tmp/f1251-persist.log | tr '\n' ' ')"
 fi
 
 if [ "$SERVER_UP" = true ]; then

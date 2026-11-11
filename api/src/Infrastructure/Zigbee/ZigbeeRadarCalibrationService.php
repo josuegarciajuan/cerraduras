@@ -502,7 +502,8 @@ final class ZigbeeRadarCalibrationService
         array $device,
         array $settings,
         ?string $settingsAt,
-        string $source = 'sensores-f104-auto'
+        string $source = 'sensores-f104-auto',
+        array $extra = []
     ): array
     {
         $stmt = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');

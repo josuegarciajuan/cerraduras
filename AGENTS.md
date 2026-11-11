@@ -1432,3 +1432,13 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Compatibilidad**: `/api/v1/rooms/{id}/...` sigue igual. El dashboard y el
   panel usan `id`; el TPV/VB6 usa `by-code/{codhab}`.
 - **Verificación**: `F128ByCodeRoutesTest` y BLOCK 96 del runner.
+
+### F125.1.1 — Corrección de `persistCalibration` con `$extra`
+
+- **Bug**: el cuerpo de `persistCalibration()` usaba `$extra`, pero la firma
+  del merge no lo declaraba. `array_merge($snap, null)` lanzaba `TypeError` y
+  el `POST /radar/profile` idempotente devolvía 500.
+- **Fix**: `array $extra = []` en la firma. Afecta al perfil ya aplicado, la
+  sensibilidad ya aplicada, el cierre del reposo y el guardado del wizard.
+- **Verificación**: `ZigbeeRadarCalibrationPersistTest` (18 checks, reflexión +
+  PDO falso), BLOCK 97 y regresión completa.
