@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Devices;
 
+use App\Domain\Sensors\RadarFreshness;
 use DateTimeImmutable;
 use DateTimeZone;
 use Throwable;
