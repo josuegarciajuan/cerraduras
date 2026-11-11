@@ -612,6 +612,15 @@ $router->get('/dashboard-api/sensores/v2/get', [$sensorWizardV2, 'getRun']);
 $router->get('/dashboard-api/sensores/v2/export', [$sensorWizardV2, 'export']);
 $router->get('/dashboard-api/sensores/v2/events', [$sensorWizardV2, 'events']);
 
+// ── Radar Studio (F125): vista viva y calibración asistida del radar Zigbee ──
+$radarStudio = new \App\Http\Controllers\RadarStudioController(
+    $pdoProvider,
+    dirname(__DIR__) . '/run/radar-studio'
+);
+$router->get('/dashboard-api/sensores/v2/radar/scope', [$radarStudio, 'scope']);
+$router->post('/dashboard-api/sensores/v2/radar/profile', [$radarStudio, 'profile']);
+$router->post('/dashboard-api/sensores/v2/radar/autotune', [$radarStudio, 'autotune']);
+
 // ── Acceptance runs store (no auth — LAN/MVP dev tool, F55/RF-62) ─────────────
 // Guarda cada corrida de aceptación manual en api/run/acceptance/<run-id>.json.
 // run_id saneado por whitelist para impedir path traversal; escritura atómica.

@@ -400,3 +400,41 @@ php bin/radar-apply-profile.php --room=14 --fading=3.5
 El script publica por MQTT y espera la confirmación por push. No consulta
 Tuya ni crea temporizadores. Por defecto respeta el `fading_time` guardado;
 `--fading=` es un override explícito.
+
+## F125 — Radar Studio (calibración visual y autoajuste)
+
+`/sensores` tiene una pestaña **Radar Studio**. No sustituye al wizard: lo
+complementa para calibrar el radar de presencia.
+
+- **Vista**: ejes en metros, círculo de alcance configurado (color = sensibilidad),
+  hueco del mínimo, anillos de densidad de ecos DP 9 y presencia DP 1 en verde.
+  El radar no da ángulo; la vista es cenital y esquemática.
+- **Aplicar**: los sliders cambian el dibujo al instante, pero el radar solo
+  recibe el cambio al pulsar **Aplicar al radar**. Se considera aplicado cuando
+  llega un push nuevo que lo confirma.
+- **Auto-alcance**: pulsa **Empezar paseo**, aléjate despacio hasta que deje de
+  detectarte y pulsa **He perdido la detección**. El sistema usa la distancia
+  del propio radar; no hace falta cinta métrica.
+- **Sensibilidad**: muévete 15 s y pulsa **Analizar 15 s**; aplica la sugerencia
+  si tiene sentido.
+- **Exterior**: sal, cierra la puerta y espera. El reposo dura 60 s; si detecta,
+  baja el alcance en pasos de 0,30 m (máx. 6) y vuelve a comprobar.
+- **Reentrada**: marca la salida estando fuera y entra; debe llegar un `PRESENT`
+  nuevo.
+
+Diagnóstico útil cuando «no detecta»:
+
+| Código | Significado |
+|---|---|
+| `no_reports` | El radar no envía datos (alimentación, Zigbee, LQI). |
+| `motion_without_presence` | Hay ecos de movimiento pero no confirma presencia (sensibilidad, fading o fusión). |
+| `presence_without_motion` | Presencia confirmada sin ecos recientes (detección marginal o estado retenido). |
+| `fusion_can_discard` | La sala usa `camera_fusion`/`radar_door` y puede descartar el `PRESENT`. |
+| `distance_at_range_edge` | La distancia observada toca el alcance configurado. |
+| `below_minimum_range` | La persona está dentro del hueco del mínimo. |
+| `fading_too_low` | `fading_time` demasiado bajo: la presencia parpadea. |
+| `door_open` | La puerta abierta deja ver el pasillo. |
+
+El estado efímero de una operación vive en
+`api/run/radar-studio/room-<id>.json`; no es dato de negocio y se puede borrar
+con la operación parada. No hay Tuya ni pollers: solo push y lectura local.

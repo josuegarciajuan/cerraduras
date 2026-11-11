@@ -26803,3 +26803,79 @@ apagado manual existente.
 
 Unit `QrValidateServiceTest` (sección F124: éxito, fallo de cerrojo y tipos
 excluidos) y BLOCK 92 del runner (llamadas gated por `open.ok` y wiring).
+## F125 — Radar Studio
+
+### Principios
+
+- El radar Zigbee informa **distancia (DP 9)** y **presencia auténtica (DP 1)**;
+  no informa ángulo. El dibujo es una vista cenital esquemática y honesta.
+- `maximum_range` es un filtro configurable, no el borde real. El borde se mide
+  con la pérdida de presencia y la distancia del último eco.
+- La UI presenta; el servidor decide. Toda aplicación se confirma por push.
+- Sin Tuya, sin pollers nuevos y sin migraciones: se usan
+  `radar_distance_reports`, `radar_presence_reports`, `presence_events` y
+  `devices.meta_json.calibration`.
+
+### Componentes
+
+- `App\Domain\Sensors\RadarAutoTune` (puro): `snap` a la rejilla 0,15 m
+  anclada en 0,15; `boundary` (mediana de los últimos 3 ecos antes del
+  `ABSENT`); `sensitivity`; `soak`; `reentry`.
+- `App\Domain\Sensors\RadarScope` (puro): estadísticas de la ventana, borde,
+  sugerencia de alcance/sensibilidad, diagnóstico y escala de ejes.
+- `App\Infrastructure\Sensors\RadarStudioStore`: estado efímero por sala en
+  `api/run/radar-studio/room-<id>.json`, con `flock` y escritura atómica.
+- `App\Http\Controllers\RadarStudioController`: endpoints, reutiliza
+  `ZigbeeRadarCalibrationService::publish/confirm/normalizeCommands/apply` y
+  `SensorContextBuilder`.
+- `radar-scope.js` (UMD puro) y `radar-studio.js` (UI). La pestaña vive en
+  `sensores.html`; el wizard F95 no se modifica.
+
+### Endpoints
+
+- `GET /dashboard-api/sensores/v2/radar/scope?room_id=&window=60`.
+- `POST /dashboard-api/sensores/v2/radar/profile`.
+- `POST /dashboard-api/sensores/v2/radar/autotune` con `start/step/finish/cancel`
+  (`auto_range_start|finish`, `sensitivity_recommend|apply`, `soak_start|check`,
+  `reentry_mark|check`, `restore`, `cancel`, `status`).
+
+Una sola operación activa por sala (lock de fichero + `409`). Si el radar no
+reporta o la configuración es inválida, se bloquea con mensaje explícito; nunca
+se inventa evidencia.
+
+### Algoritmo de auto-alcance
+
+1. Se guarda el perfil original y se aplica `maximum_range=9,5` (normalizado a
+   la rejilla, 9,45) con `persist=false` y confirmación por push.
+2. El operario camina hacia atrás hasta que el radar emite `ABSENT`.
+3. Se toma la última transición `PRESENT → ABSENT` de la ventana y la mediana
+   de los últimos 3 ecos previos. `borde = mediana`.
+4. `sugerido = snap(borde − 0,30, min+0,15, 9,5)`.
+5. Se aplica el perfil final con `persist=true` y `source=radar-studio-v1`.
+   Si falla, se intenta restaurar el original y se informa.
+
+### Sensibilidad, reposo y reentrada
+
+- Sensibilidad: ventana de 15 s; si hay ecos y presencia → mantener (o bajar a
+  8 si está al máximo y la tasa es alta); si hay ecos sin presencia → subir 2;
+  si hay presencia sin ecos → subir 1; si no hay nada → subir 2 (tope 9).
+- Reposo: solo empieza con el radar en `ABSENT`; 60 s sin `PRESENT` nuevos =
+  `clear`. Un `PRESENT` = `detected` y reduce el alcance 0,30 m (máx. 6 rondas).
+- Reentrada: se marca estando fuera; exige un `PRESENT` con marcador distinto
+  al de la marca. Sin reporte nuevo en 90 s = `timeout`.
+
+### UI
+
+La pestaña **Radar Studio** muestra chips de presencia/salud/modo, el SVG con
+rejilla de 0,5 m, círculo de alcance coloreado por sensibilidad, anillos de
+densidad de ecos, borde medido y último eco sobre un eje de referencia. Los
+sliders actualizan el círculo al instante; «Aplicar al radar» publica y espera
+confirmación. El panel de diagnóstico traduce las causas y distingue
+`motion_without_presence`, `presence_without_motion`, `fusion_can_discard`,
+`door_open`, `fading_too_low`, etc.
+
+### Verificación
+
+`RadarAutoTuneTest` (39), `RadarScopeTest` (25), `RadarStudioStoreTest` (6),
+`radar-scope.test.js` (30) y BLOCK 93 del runner (estático + unit + scope HTTP
+si el servidor está disponible). Sin regresiones en el wizard F95 ni en Tuya.

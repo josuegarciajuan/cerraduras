@@ -16764,3 +16764,91 @@ aditivo en los flujos que abren cerradura:
   encendido es best-effort).
 - La apertura física por sensor (`PROXIMITY=OPEN`) mantiene el mismo
   comportamiento. Sin migración ni endpoints nuevos.
+## F125 — Radar Studio
+
+Todas las rutas viven bajo `/dashboard-api/sensores/v2/radar` y son aditivas.
+No requieren API key (igual que el resto de `/sensores`, herramienta LAN).
+
+### `GET /scope?room_id=<id>&window=60`
+
+`window` se acota a 10…300 s. Devuelve `200`:
+
+```json
+{
+  "ok": true,
+  "room_id": 14,
+  "room": { "id": 14, "code": "almacenZigbee", "presence_mode": "mixed",
+            "presence_mode_source": "override", "room_type_code": "ALMACEN_BEBIDAS" },
+  "device": { "id": 23, "label": "radar", "model": "ZY-M100-S_2",
+              "health": "online", "lqi": 120, "battery_pct": null },
+  "settings": { "maximum_range": 3.0, "minimum_range": 0.6,
+                "radar_sensitivity": 7, "detection_delay": 0.1, "fading_time": 15.5 },
+  "baseline": { "maximum_range": 6.0, "minimum_range": 0.6,
+                "radar_sensitivity": 7, "detection_delay": 0.1, "fading_time": 15.5 },
+  "scope": {
+    "window_seconds": 60,
+    "raw": { "state": "PRESENT", "age_seconds": 2, "stale": false },
+    "series": [ { "age_s": 1.2, "distance_m": 1.34 } ],
+    "presence_series": [ { "age_s": 30, "value": "ABSENT", "marker": "..." } ],
+    "stats": { "reports": 40, "rate_per_min": 40, "median": 1.4, "p90": 2.1,
+               "motion_recent": true, "latest_presence": "PRESENT" },
+    "boundary": { "found": true, "distance_m": 3.2, "samples": 3,
+                  "suggested_max": 2.85, "margin_m": 0.3 },
+    "suggestions": {
+      "maximum_range": { "value": 2.85, "reason": "walk_boundary", "confidence": "high" },
+      "radar_sensitivity": { "value": 7, "reason": "detects_reliably", "confidence": "high" }
+    },
+    "diagnosis": [ { "code": "motion_without_presence", "severity": "warn",
+                     "message": "..." } ],
+    "status": "attention",
+    "axes": { "max_m": 3.5, "grid_m": 0.5 },
+    "presence_mode": "mixed",
+    "door_state": "CLOSED",
+    "active_operation": null
+  }
+}
+```
+
+`404 presence_device_missing` si la sala no tiene radar. `settings_invalid` se
+refleja en `scope.diagnosis` y `scope.status=blocked`.
+
+### `POST /profile`
+
+```json
+{ "room_id": 14,
+  "settings": { "maximum_range": 2.85, "minimum_range": 0.6,
+                "radar_sensitivity": 8, "detection_delay": 0.1, "fading_time": 15.5 } }
+```
+
+- `200 {ok:true, result:{applied:true, persisted:true, commands:{...}}, scope:{...}}`.
+- `409 not_confirmed` si el radar no reemite la configuración por push. No se
+  persiste nada. La respuesta incluye `scope` actualizado.
+- `400 settings_required` / `400 no_parameters`.
+
+### `POST /autotune`
+
+Cuerpo base: `{ "room_id": 14, "action": "<acción>", "operator": "..." }`.
+
+| Acción | Efecto |
+|---|---|
+| `auto_range_start` | Guarda el perfil, aplica 9,5 m temporal y deja el paseo en curso. `409 presence_not_detected` si el radar no te ve. |
+| `auto_range_finish` | Calcula el borde y aplica el alcance sugerido con persistencia. `409 boundary_not_found` si no hubo `ABSENT`. |
+| `sensitivity_recommend` | Devuelve `recommendation {value, reason, confidence, stats}` sin escribir. |
+| `sensitivity_apply` | `{value:0..9}` aplica y confirma sensibilidad. |
+| `soak_start` | Exige radar en `ABSENT`; inicia el reposo. `409 presence_still_detected` si aún te detecta. |
+| `soak_check` | Devuelve `reducing` (baja 0,30 m), `clear`, `stopped` o `inconclusive` con `verdict`. |
+| `reentry_mark` | Marca la salida en `ABSENT` y espera un `PRESENT` nuevo. |
+| `reentry_check` | Devuelve `entered`, `waiting` o `timeout`. |
+| `restore` | Aplica el perfil original guardado o la base F110. |
+| `cancel` | Cancela y restaura si había una operación con perfil temporal. |
+| `status` | Devuelve `state` y `scope` sin modificar nada. |
+
+Todas las respuestas incluyen `scope` cuando aplica. Una segunda operación
+concurrente en la misma sala devuelve `409` (lock de fichero).
+
+### Persistencia
+
+`devices.meta_json.calibration` con `source`:
+`radar-studio-v1` (perfil final), `radar-studio-v1-temp` (prueba temporal) y
+`radar-studio-v1-restore` (vuelta atrás). El estado efímero vive en
+`api/run/radar-studio/room-<id>.json` (no es dato de negocio).

@@ -11887,3 +11887,17 @@ pendientes.
 - [x] TSK-F124-06: unit test en `QrValidateServiceTest` (éxito, cerrojo falla, tipos excluidos).
 - [x] TSK-F124-07: BLOCK 92 del runner + requirements/design/contracts/AGENTS.
 - [ ] TSK-F124-08: regresión completa y prueba física con el sensor de puerta desconectado.
+## F125 — Radar Studio (calibración visual y autoajuste)
+
+- [x] TSK-F125-01: `RadarAutoTune` (snap, borde, sensibilidad, reposo, reentrada) + unit.
+- [x] TSK-F125-02: `RadarScope` (estadísticas, sugerencias, diagnóstico) + unit.
+- [x] TSK-F125-03: `RadarStudioStore` con flock y escritura atómica + unit.
+- [x] TSK-F125-04: `RadarStudioController` (`scope`, `profile`, `autotune`).
+- [x] TSK-F125-05: rutas aditivas en `index.php` y `apply(..., source)` en el servicio Zigbee.
+- [x] TSK-F125-06: `radar-scope.js` (SVG puro y honesto) + unit JS.
+- [x] TSK-F125-07: `radar-studio.js` (sliders, preview, aplicar/confirmar, asistentes).
+- [x] TSK-F125-08: pestaña Radar Studio en `sensores.html` sin tocar el wizard F95.
+- [x] TSK-F125-09: actualizar `requirements/design/contracts/tasks` y AGENTS.
+- [x] TSK-F125-10: BLOCK 93 del runner (estático + unit + scope HTTP).
+- [ ] TSK-F125-11: prueba física de paseo, reposo y reentrada en el radar real.
+- [ ] TSK-F125-12: corrida de regresión completa y validación visual del operador.

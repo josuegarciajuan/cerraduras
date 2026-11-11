@@ -261,7 +261,14 @@ final class ZigbeeRadarCalibrationService
         return $this->apply($roomId, $device, $settings, false, 45);
     }
 
-    public function apply(int $roomId, array $device, array $input, bool $persist, int $waitAttempts = 12): array
+    public function apply(
+        int $roomId,
+        array $device,
+        array $input,
+        bool $persist,
+        int $waitAttempts = 12,
+        string $source = 'dashboard-calib-zigbee'
+    ): array
     {
         $commands = self::normalizeCommands($input);
         if ($commands === []) {
@@ -368,7 +375,7 @@ final class ZigbeeRadarCalibrationService
 
         $saved = null;
         if ($persist && $applied) {
-            $saved = $this->persistSnapshot($device, $commands, $snapshotForStatus['last_at']);
+            $saved = $this->persistSnapshot($device, $commands, $snapshotForStatus['last_at'], $source);
             // Refresca el meta del dispositivo para que `status.saved` refleje
             // exactamente la calibración recién persistida.
             $fresh = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
@@ -417,7 +424,8 @@ final class ZigbeeRadarCalibrationService
     }
 
     /**
-     * @return array{id:?int,value:?string,last_at:?string,age_seconds:?int,settings:array<string,mixed>}
+     * @return array{id:?int,value:?string,last_at:?string,age_seconds:?int,
+     *               settings:array<string,mixed>,report:?array<string,mixed>}
      */
     private function latestSnapshot(int $roomId): array
     {
@@ -430,10 +438,13 @@ final class ZigbeeRadarCalibrationService
         $stmt->execute([':rid' => $roomId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row === false) {
-            return ['id' => null, 'value' => null, 'last_at' => null, 'age_seconds' => null, 'settings' => []];
+            return ['id' => null, 'value' => null, 'last_at' => null, 'age_seconds' => null,
+                'settings' => [], 'report' => null];
         }
         $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
         $settings = is_array($meta) && is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
+        $report = is_array($meta) && is_array($meta['presence_report'] ?? null)
+            ? $meta['presence_report'] : null;
         $lastAt = (string) ($row['occurred_at'] ?? '');
         $age = null;
         if ($lastAt !== '') {
@@ -448,6 +459,7 @@ final class ZigbeeRadarCalibrationService
             'last_at' => $lastAt === '' ? null : $lastAt,
             'age_seconds' => $age,
             'settings' => $settings,
+            'report' => $report,
         ];
     }
 
@@ -486,7 +498,12 @@ final class ZigbeeRadarCalibrationService
      * @param array<string,mixed> $settings
      * @return array<string,mixed>
      */
-    public function persistCalibration(array $device, array $settings, ?string $settingsAt): array
+    public function persistCalibration(
+        array $device,
+        array $settings,
+        ?string $settingsAt,
+        string $source = 'sensores-f104-auto'
+    ): array
     {
         $stmt = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
         $stmt->execute([':id' => (int) $device['id']]);
@@ -495,7 +512,7 @@ final class ZigbeeRadarCalibrationService
         $meta = is_array($meta) ? $meta : [];
 
         $snap = [
-            'source' => 'sensores-f104-auto',
+            'source' => $source,
             'calibrated_at' => gmdate('Y-m-d\TH:i:s\Z'),
             'settings_at' => $settingsAt,
         ];
@@ -518,7 +535,7 @@ final class ZigbeeRadarCalibrationService
      * @param array<string,int|float> $commands
      * @return array<string,mixed>
      */
-    private function persistSnapshot(array $device, array $commands, ?string $settingsAt): array
+    private function persistSnapshot(array $device, array $commands, ?string $settingsAt, string $source = 'dashboard-calib-zigbee'): array
     {
         $stmt = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
         $stmt->execute([':id' => (int) $device['id']]);
@@ -527,7 +544,7 @@ final class ZigbeeRadarCalibrationService
         $meta = is_array($meta) ? $meta : [];
 
         $snap = [
-            'source' => 'dashboard-calib-zigbee',
+            'source' => $source,
             'calibrated_at' => gmdate('Y-m-d\TH:i:s\Z'),
             'settings_at' => $settingsAt,
         ];

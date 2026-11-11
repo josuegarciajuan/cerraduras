@@ -9308,6 +9308,97 @@ if grep -q "F124:" "$F124_UNIT"; then
 else
     fail "F124: unit test del encendido por credencial presente" "falta en tests/Unit/QrValidateServiceTest.php"
 fi
+# BLOCK 93 — F125: Radar Studio
+# Trazabilidad: F125 · requirements.md §F125 · contracts.md §F125
+# =============================================================================
+block "BLOCK 93 — F125: Radar Studio"
+
+for F125_FILE in \
+    src/Domain/Sensors/RadarAutoTune.php \
+    src/Domain/Sensors/RadarScope.php \
+    src/Infrastructure/Sensors/RadarStudioStore.php \
+    src/Http/Controllers/RadarStudioController.php \
+    public/assets/radar-scope.js \
+    public/assets/radar-studio.js \
+    tests/Unit/RadarAutoTuneTest.php \
+    tests/Unit/RadarScopeTest.php \
+    tests/Unit/RadarStudioStoreTest.php \
+    tests/Unit/radar-scope.test.js; do
+    if [ -f "$F125_FILE" ]; then
+        pass "F125: existe $F125_FILE"
+    else
+        fail "F125: $F125_FILE" "no encontrado"
+    fi
+done
+
+for F125_MARK in '/radar/scope' '/radar/profile' '/radar/autotune'; do
+    if grep -qF "$F125_MARK" public/index.php 2>/dev/null; then
+        pass "F125: ruta $F125_MARK"
+    else
+        fail "F125: ruta $F125_MARK" "ausente"
+    fi
+done
+
+for F125_PHP in src/Domain/Sensors/RadarAutoTune.php src/Domain/Sensors/RadarScope.php src/Infrastructure/Sensors/RadarStudioStore.php src/Http/Controllers/RadarStudioController.php; do
+    if php -l "$F125_PHP" >/tmp/f125-php.log 2>&1; then
+        pass "F125: sintaxis $(basename "$F125_PHP")"
+    else
+        fail "F125: sintaxis $(basename "$F125_PHP")" "$(tail -2 /tmp/f125-php.log | tr '\n' ' ')"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    for F125_JS in public/assets/radar-scope.js public/assets/radar-studio.js; do
+        if node --check "$F125_JS" >/tmp/f125-js.log 2>&1; then
+            pass "F125: sintaxis $(basename "$F125_JS")"
+        else
+            fail "F125: sintaxis $(basename "$F125_JS")" "$(tail -3 /tmp/f125-js.log | tr '\n' ' ')"
+        fi
+    done
+    if node tests/Unit/radar-scope.test.js >/tmp/f125-js-unit.log 2>&1; then
+        pass "F125: unit radar-scope (JS)"
+    else
+        fail "F125: unit radar-scope (JS)" "$(tail -3 /tmp/f125-js-unit.log | tr '\n' ' ')"
+    fi
+else
+    skip "F125: tests JS" "node no disponible"
+fi
+
+if php tests/Unit/RadarAutoTuneTest.php >/tmp/f125-at.log 2>&1; then
+    pass "F125: unit RadarAutoTune"
+else
+    fail "F125: unit RadarAutoTune" "$(tail -3 /tmp/f125-at.log | tr '\n' ' ')"
+fi
+if php tests/Unit/RadarScopeTest.php >/tmp/f125-scope.log 2>&1; then
+    pass "F125: unit RadarScope"
+else
+    fail "F125: unit RadarScope" "$(tail -3 /tmp/f125-scope.log | tr '\n' ' ')"
+fi
+if php tests/Unit/RadarStudioStoreTest.php >/tmp/f125-store.log 2>&1; then
+    pass "F125: unit RadarStudioStore"
+else
+    fail "F125: unit RadarStudioStore" "$(tail -3 /tmp/f125-store.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ] && [ -n "$RADAR_ROOM" ]; then
+    F125_SCOPE_CODE=$(curl -s -o /tmp/f125-scope.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/scope?room_id=$RADAR_ROOM&window=60" 2>/dev/null)
+    F125_SCOPE_OK=$(python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/f125-scope.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+print('ok' if d.get('ok') is True and isinstance(d.get('scope'), dict) else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F125_SCOPE_CODE" = "200" ] && [ "$F125_SCOPE_OK" = "ok" ]; then
+        pass "F125: scope HTTP"
+    else
+        fail "F125: scope HTTP" "http=$F125_SCOPE_CODE json=$F125_SCOPE_OK"
+    fi
+    rm -f /tmp/f125-scope.json
+else
+    skip "F125: scope HTTP" "servidor o radar no disponible"
+fi
 
 # =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar

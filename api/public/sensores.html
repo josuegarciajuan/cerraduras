@@ -121,6 +121,31 @@
     body{background:#fff;color:#000}
     .card{border-color:#000}
   }
+
+  /* F125 · Radar Studio */
+  .tabs{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .tab{background:transparent;border:1px solid var(--line);color:var(--text-mid);
+    padding:8px 14px;min-height:40px;border-radius:999px;font-size:13px}
+  .tab.active{border-color:var(--cyan);color:var(--text);background:var(--surface2)}
+  body[data-tab="radar"] #roster,body[data-tab="radar"] #rail{display:none}
+  .radar-main{max-width:1180px;margin:0 auto;padding:14px;display:grid;
+    grid-template-columns:minmax(0,1fr) 380px;gap:14px;align-items:start}
+  @media (max-width:980px){.radar-main{grid-template-columns:1fr}}
+  .scope-svg{background:var(--well);border:1px solid var(--line);border-radius:16px;padding:8px;min-height:320px}
+  .scope-svg svg{width:100%;height:auto;display:block}
+  .scope-empty{padding:40px;text-align:center;color:var(--text-mid)}
+  .scope-presence{animation:scopePulse 1.6s ease-in-out infinite}
+  .scope-motion{animation:scopePulse 1.2s ease-in-out infinite}
+  @keyframes scopePulse{0%,100%{opacity:.45}50%{opacity:1}}
+  .control{margin:12px 0}
+  .control label{display:flex;justify-content:space-between;gap:10px;font-size:13px;
+    color:var(--text-mid);margin-bottom:6px}
+  .control input[type=range]{width:100%;min-height:36px;accent-color:var(--cyan)}
+  .control output{font-family:var(--mono);color:var(--text)}
+  .at-card{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;background:var(--surface)}
+  .at-card strong{font-size:14px}
+  .at-card .actions{flex-direction:column;gap:8px}
+  details summary{cursor:pointer;color:var(--text-mid);font-size:13px;margin:10px 0}
 </style>
 </head>
 <body>
@@ -137,12 +162,17 @@
     <button id="btnResetRun" class="ghost hidden" type="button">↻ Reiniciar toda la prueba</button>
     <button id="btnRuns" class="ghost" type="button">Verificaciones</button>
   </div>
+  <nav class="tabs" role="tablist" aria-label="Vistas de sensores">
+    <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="verify">Verificación</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="radar">Radar Studio</button>
+  </nav>
   <div id="roster" class="roster" aria-label="Estado de dispositivos"></div>
   <div id="rail" class="rail" aria-label="Progreso"></div>
 </header>
 
 <div id="banner" class="banner hidden" role="alert"></div>
 
+<div id="view-verify">
 <main>
   <section id="mainCard" aria-live="polite"></section>
   <aside>
@@ -160,6 +190,109 @@
     </div>
   </aside>
 </main>
+</div>
+
+<div id="view-radar" class="hidden">
+  <main class="radar-main">
+    <section class="card">
+      <div class="eyebrow">Radar Studio · F125</div>
+      <h1 id="studioTitle">Radar de presencia</h1>
+      <div class="row" id="studioChips" style="margin-bottom:10px"></div>
+      <div id="scopeSvg" class="scope-svg" role="img" aria-label="Vista cenital del radar y su alcance configurado"></div>
+      <div class="hint" style="margin-top:8px">Vista cenital esquemática. Los anillos muestran la distancia de los ecos; el radar no informa ángulo. El círculo grande es el alcance configurado, no una detección real.</div>
+      <div class="divider"></div>
+      <h2>Diagnóstico</h2>
+      <div id="studioDiagnosis" class="checklist"></div>
+    </section>
+    <aside class="radar-side">
+      <div class="card">
+        <h2>Perfil del radar</h2>
+        <div class="control">
+          <label for="sensRange">Sensibilidad <output id="sensOut">—</output></label>
+          <input id="sensRange" type="range" min="0" max="9" step="1" value="7" aria-label="Sensibilidad del radar">
+          <div class="hint" id="sensHint"></div>
+        </div>
+        <div class="control">
+          <label for="rangeRange">Alcance <output id="rangeOut">—</output></label>
+          <input id="rangeRange" type="range" min="0.15" max="9.5" step="0.15" value="6" aria-label="Alcance máximo del radar">
+          <div class="hint" id="rangeHint"></div>
+        </div>
+        <details>
+          <summary>Avanzado</summary>
+          <div class="control">
+            <label for="minRange">Mínimo <output id="minOut">—</output></label>
+            <input id="minRange" type="range" min="0" max="9.5" step="0.15" value="0.6">
+          </div>
+          <div class="control">
+            <label for="delayRange">Retardo de detección <output id="delayOut">—</output></label>
+            <input id="delayRange" type="range" min="0" max="10" step="0.1" value="0.1">
+          </div>
+          <div class="control">
+            <label for="fadingRange">fading_time <output id="fadingOut">—</output></label>
+            <input id="fadingRange" type="range" min="0.5" max="150" step="0.5" value="15.5">
+            <div class="hint">Cuánto mantiene la presencia tras dejar de verte. Muy bajo = parpadea; muy alto = falsos positivos al salir.</div>
+          </div>
+        </details>
+        <div class="actions">
+          <button class="primary" id="btnApplyProfile">Aplicar al radar</button>
+          <button class="ghost" id="btnBaseline">Restaurar ajustes iniciales</button>
+        </div>
+        <div class="hint" id="applyStatus"></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h2>Autoajuste guiado</h2>
+        <div class="at-card">
+          <strong>0 · ¿El radar te ve?</strong>
+          <p class="hint">Pulsa, muévete delante del radar durante 10 s y comprobaremos si llega movimiento (distancia) o presencia.</p>
+          <div class="actions">
+            <button id="btnMotionTest">Comprobar movimiento (10 s)</button>
+          </div>
+          <div class="hint" id="motionTestStatus"></div>
+        </div>
+        <div class="at-card">
+          <strong>1 · Medir alcance por paseo</strong>
+          <p class="hint">Ponte delante del radar, empieza el paseo y aléjate despacio hasta que deje de detectarte. No hace falta cinta métrica.</p>
+          <div class="actions">
+            <button id="btnAutoRangeStart">Empezar paseo</button>
+            <button class="primary hidden" id="btnAutoRangeFinish">He perdido la detección</button>
+            <button class="ghost hidden" id="btnAutoRangeCancel">Cancelar</button>
+          </div>
+          <div class="hint" id="autoRangeStatus"></div>
+        </div>
+        <div class="at-card">
+          <strong>2 · Recomendar sensibilidad</strong>
+          <p class="hint">Muévete de forma natural durante 15 s. El sistema mide ecos y presencia, y propone el valor más bajo que detecte de forma fiable.</p>
+          <div class="actions">
+            <button id="btnSensitivity">Analizar 15 s</button>
+            <button class="primary hidden" id="btnSensitivityApply">Aplicar sugerencia</button>
+          </div>
+          <div class="hint" id="sensitivityStatus"></div>
+        </div>
+        <div class="at-card">
+          <strong>3 · Comprobar exterior (reposo)</strong>
+          <p class="hint">Sal de la sala, cierra la puerta y espera. Si el radar te detecta fuera, bajará el alcance por pasos.</p>
+          <div class="actions">
+            <button id="btnSoakStart">Empezar reposo</button>
+            <button class="ghost hidden" id="btnSoakCancel">Cancelar</button>
+          </div>
+          <div class="hint" id="soakStatus"></div>
+        </div>
+        <div class="at-card">
+          <strong>4 · Verificar reentrada</strong>
+          <p class="hint">Marca la salida estando fuera y entra; el radar debe volver a detectarte con un reporte nuevo.</p>
+          <div class="actions">
+            <button id="btnReentryMark">Marcar salida</button>
+            <button class="primary hidden" id="btnReentryCheck">Ya he entrado</button>
+          </div>
+          <div class="hint" id="reentryStatus"></div>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="btnRestore">Restaurar ajustes desde la operación</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
 
 <div id="toast" class="toast hidden" role="status"></div>
 <dialog id="runsDialog" aria-labelledby="runsTitle">
@@ -171,5 +304,7 @@
 </dialog>
 
 <script src="assets/sensor-wizard-v2.js?v=20261103-f112d"></script>
+<script src="assets/radar-scope.js?v=20261111-f124"></script>
+<script src="assets/radar-studio.js?v=20261111-f124"></script>
 </body>
 </html>
