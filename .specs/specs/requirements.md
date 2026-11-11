@@ -14103,3 +14103,40 @@ el código real (`codhab == rooms.code`).
 
 **Trazabilidad:** `RoomControlController`, `index.php`,
 `F128ByCodeRoutesTest`, BLOCK 96.
+
+## F125.1 — Calibración guiada del radar (RF-356…RF-361)
+
+**Motivo:** el Radar Studio base permite ajustar y probar, pero el operador
+necesita un flujo lineal que le diga qué hacer en cada momento y que impida
+avanzar sin superar el paso anterior.
+
+- **RF-356 (wizard lineal con bloqueo):** `/sensores` muestra un stepper con
+  pasos `Ajuste manual → ¿El radar te ve? → Paseo → Sensibilidad → Fuera →
+  Dentro → Fuera final → Calibrado`. Solo el paso actual tiene botones
+  habilitados; los futuros quedan bloqueados y los superados en verde.
+- **RF-357 (ajuste manual):** el paso 1 permite ajustar sensibilidad, alcance
+  máximo, mínimo (0 permitido) y retardo. El perfil se aplica con confirmación
+  por push. Aplicar un perfil nuevo reinicia las pruebas para no validar una
+  configuración distinta.
+- **RF-358 (¿te ve? y paseo manual):** el paso 2 comprueba 10 s de presencia.
+  El paso 3 es manual: el operador empieza en la distancia mínima, camina hacia
+  atrás y pulsa «Prueba buena» cuando lo considera; el sistema no juzga la
+  distancia de pérdida ni avanza sin esa confirmación.
+- **RF-359 (sensibilidad):** el paso 4 mide 15 s y recomienda una sensibilidad.
+  Si recomienda un valor distinto, el operador acepta o mantiene la actual; si
+  no hay cambio, avanza automáticamente.
+- **RF-360 (fuera/dentro/fuera automáticos):** pasos 5, 6 y 7 de 30 s. Fuera
+  exige ausencia sin `PRESENT`; dentro exige detección estable. Si falla, el
+  paso se marca en rojo y el operador puede reintentar o volver a ajustar. No
+  se reduce el alcance automáticamente.
+- **RF-361 (estado y resumen):** el wizard se persiste por sala (sobrevive a
+  recargas), detecta cambios de configuración y, al terminar, guarda el perfil
+  en `devices.meta_json.calibration` con `source=radar-studio-guided-v1` y un
+  resumen de pruebas.
+
+**Fuera de alcance:** Tuya, pollers nuevos, migraciones y cambios en las rutas
+antiguas de autoajuste (se conservan en «Avanzado»).
+
+**Trazabilidad:** `RadarGuidedCalibration`, `RadarStudioController`,
+`RadarStudioStore`, `radar-wizard.js`, `radar-studio.js`, `sensores.html`,
+`RadarGuidedCalibrationTest`, `radar-wizard.test.js` y BLOCK 97.

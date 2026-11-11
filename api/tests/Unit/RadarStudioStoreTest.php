@@ -32,8 +32,24 @@ $store->save(14, ['action' => 'auto_range']);
 $store->clear(14);
 check('clear borra el estado', $store->load(14) === null);
 
+// Wizard F125.1: estado independiente del autoajuste clásico.
+check('wizard sin estado → null', $store->loadWizard(14) === null);
+$store->saveWizard(14, ['current_step' => 'sees_you', 'status' => 'running']);
+$wizard = $store->loadWizard(14);
+check('wizard guardado', is_array($wizard));
+same('wizard paso actual', $wizard['current_step'] ?? null, 'sees_you');
+$store->save(14, ['action' => 'soak']);
+check('wizard y operación conviven', $store->load(14)['action'] === 'soak' && $store->loadWizard(14)['current_step'] === 'sees_you');
+$returnedWizard = $store->withWizardLock(14, static function (?array $state): string {
+    return ($state['current_step'] ?? 'none') . ':wizard';
+});
+same('withWizardLock recibe el estado', $returnedWizard, 'sees_you:wizard');
+$store->clearWizard(14);
+check('clearWizard borra el estado', $store->loadWizard(14) === null);
+
 // Limpieza.
 @unlink($dir . '/room-14.json.lock');
+@unlink($dir . '/wizard-room-14.json.lock');
 @rmdir($dir);
 
 echo "\nTotal: {$P} passed, {$F} failed\n";

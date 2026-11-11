@@ -27062,3 +27062,53 @@ de luz, apertura, reset, scopes ni idempotencia.
 
 Las rutas por `{id}` siguen intactas. El dashboard y el panel usan `{id}`; el
 TPV/VB6 puede usar `by-code/{codhab}`.
+
+## F125.1 — Calibración guiada
+
+### Máquina de estados
+
+`App\Domain\Sensors\RadarGuidedCalibration` define los 8 pasos y transiciones.
+Es pura: recibe estado, presencia auténtica, reportes DP1/DP9 y settings; no
+lee BD, no publica MQTT y no usa el reloj.
+
+Estados por paso: `pending`, `active`, `awaiting_decision`, `passed`, `failed`
+y `locked`. El estado global es `running`, `done` o `config_changed`.
+
+### Endpoints
+
+- `GET /dashboard-api/sensores/v2/radar/wizard?room_id=` devuelve el estado,
+  los pasos para la UI y el `scope` en vivo. Evalúa los pasos automáticos y
+  persiste el avance.
+- `POST /dashboard-api/sensores/v2/radar/wizard` con `action`:
+  `profile_applied`, `step_start`, `step_pass`, `sensitivity_accept`,
+  `sensitivity_keep`, `retry`, `reset`, `finish`, `status`.
+
+El estado vive en `api/run/radar-studio/wizard-room-<id>.json` con `flock`, en
+un fichero separado del autoajuste clásico.
+
+### Evaluación
+
+- `sees_you`: 10 s; pasa con presencia auténtica o un `PRESENT` nuevo. Si el
+  DP1 no está disponible, usa el estado crudo.
+- `outside`: espera a `ABSENT`, arranca 30 s y falla si aparece un `PRESENT`.
+- `inside`: espera a `ABSENT`, entra y exige `PRESENT` estable 3 s; 30 s de
+  timeout.
+- `walk`: calcula la pérdida `PRESENT→ABSENT` y la distancia informativa, pero
+  **no decide**. Solo `step_pass` avanza.
+- `sensitivity`: 15 s; usa `RadarAutoTune::sensitivity` con fallback de
+  presencia cruda. Si no hay cambio, avanza solo; si hay sugerencia, espera
+  aceptar/mantener.
+- Cambio de `config_key` → `config_changed` y vuelta al paso 1.
+- Al terminar, `persistCalibration(..., 'radar-studio-guided-v1', ['wizard'=>summary])`.
+
+### UI
+
+`radar-wizard.js` (puro) decide botones y estados. `radar-studio.js` pinta el
+stepper y delega las acciones. El ajuste manual queda siempre visible; los
+controles antiguos se mueven a «Avanzado (diagnóstico)». Sin polling a Tuya:
+el cliente consulta el estado local cada 1,5 s mientras la pestaña está visible.
+
+### Verificación
+
+`RadarGuidedCalibrationTest` (49), `radar-wizard.test.js` (28), ampliación de
+`RadarStudioStoreTest` (12) y BLOCK 97 del runner. Regresión completa.

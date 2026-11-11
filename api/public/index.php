@@ -642,6 +642,8 @@ $radarStudio = new \App\Http\Controllers\RadarStudioController(
 $router->get('/dashboard-api/sensores/v2/radar/scope', [$radarStudio, 'scope']);
 $router->post('/dashboard-api/sensores/v2/radar/profile', [$radarStudio, 'profile']);
 $router->post('/dashboard-api/sensores/v2/radar/autotune', [$radarStudio, 'autotune']);
+$router->get('/dashboard-api/sensores/v2/radar/wizard', [$radarStudio, 'wizard']);
+$router->post('/dashboard-api/sensores/v2/radar/wizard', [$radarStudio, 'wizardAction']);
 
 // ── Acceptance runs store (no auth — LAN/MVP dev tool, F55/RF-62) ─────────────
 // Guarda cada corrida de aceptación manual en api/run/acceptance/<run-id>.json.

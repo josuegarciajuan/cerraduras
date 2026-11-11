@@ -11937,3 +11937,16 @@ pendientes.
 - [x] TSK-F128-03: misma lógica, scopes e idempotencia que las rutas por `{id}`.
 - [x] TSK-F128-04: `F128ByCodeRoutesTest` + BLOCK 96.
 - [x] TSK-F128-05: documentación y compatibilidad.
+
+## F125.1 — Calibración guiada del radar
+
+- [x] TSK-F125.1-01: `RadarGuidedCalibration` (pasos, bloqueo, evaluación, resumen) + unit.
+- [x] TSK-F125.1-02: persistencia `wizard-room-<id>.json` y lock en `RadarStudioStore`.
+- [x] TSK-F125.1-03: endpoints `GET/POST /radar/wizard` y acciones del wizard.
+- [x] TSK-F125.1-04: fallback de presencia cruda en la recomendación de sensibilidad.
+- [x] TSK-F125.1-05: `radar-wizard.js` (acciones/estado puro) + unit JS.
+- [x] TSK-F125.1-06: stepper, gating, resumen y «Volver a ajustar» en `sensores.html`/`radar-studio.js`.
+- [x] TSK-F125.1-07: controles antiguos movidos a «Avanzado (diagnóstico)».
+- [x] TSK-F125.1-08: persistencia final con `source=radar-studio-guided-v1`.
+- [x] TSK-F125.1-09: BLOCK 97 del runner y documentación.
+- [ ] TSK-F125.1-10: prueba física completa (a ojo, paseo, sensibilidad, fuera/dentro/fuera).

@@ -438,3 +438,33 @@ Diagnóstico útil cuando «no detecta»:
 El estado efímero de una operación vive en
 `api/run/radar-studio/room-<id>.json`; no es dato de negocio y se puede borrar
 con la operación parada. No hay Tuya ni pollers: solo push y lectura local.
+
+## F125.1 — Calibración guiada paso a paso
+
+La pestaña **Radar Studio** incluye un wizard lineal. Solo el paso activo tiene
+botones; los pasos futuros quedan bloqueados y los superados en verde.
+
+1. **Ajuste manual**: sensibilidad, alcance máximo, mínimo (puede ser 0) y
+   retardo. Pulsa **Aplicar al radar** y espera la confirmación por push.
+   Aplicar un perfil nuevo reinicia las pruebas.
+2. **¿El radar te ve?**: ponte dentro de la zona, muévete ligeramente y pulsa
+   **Probar 10 s**. Si hay presencia, pasa a verde.
+3. **Paseo (manual)**: empieza en la distancia mínima, camina hacia atrás y
+   pulsa **Prueba buena** cuando deje de detectarte en el punto que querías.
+   El sistema no decide por ti; muestra la última pérdida y el último eco como
+   información.
+4. **Sensibilidad**: muévete 15 s. Si recomienda un valor distinto, pulsa
+   **Aceptar N/9** o **Mantener actual**. Sin cambio, avanza solo.
+5. **Fuera**: sal, cierra la puerta y espera 30 s sin detección. El contador
+   empieza cuando el radar te pierde. Si te detecta, el paso falla.
+6. **Dentro**: sal y espera a que no te detecte; pulsa **Empezar** y entra.
+   Debe detectarte en 30 s.
+7. **Fuera final**: sal y espera 30 s sin detección.
+
+Si un paso falla: **Reintentar** (mismo perfil) o **Volver a ajustar**
+(desbloquea el ajuste manual y reinicia el wizard). El sistema no reduce el
+alcance automáticamente. Al terminar, el resumen queda guardado en
+`devices.meta_json.calibration` con `source=radar-studio-guided-v1`.
+
+Los controles antiguos de autoalcance, sensibilidad, reposo y reentrada siguen
+disponibles en **Avanzado (diagnóstico)**.

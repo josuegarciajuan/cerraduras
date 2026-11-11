@@ -132,7 +132,8 @@ final class RadarAutoTune
         array $presenceReports,
         mixed $current,
         int $windowSeconds,
-        string $now = ''
+        string $now = '',
+        ?string $rawPresence = null
     ): array {
         $windowSeconds = max(5, min(300, $windowSeconds));
         $nowMs = $now !== '' ? self::toMs($now) : (int) round(microtime(true) * 1000);
@@ -156,6 +157,13 @@ final class RadarAutoTune
             }
         }
         $latest = $presence === [] ? null : $presence[count($presence) - 1]['value'];
+        $raw = strtoupper(trim((string) ($rawPresence ?? '')));
+        if ($presents === 0 && $raw === 'PRESENT') {
+            // El DP1 puede no estar disponible (conversor ausente). Si el evento
+            // crudo dice PRESENTE, no recomendamos subir a ciegas.
+            $presents = 1;
+            $latest = 'PRESENT';
+        }
         $currentInt = is_numeric($current) ? (int) round((float) $current) : null;
         $stats = [
             'window_seconds' => $windowSeconds,
@@ -164,6 +172,7 @@ final class RadarAutoTune
             'present_reports' => $presents,
             'presence_transitions' => $transitions,
             'latest_presence' => $latest,
+            'raw_presence' => $raw !== '' ? $raw : null,
         ];
         if ($currentInt === null) {
             return ['value' => null, 'reason' => 'current_unknown', 'confidence' => 'low', 'stats' => $stats];

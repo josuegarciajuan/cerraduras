@@ -117,7 +117,8 @@ final class RadarScope
             $presenceReports,
             $settings['radar_sensitivity'] ?? null,
             $window,
-            self::iso($nowMs)
+            self::iso($nowMs),
+            (string) ($raw['state'] ?? '')
         );
 
         $rawState = strtoupper(trim((string) ($raw['state'] ?? 'UNKNOWN')));
