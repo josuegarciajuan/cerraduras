@@ -232,6 +232,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 
 | **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
+| **F124 Radar Studio: calibración visual y autoajuste** | **BLOCK 92 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1292,3 +1293,33 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   BLOCK 69 del runner ampliado (reuso, una sola sesión, 409 del QR maestro
   auditado, cierre manual idempotente, autocierre por TTL) y regresión completa.
   Pendiente la prueba física y la corrida de regresión en esta sesión.
+
+### F124 — Radar Studio: calibración visual y autoajuste (RF-344…RF-349)
+
+- **Motivo**: la calibración del radar se basaba en distancias DP 9 ruidosas y
+  fases difíciles de interpretar; además la presencia operativa podía descartar
+  un `PRESENT` real como `uncorroborated`.
+- **UI**: pestaña **Radar Studio** en `/sensores` (sin tocar el wizard F95):
+  ejes en metros, círculo de alcance configurado coloreado por sensibilidad,
+  hueco del mínimo, densidad radial de ecos DP 9, presencia DP 1 en verde y
+  movimiento sin presencia en ámbar. No se inventa ángulo.
+- **Perfil (RF-345)**: sliders con preview local instantáneo; «Aplicar al
+  radar» publica MQTT y solo marca aplicado cuando llega un push nuevo que lo
+  confirma. Sin confirmación no se persiste.
+- **Auto-alcance (RF-346)**: se aplica 9,5 m temporal, el operario camina hacia
+  atrás hasta el `ABSENT`, y el servidor calcula el borde con la mediana de los
+  últimos 3 ecos previos y aplica `borde − 0,30 m`.
+- **Auto-sensibilidad (RF-347)**: ventana de 15 s; recomienda el valor más bajo
+  que detecte ecos/presencia de forma fiable.
+- **Reposo exterior (RF-348)**: solo empieza con el radar en `ABSENT`; 60 s sin
+  `PRESENT` nuevos = exterior correcto. Si detecta, baja el alcance 0,30 m por
+  paso (máx. 6) con confirmación por push.
+- **Reentrada (RF-349)**: exige un `PRESENT` con marcador nuevo tras marcar la
+  salida. El diagnóstico explica `motion_without_presence`,
+  `presence_without_motion`, `fusion_can_discard`, `door_open`,
+  `fading_too_low`, etc.
+- **Sin migración, sin Tuya y sin pollers nuevos.** Estado efímero en
+  `api/run/radar-studio/room-<id>.json` (flock + escritura atómica).
+- **Verificación**: `RadarAutoTuneTest` (39), `RadarScopeTest` (25),
+  `RadarStudioStoreTest` (6), `radar-scope.test.js` (30) y BLOCK 92 del runner.
+  Pendiente la prueba física de paseo/reposo/reentrada y la regresión completa.

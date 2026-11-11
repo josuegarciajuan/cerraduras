@@ -1,0 +1,636 @@
+/**
+ * radar-studio.js — F124/RF-344…RF-349.
+ *
+ * UI del Radar Studio: vista viva, sliders con preview local, aplicación con
+ * confirmación por push y asistentes de calibración (paseo, sensibilidad,
+ * reposo exterior y reentrada).
+ *
+ * La UI presenta; el servidor decide. No hay llamadas a Tuya ni pollers.
+ */
+(function () {
+  'use strict';
+
+  var API = '/dashboard-api/sensores/v2/radar';
+  var POLL_MS = 1500;
+  var SOAK_MS = 5000;
+
+  var S = {
+    scope: null,
+    preview: null,
+    recommendation: null,
+    active: null,
+    busy: false,
+    timer: null,
+    lastSoak: 0,
+    roomRetries: 0,
+    motionTimer: null,
+    tab: 'verify'
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function roomId() {
+    var sel = $('roomSel');
+    if (!sel) return 0;
+    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+    return parseInt(sel.value, 10) || 0;
+  }
+  function operator() { return (($('operator') && $('operator').value) || '').trim(); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function num(v, fallback) { var n = Number(v); return isFinite(n) ? n : fallback; }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    var ctrl = new AbortController();
+    var to = setTimeout(function () { ctrl.abort(); }, 60000);
+    try {
+      var res = await fetch(path, Object.assign({}, opts, { signal: ctrl.signal }));
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        var err = new Error(data.message || data.error || ('HTTP ' + res.status));
+        err.data = data;
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    } finally {
+      clearTimeout(to);
+    }
+  }
+
+  function toast(msg) {
+    var el = $('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.classList.add('hidden'); }, 3800);
+  }
+
+  // ── pestañas ─────────────────────────────────────────────────────────
+  function setTab(name) {
+    S.tab = name === 'radar' ? 'radar' : 'verify';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tab]'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === S.tab);
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === S.tab ? 'true' : 'false');
+    });
+    var verify = $('view-verify');
+    var radar = $('view-radar');
+    if (verify) verify.classList.toggle('hidden', S.tab !== 'verify');
+    if (radar) radar.classList.toggle('hidden', S.tab !== 'radar');
+    document.body.setAttribute('data-tab', S.tab);
+    if (S.tab === 'radar') {
+      fetchScope();
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  }
+
+  // ── carga y render ───────────────────────────────────────────────────
+  async function fetchScope() {
+    if (!roomId()) {
+      if (S.roomRetries < 10) {
+        S.roomRetries++;
+        setTimeout(fetchScope, 300);
+      }
+      return;
+    }
+    S.roomRetries = 0;
+    try {
+      var data = await api(API + '/scope?room_id=' + roomId() + '&window=60', { cache: 'no-store' });
+      S.scope = data;
+      // No borrar una edición local mientras el operario mueve los sliders.
+      // El preview se limpia al aplicar, cambiar de sala o restaurar.
+      render();
+    } catch (e) {
+      renderError(e.message);
+    }
+  }
+
+  function renderError(message) {
+    var host = $('scopeSvg');
+    if (host) host.innerHTML = '<div class="scope-empty">No se pudo leer el radar: ' + esc(message) + '</div>';
+    var chips = $('studioChips');
+    if (chips) chips.innerHTML = '';
+    var diag = $('studioDiagnosis');
+    if (diag) diag.innerHTML = '';
+  }
+
+  function currentScope() {
+    if (!S.scope) return null;
+    var sc = S.scope.scope;
+    if (!sc) return null;
+    if (!S.preview) return sc;
+    var copy = JSON.parse(JSON.stringify(sc));
+    copy.settings = Object.assign({}, copy.settings, S.preview);
+    var maxM = Math.max(1.5,
+      num(copy.settings.maximum_range, 2),
+      num(copy.stats && copy.stats.p90, 0) + 0.5);
+    copy.axes = { max_m: Math.ceil(maxM * 2) / 2, grid_m: 0.5 };
+    return copy;
+  }
+
+  function render() {
+    if (!S.scope || !S.scope.scope) { renderError('sin datos'); return; }
+    var sc = S.scope.scope;
+    renderChips(sc);
+    var host = $('scopeSvg');
+    if (host && window.RadarScope) host.innerHTML = window.RadarScope.buildSvg(currentScope() || sc);
+    renderDiagnosis(sc);
+    syncControls(sc);
+    renderActive(sc);
+  }
+
+  function renderChips(sc) {
+    var host = $('studioChips');
+    if (!host) return;
+    var visual = window.RadarScope ? window.RadarScope.presenceVisual(sc) : { label: '—', tone: 'dim', state: 'UNKNOWN' };
+    var dev = S.scope.device || {};
+    var settings = sc.settings || {};
+    var age = sc.raw && sc.raw.age_seconds != null ? sc.raw.age_seconds + ' s' : '—';
+    var mode = sc.presence_mode || '—';
+    var chest = [
+      '<span class="pill ' + (visual.tone === 'ok' ? 'ok' : visual.tone === 'warn' ? 'warn' : visual.tone === 'bad' ? 'bad' : 'dim') + '">'
+        + esc(visual.label) + '</span>',
+      '<span class="pill ' + (dev.health === 'online' ? 'ok' : dev.health === 'stale' ? 'warn' : 'dim') + '">'
+        + esc(dev.label || 'RADAR') + ' · ' + esc(dev.health || '—') + '</span>',
+      '<span class="pill dim">último push ' + esc(age) + '</span>',
+      '<span class="pill dim">modo ' + esc(mode) + '</span>'
+    ];
+    if (settings.maximum_range != null) {
+      chest.push('<span class="pill dim">alcance ' + Number(settings.maximum_range).toFixed(2) + ' m</span>');
+    }
+    if (settings.radar_sensitivity != null) {
+      chest.push('<span class="pill dim">sens ' + Math.round(settings.radar_sensitivity) + '/9</span>');
+    }
+    if (sc.door_state) {
+      chest.push('<span class="pill ' + (sc.door_state === 'OPEN' ? 'warn' : 'dim') + '">puerta ' + esc(sc.door_state) + '</span>');
+    }
+    host.innerHTML = chest.join('');
+  }
+
+  function renderDiagnosis(sc) {
+    var host = $('studioDiagnosis');
+    if (!host) return;
+    var items = sc.diagnosis || [];
+    if (!items.length) {
+      host.innerHTML = '<div class="check"><span class="dot ok"></span> Sin incidencias detectadas.</div>';
+      return;
+    }
+    host.innerHTML = items.map(function (item) {
+      var cls = item.severity === 'error' ? 'bad' : item.severity === 'warn' ? 'warn' : 'ok';
+      return '<div class="check"><span class="dot ' + cls + '"></span> ' + esc(item.message) + '</div>';
+    }).join('');
+  }
+
+  function syncControls(sc) {
+    var settings = sc.settings || {};
+    var sens = $('sensRange');
+    var range = $('rangeRange');
+    var min = $('minRange');
+    var delay = $('delayRange');
+    var fading = $('fadingRange');
+    if (!S.preview) {
+      if (sens && settings.radar_sensitivity != null) sens.value = String(Math.round(settings.radar_sensitivity));
+      if (range && settings.maximum_range != null) range.value = String(settings.maximum_range);
+      if (min && settings.minimum_range != null) min.value = String(settings.minimum_range);
+      if (delay && settings.detection_delay != null) delay.value = String(settings.detection_delay);
+      if (fading && settings.fading_time != null) fading.value = String(settings.fading_time);
+    }
+    updateSliderLabels();
+    var suggestRange = sc.suggestions && sc.suggestions.maximum_range;
+    var rangeHint = $('rangeHint');
+    if (rangeHint) {
+      if (suggestRange && suggestRange.value != null) {
+        rangeHint.textContent = 'Sugerido: ' + Number(suggestRange.value).toFixed(2) + ' m ('
+          + (suggestRange.reason === 'walk_boundary' ? 'borde medido' : 'huella observada') + ').';
+      } else {
+        rangeHint.textContent = 'Mueve el slider: el círculo cambia al instante, pero el radar solo recibe el cambio al pulsar Aplicar.';
+      }
+    }
+    var sensSug = sc.suggestions && sc.suggestions.radar_sensitivity;
+    var sensHint = $('sensHint');
+    if (sensHint) {
+      if (sensSug && sensSug.value != null) {
+        var reasons = {
+          detects_reliably: 'detecta de forma fiable',
+          motion_without_presence: 'hay movimiento pero no confirma presencia',
+          no_motion_no_presence: 'no se ha visto movimiento ni presencia',
+          presence_without_motion: 'hay presencia pero pocos ecos de movimiento',
+          marginal: 'detección justa',
+          no_motion: 'sin movimiento en la ventana'
+        };
+        sensHint.textContent = 'Sugerido: ' + sensSug.value + '/9 · ' + (reasons[sensSug.reason] || sensSug.reason) + '.';
+      } else {
+        sensHint.textContent = 'La sensibilidad alta detecta más, pero también puede disparar falsos positivos.';
+      }
+    }
+    var applyStatus = $('applyStatus');
+    if (applyStatus && S.preview) applyStatus.textContent = 'Cambios sin aplicar. Pulsa «Aplicar al radar».';
+  }
+
+  function updateSliderLabels() {
+    var sens = $('sensRange');
+    var range = $('rangeRange');
+    var sensOut = $('sensOut');
+    var rangeOut = $('rangeOut');
+    if (sens && sensOut) {
+      var label = window.RadarScope ? window.RadarScope.sensitivityLabel(sens.value) : '';
+      sensOut.textContent = Math.round(num(sens.value, 7)) + '/9 · ' + label;
+    }
+    if (range && rangeOut) rangeOut.textContent = Number(range.value).toFixed(2) + ' m';
+    var min = $('minRange');
+    var minOut = $('minOut');
+    if (min && minOut) minOut.textContent = Number(min.value).toFixed(2) + ' m';
+    var delay = $('delayRange');
+    var delayOut = $('delayOut');
+    if (delay && delayOut) delayOut.textContent = Number(delay.value).toFixed(2) + ' s';
+    var fading = $('fadingRange');
+    var fadingOut = $('fadingOut');
+    if (fading && fadingOut) fadingOut.textContent = Number(fading.value).toFixed(1) + ' s';
+  }
+
+  function readControls() {
+    var out = {
+      radar_sensitivity: Math.round(num($('sensRange') && $('sensRange').value, 7)),
+      maximum_range: Number(num($('rangeRange') && $('rangeRange').value, 6)),
+      minimum_range: Number(num($('minRange') && $('minRange').value, 0.6)),
+      detection_delay: Number(num($('delayRange') && $('delayRange').value, 0.1)),
+      fading_time: Number(num($('fadingRange') && $('fadingRange').value, 15.5))
+    };
+    return out;
+  }
+
+  function markPending() {
+    S.preview = readControls();
+    updateSliderLabels();
+    render();
+  }
+
+  function renderActive(sc) {
+    var state = S.active || (sc && sc.active_operation) || null;
+    var auto = !!(state && state.action === 'auto_range');
+    var soaking = !!(state && state.action === 'soak');
+    var reentry = !!(state && state.action === 'reentry');
+    toggle('btnAutoRangeStart', !auto);
+    toggle('btnAutoRangeFinish', auto);
+    toggle('btnAutoRangeCancel', auto);
+    toggle('btnSoakStart', !soaking);
+    toggle('btnSoakCancel', soaking);
+    toggle('btnReentryMark', !reentry);
+    toggle('btnReentryCheck', reentry);
+    var ar = $('autoRangeStatus');
+    if (ar) {
+      if (auto) {
+        ar.textContent = state.phase === 'walking'
+          ? 'Paseo en curso desde ' + shortTime(state.started_at) + '. Aléjate hasta que deje de detectarte.'
+          : 'Operación de alcance en curso.';
+      } else if (!ar.textContent) {
+        ar.textContent = '';
+      }
+    }
+    var sk = $('soakStatus');
+    if (sk) {
+      if (soaking) sk.textContent = 'Reposo en curso desde ' + shortTime(state.started_at) + '. Reducciones: ' + (state.reductions || 0) + '/6.';
+      else if (!sk.textContent) sk.textContent = '';
+    }
+    var re = $('reentryStatus');
+    if (re) {
+      if (reentry) re.textContent = 'Esperando una presencia nueva desde ' + shortTime(state.started_at) + '.';
+      else if (!re.textContent) re.textContent = '';
+    }
+  }
+
+  function toggle(id, show) {
+    var el = $(id);
+    if (el) el.classList.toggle('hidden', !show);
+  }
+
+  function shortTime(iso) {
+    if (!iso) return '—';
+    var s = String(iso).replace('T', ' ').replace('Z', '');
+    return s.slice(11, 19) || s;
+  }
+
+  // ── acciones ─────────────────────────────────────────────────────────
+  function motionTest() {
+    if (S.motionTimer) return;
+    var el = $('motionTestStatus');
+    var btn = $('btnMotionTest');
+    var start = Date.now();
+    if (btn) btn.disabled = true;
+    if (el) el.textContent = 'Muévete delante del radar. Quedan 10 s…';
+    S.motionTimer = setInterval(function () {
+      var left = Math.max(0, 10 - Math.floor((Date.now() - start) / 1000));
+      if (el && left > 0) el.textContent = 'Muévete delante del radar. Quedan ' + left + ' s…';
+      if (left <= 0) {
+        clearInterval(S.motionTimer);
+        S.motionTimer = null;
+        evaluateMotionTest();
+      }
+    }, 1000);
+  }
+
+  async function evaluateMotionTest() {
+    await fetchScope();
+    var sc = S.scope && S.scope.scope;
+    var el = $('motionTestStatus');
+    var btn = $('btnMotionTest');
+    if (btn) btn.disabled = false;
+    if (!sc) return;
+    var moves = (sc.series || []).filter(function (p) { return Number(p.age_s) <= 10; }).length;
+    var pres = (sc.presence_series || []).filter(function (p) { return Number(p.age_s) <= 10; }).length;
+    if (moves > 0 || pres > 0) {
+      if (el) el.textContent = 'Detectado: ' + moves + ' ecos de distancia y ' + pres + ' reportes de presencia en 10 s.';
+    } else {
+      if (el) el.textContent = 'No se ha detectado movimiento ni presencia en 10 s. Revisa alimentación, LQI, sensibilidad y colocación.';
+    }
+  }
+
+  async function applyProfile() {
+    if (!S.scope || S.busy) return;
+    var settings = S.preview || readControls();
+    setBusy(true, 'Aplicando al radar…');
+    try {
+      var data = await api(API + '/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId(), settings: settings })
+      });
+      S.scope = data.scope;
+      S.preview = null;
+      S.active = null;
+      var st = $('applyStatus');
+      if (st) st.textContent = 'Aplicado y confirmado por push.';
+      render();
+      toast('Perfil aplicado y confirmado por el radar');
+    } catch (e) {
+      if (e.data && e.data.scope) S.scope = e.data.scope;
+      var st2 = $('applyStatus');
+      if (st2) st2.textContent = e.message;
+      render();
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreBaseline() {
+    if (S.busy) return;
+    var b = (S.scope && S.scope.baseline) || {
+      maximum_range: 6.0, minimum_range: 0.6, radar_sensitivity: 7,
+      detection_delay: 0.1, fading_time: 15.5
+    };
+    S.preview = b;
+    render();
+    await applyProfile();
+  }
+
+  async function autotune(action, extra, statusEl, successText) {
+    if (S.busy) return null;
+    setBusy(true, 'Ejecutando…');
+    try {
+      var body = Object.assign({ room_id: roomId(), action: action, operator: operator() }, extra || {});
+      var data = await api(API + '/autotune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (data.scope) S.scope = data.scope;
+      if (data.state !== undefined) S.active = data.state;
+      if (successText && statusEl) statusEl.textContent = successText;
+      render();
+      return data;
+    } catch (e) {
+      if (e.data && e.data.scope) S.scope = e.data.scope;
+      if (statusEl) statusEl.textContent = e.message;
+      render();
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setBusy(on, message) {
+    S.busy = !!on;
+    Array.prototype.forEach.call(document.querySelectorAll('#view-radar button'), function (b) {
+      b.disabled = !!on;
+    });
+    var st = $('applyStatus');
+    if (on && message && st) st.textContent = message;
+  }
+
+  async function autoRangeStart() {
+    var el = $('autoRangeStatus');
+    var data = await autotune('auto_range_start', {}, el);
+    if (data) {
+      S.active = data.state;
+      if (el) el.textContent = data.instruction || 'Paseo iniciado.';
+      render();
+    }
+  }
+
+  async function autoRangeFinish() {
+    var el = $('autoRangeStatus');
+    var data = await autotune('auto_range_finish', {}, el);
+    if (data) {
+      S.active = null;
+      if (el) {
+        el.textContent = 'Borde medido: ' + Number(data.boundary.distance_m).toFixed(2)
+          + ' m · alcance aplicado: ' + Number(data.applied_maximum_range).toFixed(2) + ' m.';
+      }
+      toast('Alcance calibrado por paseo');
+      render();
+    }
+  }
+
+  async function sensitivityAnalyze() {
+    var el = $('sensitivityStatus');
+    var data = await autotune('sensitivity_recommend', {}, el);
+    if (data && data.recommendation) {
+      S.recommendation = data.recommendation;
+      var r = data.recommendation;
+      if (el) {
+        el.textContent = 'Sugerencia: ' + (r.value == null ? '—' : r.value + '/9')
+          + ' · ' + r.reason + ' · ' + (r.stats ? r.stats.moves + ' ecos/' + r.stats.window_seconds + ' s' : '');
+      }
+      toggle('btnSensitivityApply', r.value != null);
+      render();
+    }
+  }
+
+  async function sensitivityApply() {
+    if (!S.recommendation || S.recommendation.value == null) return;
+    var el = $('sensitivityStatus');
+    var data = await autotune('sensitivity_apply', { value: S.recommendation.value }, el);
+    if (data) {
+      if (el) el.textContent = 'Sensibilidad aplicada: ' + S.recommendation.value + '/9.';
+      toggle('btnSensitivityApply', false);
+      toast('Sensibilidad aplicada y confirmada');
+      render();
+    }
+  }
+
+  async function soakStart() {
+    var el = $('soakStatus');
+    var data = await autotune('soak_start', {}, el);
+    if (data) {
+      S.active = data.state;
+      S.lastSoak = Date.now();
+      if (el) el.textContent = data.instruction || 'Reposo iniciado.';
+      render();
+    }
+  }
+
+  async function soakCheck() {
+    var el = $('soakStatus');
+    var data = await autotune('soak_check', {}, el);
+    if (!data) return;
+    if (data.result === 'reducing') {
+      S.active = data.state;
+      S.lastSoak = Date.now();
+      if (el) el.textContent = data.message || 'Alcance reducido. Sigue fuera.';
+      render();
+      return;
+    }
+    if (data.result === 'clear') {
+      S.active = null;
+      if (el) el.textContent = data.message || 'Reposo correcto.';
+      toast('Exterior verificado: no detecta fuera');
+      render();
+      return;
+    }
+    if (data.result === 'stopped') {
+      S.active = data.state || null;
+      if (el) el.textContent = data.message || 'No se pudo dejar de detectar fuera.';
+      render();
+      return;
+    }
+    if (data.verdict) {
+      var v = data.verdict;
+      if (el) {
+        el.textContent = v.result === 'inconclusive' && v.reason === 'too_early'
+          ? 'Esperando ' + (v.remaining_seconds != null ? v.remaining_seconds : '?') + ' s de reposo…'
+          : 'Reposo: ' + (v.reason || v.result) + (v.remaining_seconds != null ? ' · ' + v.remaining_seconds + ' s' : '');
+      }
+    }
+    if (data.state) S.active = data.state;
+    render();
+  }
+
+  async function reentryMark() {
+    var el = $('reentryStatus');
+    var data = await autotune('reentry_mark', {}, el);
+    if (data) {
+      S.active = data.state;
+      if (el) el.textContent = data.instruction || 'Salida marcada. Entra ahora.';
+      render();
+    }
+  }
+
+  async function reentryCheck() {
+    var el = $('reentryStatus');
+    var data = await autotune('reentry_check', {}, el);
+    if (data) {
+      if (data.result === 'entered') {
+        S.active = null;
+        if (el) el.textContent = data.message || 'Reentrada verificada.';
+        toast('Reentrada verificada');
+      } else if (data.result === 'timeout') {
+        S.active = null;
+        if (el) el.textContent = data.message || 'No ha llegado presencia nueva.';
+      } else if (el && data.verdict) {
+        el.textContent = 'Esperando presencia… ' + (data.verdict.remaining_seconds != null ? data.verdict.remaining_seconds + ' s' : '');
+      }
+      render();
+    }
+  }
+
+  async function cancelActive() {
+    var data = await autotune('cancel', {}, $('applyStatus'));
+    if (data) {
+      S.active = null;
+      toast('Operación cancelada');
+      render();
+    }
+  }
+
+  async function restoreFromToolbar() {
+    var data = await autotune('restore', {}, $('applyStatus'));
+    if (data) {
+      S.active = null;
+      toast('Ajustes iniciales restaurados');
+      render();
+    }
+  }
+
+  // ── polling ──────────────────────────────────────────────────────────
+  function startPolling() {
+    stopPolling();
+    S.timer = setInterval(function () {
+      if (document.hidden || S.busy || S.tab !== 'radar') return;
+      var active = S.active || (S.scope && S.scope.scope && S.scope.scope.active_operation);
+      if (active && active.action === 'soak' && (Date.now() - S.lastSoak) >= SOAK_MS) {
+        S.lastSoak = Date.now();
+        soakCheck();
+        return;
+      }
+      fetchScope();
+    }, POLL_MS);
+  }
+
+  function stopPolling() {
+    if (S.timer) clearInterval(S.timer);
+    S.timer = null;
+  }
+
+  // ── arranque ─────────────────────────────────────────────────────────
+  function boot() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tab]'), function (b) {
+      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
+    });
+    var sel = $('roomSel');
+    if (sel) {
+      sel.addEventListener('change', function () {
+        S.scope = null; S.preview = null; S.recommendation = null; S.active = null;
+        if (S.motionTimer) { clearInterval(S.motionTimer); S.motionTimer = null; }
+        if (S.tab === 'radar') fetchScope();
+      });
+    }
+    ['sensRange', 'rangeRange', 'minRange', 'delayRange', 'fadingRange'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.addEventListener('input', markPending);
+    });
+    bind('btnMotionTest', motionTest);
+    bind('btnApplyProfile', applyProfile);
+    bind('btnBaseline', restoreBaseline);
+    bind('btnAutoRangeStart', autoRangeStart);
+    bind('btnAutoRangeFinish', autoRangeFinish);
+    bind('btnAutoRangeCancel', cancelActive);
+    bind('btnSensitivity', sensitivityAnalyze);
+    bind('btnSensitivityApply', sensitivityApply);
+    bind('btnSoakStart', soakStart);
+    bind('btnSoakCancel', cancelActive);
+    bind('btnReentryMark', reentryMark);
+    bind('btnReentryCheck', reentryCheck);
+    bind('btnRestore', restoreFromToolbar);
+    var fromUrl = '';
+    try { fromUrl = new URLSearchParams(location.search).get('tab') || ''; } catch (e) { fromUrl = ''; }
+    setTab(fromUrl === 'radar' ? 'radar' : 'verify');
+  }
+
+  function bind(id, fn) {
+    var el = $(id);
+    if (el) el.addEventListener('click', fn);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();

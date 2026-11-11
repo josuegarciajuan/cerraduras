@@ -11876,3 +11876,18 @@ pendientes.
 - [x] TSK-F123-07: tabla de sesiones abiertas y botón «Cerrar sesión» en `/panel`.
 - [x] TSK-F123-08: `.env.example`, `requirements/design/contracts` y AGENTS.
 - [x] TSK-F123-09: BLOCK 69 del runner ampliado + regresión completa.
+
+## F124 — Radar Studio (calibración visual y autoajuste)
+
+- [x] TSK-F124-01: `RadarAutoTune` (snap, borde, sensibilidad, reposo, reentrada) + unit.
+- [x] TSK-F124-02: `RadarScope` (estadísticas, sugerencias, diagnóstico) + unit.
+- [x] TSK-F124-03: `RadarStudioStore` con flock y escritura atómica + unit.
+- [x] TSK-F124-04: `RadarStudioController` (`scope`, `profile`, `autotune`).
+- [x] TSK-F124-05: rutas aditivas en `index.php` y `apply(..., source)` en el servicio Zigbee.
+- [x] TSK-F124-06: `radar-scope.js` (SVG puro y honesto) + unit JS.
+- [x] TSK-F124-07: `radar-studio.js` (sliders, preview, aplicar/confirmar, asistentes).
+- [x] TSK-F124-08: pestaña Radar Studio en `sensores.html` sin tocar el wizard F95.
+- [x] TSK-F124-09: actualizar `requirements/design/contracts/tasks` y AGENTS.
+- [x] TSK-F124-10: BLOCK 92 del runner (estático + unit + scope HTTP).
+- [ ] TSK-F124-11: prueba física de paseo, reposo y reentrada en el radar real.
+- [ ] TSK-F124-12: corrida de regresión completa y validación visual del operador.

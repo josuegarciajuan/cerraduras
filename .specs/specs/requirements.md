@@ -13926,3 +13926,44 @@ o F114, reintroducir Tuya o añadir polling.
 **Trazabilidad:** `WorkerSessionReusePolicy`, `AccessKeyService`,
 `WorkerQrService`, `WorkerService`, `WorkerController`, `panel/index.html`,
 `WorkerSessionReusePolicyTest`, BLOCK 69 del runner (ampliado).
+
+## F124 — Radar Studio: calibración visual y autoajuste del radar Zigbee (RF-344…RF-349)
+
+**Motivo:** la calibración del radar de presencia (`ZY-M100-S_2`) es difícil de
+entender y de repetir: depende de distancias DP 9 ruidosas, fases y ventanas
+que el operario no puede interpretar. Además, la presencia operativa puede
+descartar un `PRESENT` real como `uncorroborated`, y el `maximum_range` no es
+el borde físico de detección. Se necesita una vista visual honesta y asistentes
+que midan con el propio radar, sin cinta métrica.
+
+- **RF-344 (vista viva):** `/sensores` ofrece una pestaña **Radar Studio** con
+  ejes X/Y en metros, círculo de alcance configurado, hueco de `minimum_range`,
+  densidad radial de ecos DP 9, presencia DP 1 en verde y movimiento sin
+  presencia en ámbar. El radar no informa ángulo; la UI no debe inventarlo.
+- **RF-345 (perfil con confirmación):** sliders de sensibilidad y alcance con
+  preview local inmediato; el cambio solo se considera aplicado cuando llega un
+  push nuevo del radar que lo confirma. Si no confirma, no se persiste ni se
+  pinta como aplicado.
+- **RF-346 (auto-alcance sin cinta):** con el radar temporalmente a 9,5 m, el
+  operario camina hacia atrás hasta perder la presencia; el servidor estima el
+  borde con el último `PRESENT`, la mediana robusta de ecos previos al `ABSENT`
+  y aplica `maximum_range = borde − margen`, con confirmación por push.
+- **RF-347 (auto-sensibilidad):** con una ventana de movimiento real, el
+  servidor mide ecos DP 9, transiciones DP 1 y presencia, y recomienda el valor
+  más bajo que detecte de forma fiable. No sube la sensibilidad a ciegas.
+- **RF-348 (reposo exterior):** con el operario fuera y el radar en `ABSENT`, un
+  reposo de 60 s sin `PRESENT` nuevos confirma el exterior. Si aparece un
+  `PRESENT`, el sistema reduce el alcance por pasos (0,30 m, máx. 6) y vuelve a
+  comprobar, con motivos de parada explícitos.
+- **RF-349 (reentrada y diagnóstico):** la reentrada exige un `PRESENT` con
+  marcador nuevo; el diagnóstico explica por qué no detecta (antigüedad, LQI,
+  configuración inválida, `minimum_range`, `fading_time`, puerta abierta, modo
+  de presencia de la sala y descartes `uncorroborated`).
+
+**Fuera de alcance:** Tuya, pollers nuevos, cambios en la fusión de presencia,
+migraciones de datos y modificaciones del wizard de verificación existente.
+
+**Trazabilidad:** `RadarStudioController`, `RadarScope`, `RadarAutoTune`,
+`RadarStudioStore`, `radar-scope.js`, `radar-studio.js`, `sensores.html`,
+`RadarAutoTuneTest`, `RadarScopeTest`, `RadarStudioStoreTest`,
+`radar-scope.test.js`, BLOCK 92 del runner.
