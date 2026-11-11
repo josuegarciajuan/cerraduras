@@ -12,6 +12,7 @@
 
   var API = '/dashboard-api/sensores/v2/radar';
   var POLL_MS = 1500;
+  var LIVE_FALLBACK_MS = 1000;
   var SOAK_MS = 5000;
 
   var S = {
@@ -22,8 +23,20 @@
     wizard: null,
     steps: [],
     wizardStatus: 'running',
+    live: null,
+    liveSource: null,
+    liveFallbackTimer: null,
+    liveBusy: false,
+    scopeBusy: false,
+    wizardBusy: false,
+    scopeSeq: 0,
+    wizardSeq: 0,
+    liveSeq: 0,
     busy: false,
     timer: null,
+    wizardTimer: null,
+    ageTimer: null,
+    soakTimer: null,
     lastSoak: 0,
     roomRetries: 0,
     motionTimer: null,
@@ -86,7 +99,6 @@
     if (radar) radar.classList.toggle('hidden', S.tab !== 'radar');
     document.body.setAttribute('data-tab', S.tab);
     if (S.tab === 'radar') {
-      fetchScope();
       startPolling();
     } else {
       stopPolling();
@@ -94,6 +106,41 @@
   }
 
   // ── carga y render ───────────────────────────────────────────────────
+  function liveFromScope(payload) {
+    if (!payload) return null;
+    if (payload.scope) {
+      var sc = payload.scope;
+      return {
+        device: payload.device || {},
+        settings: sc.settings || {},
+        raw: sc.raw || {},
+        stats: sc.stats || {},
+        series: sc.series || [],
+        presence_mode: sc.presence_mode || null,
+        door_state: sc.door_state || null,
+        stale_seconds: sc.stale_seconds || 30,
+        server_ts: sc.server_ts || payload.server_ts || null
+      };
+    }
+    return payload;
+  }
+
+  async function fetchLive() {
+    if (!roomId() || S.liveBusy || S.tab !== 'radar') return;
+    S.liveBusy = true;
+    var seq = ++S.liveSeq;
+    try {
+      var data = await api(API + '/live?room_id=' + roomId(), { cache: 'no-store' });
+      if (seq !== S.liveSeq) return;
+      S.live = data;
+      renderLive();
+    } catch (e) {
+      // Se conserva el último estado; el tick local lo marca stale.
+    } finally {
+      S.liveBusy = false;
+    }
+  }
+
   async function fetchScope() {
     if (!roomId()) {
       if (S.roomRetries < 10) {
@@ -102,15 +149,43 @@
       }
       return;
     }
+    if (S.scopeBusy) return;
     S.roomRetries = 0;
+    S.scopeBusy = true;
+    var seq = ++S.scopeSeq;
+    try {
+      var data = await api(API + '/scope?room_id=' + roomId() + '&window=60', { cache: 'no-store' });
+      if (seq !== S.scopeSeq) return;
+      S.scope = data;
+      if (!S.live) {
+        S.live = liveFromScope(data);
+        renderLive();
+      }
+      renderScope();
+    } catch (e) {
+      if (seq === S.scopeSeq && !S.scope) renderError(e.message);
+    } finally {
+      S.scopeBusy = false;
+    }
+  }
+
+  async function fetchWizard() {
+    if (!roomId() || S.wizardBusy || S.tab !== 'radar') return;
+    S.wizardBusy = true;
+    var seq = ++S.wizardSeq;
     try {
       var data = await api(API + '/wizard?room_id=' + roomId(), { cache: 'no-store' });
+      if (seq !== S.wizardSeq) return;
       applyWizardData(data);
-      // No borrar una edición local mientras el operario mueve los sliders.
-      // El preview se limpia al aplicar, cambiar de sala o restaurar.
-      render();
+      if (!S.scope && data.scope) {
+        S.scope = data.scope;
+        renderScope();
+      }
+      renderWizard();
     } catch (e) {
-      renderError(e.message);
+      // Se conserva el último wizard.
+    } finally {
+      S.wizardBusy = false;
     }
   }
 
@@ -119,7 +194,79 @@
     if (data.wizard !== undefined) S.wizard = data.wizard;
     if (Array.isArray(data.steps)) S.steps = data.steps;
     if (data.wizard_status) S.wizardStatus = data.wizard_status;
-    if (data.scope) S.scope = data.scope;
+    if (data.scope && !S.scope) S.scope = data.scope;
+  }
+
+  function startLiveStream() {
+    stopLiveStream();
+    if (!roomId() || !window.EventSource) {
+      startLiveFallback();
+      fetchLive();
+      return;
+    }
+    try {
+      S.liveSource = new EventSource(API + '/event-stream?room_id=' + roomId());
+      S.liveSource.addEventListener('live', function (ev) {
+        try {
+          var data = JSON.parse(ev.data);
+          if (data && data.ok !== false && S.tab === 'radar') {
+            S.live = data;
+            renderLive();
+          }
+        } catch (e) { /* ignore */ }
+      });
+      S.liveSource.onopen = function () { stopLiveFallback(); };
+      S.liveSource.onerror = function () { startLiveFallback(); };
+    } catch (e) {
+      startLiveFallback();
+    }
+    fetchLive();
+  }
+
+  function startLiveFallback() {
+    if (S.liveFallbackTimer) return;
+    S.liveFallbackTimer = setInterval(function () {
+      if (!document.hidden && S.tab === 'radar') fetchLive();
+    }, LIVE_FALLBACK_MS);
+  }
+
+  function stopLiveFallback() {
+    if (S.liveFallbackTimer) clearInterval(S.liveFallbackTimer);
+    S.liveFallbackTimer = null;
+  }
+
+  function stopLiveStream() {
+    if (S.liveSource) {
+      try { S.liveSource.close(); } catch (e) { /* ignore */ }
+    }
+    S.liveSource = null;
+    stopLiveFallback();
+  }
+
+  function refreshAll() {
+    fetchLive();
+    fetchScope();
+    fetchWizard();
+  }
+
+  function tickLiveAge() {
+    if (!S.live || !S.live.raw) return;
+    var base = S.live.raw.age_seconds;
+    if (base == null) return;
+    var serverTs = S.live.server_ts ? Date.parse(S.live.server_ts) : NaN;
+    var elapsed = isFinite(serverTs) ? Math.max(0, (Date.now() - serverTs) / 1000) : 0;
+    var age = Math.round(Number(base) + elapsed);
+    var threshold = Number(S.live.stale_seconds || 30);
+    var stale = S.live.raw.stale === true || age > threshold;
+    var ageEl = $('detectAge');
+    if (ageEl) ageEl.textContent = 'hace ' + age + ' s';
+    if (stale && S.live.raw.stale !== true) {
+      var clone = Object.assign({}, S.live, {
+        raw: Object.assign({}, S.live.raw, { stale: true }),
+        stats: Object.assign({}, S.live.stats, { motion_recent: false })
+      });
+      renderDetection(clone);
+    }
   }
 
   function renderError(message) {
@@ -147,15 +294,26 @@
   }
 
   function render() {
-    if (!S.scope || !S.scope.scope) { renderError('sin datos'); return; }
+    if (S.live) renderLive();
+    if (S.scope && S.scope.scope) renderScope();
+    if (!S.live && (!S.scope || !S.scope.scope)) { renderError('sin datos'); return; }
+    renderWizard();
+  }
+
+  function renderLive() {
+    var live = S.live || liveFromScope(S.scope);
+    if (!live) return;
+    renderDetection(live);
+    renderChips(live);
+  }
+
+  function renderScope() {
+    if (!S.scope || !S.scope.scope) return;
     var sc = S.scope.scope;
-    renderDetection(sc);
-    renderChips(sc);
     var host = $('scopeSvg');
     if (host && window.RadarScope) host.innerHTML = window.RadarScope.buildSvg(currentScope() || sc);
     renderDiagnosis(sc);
     syncControls(sc);
-    renderWizard();
     renderActive(sc);
   }
 
@@ -179,7 +337,7 @@
   function renderChips(sc) {
     var host = $('studioChips');
     if (!host) return;
-    var dev = S.scope.device || {};
+    var dev = sc.device || (S.scope && S.scope.device) || {};
     var settings = sc.settings || {};
     var age = sc.raw && sc.raw.age_seconds != null ? sc.raw.age_seconds + ' s' : '—';
     var mode = sc.presence_mode || '—';
@@ -391,7 +549,9 @@
     try {
       var data = await postWizard(action, extra);
       applyWizardData(data);
+      if (data && data.scope) S.scope = data.scope;
       render();
+      refreshAll();
       return data;
     } catch (e) {
       if (e.data && typeof e.data === 'object') applyWizardData(e.data);
@@ -499,12 +659,14 @@
       try {
         var w = await postWizard('profile_applied');
         applyWizardData(w);
+        if (w && w.scope) S.scope = w.scope;
       } catch (we) {
         toast('Perfil aplicado, pero no se pudo iniciar la guía: ' + we.message);
       }
       var st = $('applyStatus');
       if (st) st.textContent = 'Aplicado y confirmado por push.';
       render();
+      refreshAll();
       toast('Perfil aplicado; calibración guiada reiniciada');
     } catch (e) {
       if (e.data && e.data.scope) S.scope = e.data.scope;
@@ -555,6 +717,11 @@
 
   function setBusy(on, message) {
     S.busy = !!on;
+    if (on) {
+      S.liveSeq++;
+      S.scopeSeq++;
+      S.wizardSeq++;
+    }
     Array.prototype.forEach.call(document.querySelectorAll('#view-radar button'), function (b) {
       b.disabled = !!on;
     });
@@ -709,21 +876,39 @@
   // ── polling ──────────────────────────────────────────────────────────
   function startPolling() {
     stopPolling();
+    startLiveStream();
+    startLiveFallback();
+    fetchLive();
+    fetchScope();
+    fetchWizard();
     S.timer = setInterval(function () {
       if (document.hidden || S.busy || S.tab !== 'radar') return;
-      var active = S.active || (S.scope && S.scope.scope && S.scope.scope.active_operation);
-      if (!S.wizard && active && active.action === 'soak' && (Date.now() - S.lastSoak) >= SOAK_MS) {
-        S.lastSoak = Date.now();
-        soakCheck();
-        return;
-      }
       fetchScope();
     }, POLL_MS);
+    S.wizardTimer = setInterval(function () {
+      if (document.hidden || S.busy || S.tab !== 'radar') return;
+      fetchWizard();
+    }, POLL_MS);
+    S.ageTimer = setInterval(function () {
+      if (document.hidden || S.tab !== 'radar') return;
+      tickLiveAge();
+    }, 1000);
+    S.soakTimer = setInterval(function () {
+      if (document.hidden || S.busy || S.tab !== 'radar') return;
+      var active = S.active || (S.scope && S.scope.scope && S.scope.scope.active_operation);
+      if (!S.wizard && active && active.action === 'soak') {
+        S.lastSoak = Date.now();
+        soakCheck();
+      }
+    }, SOAK_MS);
   }
 
   function stopPolling() {
-    if (S.timer) clearInterval(S.timer);
-    S.timer = null;
+    stopLiveStream();
+    ['timer', 'wizardTimer', 'ageTimer', 'soakTimer'].forEach(function (key) {
+      if (S[key]) clearInterval(S[key]);
+      S[key] = null;
+    });
   }
 
   // ── arranque ─────────────────────────────────────────────────────────
@@ -734,9 +919,10 @@
     var sel = $('roomSel');
     if (sel) {
       sel.addEventListener('change', function () {
-        S.scope = null; S.preview = null; S.recommendation = null; S.active = null;
+        S.scope = null; S.live = null; S.wizard = null; S.steps = [];
+        S.preview = null; S.recommendation = null; S.active = null;
         if (S.motionTimer) { clearInterval(S.motionTimer); S.motionTimer = null; }
-        if (S.tab === 'radar') fetchScope();
+        if (S.tab === 'radar') { stopPolling(); startPolling(); }
       });
     }
     ['sensRange', 'rangeRange', 'minRange', 'delayRange', 'fadingRange'].forEach(function (id) {

@@ -11977,3 +11977,15 @@ pendientes.
 - [x] TSK-F125.1.3-03: `renderDetection` en `radar-studio.js` y retirada del pill duplicado.
 - [x] TSK-F125.1.3-04: anillo/halo rojo tenue y gris en el SVG.
 - [x] TSK-F125.1.3-05: tests JS, chequeo estático en BLOCK 97 y documentación.
+
+## F125.1.4/1.5 — Frescura real y Radar Studio en vivo
+
+- [x] TSK-F125.1.4-01: `RadarFreshness` + `RADAR_PRESENCE_STALE_SECONDS`.
+- [x] TSK-F125.1.4-02: umbral 30 s en health, status, scope y liveness/integración.
+- [x] TSK-F125.1.4-03: `presence_decision.age_seconds/stale` y `radar_stale` en RoomLive/SSE.
+- [x] TSK-F125.1.4-04: dashboard muestra `SIN DATOS` con decisión/radar stale.
+- [x] TSK-F125.1.5-01: `RadarLiveService` + `/radar/live`.
+- [x] TSK-F125.1.5-02: `RadarEventStreamController` SSE + ruta sin Router.
+- [x] TSK-F125.1.5-03: SSE/fallback, split scope/wizard, secuencias y render incremental.
+- [x] TSK-F125.1.5-04: tick local de edad/stale y preflight del roster cada 5 s.
+- [x] TSK-F125.1.5-05: tests, BLOCK 99 y documentación.

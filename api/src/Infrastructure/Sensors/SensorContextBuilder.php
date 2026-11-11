@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Sensors;
 
+use App\Domain\Sensors\RadarFreshness;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use PDO;
 
@@ -40,9 +41,11 @@ final class SensorContextBuilder
             $lastSeenTs = $lastSeen !== null ? strtotime($lastSeen . ' UTC') : false;
             $age = $lastSeenTs !== false ? max(0, time() - $lastSeenTs) : null;
             $metaArr = is_array($meta) ? $meta : [];
+            $threshold = $kind === 'PRESENCE' ? RadarFreshness::staleSeconds() : 300;
+            $fresh = $age !== null && $age <= $threshold;
             $health = \App\Infrastructure\Sensors\DeviceHealth::classify(
                 true,
-                $age !== null && $age <= 300,
+                $fresh,
                 (string) $row['kind'],
                 $age
             );
@@ -54,7 +57,7 @@ final class SensorContextBuilder
                 'transport' => strtoupper((string) ($row['transport'] ?? '')),
                 'last_seen_at' => $lastSeen,
                 'last_seen_age_seconds' => $age,
-                'fresh' => $age !== null && $age <= 300,
+                'fresh' => $fresh,
                 'health' => $health['state'],
                 'health_label' => $health['label'],
                 'health_tone' => $health['tone'],
@@ -124,7 +127,8 @@ final class SensorContextBuilder
             'presence_age_seconds' => $presenceAge,
             'presence_stale' => $presenceAge !== null && $presenceAge > $staleSeconds,
             'presence_stale_seconds' => $staleSeconds,
-            'presence_decision' => $this->latestRadarDecision($roomId),
+            'radar_stale' => RadarFreshness::stale($row['last_presence_event_at'] ?? null),
+            'presence_decision' => $this->freshRadarDecision($roomId),
         ];
     }
 
@@ -426,6 +430,25 @@ final class SensorContextBuilder
             'state_at' => $switch['switch_state_at'] ?? null,
             'reported' => in_array($switch['switch_state'] ?? 'UNKNOWN', ['ON', 'OFF'], true),
         ];
+    }
+
+    /**
+     * Decisión del radar con edad/stale recalculados ahora.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function freshRadarDecision(int $roomId): ?array
+    {
+        $decision = $this->latestRadarDecision($roomId);
+        if ($decision === null) {
+            return null;
+        }
+        $age = RadarFreshness::ageSeconds(
+            isset($decision['decided_at']) && is_string($decision['decided_at']) ? $decision['decided_at'] : null
+        );
+        $decision['age_seconds'] = $age;
+        $decision['stale'] = RadarFreshness::decisionStale($decision);
+        return $decision;
     }
 
     /**

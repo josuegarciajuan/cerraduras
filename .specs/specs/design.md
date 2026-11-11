@@ -27188,3 +27188,59 @@ Sin backend: se actualiza con el `/wizard` que ya se consulta cada 1,5 s.
 
 `radar-scope.test.js` (39) cubre `detectionModel`, el anillo rojo y el gris;
 BLOCK 97 comprueba el markup y `renderDetection`.
+
+## F125.1.4/1.5 — Frescura y Radar Studio en vivo
+
+### Frescura
+
+`App\Domain\Sensors\RadarFreshness` centraliza
+`RADAR_PRESENCE_STALE_SECONDS` (def. 30, acotado 5–300), `ageSeconds`,
+`stale` y `decisionStale`. Se usa en:
+
+- `SensorContextBuilder::devices()` para `PRESENCE` (`fresh`/health);
+- `SensorContextBuilder::live()` (`radar_stale`, decisión fresca);
+- `ZigbeeRadarCalibrationService::status()` (`stale`, `online`,
+  `stale_seconds`);
+- `RadarScope::build()` (`stale_seconds` en las opciones);
+- `DeviceIntegrationStatusService` y `DeviceLivenessService` para `PRESENCE`;
+- `RoomLiveController`/`EventStreamController` (`presence_stale` por edad,
+  `radar_stale`, `presence_decision.age_seconds/stale`);
+- `dashboard.html` (`pd.stale`/`radar_stale` → `SIN DATOS`).
+
+La ocupación de negocio (`iot_sessions.presence_state` y
+`presence_stale_seconds=180`) no cambia.
+
+### Canal en vivo
+
+`App\Infrastructure\Sensors\RadarLiveService::payload($roomId)` devuelve el
+payload ligero: `device`, `settings`, `raw{state,age_seconds,stale}`,
+`stats{motion_recent,last_age_s,last_distance}`, `series`, `last_distance`,
+`door_state`, `presence_mode`, `stale_seconds`.
+
+- `GET /dashboard-api/sensores/v2/radar/live` para el primer render y el
+  fallback.
+- `GET /dashboard-api/sensores/v2/radar/event-stream` (SSE,
+  `RadarEventStreamController`) comprueba el payload cada 500 ms y emite
+  `event: live` cuando cambia; `ping` cada 5 s; vida máxima 60 s; conexiones
+  limitadas por sala.
+
+### Cliente
+
+`radar-studio.js` separa tres ritmos:
+
+- live (SSE; fallback `/radar/live` cada 1 s): banner, chips y último eco;
+- `/scope` cada 1,5 s: SVG, diagnóstico y sugerencias;
+- `/wizard` cada 1,5 s: evaluación/avance del wizard.
+
+`renderLive` no reconstruye el wizard ni el SVG. `AbortController`/secuencias
+(`liveSeq/scopeSeq/wizardSeq`) descartan respuestas viejas; `setBusy` invalida
+las peticiones en vuelo al iniciar una acción. El tick local de 1 s actualiza
+la edad y puede marcar `SIN DATOS` al cruzar el umbral antes del siguiente
+evento. Al volver a la pestaña se refresca todo. `sensor-wizard-v2.js` refresca
+`/preflight` cada 5 s para el roster del header.
+
+### Verificación
+
+`RadarFreshnessTest` (12), `radar-scope.test.js` (39),
+`radar-wizard.test.js` (27), BLOCK 99 (`/radar/live` y SSE) y regresión
+completa.

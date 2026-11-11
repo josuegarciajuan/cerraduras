@@ -481,3 +481,15 @@ Radar Studio muestra un banner grande encima del croquis:
 El croquis mantiene el glow verde/ámbar y añade un anillo/halo rojo tenue cuando
 no detecta y gris cuando no hay datos. No hay cambios de backend ni de polling:
 se actualiza con el estado que ya consulta Radar Studio.
+
+### F125.1.4/1.5 — Frescura del radar y Radar Studio en vivo
+
+- El radar se considera `SIN DATOS` tras **30 s** sin mensajes
+  (`RADAR_PRESENCE_STALE_SECONDS`). La ocupación de negocio sigue con su umbral
+  de 180 s.
+- `presence_decision` expone `age_seconds`/`stale`; el dashboard muestra
+  **SIN DATOS** en vez de `PRESENT` si la decisión es vieja.
+- Radar Studio usa un canal SSE (`/radar/event-stream`) con fallback a
+  `/radar/live` cada 1 s. El banner/chips/último eco se actualizan sin recargar;
+  el SVG/diagnóstico y el wizard van a 1,5 s.
+- El roster del header refresca `/preflight` cada 5 s.

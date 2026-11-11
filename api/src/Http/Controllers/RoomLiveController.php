@@ -12,6 +12,7 @@ use App\Domain\Presence\KeyEpisodePolicy;
 use App\Domain\Presence\IotSessionRepositoryInterface;
 use App\Domain\Presence\PresenceEventRepositoryInterface;
 use App\Domain\Qr\QrWindows;
+use App\Domain\Sensors\RadarFreshness;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\StayRepositoryInterface;
@@ -100,8 +101,10 @@ final class RoomLiveController
         $iotData['door_stale'] = (($iotData['door_state'] ?? 'UNKNOWN') === 'UNKNOWN')
             || $doorAge === null
             || $doorAge > $doorStaleSeconds;
-        $iotData['presence_stale'] = (($iotData['presence_state'] ?? 'UNKNOWN') === 'PRESENT')
-            && ($presenceAge === null || $presenceAge > $presenceStaleSeconds);
+        $iotData['presence_stale'] = $presenceAge !== null && $presenceAge > $presenceStaleSeconds;
+        // F125.1.4: frescura específica del radar (30 s), separada del umbral
+        // de negocio de la sala.
+        $iotData['radar_stale'] = RadarFreshness::stale($iotData['last_presence_event_at'] ?? null);
 
         // Active stay
         $activeStay = $this->stays->findActiveForRoom($roomId);
@@ -286,7 +289,7 @@ final class RoomLiveController
             // F93/RF-157.1: última decisión del radar Zigbee (candidato,
             // confirmado, stale) para que /dashboard muestre la misma
             // incertidumbre que /almacen. Aditivo; null sin radar Zigbee.
-            'presence_decision' => $this->latestRadarDecision($roomId),
+            'presence_decision' => $this->freshRadarDecision($roomId),
             'anomalies'        => $anomalies,
             'door_open_too_long' => $doorOpenTooLong,
             // F118.4: hora del servidor con ms para que todos los clientes usen
@@ -342,6 +345,25 @@ final class RoomLiveController
             time(),
             (int) (Config::getInt('EXIT_MAX_VERIFY_SECONDS', 15) ?? 15)
         );
+    }
+
+    /**
+     * Decisión del radar con edad/stale recalculados ahora.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function freshRadarDecision(int $roomId): ?array
+    {
+        $decision = $this->latestRadarDecision($roomId);
+        if ($decision === null) {
+            return null;
+        }
+        $age = RadarFreshness::ageSeconds(
+            isset($decision['decided_at']) && is_string($decision['decided_at']) ? $decision['decided_at'] : null
+        );
+        $decision['age_seconds'] = $age;
+        $decision['stale'] = RadarFreshness::decisionStale($decision);
+        return $decision;
     }
 
     /**

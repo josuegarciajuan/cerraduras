@@ -9837,6 +9837,108 @@ else
 fi
 
 # =============================================================================
+# BLOCK 99 — F125.1.4/1.5: frescura real y Radar Studio en vivo
+# Trazabilidad: F125.1.4 (RF-369…) · F125.1.5 · requirements/design/contracts
+# =============================================================================
+block "BLOCK 99 — F125.1.4/1.5: frescura y Radar Studio en vivo"
+
+for F12515_FILE in \
+    src/Domain/Sensors/RadarFreshness.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Http/Controllers/RadarEventStreamController.php \
+    tests/Unit/RadarFreshnessTest.php; do
+    if [ -f "$F12515_FILE" ]; then
+        pass "F125.1.4: existe $F12515_FILE"
+    else
+        fail "F125.1.4: $F12515_FILE" "no encontrado"
+    fi
+done
+
+for F12515_MARK in 'RADAR_PRESENCE_STALE_SECONDS' 'RadarFreshness' 'radar/event-stream' 'EventSource' 'renderLive' 'radar_stale'; do
+    if grep -qF "$F12515_MARK" src/Domain/Sensors/RadarFreshness.php 2>/dev/null \
+       || grep -qF "$F12515_MARK" src/Infrastructure/Sensors/SensorContextBuilder.php 2>/dev/null \
+       || grep -qF "$F12515_MARK" src/Http/Controllers/EventStreamController.php 2>/dev/null \
+       || grep -qF "$F12515_MARK" public/assets/radar-studio.js 2>/dev/null \
+       || grep -qF "$F12515_MARK" public/dashboard.html 2>/dev/null \
+       || grep -qF "$F12515_MARK" public/index.php 2>/dev/null \
+       || grep -qF "$F12515_MARK" .env.example 2>/dev/null; then
+        pass "F125.1.4/1.5: marcador $F12515_MARK"
+    else
+        fail "F125.1.4/1.5: marcador $F12515_MARK" "ausente"
+    fi
+done
+
+for F12515_PHP in \
+    src/Domain/Sensors/RadarFreshness.php \
+    src/Infrastructure/Sensors/SensorContextBuilder.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Http/Controllers/RadarEventStreamController.php \
+    src/Http/Controllers/RoomLiveController.php \
+    src/Http/Controllers/EventStreamController.php \
+    src/Http/Controllers/RadarStudioController.php \
+    src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    src/Domain/Sensors/RadarScope.php \
+    src/Domain/Devices/DeviceIntegrationStatusService.php \
+    src/Domain/Devices/DeviceLivenessService.php; do
+    if php -l "$F12515_PHP" >/tmp/f12515-php.log 2>&1; then
+        pass "F125.1.4: sintaxis $(basename "$F12515_PHP")"
+    else
+        fail "F125.1.4: sintaxis $(basename "$F12515_PHP")" "$(tail -2 /tmp/f12515-php.log | tr '\n' ' ')"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    for F12515_JS in public/assets/radar-studio.js public/assets/radar-scope.js public/assets/sensor-wizard-v2.js; do
+        if node --check "$F12515_JS" >/tmp/f12515-js.log 2>&1; then
+            pass "F125.1.5: sintaxis $(basename "$F12515_JS")"
+        else
+            fail "F125.1.5: sintaxis $(basename "$F12515_JS")" "$(tail -3 /tmp/f12515-js.log | tr '\n' ' ')"
+        fi
+    done
+    if node tests/Unit/radar-scope.test.js >/tmp/f12515-js-unit.log 2>&1; then
+        pass "F125.1.4: unit radar-scope"
+    else
+        fail "F125.1.4: unit radar-scope" "$(tail -3 /tmp/f12515-js-unit.log | tr '\n' ' ')"
+    fi
+else
+    skip "F125.1.5: JS" "node no disponible"
+fi
+
+if php tests/Unit/RadarFreshnessTest.php >/tmp/f12515-fresh.log 2>&1; then
+    pass "F125.1.4: unit RadarFreshness"
+else
+    fail "F125.1.4: unit RadarFreshness" "$(tail -3 /tmp/f12515-fresh.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F12515_LIVE_CODE=$(curl -s -o /tmp/f12515-live.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/live?room_id=201" 2>/dev/null)
+    F12515_LIVE_OK=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f12515-live.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+print('ok' if d.get('ok') is True and isinstance(d.get('raw'), dict) and isinstance(d.get('device'), dict) else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F12515_LIVE_CODE" = "200" ] && [ "$F12515_LIVE_OK" = "ok" ]; then
+        pass "F125.1.5: /radar/live HTTP"
+    else
+        fail "F125.1.5: /radar/live HTTP" "http=$F12515_LIVE_CODE json=$F12515_LIVE_OK"
+    fi
+    rm -f /tmp/f12515-live.json
+
+    curl -sN --max-time 2 "$API_BASE/dashboard-api/sensores/v2/radar/event-stream?room_id=201" > /tmp/f12515-sse.txt 2>/dev/null || true
+    if grep -qE "retry: 3000|event: connected" /tmp/f12515-sse.txt; then
+        pass "F125.1.5: /radar/event-stream SSE"
+    else
+        fail "F125.1.5: /radar/event-stream SSE" "$(head -c 160 /tmp/f12515-sse.txt | tr '\n' ' ')"
+    fi
+    rm -f /tmp/f12515-sse.txt
+else
+    skip "F125.1.5: live HTTP/SSE" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

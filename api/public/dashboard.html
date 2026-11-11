@@ -1277,7 +1277,8 @@ function buildMonigoteSnapshot(data, nowMs) {
       switch_state: ((data && data.switch_state) || {}).state || 'UNKNOWN',
       recent_presence: (data && data.recent_presence) || [],
       presence_stale: presenceStale,
-      door_stale: doorStale
+      door_stale: doorStale,
+      radar_stale: io.radar_stale === true || (data && data.presence_decision && data.presence_decision.stale === true)
     }
   };
 }
@@ -2964,17 +2965,26 @@ function updateSensorPanel(data) {
   // ocupación efectiva (solo cambia con decisiones confirmadas).
   const pd = data.presence_decision || null;
   const pdState = pd && pd.state ? String(pd.state) : '';
+  const radarStale = io.radar_stale === true || (pd && pd.stale === true);
   const presEl = document.getElementById('s-presence');
   let presText = presence;
-  if (pdState === 'CANDIDATE_PRESENT') presText = 'PRESENT?';
+  if (radarStale) {
+    presText = 'SIN DATOS';
+  } else if (pdState === 'CANDIDATE_PRESENT') presText = 'PRESENT?';
   else if (pdState === 'PRESENT_CONFIRMED') presText = 'PRESENT';
   else if (pdState === 'CANDIDATE_ABSENT') presText = 'ABSENT?';
   else if (pdState === 'ABSENT_CONFIRMED') presText = 'ABSENT';
   presEl.textContent = presText;
-  presEl.className = 'value ' + (pdState === 'CANDIDATE_PRESENT' || pdState === 'CANDIDATE_ABSENT'
-    ? 'val-cyan'
-    : (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange'));
-  presEl.title = pd ? ('radar: ' + pdState + (pd.discard_reason ? ' · ' + pd.discard_reason : '')) : '';
+  presEl.className = 'value ' + (radarStale
+    ? 'val-orange'
+    : (pdState === 'CANDIDATE_PRESENT' || pdState === 'CANDIDATE_ABSENT'
+        ? 'val-cyan'
+        : (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange')));
+  presEl.title = pd
+    ? ('radar: ' + (radarStale ? 'SIN DATOS' : pdState)
+        + (pd.age_seconds != null ? ' · ' + pd.age_seconds + ' s' : '')
+        + (pd.discard_reason ? ' · ' + pd.discard_reason : ''))
+    : '';
 
   const lockEl = document.getElementById('s-lock');
   if (cooldown) { lockEl.textContent = 'ANTI-REENTRADA'; lockEl.className = 'value val-purple'; }

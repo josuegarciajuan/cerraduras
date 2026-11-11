@@ -102,7 +102,10 @@ final class DeviceIntegrationStatusService
         if ($lastSignalAt === null) {
             return $this->result(self::STATUS_WAITING_SIGNAL, true, null, null, 'no_signal');
         }
-        if ($kind === Device::KIND_PRESENCE && $age !== null && $age > $this->presenceStaleSeconds) {
+        $threshold = $kind === Device::KIND_PRESENCE
+            ? RadarFreshness::staleSeconds()
+            : $this->presenceStaleSeconds;
+        if ($kind === Device::KIND_PRESENCE && $age !== null && $age > $threshold) {
             return $this->result(self::STATUS_DEGRADED, true, $lastSignalAt, $age, 'stale');
         }
 
