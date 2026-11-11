@@ -85,8 +85,12 @@ final class QrIssueService
      *   issued_at:string, expires_at:string, room_id:int
      * }
      */
-    public function issue(int $roomId, int $duracionMinutos, array $vb6Refs): array
-    {
+    public function issue(
+        ?int $roomId,
+        int $duracionMinutos,
+        array $vb6Refs,
+        ?string $roomCode = null
+    ): array {
         if ($duracionMinutos < self::DUR_MIN_MINUTES || $duracionMinutos > self::DUR_MAX_MINUTES) {
             throw new UnprocessableException(
                 'duration_out_of_range',
@@ -95,10 +99,42 @@ final class QrIssueService
             );
         }
 
-        $room = $this->rooms->findById($roomId);
-        if ($room === null) {
-            throw new NotFoundException('Room not found', ['room_id' => $roomId]);
+        $roomCode = $roomCode !== null ? trim($roomCode) : null;
+        if ($roomId === null && ($roomCode === null || $roomCode === '')) {
+            throw new UnprocessableException(
+                'room_selector_required',
+                'Provide exactly one of room_id or room_code'
+            );
         }
+        if ($roomId !== null && $roomCode !== null && $roomCode !== '') {
+            throw new UnprocessableException(
+                'room_selector_ambiguous',
+                'Provide only one of room_id or room_code'
+            );
+        }
+
+        if ($roomCode !== null && $roomCode !== '') {
+            $room = $this->rooms->findByCode($roomCode);
+            if ($room === null) {
+                throw new NotFoundException('Room not found by code', ['code' => $roomCode]);
+            }
+        } else {
+            $room = $this->rooms->findById((int) $roomId);
+            if ($room === null) {
+                throw new NotFoundException('Room not found', ['room_id' => $roomId]);
+            }
+        }
+        $roomId = $room->id;
+
+        $expectedCode = isset($vb6Refs['codhab']) ? (string) $vb6Refs['codhab'] : null;
+        if ($expectedCode !== null && $expectedCode !== '' && $expectedCode !== $room->code) {
+            throw new ConflictException(
+                'room_code_mismatch',
+                'codhab does not match the resolved room code',
+                ['room_id' => $room->id, 'room_code' => $room->code, 'codhab' => $expectedCode]
+            );
+        }
+
         $roomType = $this->roomTypes->findById($room->roomTypeId);
         if ($roomType === null) {
             // Should not happen given FK, but be defensive: surface as 404 on
@@ -158,6 +194,7 @@ final class QrIssueService
             'issued_at' => self::iso($iat),
             'expires_at' => self::iso($exp),
             'room_id' => $roomId,
+            'room_code' => $room->code,
         ];
     }
 

@@ -197,6 +197,28 @@ expect('duration_out_of_range', function () use ($service) { $service->issue(1, 
 // not_found
 expect('not_found', function () use ($service) { $service->issue(999, 60, []); }, 'reject unknown room_id');
 
+// F127: room selector by real code.
+$stayRepo->byId = [];
+$stayRepo->activeStay = null;
+$resCode = $service->issue(null, 60, [], '101');
+ok('issue by room_code resolves the room');
+if (($resCode['room_id'] ?? null) === 1 && ($resCode['room_code'] ?? null) === '101') ok('issue by room_code returns id+code');
+else bad('issue by room_code returns id+code', json_encode($resCode));
+
+$stayRepo->byId = [];
+$stayRepo->activeStay = null;
+expect('room_selector_ambiguous', function () use ($service) {
+    $service->issue(1, 60, [], '101');
+}, 'both room_id and room_code -> ambiguous');
+expect('room_selector_required', function () use ($service) {
+    $service->issue(null, 60, []);
+}, 'no selector -> required');
+expect('room_code_mismatch', function () use ($service) {
+    $service->issue(null, 60, ['codhab' => '999'], '101');
+}, 'codhab mismatch -> conflict');
+$stayRepo->byId = [];
+$stayRepo->activeStay = null;
+
 // slot_not_rentable: FREE all day
 $timeSlotService->save(1, [new TimeSlot(0, 1440, TimeSlot::KIND_FREE)]);
 expect('slot_not_rentable', function () use ($service) { $service->issue(1, 60, []); }, 'reject when slot is FREE');

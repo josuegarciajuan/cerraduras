@@ -46,6 +46,18 @@ final class RoomService
         return $r;
     }
 
+    /**
+     * F127: resolve a room by its real code (TPV/VB6 codhab).
+     */
+    public function getByCodeOrFail(string $code): Room
+    {
+        $room = $this->rooms->findByCode(trim($code));
+        if ($room === null) {
+            throw new NotFoundException('Room not found by code', ['code' => $code]);
+        }
+        return $room;
+    }
+
     public function create(string $code, int $roomTypeId, ?bool $simulatedOverride, ?string $notes = null): Room
     {
         $code = trim($code);

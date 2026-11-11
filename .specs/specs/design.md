@@ -26993,3 +26993,50 @@ Las rutas previas se conservan. En dashboard, `unlock` fuerza siempre
   apertura (SKIP si no hay cerradura), reset de una sala de prueba y
   compatibilidad de rutas.
 - Regresión completa con `bash bin/run-tests.sh`.
+
+---
+
+# Fase 127 — API unificada y códigos reales de habitación
+
+## Sesión LAN del dashboard
+
+`GET /dashboard` emite una cookie `dashboard_session` firmada con
+`DASHBOARD_SESSION_SECRET` (fallback `QR_SIGNING_SECRET`). El token es
+stateless: `base64url(payload).base64url(HMAC-SHA256)`, con `iat`, `exp` y
+`jti`. TTL por defecto 28800 s (`DASHBOARD_SESSION_TTL_SECONDS`).
+
+`AuthApiKeyMiddleware` prueba, en orden: sesión CRM, cookie de dashboard y
+`X-API-Key`. La cookie se convierte en un `ApiClient` sintético
+`DASHBOARD-LAN` con scopes `rooms:read`, `switches:write`, `locks:open` y
+`rooms:state`. No concede `locks:override`.
+
+## Rutas
+
+Las rutas canónicas son la única API documentada. Las antiguas
+`/dashboard-api/rooms/...` siguen funcionando y devuelven `Deprecation: true` y
+`Link: <sucesor>; rel="successor-version"`.
+
+Se añade `POST /api/v1/rooms/{id}/light` con `{state}`. Los endpoints
+`/light/on` y `/light/off` se conservan.
+
+## Códigos de habitación
+
+`rooms.code` es el código real y coincide con el `codhab` del TPV/VB6.
+`GET /api/v1/rooms/by-code/{code}` resuelve la sala. `POST /api/v1/qr` acepta
+exactamente uno de `room_id` o `room_code`; `QrIssueService` resuelve por
+`findByCode()` o `findById()`. Si `codhab` está presente y no coincide con
+`rooms.code`, responde `409 room_code_mismatch`.
+
+No hay migración ni tabla de mapping: la igualdad de códigos es el contrato.
+
+## Seguridad
+
+La guía VB6 y `make-reservation-qr` dejan de contener API keys y contraseñas
+SSH. La API key se toma de `CERRADURAS_API_KEY`, la URL de
+`CERRADURAS_API_BASE` y el host SSH de `CERRADURAS_SSH_HOST`.
+
+## Verificación
+
+`DashboardSessionTest`, `F127ApiUnificationTest`, extensión de
+`QrIssueServiceTest` y BLOCK 95 del runner (cookie, 401, alias deprecado,
+`by-code`, QR por código, selectores ambiguos y mismatch).

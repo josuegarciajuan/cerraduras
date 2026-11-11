@@ -235,6 +235,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; regresión 1210/0/14; prueba física pendiente** |
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
+| **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1366,3 +1367,23 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Sin migración, sin Tuya y sin pollers nuevos.**
 - **Verificación**: `RoomControlTest`, `ResetCleanupTest`, BLOCK 94 y regresión
   completa. Pendiente la prueba física de luz/apertura.
+
+### F127 — API unificada y códigos reales de habitación (RF-373…RF-380)
+
+- **Motivo**: el dashboard usaba `/dashboard-api/rooms/...`; la emisión de QR
+  exigía el `room_id` interno aunque el TPV/VB6 conoce el código real.
+- **Dashboard**: `GET /dashboard` emite `dashboard_session` firmada
+  (`DASHBOARD_SESSION_SECRET`, TTL configurable). `AuthApiKeyMiddleware` la
+  acepta como `DASHBOARD-LAN` con `rooms:read`, `switches:write`, `locks:open`
+  y `rooms:state`; sin `locks:override`.
+- **Rutas**: el dashboard usa `/api/v1/rooms/...`. Se añade
+  `POST /api/v1/rooms/{id}/light` con `{state}`. Los alias
+  `/dashboard-api/rooms/...` siguen funcionando y devuelven `Deprecation`.
+- **Código real**: `GET /api/v1/rooms/by-code/{code}` resuelve por
+  `rooms.code`. `POST /api/v1/qr` acepta exactamente uno de `room_id` o
+  `room_code`; `codhab` incoherente → `409 room_code_mismatch`.
+- **Seguridad**: se eliminan la API key y la contraseña SSH hardcodeadas de la
+  guía VB6 y de `make-reservation-qr`; se usan variables de entorno.
+- **Sin migración, sin Tuya y sin pollers nuevos.**
+- **Verificación**: `DashboardSessionTest`, `F127ApiUnificationTest`,
+  `QrIssueServiceTest` ampliado y BLOCK 95 del runner.

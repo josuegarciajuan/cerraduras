@@ -109,7 +109,10 @@ final class QrController
     public function issue(Request $request): Response
     {
         $body = JsonBody::require($request->jsonBody);
-        $roomId = JsonBody::int($body, 'room_id', 1);
+        // F127: exactly one room selector. room_id is kept for compatibility;
+        // room_code matches the real room code used by the TPV/VB6 codhab.
+        $roomId = JsonBody::intOpt($body, 'room_id', 1);
+        $roomCode = JsonBody::stringOpt($body, 'room_code', 32);
         // Service enforces [30,720] but we also pass a permissive guard at
         // the controller layer: any positive integer is accepted; the service
         // will return 422 duration_out_of_range for out-of-range values.
@@ -130,7 +133,11 @@ final class QrController
 
         $vb6Refs = $this->sanitizeVb6Refs($rawRefs);
 
-        $result = $this->issueService->issue($roomId, $duracionMinutos, $vb6Refs);
+        $result = $this->issueService->issue($roomId, $duracionMinutos, $vb6Refs, $roomCode);
+        $result['room'] = [
+            'id' => $result['room_id'],
+            'code' => $result['room_code'] ?? null,
+        ];
         return Response::json(201, $result);
     }
 

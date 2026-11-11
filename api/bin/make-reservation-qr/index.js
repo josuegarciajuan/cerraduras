@@ -3,7 +3,10 @@
  * make-reservation-qr — Emite un QR de reserva vía la API y genera un PNG.
  *
  * Uso:
- *   node index.js --room 1 --min 60 [--codtic 0] [--codhab 101]
+ *   node index.js --room-code 101 --min 60 [--codtic 0]
+ *   node index.js --room 1 --min 60 [--codtic 0]        (compatibilidad)
+ *
+ * Requiere CERRADURAS_API_KEY en el entorno.
  *
  * Flujo:
  *   1. Llama POST /api/v1/qr con la API key VB6-MAIN.
@@ -21,9 +24,9 @@ const https = require('http');
 const QRCode = require('qrcode');
 
 // ─── Config ────────────────────────────────────────────────────────
-const API_BASE  = 'http://127.0.0.1:8080';
-const API_KEY   = '5a78442da74f9eba7bfb151678ad716567e47b41b3119155'; // VB6-MAIN
-const OUTPUT_DIR = '/tmp/cerraduras-qr';
+const API_BASE  = process.env.CERRADURAS_API_BASE || 'http://127.0.0.1:8080';
+const API_KEY   = process.env.CERRADURAS_API_KEY || '';
+const OUTPUT_DIR = process.env.CERRADURAS_QR_OUTPUT_DIR || '/tmp/cerraduras-qr';
 
 // ─── CLI args ──────────────────────────────────────────────────────
 const args = {};
@@ -37,32 +40,36 @@ for (let i = 2; i < process.argv.length; i++) {
   }
 }
 
-const roomId = parseInt(args.room || args['room-id'] || '0', 10);
+const roomId = parseInt(args.room || args['room-id'] || '0', 10) || null;
+const roomCode = (args['room-code'] || args.codhab || '').trim() || null;
 const duracion = parseInt(args.min || args.duration || '60', 10);
 const codtic = parseInt(args.codtic || '0', 10);
-const codhab = args.codhab || args.room || '101';
 
-if (!roomId || roomId < 1) {
-  console.error('ERROR: --room <id> required');
-  console.error('Usage: node index.js --room 1 --min 60 [--codtic 0]');
+if (!API_KEY) {
+  console.error('ERROR: CERRADURAS_API_KEY no está definida');
+  process.exit(1);
+}
+if ((!roomId && !roomCode) || (roomId && roomCode)) {
+  console.error('ERROR: usa exactamente uno de --room-code o --room');
+  console.error('Usage: node index.js --room-code 101 --min 60 [--codtic 0]');
   process.exit(1);
 }
 
 // ─── Call API ──────────────────────────────────────────────────────
 async function main() {
   const body = JSON.stringify({
-    room_id: roomId,
+    ...(roomCode ? { room_code: roomCode } : { room_id: roomId }),
     duracion_minutos: duracion,
     vb6_refs: {
       codtic: codtic,
-      codhab: String(codhab),
+      codhab: String(roomCode || roomId),
       temporada: String(new Date().getFullYear()),
       empresa: 1,
       departamento: 2,
     }
   });
 
-  console.log(`\n📡 Emitiendo QR para habitación ${roomId} (${duracion} min)...`);
+  console.log(`\n📡 Emitiendo QR para habitación ${roomCode || roomId} (${duracion} min)...`);
 
   const resp = await fetch(`${API_BASE}/api/v1/qr`, {
     method: 'POST',
@@ -88,7 +95,7 @@ async function main() {
   console.log(`   Stay ID:    ${stay_id}`);
   console.log(`   Emitido:    ${issued_at}`);
   console.log(`   Expira:     ${expires_at}`);
-  console.log(`   Habitación: ${roomId}`);
+  console.log(`   Habitación: ${data.room?.code || roomCode || roomId} (id ${data.room?.id || data.room_id})`);
 
   // ─── Render PNG ──────────────────────────────────────────────────
   const filename = `reservation-${stay_id}.png`;
@@ -105,7 +112,8 @@ async function main() {
 
   // ─── scp command ─────────────────────────────────────────────────
   console.log(`\n📋 Comando para descargar (copiar y pegar en tu terminal local):\n`);
-  console.log(`\x1b[32msshpass -p 'P2R6dABhDnta' scp admin@92.113.151.136:${filepath} ./${filename}\x1b[0m\n`);
+  const sshHost = process.env.CERRADURAS_SSH_HOST || '<usuario>@<host>';
+  console.log(`\x1b[32mscp ${sshHost}:${filepath} ./${filename}\x1b[0m\n`);
   console.log(`   (El QR se puede escanear con el lector USB del ESP32)\n`);
 }
 

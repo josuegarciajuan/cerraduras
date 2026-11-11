@@ -7,11 +7,11 @@
 ## URL y clave de la API
 
 ```
-URL:  http://92.113.151.136:8080
-Key:  5a78442da74f9eba7bfb151678ad716567e47b41b3119155
+URL:  <URL_DE_CERRADURAS>
+Key:  <API_KEY_DE_VB6>
 ```
 
-Esa key va en el header `X-API-Key` en todas las llamadas.
+La API key se entrega por canal seguro y **no debe escribirse en el código ni en este documento**. Va en el header `X-API-Key` en todas las llamadas.
 
 ---
 
@@ -25,7 +25,7 @@ POST /api/v1/qr
 
 **Headers:**
 ```
-X-API-Key: 5a78442da74f9eba7bfb151678ad716567e47b41b3119155
+X-API-Key: <API_KEY_DE_VB6>
 Content-Type: application/json
 Idempotency-Key: vb6-<ticket>-<fecha-hora>
 ```
@@ -33,10 +33,10 @@ Idempotency-Key: vb6-<ticket>-<fecha-hora>
 > El `Idempotency-Key` evita que un reintento accidental genere dos QRs distintos.
 > Usa un valor único tipo `vb6-ticket-67890-20260728-143000`.
 
-**Body (mínimo):**
+**Body (recomendado por código real de habitación):**
 ```json
 {
-  "room_id": 2,
+  "room_code": "101",
   "duracion_minutos": 120
 }
 ```
@@ -44,7 +44,7 @@ Idempotency-Key: vb6-<ticket>-<fecha-hora>
 **Body (completo, si tienes los datos del VB6 a mano):**
 ```json
 {
-  "room_id": 2,
+  "room_code": "101",
   "duracion_minutos": 120,
   "codalq": 12345,
   "codtic": 67890,
@@ -58,12 +58,19 @@ Idempotency-Key: vb6-<ticket>-<fecha-hora>
 }
 ```
 
+`room_code` es el código real de la habitación (`rooms.code`) y coincide con
+`codhab`. También se acepta `room_id` por compatibilidad, pero **no envíes
+ambos**. Si `codhab` no coincide con la sala resuelta, la API responde
+`409 room_code_mismatch`.
+
 **Respuesta:**
 ```json
 {
   "stay_id": 42,
   "qr_text": "eyJhbGciOi...<mucho texto>",
-  "room_id": 2
+  "room_id": 1,
+  "room_code": "101",
+  "room": { "id": 1, "code": "101" }
 }
 ```
 
@@ -129,7 +136,7 @@ Cuando desde el VB6 haces el checkout de un cliente:
 
 ```
 POST /api/v1/stays/42/close
-X-API-Key: 5a78442da74f9eba7bfb151678ad716567e47b41b3119155
+X-API-Key: <API_KEY_DE_VB6>
 Idempotency-Key: vb6-close-42-20260728-160000
 Body: {}
 ```
@@ -142,7 +149,7 @@ Esto libera la habitación, apaga la luz y escribe `log_usuarios` con `tipo='EXI
 
 ```
 POST /api/v1/qr/<jti>/revoke
-X-API-Key: 5a78442da74f9eba7bfb151678ad716567e47b41b3119155
+X-API-Key: <API_KEY_DE_VB6>
 Idempotency-Key: vb6-revoke-<jti>
 ```
 
@@ -170,7 +177,11 @@ EMITIR QR      POST /api/v1/qr                    (al cobrar)
 PANEL          GET  /api/v1/rooms/{id}/live        (cada 5-10s, sin auth)
 CHECKOUT       POST /api/v1/stays/{id}/close
 CANCELAR QR    POST /api/v1/qr/{jti}/revoke
+RESOLVER SALA  GET  /api/v1/rooms/by-code/{code}
 COMPLETAR REFS PATCH /api/v1/stays/{id}/vb6-refs   (solo si falta codtic)
+
+Emitir QR: usa `room_code` (recomendado) o `room_id`, nunca ambos.
+
 ```
 
 ---

@@ -79,6 +79,21 @@ final class RoomController
         return Response::json(200, $payload);
     }
 
+    /**
+     * GET /api/v1/rooms/by-code/{code}
+     * Resuelve la sala por su código real (rooms.code), que es el mismo que
+     * usa el TPV/VB6 como codhab. No expone datos sensibles adicionales.
+     */
+    public function showByCode(Request $request): Response
+    {
+        $code = trim((string) $request->routeParam('code'));
+        $room = $this->rooms->getByCodeOrFail($code);
+        $devices = $this->devices->listForRoom($room->id);
+        $payload = $room->toArray();
+        $payload['devices'] = array_map(fn($d) => $this->serializeDevice($d), $devices);
+        return Response::json(200, $payload);
+    }
+
     public function create(Request $request): Response
     {
         $body = JsonBody::require($request->jsonBody);

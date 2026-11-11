@@ -16935,3 +16935,52 @@ concurrente en la misma sala devuelve `409` (lock de fichero).
 - `GET /api/v1/devices/{id}/firmware-operations`
 - `POST /api/v1/devices/{id}/firmware-update`
 - `POST /api/v1/firmware-operations/{id}/cancel`
+
+---
+
+# Fase 127: API unificada y códigos reales
+
+## Sesión LAN
+
+`GET /dashboard` responde `200 text/html` y añade:
+
+```http
+Set-Cookie: dashboard_session=<token>; Expires=...; Path=/; HttpOnly; SameSite=Lax
+```
+
+La cookie permite llamar a `/api/v1/rooms/...` con los scopes
+`rooms:read`, `switches:write`, `locks:open` y `rooms:state`. Sin cookie ni
+API key, `401`.
+
+## `POST /api/v1/rooms/{id}/light`
+
+- Scope: `switches:write`.
+- Body: `{ "state": "ON" | "OFF" }`.
+- Misma respuesta que `/light/on|off`.
+- `400 invalid_state`.
+
+## `GET /api/v1/rooms/by-code/{code}`
+
+- Scope: `rooms:read`.
+- `200` con la sala y sus dispositivos.
+- `404 not_found` con `details.code` si no existe.
+
+## `POST /api/v1/qr` — selectores
+
+- Acepta exactamente uno de `room_id` o `room_code`.
+- `422 room_selector_required` si no viene ninguno.
+- `422 room_selector_ambiguous` si vienen ambos.
+- `409 room_code_mismatch` si `codhab` no coincide con `rooms.code`.
+- Respuesta `201` añade `room_code` y `room: {id, code}`.
+
+## Alias deprecados
+
+- `/dashboard-api/rooms/controls`
+- `/dashboard-api/rooms/{id}/status`
+- `/dashboard-api/rooms/{id}/light`
+- `/dashboard-api/rooms/{id}/unlock`
+- `/dashboard-api/rooms/{id}/reset`
+- `/dashboard-api/rooms/reset`
+
+Siguen funcionando, pero responden con `Deprecation: true` y `Link` al sucesor
+`/api/v1/...`. No se documentan como API nueva.

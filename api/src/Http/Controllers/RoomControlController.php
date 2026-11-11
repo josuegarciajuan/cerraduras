@@ -69,6 +69,22 @@ final class RoomControlController
         return $this->applyLight($request, 'OFF');
     }
 
+    /**
+     * POST /api/v1/rooms/{id}/light — canonical single endpoint.
+     * Body: {"state":"ON"|"OFF"}
+     */
+    public function lightAction(Request $request): Response
+    {
+        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
+        $state = strtoupper(trim((string) ($body['state'] ?? '')));
+        if (!in_array($state, ['ON', 'OFF'], true)) {
+            return Response::json(400, [
+                'error' => ['code' => 'invalid_state', 'message' => 'state must be ON or OFF'],
+            ]);
+        }
+        return $this->applyLight($request, $state);
+    }
+
     public function unlock(Request $request): Response
     {
         $roomId = (int) $request->routeParam('id');
@@ -120,24 +136,19 @@ final class RoomControlController
 
     public function dashboardControls(Request $request): Response
     {
-        return $this->controls($request);
+        return $this->deprecated($this->controls($request), '/api/v1/rooms/controls');
     }
 
     public function dashboardStatus(Request $request): Response
     {
-        return $this->status($request);
+        $id = (int) $request->routeParam('id');
+        return $this->deprecated($this->status($request), '/api/v1/rooms/' . $id . '/status');
     }
 
     public function dashboardLight(Request $request): Response
     {
-        $body = is_array($request->jsonBody) ? $request->jsonBody : [];
-        $state = strtoupper(trim((string) ($body['state'] ?? '')));
-        if (!in_array($state, ['ON', 'OFF'], true)) {
-            return Response::json(400, [
-                'error' => ['code' => 'invalid_state', 'message' => 'state must be ON or OFF'],
-            ]);
-        }
-        return $this->applyLight($request, $state);
+        $id = (int) $request->routeParam('id');
+        return $this->deprecated($this->lightAction($request), '/api/v1/rooms/' . $id . '/light');
     }
 
     public function dashboardUnlock(Request $request): Response
@@ -152,7 +163,10 @@ final class RoomControlController
             (string) $request->attr('correlation_id', ''),
             'dashboard'
         );
-        return Response::json(200, $result);
+        return $this->deprecated(
+            Response::json(200, $result),
+            '/api/v1/rooms/' . $roomId . '/unlock'
+        );
     }
 
     public function dashboardReset(Request $request): Response
@@ -165,12 +179,22 @@ final class RoomControlController
         }
         $roomId = (int) $request->routeParam('id');
         $result = $this->resets->reset($roomId);
-        return Response::json(200, [
-            'ok' => true,
-            'room_id' => $roomId,
-            'status' => 'FREE',
-            'summary' => $result['summary'],
-        ]);
+        return $this->deprecated(
+            Response::json(200, [
+                'ok' => true,
+                'room_id' => $roomId,
+                'status' => 'FREE',
+                'summary' => $result['summary'],
+            ]),
+            '/api/v1/rooms/' . $roomId . '/reset'
+        );
+    }
+
+    private function deprecated(Response $response, string $successor): Response
+    {
+        return $response
+            ->withHeader('Deprecation', 'true')
+            ->withHeader('Link', '<' . $successor . '>; rel="successor-version"');
     }
 
     // -------------------------------------------------------------------------

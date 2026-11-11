@@ -9471,6 +9471,125 @@ else
 fi
 
 # =============================================================================
+# BLOCK 95 — F127: API unificada y resolución por código real
+# Trazabilidad: F127 · requirements.md §F127 · contracts.md §F127
+# =============================================================================
+block "BLOCK 95 — F127: API unificada y códigos de habitación"
+
+F127_KEY=$(get_key "ADMIN-CLI")
+F127_QR_KEY=$(get_key "VB6-MAIN")
+F127_KNOWN_CODE=$($MYSQL -sN -e "SELECT code FROM rooms ORDER BY id LIMIT 1" 2>/dev/null)
+if [ -z "$F127_KEY" ] || [ -z "$F127_QR_KEY" ]; then
+    skip "F127 completo" "claves ADMIN-CLI/VB6-MAIN no disponibles"
+elif [ "$SERVER_UP" != true ]; then
+    skip "F127 completo" "servidor no disponible"
+else
+    http_test GET "/api/v1/rooms/by-code/$F127_KNOWN_CODE" 200 \
+        "F127: GET /rooms/by-code/{code}" --key ADMIN-CLI
+    http_test GET "/api/v1/rooms/by-code/NO-EXISTE-F127" 404 \
+        "F127: código desconocido → 404" --key ADMIN-CLI
+    http_test GET "/api/v1/rooms/controls" 401 \
+        "F127: /api/v1/rooms/controls sin credencial → 401"
+
+    # Cookie de dashboard y uso de la API canónica sin X-API-Key.
+    rm -f /tmp/f127-dashboard-cookies.txt
+    F127_DASH_CODE=$(curl -s -c /tmp/f127-dashboard-cookies.txt -o /dev/null -w '%{http_code}' \
+        "${API_BASE}/dashboard" 2>/dev/null)
+    if [ "$F127_DASH_CODE" = "200" ] && grep -q 'dashboard_session' /tmp/f127-dashboard-cookies.txt; then
+        pass "F127: /dashboard emite cookie dashboard_session"
+    else
+        fail "F127: /dashboard emite cookie dashboard_session" "http=$F127_DASH_CODE"
+    fi
+    F127_COOKIE_CODE=$(curl -s -b /tmp/f127-dashboard-cookies.txt -o /tmp/f127-controls.json -w '%{http_code}' \
+        "${API_BASE}/api/v1/rooms/controls" 2>/dev/null)
+    F127_COOKIE_ITEMS=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f127-controls.json'))
+    print(len(d.get('items', [])))
+except Exception:
+    print('bad')
+" 2>/dev/null)
+    if [ "$F127_COOKIE_CODE" = "200" ] && [ "$F127_COOKIE_ITEMS" != "bad" ]; then
+        pass "F127: cookie LAN accede a /api/v1/rooms/controls"
+    else
+        fail "F127: cookie LAN accede a /api/v1/rooms/controls" "http=$F127_COOKIE_CODE items=$F127_COOKIE_ITEMS"
+    fi
+    rm -f /tmp/f127-dashboard-cookies.txt /tmp/f127-controls.json
+
+    # Alias antiguo: sigue funcionando y anuncia deprecación.
+    F127_ALIAS_HEADERS=$(curl -s -D - -o /dev/null "${API_BASE}/dashboard-api/rooms/controls" 2>/dev/null)
+    if printf '%s' "$F127_ALIAS_HEADERS" | grep -qi '^Deprecation:'; then
+        pass "F127: alias /dashboard-api marca Deprecation"
+    else
+        fail "F127: alias /dashboard-api marca Deprecation" "sin cabecera Deprecation"
+    fi
+
+    # Sala temporal para probar room_code en emisión de QR.
+    F127_CODE="F127-TEST-$$"
+    F127_TYPE=$($MYSQL -sN -e "SELECT room_type_id FROM time_slots WHERE kind='RENTABLE' ORDER BY room_type_id LIMIT 1" 2>/dev/null)
+    F127_ROOM_ID=""
+    if [ -z "$F127_TYPE" ]; then
+        skip "F127: QR por room_code" "sin room_type con slots RENTABLE"
+    else
+        F127_CREATE=$(curl -s -X POST "${API_BASE}/api/v1/rooms" \
+            -H "X-API-Key: $F127_KEY" -H "Content-Type: application/json" \
+            -d "{\"code\":\"$F127_CODE\",\"room_type_id\":$F127_TYPE}" 2>/dev/null)
+        F127_ROOM_ID=$(printf '%s' "$F127_CREATE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null)
+        if [ -z "$F127_ROOM_ID" ]; then
+            fail "F127: crear sala temporal" "$(printf '%s' "$F127_CREATE" | head -c 300)"
+        else
+            http_test POST "/api/v1/qr" 422 \
+                "F127: QR sin selector → 422" --key VB6-MAIN \
+                --idem "f127-none-$F127_ROOM_ID-$(date +%s)" \
+                --body '{"duracion_minutos":60}'
+            http_test POST "/api/v1/qr" 422 \
+                "F127: QR con dos selectores → 422" --key VB6-MAIN \
+                --idem "f127-both-$F127_ROOM_ID-$(date +%s)" \
+                --body "{\"room_id\":$F127_ROOM_ID,\"room_code\":\"$F127_CODE\",\"duracion_minutos\":60}"
+            http_test POST "/api/v1/qr" 409 \
+                "F127: codhab incoherente → 409" --key VB6-MAIN \
+                --idem "f127-mismatch-$F127_ROOM_ID-$(date +%s)" \
+                --body "{\"room_code\":\"$F127_CODE\",\"codhab\":\"OTRO\",\"duracion_minutos\":60}"
+
+            F127_QR_CODE=$(curl -s -o /tmp/f127-qr.json -w '%{http_code}' -X POST "${API_BASE}/api/v1/qr" \
+                -H "X-API-Key: $F127_QR_KEY" -H "Content-Type: application/json" \
+                -H "Idempotency-Key: f127-code-$F127_ROOM_ID-$(date +%s)" \
+                -d "{\"room_code\":\"$F127_CODE\",\"duracion_minutos\":60}" 2>/dev/null)
+            if [ "$F127_QR_CODE" = "201" ]; then
+                F127_QR_ROOM=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f127-qr.json'))
+    print(d.get('room',{}).get('code',''), d.get('room_code',''))
+except Exception:
+    print('bad')
+" 2>/dev/null)
+                if [ "$F127_QR_ROOM" = "$F127_CODE $F127_CODE" ]; then
+                    pass "F127: QR emitido por room_code devuelve la misma sala"
+                else
+                    fail "F127: QR emitido por room_code" "room=$F127_QR_ROOM"
+                fi
+            elif [ "$F127_QR_CODE" = "422" ] && grep -q 'slot_not_rentable' /tmp/f127-qr.json 2>/dev/null; then
+                skip "F127: QR por room_code" "slot no rentable en este momento"
+            else
+                fail "F127: QR por room_code" "http=$F127_QR_CODE body=$(head -c 300 /tmp/f127-qr.json)"
+            fi
+            rm -f /tmp/f127-qr.json
+
+            # Limpieza de la sala temporal y de cualquier estancia/QR creado.
+            db_exec "DELETE FROM qr_credentials WHERE room_id=$F127_ROOM_ID;
+                     DELETE FROM access_events WHERE room_id=$F127_ROOM_ID;
+                     DELETE FROM debts WHERE room_id=$F127_ROOM_ID;
+                     DELETE FROM stays WHERE room_id=$F127_ROOM_ID;
+                     DELETE FROM iot_sessions WHERE room_id=$F127_ROOM_ID;
+                     DELETE FROM rooms WHERE id=$F127_ROOM_ID;" >/dev/null 2>&1 || true
+            pass "F127: sala temporal eliminada"
+        fi
+    fi
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

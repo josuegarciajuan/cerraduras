@@ -11916,3 +11916,16 @@ pendientes.
 - [x] TSK-F126-09: OTA por sala (estado, actualizar, variante y cancelar).
 - [x] TSK-F126-10: `RoomControlTest` + `ResetCleanupTest` (estado, reset, UI, almacén y OTA).
 - [x] TSK-F126-11: BLOCK 94 del runner y regresión completa.
+
+## F127 — API unificada y códigos reales de habitación
+
+- [x] TSK-F127-01: `DashboardSessionService` firmado y cookie en `/dashboard`.
+- [x] TSK-F127-02: middleware acepta `DASHBOARD-LAN` con scopes limitados.
+- [x] TSK-F127-03: dashboard migrado a `/api/v1/rooms/...`.
+- [x] TSK-F127-04: `POST /api/v1/rooms/{id}/light` y alias on/off.
+- [x] TSK-F127-05: alias `/dashboard-api/rooms/...` con `Deprecation`.
+- [x] TSK-F127-06: `GET /api/v1/rooms/by-code/{code}`.
+- [x] TSK-F127-07: QR por `room_code`, selector único y `codhab` coherente.
+- [x] TSK-F127-08: eliminar secretos hardcodeados de guía y herramienta.
+- [x] TSK-F127-09: `DashboardSessionTest`, `F127ApiUnificationTest` y extensión de QR.
+- [x] TSK-F127-10: BLOCK 95 del runner y regresión completa.
