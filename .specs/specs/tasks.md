@@ -11969,3 +11969,11 @@ pendientes.
 - [x] TSK-F125.1.2-07: documentar perfiles y separación dev/producción.
 - [x] TSK-F125.1.2-08: asignar `mqtt_profile=dev` al dispositivo 1339 y smoke.
 - [x] TSK-F125.1.2-09: regresión completa (1315/0/14) y producción 1884 verificada.
+
+## F125.1.3 — Indicador visual de detección
+
+- [x] TSK-F125.1.3-01: `detectionModel` puro en `radar-scope.js`.
+- [x] TSK-F125.1.3-02: banner `#radarDetection` + CSS de estados y pulso.
+- [x] TSK-F125.1.3-03: `renderDetection` en `radar-studio.js` y retirada del pill duplicado.
+- [x] TSK-F125.1.3-04: anillo/halo rojo tenue y gris en el SVG.
+- [x] TSK-F125.1.3-05: tests JS, chequeo estático en BLOCK 97 y documentación.

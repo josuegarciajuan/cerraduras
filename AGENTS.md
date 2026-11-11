@@ -236,6 +236,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 | **F125.1 Calibración guiada del radar** | **BLOCK 97 + `RadarGuidedCalibrationTest`/`radar-wizard.test.js`** | **Implementado (código); prueba física completa pendiente** |
 | **F125.1.2 Perfil MQTT por dispositivo** | **BLOCK 98 + `ZigbeeMqttProfileTest`/`ZigbeeRadarCalibrationProfileTest`** | **Implementado: perfil dev asignado (1339→1886), producción en 1884, regresión 1315/0/14** |
+| **F125.1.3 Indicador visual de detección** | **BLOCK 97 + `radar-scope.test.js`** | **Implementado (código); validación visual pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
@@ -1400,6 +1401,22 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   `ZigbeeRadarCalibrationProfileTest` (10), `ZigbeeSwitchGatewayTest` (23) y
   BLOCK 98. Perfil dev asignado al 1339; producción 438 sigue en 1884;
   regresión 1315/0/14. Smoke real dev: 6,0→5,85→6,0 confirmado por push.
+
+### F125.1.3 — Indicador visual de detección (RF-366…RF-368)
+
+- **Motivo**: la presencia en Radar Studio solo se veía en un pill pequeño y en
+  el brillo del croquis.
+- **Banner**: `#radarDetection` encima del croquis, a todo el ancho, con icono,
+  título, subtítulo y edad del último reporte.
+- **Estados**: verde **TE DETECTA** (`PRESENT`), ámbar **MOVIMIENTO SIN
+  PRESENCIA** (ecos DP9 sin `PRESENT`), rojo **NO TE DETECTA** (`ABSENT` sin
+  movimiento) y gris **SIN DATOS** (`stale`/sin reportes). No depende solo del
+  color.
+- **Croquis**: mantiene verde/ámbar y añade anillo/halo rojo tenue para
+  `ABSENT` y gris para `STALE`.
+- **Sin backend**: se actualiza con el `/wizard` que ya se consulta cada 1,5 s.
+- **Verificación**: `radar-scope.test.js` (39), BLOCK 97 y validación visual
+  pendiente.
 
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 

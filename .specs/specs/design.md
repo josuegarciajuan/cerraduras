@@ -27161,3 +27161,30 @@ API es breve; el ingress/spool no se reinicia.
 
 `ZigbeeMqttProfileTest` (27), `ZigbeeRadarCalibrationProfileTest` (10),
 `ZigbeeSwitchGatewayTest` (23) y BLOCK 98. Regresión completa.
+
+## F125.1.3 — Banner de detección
+
+`radar-scope.js` expone `detectionModel(scope)` (puro) que traduce
+`presenceVisual` a `{state,tone,icon,title,subtitle,ageSeconds,lastDistance}`:
+
+| Estado | tone | Título |
+|---|---|---|
+| PRESENT | ok | TE DETECTA |
+| MOTION | warn | MOVIMIENTO SIN PRESENCIA |
+| ABSENT | bad | NO TE DETECTA |
+| STALE/UNKNOWN | dim | SIN DATOS |
+
+`radar-studio.js` pinta `#radarDetection` en cada `render()` y actualiza
+`#detectTitle`, `#detectSub`, `#detectIcon` y `#detectAge`. El pill de presencia
+se retira de `#studioChips` para no duplicar.
+
+El SVG añade un anillo rojo tenue (`#ff5252`, opacidad 0.35) y un halo pequeño
+para `ABSENT`; un anillo/halo gris (`#8a8aa0`) para `STALE`. El verde/ámbar
+existente se mantiene.
+
+Sin backend: se actualiza con el `/wizard` que ya se consulta cada 1,5 s.
+
+### Verificación
+
+`radar-scope.test.js` (39) cubre `detectionModel`, el anillo rojo y el gris;
+BLOCK 97 comprueba el markup y `renderDetection`.

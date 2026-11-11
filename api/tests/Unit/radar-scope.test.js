@@ -53,6 +53,34 @@ check('movimiento sin presencia → ámbar', motion.state === 'MOTION' && motion
 const absent = RadarScope.presenceVisual({ raw: { state: 'ABSENT' }, stats: { motion_recent: false } });
 check('AUSENTE → dim', absent.state === 'ABSENT' && absent.tone === 'dim');
 
+// ─── Banner de detección ─────────────────────────────────────────────────
+const dmPresent = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  series: [{ distance_m: 1.2 }],
+});
+check('banner PRESENT → verde', dmPresent.tone === 'ok' && dmPresent.title === 'TE DETECTA' && dmPresent.icon === '✓');
+check('banner PRESENT incluye distancia', dmPresent.subtitle.indexOf('1.20 m') >= 0);
+check('banner PRESENT incluye edad', dmPresent.ageSeconds === 1);
+
+const dmAbsent = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', age_seconds: 2 },
+  stats: { motion_recent: false },
+});
+check('banner ABSENT → rojo', dmAbsent.tone === 'bad' && dmAbsent.title === 'NO TE DETECTA' && dmAbsent.icon === '✕');
+
+const dmMotion = RadarScope.detectionModel({
+  raw: { state: 'ABSENT' },
+  stats: { motion_recent: true },
+});
+check('banner MOTION → ámbar', dmMotion.tone === 'warn' && dmMotion.title === 'MOVIMIENTO SIN PRESENCIA' && dmMotion.icon === '≈');
+
+const dmStale = RadarScope.detectionModel({ raw: { state: 'PRESENT', stale: true }, stats: {} });
+check('banner STALE → gris', dmStale.tone === 'dim' && dmStale.title === 'SIN DATOS' && dmStale.icon === '…');
+
+const dmNull = RadarScope.detectionModel(null);
+check('banner sin scope → SIN DATOS', dmNull.tone === 'dim' && dmNull.title === 'SIN DATOS');
+
 // ─── Histograma radial ───────────────────────────────────────────────────
 const hist = RadarScope.histogram([
   { distance_m: 1.0 }, { distance_m: 1.0 }, { distance_m: 2.0 },
@@ -79,6 +107,12 @@ check('SVG contiene sensor', svg.indexOf('RADAR') >= 0);
 check('SVG contiene borde', svg.indexOf('borde 1.50 m') >= 0);
 check('SVG contiene leyenda honesta', svg.indexOf('no informa ángulo') >= 0);
 check('SVG sin presencia no pinta glow', svg.indexOf('scope-presence') < 0);
+check('SVG ABSENT pinta anillo rojo tenue', svg.indexOf('#ff5252') >= 0 && svg.indexOf('stroke-opacity="0.35"') >= 0);
+
+const svgStale = RadarScope.buildSvg(Object.assign({}, baseScope, {
+  raw: { state: 'UNKNOWN', stale: true },
+}));
+check('SVG STALE pinta anillo gris', svgStale.indexOf('#8a8aa0') >= 0);
 
 const svgPresent = RadarScope.buildSvg(Object.assign({}, baseScope, {
   raw: { state: 'PRESENT', stale: false },
