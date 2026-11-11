@@ -10,6 +10,7 @@ use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Presence\IotSession;
 use App\Domain\Presence\IotSessionRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
+use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
@@ -67,6 +68,7 @@ final class QrValidateService
     private AccessEventRepositoryInterface $accessEvents;
     private ?IotSessionRepositoryInterface $iotSessions;
     private ?SwitchService $switchService;
+    private ?RoomTypeRepositoryInterface $roomTypes;
 
     public function __construct(
         QrTokenizer $tokenizer,
@@ -78,7 +80,8 @@ final class QrValidateService
         LockGatewayInterface $lockGateway,
         AccessEventRepositoryInterface $accessEvents,
         ?IotSessionRepositoryInterface $iotSessions = null,
-        ?SwitchService $switchService = null
+        ?SwitchService $switchService = null,
+        ?RoomTypeRepositoryInterface $roomTypes = null
     ) {
         $this->tokenizer    = $tokenizer;
         $this->credentials  = $credentials;
@@ -90,6 +93,7 @@ final class QrValidateService
         $this->accessEvents = $accessEvents;
         $this->iotSessions  = $iotSessions;
         $this->switchService = $switchService;
+        $this->roomTypes    = $roomTypes;
     }
 
     /**
@@ -377,11 +381,18 @@ final class QrValidateService
         $gatewayResult = $this->lockGateway->open($tokenRoomId);
         $provider      = $gatewayResult['provider'];
 
-        // Light control: deferred to IotSessionService::processEvent which
-        // calls switchService->turnOn() when a real PROXIMITY OPEN sensor
-        // event arrives, ensuring the light activates in response to the
-        // physical door opening, not at QR validation time.
-        // See dashboard.md — Bug 1 fix: light must follow door open, not QR scan.
+        // F124/RF-344: la luz se enciende también al abrir con el QR, para que
+        // siga funcionando si el sensor de puerta no emite `OPEN`. Solo se
+        // enciende si el cerrojo abre de verdad; es best-effort y no bloquea la
+        // validación. El encendido por apertura física sigue en IotSessionService.
+        if (!empty($gatewayResult['ok']) && $this->switchService !== null) {
+            $roomTypeCode = null;
+            if ($this->roomTypes !== null) {
+                $roomType = $this->roomTypes->findById($room->roomTypeId);
+                $roomTypeCode = $roomType?->code;
+            }
+            $this->switchService->turnOnForCredentialOpen($tokenRoomId, $roomTypeCode);
+        }
 
         // Write success access_event
         $this->writeAccessEvent(

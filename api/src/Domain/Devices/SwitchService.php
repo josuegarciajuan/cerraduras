@@ -107,6 +107,31 @@ final class SwitchService
     }
 
     /**
+     * F124/RF-344: encender la luz cuando una credencial válida abre la
+     * habitación (QR de huésped, QR de llave, ficha NFC o QR maestro).
+     *
+     * Es el plan B cuando el sensor de puerta no emite `OPEN`: el encendido no
+     * depende de ningún evento físico. Se omite en las salas especiales cuyo
+     * encendido lo gobierna su propio flujo (almacén y timbrado), igual que el
+     * encendido por apertura de puerta de `IotSessionService`.
+     *
+     * Best-effort: un fallo del switch nunca bloquea la validación ni la
+     * apertura (se registra y se ignora).
+     */
+    public function turnOnForCredentialOpen(int $roomId, ?string $roomTypeCode): void
+    {
+        $code = strtoupper(trim((string) $roomTypeCode));
+        if (in_array($code, ['ALMACEN_BEBIDAS', 'TIMBRADO'], true)) {
+            return;
+        }
+        try {
+            $this->turnOn($roomId);
+        } catch (\Throwable $e) {
+            error_log('[SwitchService] turnOnForCredentialOpen failed room=' . $roomId . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
      * Turn on the switch for the given pack (pack-based, no room required).
      *
      * @return array{ok:bool, provider:string, error:string|null}

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Domain\Workers;
 
 use App\Domain\AccessKeys\WorkerSessionPolicy;
+use App\Domain\Devices\SwitchService;
 use App\Domain\Locks\AccessEvent;
 use App\Domain\Locks\AccessEventRepositoryInterface;
 use App\Domain\Rooms\RoomRepositoryInterface;
@@ -36,6 +37,7 @@ final class WorkerQrService
     private AccessEventRepositoryInterface $accessEvents;
     private ?WarehouseAccessPolicyInterface $accessPolicy;
     private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
+    private ?SwitchService $switchService;
 
     public function __construct(
         QrTokenizer $tokenizer,
@@ -46,7 +48,8 @@ final class WorkerQrService
         RoomTypeRepositoryInterface $roomTypeRepo,
         AccessEventRepositoryInterface $accessEvents,
         ?WarehouseAccessPolicyInterface $accessPolicy = null,
-        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null
+        ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null,
+        ?SwitchService $switchService = null
     ) {
         $this->tokenizer    = $tokenizer;
         $this->workerRepo   = $workerRepo;
@@ -57,6 +60,7 @@ final class WorkerQrService
         $this->accessEvents = $accessEvents;
         $this->accessPolicy = $accessPolicy;
         $this->warehouseRecorder = $warehouseRecorder;
+        $this->switchService = $switchService;
     }
 
     /**
@@ -168,6 +172,12 @@ final class WorkerQrService
         $gateway   = LockGatewayFactory::make($room);
         $openResult = $gateway->open($roomId);
         $gwProvider = $openResult['provider'] ?? $provider;
+
+        // F124/RF-344: encender la luz al abrir con el QR maestro, solo si el
+        // cerrojo abre. Best-effort; almacén y timbrado conservan su flujo.
+        if (!empty($openResult['ok']) && $this->switchService !== null) {
+            $this->switchService->turnOnForCredentialOpen($roomId, $roomType?->code);
+        }
 
         // 8. Create worker session (never for TIMBRADO).
         $workerSessionId = null;

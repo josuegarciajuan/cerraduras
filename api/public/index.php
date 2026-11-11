@@ -2052,7 +2052,8 @@ $accessKeyService    = new \App\Domain\AccessKeys\AccessKeyService(
     $accessEventRepo,
     $qrTokenizer,
     $pdo,
-    $warehouseRecordingService
+    $warehouseRecordingService,
+    $switchService
 );
 $accessKeyController = new AccessKeyController($accessKeyService);
 $workerQrService     = new \App\Domain\Workers\WorkerQrService(
@@ -2064,7 +2065,8 @@ $workerQrService     = new \App\Domain\Workers\WorkerQrService(
     $roomTypeRepo,
     $accessEventRepo,
     $warehouseAccessPolicy,
-    $warehouseRecordingService
+    $warehouseRecordingService,
+    $switchService
 );
 $workerQrController  = new WorkerQrController($workerQrService, $accessKeyService, $qrTokenizer);
 
@@ -2079,7 +2081,8 @@ $qrValidateService = new QrValidateService(
     $lockGateway,
     $accessEventRepo,
     $iotSessionRepo = new IotSessionRepository($pdo),   // F21: sync IoT state on QR open
-    $switchService                                       // RF-16: turn on light on QR open
+    $switchService,                                      // RF-16/F124: turn on light on QR open
+    $roomTypeRepo                                        // F124: excluye almacén/timbrado
 );
 $qrController = new QrController($qrIssueService, $qrValidateService, $qrCredRepo, $accessKeyService, $qrTokenizer);
 

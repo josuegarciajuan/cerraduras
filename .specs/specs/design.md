@@ -26759,3 +26759,47 @@ No se añade migración ni columna.
 `WorkerSessionReusePolicyTest` (8 casos), `WorkerTest`, BLOCK 69 del runner
 ampliado (reuso, una sola sesión, 409 del QR maestro auditado, cierre manual
 idempotente, autocierre por TTL) y regresión completa.
+
+## F124 — Luz al abrir por credencial
+
+### Decisión
+
+La luz de una habitación normal debe encenderse por dos vías independientes:
+
+1. `PROXIMITY=OPEN` aplicado en `IotSessionService` (F28, se mantiene).
+2. Una credencial válida que abre el cerrojo (F124), como plan B si el sensor
+   de puerta no emite.
+
+La política vive en un único punto, `SwitchService::turnOnForCredentialOpen()`:
+- no hace nada para `ALMACEN_BEBIDAS` ni `TIMBRADO` (igual que el encendido por
+  puerta, que ya los excluye);
+- para el resto invoca `turnOn()` en `try/catch` (best-effort).
+
+### Flujo
+
+```
+validar credencial → abrir cerrojo → si open.ok:
+    SwitchService::turnOnForCredentialOpen(roomId, roomTypeCode)
+```
+
+Puntos de llamada:
+- `QrValidateService::validate()` tras `lockGateway->open()` y con
+  `gatewayResult['ok']`; resuelve el tipo con `RoomTypeRepository`.
+- `AccessKeyService::authorise()` tras `gateway->open()` y con
+  `openResult['ok']`; reutiliza `$roomType`.
+- `WorkerQrService::validate()` tras `gateway->open()` y con
+  `openResult['ok']`; reutiliza `$roomType`.
+
+No se enciende si el cerrojo no abre (el usuario no puede entrar). No se tocan
+las aperturas remotas ni manuales de admin. Sin polling ni Tuya.
+
+### Configuración
+
+No se añade configuración ni migración. El apagado sigue a cargo del cierre de
+estancia (`ExitActionService`); si además fallara la presencia, queda el
+apagado manual existente.
+
+### Verificación
+
+Unit `QrValidateServiceTest` (sección F124: éxito, fallo de cerrojo y tipos
+excluidos) y BLOCK 92 del runner (llamadas gated por `open.ok` y wiring).

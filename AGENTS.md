@@ -232,6 +232,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 
 | **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
+| **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1292,3 +1293,23 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   BLOCK 69 del runner ampliado (reuso, una sola sesión, 409 del QR maestro
   auditado, cierre manual idempotente, autocierre por TTL) y regresión completa.
   Pendiente la prueba física y la corrida de regresión en esta sesión.
+
+### F124 — Luz al abrir por credencial (RF-344…RF-348)
+
+- **Motivo**: en habitaciones normales la luz solo se encendía con
+  `PROXIMITY=OPEN`; si el sensor de puerta falla, la puerta abre pero no hay
+  luz. Se añade el encendido por credencial como plan B.
+- **Política (RF-344/RF-346)**: `SwitchService::turnOnForCredentialOpen()` es
+  el único punto. Enciende solo si el cerrojo abre (`open.ok=true`); excluye
+  `ALMACEN_BEBIDAS` y `TIMBRADO`, que conservan su automatización.
+- **Puntos (RF-344)**: `QrValidateService` (QR de huésped),
+  `AccessKeyService` (QR de llave y ficha NFC) y `WorkerQrService` (QR maestro).
+  La apertura física por sensor se mantiene en `IotSessionService`.
+- **Independiente del sensor (RF-345)**: el encendido por credencial no
+  depende de ningún evento de puerta.
+- **Best-effort (RF-347)**: un fallo del switch se registra y no bloquea la
+  validación ni la apertura.
+- **Sin migración, sin cambios de forma de contrato, sin Tuya ni polling.**
+- **Verificación (RF-348)**: unit `QrValidateServiceTest` (sección F124:
+  éxito, cerrojo falla, tipos excluidos) y BLOCK 92 del runner. Pendiente la
+  prueba física con el sensor de puerta desconectado.

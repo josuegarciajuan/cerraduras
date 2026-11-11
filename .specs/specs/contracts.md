@@ -16749,3 +16749,18 @@ Response 200:
 - El QR maestro (`/api/v1/workers/qr/validate`) mantiene el 409
   `already_inside` y ahora deja un `access_events` `DENIED` con motivo
   `already_inside` y `worker_session_id`.
+
+## F124 — Efecto de luz al abrir por credencial
+
+Sin cambios de forma en las peticiones ni en las respuestas. Efecto secundario
+aditivo en los flujos que abren cerradura:
+
+- `POST /api/v1/qr/validate` (QR de huésped), `POST /api/v1/keys/validate`
+  (QR de llave y ficha NFC) y `POST /api/v1/workers/qr/validate` (QR maestro):
+  si la credencial es válida y el cerrojo abre (`open.ok=true`), se enciende la
+  luz de la habitación.
+- Se omite en salas `ALMACEN_BEBIDAS` y `TIMBRADO`.
+- Si el cerrojo no abre, o el switch falla, la respuesta no cambia (el
+  encendido es best-effort).
+- La apertura física por sensor (`PROXIMITY=OPEN`) mantiene el mismo
+  comportamiento. Sin migración ni endpoints nuevos.
