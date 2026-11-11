@@ -6,10 +6,12 @@ namespace App\Http\Controllers;
 use App\Domain\Devices\DeviceRepositoryInterface;
 use App\Domain\Devices\SwitchService;
 use App\Domain\Rooms\RoomControlStatusService;
+use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomRemoteUnlockService;
 use App\Domain\Rooms\RoomResetService;
 use App\Http\Request;
 use App\Http\Response;
+use App\Support\Errors\NotFoundException;
 
 /**
  * RoomControlController — F126.
@@ -24,19 +26,44 @@ final class RoomControlController
     private RoomRemoteUnlockService $unlocks;
     private RoomResetService $resets;
     private DeviceRepositoryInterface $devices;
+    private RoomRepositoryInterface $rooms;
 
     public function __construct(
         RoomControlStatusService $status,
         SwitchService $switches,
         RoomRemoteUnlockService $unlocks,
         RoomResetService $resets,
-        DeviceRepositoryInterface $devices
+        DeviceRepositoryInterface $devices,
+        RoomRepositoryInterface $rooms
     ) {
         $this->status = $status;
         $this->switches = $switches;
         $this->unlocks = $unlocks;
         $this->resets = $resets;
         $this->devices = $devices;
+        $this->rooms = $rooms;
+    }
+
+    /**
+     * F128: shared room resolver. Routes by {id} use the internal ID; routes
+     * by /by-code/{code}/... resolve rooms.code (same value as TPV codhab).
+     * All actions call this helper, so no business logic is duplicated.
+     */
+    private function resolveRoomId(Request $request): int
+    {
+        $id = $request->routeParam('id');
+        if ($id !== null && $id !== '') {
+            return (int) $id;
+        }
+        $code = $request->routeParam('code');
+        if ($code !== null && trim($code) !== '') {
+            $room = $this->rooms->findByCode(trim($code));
+            if ($room === null) {
+                throw new NotFoundException('Room not found by code', ['code' => $code]);
+            }
+            return $room->id;
+        }
+        throw new NotFoundException('Room reference missing');
     }
 
     public function controls(Request $request): Response
@@ -49,13 +76,13 @@ final class RoomControlController
 
     public function status(Request $request): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         return Response::json(200, $this->status->status($roomId));
     }
 
     public function light(Request $request): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         return Response::json(200, $this->status->lightState($roomId));
     }
 
@@ -87,7 +114,7 @@ final class RoomControlController
 
     public function unlock(Request $request): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         $reason = isset($body['reason']) ? (string) $body['reason'] : 'manual_override';
         $override = isset($body['override_cooldown']) && (bool) $body['override_cooldown'];
@@ -114,7 +141,7 @@ final class RoomControlController
 
     public function reset(Request $request): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         if (($body['confirm'] ?? false) !== true) {
             return Response::json(422, [
@@ -141,19 +168,19 @@ final class RoomControlController
 
     public function dashboardStatus(Request $request): Response
     {
-        $id = (int) $request->routeParam('id');
+        $id = $this->resolveRoomId($request);
         return $this->deprecated($this->status($request), '/api/v1/rooms/' . $id . '/status');
     }
 
     public function dashboardLight(Request $request): Response
     {
-        $id = (int) $request->routeParam('id');
+        $id = $this->resolveRoomId($request);
         return $this->deprecated($this->lightAction($request), '/api/v1/rooms/' . $id . '/light');
     }
 
     public function dashboardUnlock(Request $request): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         $body = is_array($request->jsonBody) ? $request->jsonBody : [];
         $reason = isset($body['reason']) ? (string) $body['reason'] : 'dashboard_manual';
         $result = $this->unlocks->open(
@@ -177,7 +204,7 @@ final class RoomControlController
                 'error' => ['code' => 'confirm_required', 'message' => 'confirm=true is required'],
             ]);
         }
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         $result = $this->resets->reset($roomId);
         return $this->deprecated(
             Response::json(200, [
@@ -201,7 +228,7 @@ final class RoomControlController
 
     private function applyLight(Request $request, string $state): Response
     {
-        $roomId = (int) $request->routeParam('id');
+        $roomId = $this->resolveRoomId($request);
         $device = $this->switches->getSwitchForRoom($roomId);
         if ($device === null) {
             return Response::json(404, [

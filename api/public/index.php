@@ -2144,7 +2144,8 @@ $roomControlController = new RoomControlController(
     $switchService,
     $roomRemoteUnlockService,
     $roomResetService,
-    $deviceRepo
+    $deviceRepo,
+    $roomRepo
 );
 
 $presenceEventRepo = new PresenceEventRepository($pdo);
@@ -2282,6 +2283,47 @@ $router->get(
     '/api/v1/rooms/by-code/{code}',
     [$roomController, 'showByCode'],
     $authFactory(['rooms:read'])
+);
+// F128: room-control actions resolved by real code (TPV/VB6 codhab).
+// Same controller methods and services as the {id} routes; only the room
+// resolver changes. No duplicated business logic.
+$router->get(
+    '/api/v1/rooms/by-code/{code}/status',
+    [$roomControlController, 'status'],
+    $authFactory(['rooms:read'])
+);
+$router->get(
+    '/api/v1/rooms/by-code/{code}/light',
+    [$roomControlController, 'light'],
+    $authFactory(['rooms:read'])
+);
+$router->post(
+    '/api/v1/rooms/by-code/{code}/light',
+    [$roomControlController, 'lightAction'],
+    $authFactory(['switches:write'])
+);
+$router->post(
+    '/api/v1/rooms/by-code/{code}/light/on',
+    [$roomControlController, 'lightOn'],
+    $authFactory(['switches:write'])
+);
+$router->post(
+    '/api/v1/rooms/by-code/{code}/light/off',
+    [$roomControlController, 'lightOff'],
+    $authFactory(['switches:write'])
+);
+$router->post(
+    '/api/v1/rooms/by-code/{code}/unlock',
+    [$roomControlController, 'unlock'],
+    array_merge(
+        $authFactory(['locks:open']),
+        [$idempotencyFactory('rooms.unlock')]
+    )
+);
+$router->post(
+    '/api/v1/rooms/by-code/{code}/reset',
+    [$roomControlController, 'reset'],
+    $authFactory(['rooms:state'])
 );
 // F126: must precede /rooms/{id} so "controls" is not read as an id.
 $router->get(

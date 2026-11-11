@@ -27040,3 +27040,25 @@ SSH. La API key se toma de `CERRADURAS_API_KEY`, la URL de
 `DashboardSessionTest`, `F127ApiUnificationTest`, extensión de
 `QrIssueServiceTest` y BLOCK 95 del runner (cookie, 401, alias deprecado,
 `by-code`, QR por código, selectores ambiguos y mismatch).
+
+---
+
+# Fase 128 — Control de sala por código real
+
+Se añaden rutas aditivas:
+
+- `GET /api/v1/rooms/by-code/{code}/status`
+- `GET /api/v1/rooms/by-code/{code}/light`
+- `POST /api/v1/rooms/by-code/{code}/light`
+- `POST /api/v1/rooms/by-code/{code}/light/on`
+- `POST /api/v1/rooms/by-code/{code}/light/off`
+- `POST /api/v1/rooms/by-code/{code}/unlock`
+- `POST /api/v1/rooms/by-code/{code}/reset`
+
+Todas llaman a los mismos métodos de `RoomControlController`. El controlador
+usa un único `resolveRoomId(Request)`: si existe `id`, usa el ID interno; si
+existe `code`, resuelve `rooms.code` con el repositorio. No se duplica lógica
+de luz, apertura, reset, scopes ni idempotencia.
+
+Las rutas por `{id}` siguen intactas. El dashboard y el panel usan `{id}`; el
+TPV/VB6 puede usar `by-code/{codhab}`.

@@ -16984,3 +16984,20 @@ API key, `401`.
 
 Siguen funcionando, pero responden con `Deprecation: true` y `Link` al sucesor
 `/api/v1/...`. No se documentan como API nueva.
+
+---
+
+# Fase 128: rutas de control por código real
+
+| Método | Ruta | Scope |
+|---|---|---|
+| GET | `/api/v1/rooms/by-code/{code}/status` | `rooms:read` |
+| GET | `/api/v1/rooms/by-code/{code}/light` | `rooms:read` |
+| POST | `/api/v1/rooms/by-code/{code}/light` | `switches:write` |
+| POST | `/api/v1/rooms/by-code/{code}/light/on` | `switches:write` |
+| POST | `/api/v1/rooms/by-code/{code}/light/off` | `switches:write` |
+| POST | `/api/v1/rooms/by-code/{code}/unlock` | `locks:open` + `Idempotency-Key` |
+| POST | `/api/v1/rooms/by-code/{code}/reset` | `rooms:state` |
+
+`{code}` es `rooms.code` (mismo valor que `codhab`). Mismo cuerpo y respuesta
+que las rutas por `{id}`. Código inexistente → `404 not_found`.

@@ -236,6 +236,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
+| **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1387,3 +1388,19 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Sin migración, sin Tuya y sin pollers nuevos.**
 - **Verificación**: `DashboardSessionTest`, `F127ApiUnificationTest`,
   `QrIssueServiceTest` ampliado y BLOCK 95 del runner.
+
+### F128 — Control de sala por código real (RF-381…RF-385)
+
+- **Motivo**: las acciones de sala solo aceptaban `{id}` interno; el TPV/VB6
+  conoce el código real (`codhab == rooms.code`).
+- **Rutas**: `GET /api/v1/rooms/by-code/{code}/status`,
+  `GET /api/v1/rooms/by-code/{code}/light`,
+  `POST /api/v1/rooms/by-code/{code}/light`,
+  `POST /api/v1/rooms/by-code/{code}/unlock` y
+  `POST /api/v1/rooms/by-code/{code}/reset`.
+- **Sin duplicar lógica**: `RoomControlController::resolveRoomId()` resuelve
+  `id` o `code`; las acciones comparten controlador, servicios, scopes e
+  idempotencia con las rutas por `{id}`.
+- **Compatibilidad**: `/api/v1/rooms/{id}/...` sigue igual. El dashboard y el
+  panel usan `id`; el TPV/VB6 usa `by-code/{codhab}`.
+- **Verificación**: `F128ByCodeRoutesTest` y BLOCK 96 del runner.

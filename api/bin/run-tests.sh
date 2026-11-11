@@ -9590,6 +9590,59 @@ except Exception:
 fi
 
 # =============================================================================
+# BLOCK 96 — F128: acciones de sala por código real
+# Trazabilidad: F128 · requirements.md §F128 · contracts.md §F128
+# =============================================================================
+block "BLOCK 96 — F128: control de sala por código real"
+
+F128_KEY=$(get_key "ADMIN-CLI")
+if [ -z "$F128_KEY" ]; then
+    skip "F128 completo" "clave ADMIN-CLI no disponible"
+elif [ "$SERVER_UP" != true ]; then
+    skip "F128 completo" "servidor no disponible"
+else
+    F128_CODE="F128-TEST-$$"
+    F128_CREATE=$(curl -s -X POST "${API_BASE}/api/v1/rooms" \
+        -H "X-API-Key: $F128_KEY" -H "Content-Type: application/json" \
+        -d "{\"code\":\"$F128_CODE\",\"room_type_id\":$ROOM_TYPE_PRIMARY}" 2>/dev/null)
+    F128_ROOM_ID=$(printf '%s' "$F128_CREATE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null)
+    if [ -z "$F128_ROOM_ID" ]; then
+        fail "F128: crear sala temporal" "$(printf '%s' "$F128_CREATE" | head -c 300)"
+    else
+        http_test GET "/api/v1/rooms/by-code/$F128_CODE/status" 200 \
+            "F128: status por código" --key ADMIN-CLI
+        http_test GET "/api/v1/rooms/by-code/$F128_CODE/light" 200 \
+            "F128: light por código" --key ADMIN-CLI
+        http_test POST "/api/v1/rooms/by-code/$F128_CODE/light" 400 \
+            "F128: luz por código con estado inválido → 400" --key ADMIN-CLI \
+            --body '{"state":"BAD"}'
+        http_test POST "/api/v1/rooms/by-code/$F128_CODE/light" 404 \
+            "F128: luz por código sin SWITCH → 404" --key ADMIN-CLI \
+            --body '{"state":"ON"}'
+        http_test POST "/api/v1/rooms/by-code/$F128_CODE/unlock" 200 \
+            "F128: unlock por código" --key ADMIN-CLI \
+            --idem "f128-unlock-$F128_ROOM_ID-$(date +%s)" --body '{"reason":"run-tests"}'
+        http_test POST "/api/v1/rooms/by-code/$F128_CODE/reset" 422 \
+            "F128: reset por código sin confirm → 422" --key ADMIN-CLI --body '{}'
+        http_test POST "/api/v1/rooms/by-code/$F128_CODE/reset" 200 \
+            "F128: reset por código confirmado" --key ADMIN-CLI --body '{"confirm":true}'
+        http_test GET "/api/v1/rooms/by-code/NO-EXISTE-F128/status" 404 \
+            "F128: código inexistente → 404" --key ADMIN-CLI
+
+        db_exec "DELETE FROM access_events WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM key_access_events WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM qr_credentials WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM debts WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM worker_sessions WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM stays WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM anomalies WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM iot_sessions WHERE room_id=$F128_ROOM_ID;
+                 DELETE FROM rooms WHERE id=$F128_ROOM_ID;" >/dev/null 2>&1 || true
+        pass "F128: sala temporal eliminada"
+    fi
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

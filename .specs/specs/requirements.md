@@ -14086,3 +14086,20 @@ cambio de la autenticación CRM y eliminación inmediata de los alias.
 `RoomControlController`, `QrIssueService`, `QrController`, `RoomController`,
 `dashboard.html`, `make-reservation-qr`, `DashboardSessionTest`,
 `F127ApiUnificationTest`, BLOCK 95.
+
+## F128 — Control de sala por código real (RF-381…RF-385)
+
+**Motivo:** las rutas de control usaban solo `{id}` interno; el TPV/VB6 conoce
+el código real (`codhab == rooms.code`).
+
+- **RF-381 (rutas por código):** se añaden `/api/v1/rooms/by-code/{code}/...`
+  para estado, luz, apertura y reset.
+- **RF-382 (sin duplicar lógica):** todas las acciones resuelven la sala con un
+  único `resolveRoomId()`; comparten controlador, servicios, scopes e
+  idempotencia con las rutas por `{id}`.
+- **RF-383 (compatibilidad):** las rutas `/api/v1/rooms/{id}/...` no cambian.
+- **RF-384 (scopes):** los mismos scopes que sus equivalentes por ID.
+- **RF-385 (errores):** código inexistente → `404 not_found`.
+
+**Trazabilidad:** `RoomControlController`, `index.php`,
+`F128ByCodeRoutesTest`, BLOCK 96.

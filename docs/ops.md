@@ -518,3 +518,21 @@ Formato CSV: `external_id,room_code` (ej. `92f57630,101`)
   `Deprecation`; no se documenta como API nueva.
 - **Herramientas**: `make-reservation-qr` usa `CERRADURAS_API_KEY`,
   `CERRADURAS_API_BASE` y `CERRADURAS_SSH_HOST`. No contiene secretos.
+
+## Control de sala por código real (F128)
+
+Además de `/api/v1/rooms/{id}/...`, existen rutas equivalentes por
+`rooms.code`/`codhab`:
+
+```text
+GET  /api/v1/rooms/by-code/{code}/status
+GET  /api/v1/rooms/by-code/{code}/light
+POST /api/v1/rooms/by-code/{code}/light
+POST /api/v1/rooms/by-code/{code}/light/on
+POST /api/v1/rooms/by-code/{code}/light/off
+POST /api/v1/rooms/by-code/{code}/unlock
+POST /api/v1/rooms/by-code/{code}/reset
+```
+
+Usan los mismos scopes, cuerpos, respuestas e `Idempotency-Key` que las rutas
+por `{id}`. El controlador resuelve la sala con un único `resolveRoomId()`.
