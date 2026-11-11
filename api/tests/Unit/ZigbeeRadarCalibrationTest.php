@@ -42,7 +42,9 @@ same('maximum_range se ajusta a 0.15 m', ZigbeeRadarCalibrationService::normaliz
 same('minimum_range se ajusta a 0.15 m', ZigbeeRadarCalibrationService::normalizeCommands(['minimum_range' => 0.61]), ['minimum_range' => 0.6]);
 same('radar_sensitivity es entero', ZigbeeRadarCalibrationService::normalizeCommands(['radar_sensitivity' => 7.4]), ['radar_sensitivity' => 7]);
 same('detection_delay se ajusta a 0.1 s', ZigbeeRadarCalibrationService::normalizeCommands(['detection_delay' => 0.26]), ['detection_delay' => 0.3]);
-same('fading_time se ajusta a la rejilla 0.5+1s', ZigbeeRadarCalibrationService::normalizeCommands(['fading_time' => 15.6]), ['fading_time' => 15.5]);
+same('fading_time se ajusta a la rejilla 0.5 s', ZigbeeRadarCalibrationService::normalizeCommands(['fading_time' => 15.6]), ['fading_time' => 15.5]);
+same('fading_time 5.0 se conserva', ZigbeeRadarCalibrationService::normalizeCommands(['fading_time' => 5.0]), ['fading_time' => 5.0]);
+same('fading_time 15.5 se conserva', ZigbeeRadarCalibrationService::normalizeCommands(['fading_time' => 15.5]), ['fading_time' => 15.5]);
 same('valores fuera de rango se recortan a la rejilla', ZigbeeRadarCalibrationService::normalizeCommands(['maximum_range' => 99]), ['maximum_range' => 9.45]);
 same('claves ajenas se ignoran', ZigbeeRadarCalibrationService::normalizeCommands(['state' => 'ON', 'maximum_range' => 3]), ['maximum_range' => 3.0]);
 same('sin parámetros válidos devuelve vacío', ZigbeeRadarCalibrationService::normalizeCommands(['state' => 'ON']), []);

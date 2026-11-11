@@ -43,7 +43,10 @@ final class ZigbeeRadarCalibrationService
         'minimum_range'     => ['min' => 0.0, 'max' => 9.5,  'step' => 0.15, 'unit' => 'm'],
         'maximum_range'     => ['min' => 0.15, 'max' => 9.5, 'step' => 0.15, 'unit' => 'm'],
         'detection_delay'   => ['min' => 0.0, 'max' => 10.0, 'step' => 0.1,  'unit' => 's'],
-        'fading_time'       => ['min' => 0.5, 'max' => 1500.0, 'step' => 1.0, 'unit' => 's'],
+        // El ZY-M100 reporta valores como 5.0 y 15.5; la rejilla real es de
+        // 0.5 s. Con paso 1.0 anclado en 0.5, 5.0 se convertía en 5.5 y la
+        // ruta idempotente nunca coincidía con el estado del radar.
+        'fading_time'       => ['min' => 0.5, 'max' => 1500.0, 'step' => 0.5, 'unit' => 's'],
     ];
 
     /**
