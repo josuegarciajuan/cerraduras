@@ -234,6 +234,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
 | **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; regresión 1210/0/14; prueba física pendiente** |
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
+| **F125.1 Calibración guiada del radar** | **BLOCK 97 + `RadarGuidedCalibrationTest`/`radar-wizard.test.js`** | **Implementado (código); prueba física completa pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
@@ -1346,6 +1347,33 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarAutoTuneTest` (39), `RadarScopeTest` (25),
   `RadarStudioStoreTest` (6), `radar-scope.test.js` (30) y BLOCK 93 del runner.
   Pendiente la prueba física de paseo/reposo/reentrada y la regresión completa.
+### F125.1 — Calibración guiada del radar (RF-356…RF-361)
+
+- **Motivo**: el Radar Studio base permitía ajustar y probar, pero faltaba un
+  flujo lineal que bloqueara los pasos y dijera al operador qué hacer.
+- **Wizard**: `Ajuste manual → ¿El radar te ve? → Paseo → Sensibilidad →
+  Fuera → Dentro → Fuera final → Calibrado`. Solo el paso actual tiene botones;
+  los futuros quedan bloqueados y los superados en verde.
+- **Ajuste manual**: sensibilidad, alcance máximo, mínimo **0** y retardo.
+  Aplicar un perfil nuevo reinicia las pruebas para no validar otra config.
+- **Paseo manual**: el operador empieza en la distancia mínima, camina hacia
+  atrás y pulsa «Prueba buena». El sistema muestra la pérdida y el último eco,
+  pero **no decide** ni avanza sin la confirmación del operador.
+- **Sensibilidad**: ventana de 15 s; si recomienda un valor distinto, aceptar o
+  mantener. Sin cambio → avanza automáticamente. Si no hay DP1, usa el estado
+  crudo para no subir a ciegas.
+- **Fuera/Dentro/Fuera**: 30 s cada uno. Fuera exige ausencia sin `PRESENT`;
+  dentro exige `PRESENT` estable. Si falla: rojo, **Reintentar** o **Volver a
+  ajustar**. No se reduce el alcance automáticamente.
+- **Estado**: `wizard-room-<id>.json` con flock; detecta cambios de `config_key`
+  y vuelve al ajuste manual. Al terminar persiste
+  `devices.meta_json.calibration` con `source=radar-studio-guided-v1` y resumen.
+- **UI**: stepper en `/sensores`; los controles antiguos quedan en «Avanzado
+  (diagnóstico)». Sin Tuya, sin migración y sin pollers nuevos.
+- **Verificación**: `RadarGuidedCalibrationTest` (49), `radar-wizard.test.js`
+  (28), `RadarStudioStoreTest` (12) y BLOCK 97 del runner. Pendiente la prueba
+  física completa y la regresión final.
+
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 
 - **Motivo**: el panel no permitía operar luz, cerradura ni liberar el ciclo

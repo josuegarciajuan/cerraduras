@@ -9643,6 +9643,93 @@ else
 fi
 
 # =============================================================================
+# BLOCK 97 — F125.1: calibración guiada del radar
+# Trazabilidad: F125.1 · requirements.md §F125.1 · contracts.md §F125.1
+# =============================================================================
+block "BLOCK 97 — F125.1: calibración guiada"
+
+for F1251_FILE in \
+    src/Domain/Sensors/RadarGuidedCalibration.php \
+    public/assets/radar-wizard.js \
+    tests/Unit/RadarGuidedCalibrationTest.php \
+    tests/Unit/radar-wizard.test.js; do
+    if [ -f "$F1251_FILE" ]; then
+        pass "F125.1: existe $F1251_FILE"
+    else
+        fail "F125.1: $F1251_FILE" "no encontrado"
+    fi
+done
+
+if grep -qF '/radar/wizard' public/index.php 2>/dev/null; then
+    pass "F125.1: rutas /radar/wizard"
+else
+    fail "F125.1: rutas /radar/wizard" "ausentes"
+fi
+if grep -qF 'dispatchWizardAction' src/Http/Controllers/RadarStudioController.php 2>/dev/null; then
+    pass "F125.1: controlador del wizard"
+else
+    fail "F125.1: controlador del wizard" "ausente"
+fi
+if grep -qF 'wizardSteps' public/sensores.html 2>/dev/null    && grep -qF 'radar-wizard.js' public/sensores.html 2>/dev/null; then
+    pass "F125.1: stepper en /sensores"
+else
+    fail "F125.1: stepper en /sensores" "falta wizardSteps o radar-wizard.js"
+fi
+
+for F1251_PHP in \
+    src/Domain/Sensors/RadarGuidedCalibration.php \
+    src/Domain/Sensors/RadarAutoTune.php \
+    src/Infrastructure/Sensors/RadarStudioStore.php \
+    src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    src/Http/Controllers/RadarStudioController.php; do
+    if php -l "$F1251_PHP" >/tmp/f1251-php.log 2>&1; then
+        pass "F125.1: sintaxis $(basename "$F1251_PHP")"
+    else
+        fail "F125.1: sintaxis $(basename "$F1251_PHP")" "$(tail -2 /tmp/f1251-php.log | tr '\n' ' ')"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    for F1251_JS in public/assets/radar-wizard.js public/assets/radar-studio.js; do
+        if node --check "$F1251_JS" >/tmp/f1251-js.log 2>&1; then
+            pass "F125.1: sintaxis $(basename "$F1251_JS")"
+        else
+            fail "F125.1: sintaxis $(basename "$F1251_JS")" "$(tail -3 /tmp/f1251-js.log | tr '\n' ' ')"
+        fi
+    done
+    if node tests/Unit/radar-wizard.test.js >/tmp/f1251-js-unit.log 2>&1; then
+        pass "F125.1: unit radar-wizard (JS)"
+    else
+        fail "F125.1: unit radar-wizard (JS)" "$(tail -3 /tmp/f1251-js-unit.log | tr '\n' ' ')"
+    fi
+else
+    skip "F125.1: tests JS" "node no disponible"
+fi
+
+if php tests/Unit/RadarGuidedCalibrationTest.php >/tmp/f1251-guided.log 2>&1; then
+    pass "F125.1: unit RadarGuidedCalibration"
+else
+    fail "F125.1: unit RadarGuidedCalibration" "$(tail -3 /tmp/f1251-guided.log | tr '\n' ' ')"
+fi
+if php tests/Unit/RadarStudioStoreTest.php >/tmp/f1251-store.log 2>&1; then
+    pass "F125.1: unit RadarStudioStore (wizard)"
+else
+    fail "F125.1: unit RadarStudioStore (wizard)" "$(tail -3 /tmp/f1251-store.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F1251_CODE=$(curl -s -o /tmp/f1251-wizard.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/wizard?room_id=999999" 2>/dev/null)
+    if [ "$F1251_CODE" = "404" ]; then
+        pass "F125.1: wizard en sala inexistente → 404"
+    else
+        fail "F125.1: wizard en sala inexistente" "http=$F1251_CODE"
+    fi
+    rm -f /tmp/f1251-wizard.json
+else
+    skip "F125.1: wizard HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

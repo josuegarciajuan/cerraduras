@@ -17001,3 +17001,57 @@ Siguen funcionando, pero responden con `Deprecation: true` y `Link` al sucesor
 
 `{code}` es `rooms.code` (mismo valor que `codhab`). Mismo cuerpo y respuesta
 que las rutas por `{id}`. Código inexistente → `404 not_found`.
+
+## F125.1 — Wizard de calibración guiada
+
+### `GET /dashboard-api/sensores/v2/radar/wizard?room_id=<id>`
+
+Devuelve `200`:
+
+```json
+{
+  "ok": true,
+  "wizard": {
+    "status": "running",
+    "current_step": "sees_you",
+    "settings": { "maximum_range": 3.0, "minimum_range": 0.0,
+                  "radar_sensitivity": 7, "detection_delay": 0.1, "fading_time": 15.5 },
+    "summary": null
+  },
+  "current_step": "sees_you",
+  "wizard_status": "running",
+  "steps": [
+    { "id": "profile", "title": "Ajuste manual", "kind": "profile",
+      "status": "passed", "description": "...", "detail": { "message": "..." } },
+    { "id": "sees_you", "title": "¿El radar te ve?", "kind": "present",
+      "status": "pending", "duration": 10, "detail": { "message": "..." } }
+  ],
+  "scope": { "...": "mismo bloque que /radar/scope" },
+  "server_ts": "..."
+}
+```
+
+`404 presence_device_missing` si la sala no tiene radar. `wizard=null` cuando
+no hay calibración guiada iniciada.
+
+### `POST /dashboard-api/sensores/v2/radar/wizard`
+
+Cuerpo base: `{ "room_id": 12, "action": "<acción>", "operator": "..." }`.
+
+| Acción | Efecto |
+|---|---|
+| `profile_applied` | Crea/reinicia el wizard y marca el perfil como aplicado. |
+| `step_start` | `{step_id}` inicia el paso actual. |
+| `step_pass` | Marca el paseo como «Prueba buena» (solo paso `walk`). |
+| `sensitivity_accept` | Aplica la sensibilidad recomendada y avanza. |
+| `sensitivity_keep` | Mantiene la sensibilidad y avanza. |
+| `retry` | Reinicia el paso actual a `pending`. |
+| `reset` | Borra el wizard y vuelve al ajuste manual. |
+| `finish` | Persiste el resumen si el estado ya es `done`. |
+| `status` | Devuelve el estado y evalúa los pasos automáticos. |
+
+Errores: `409 step_locked`, `409 step_not_started`, `409 not_awaiting_decision`,
+`409 not_confirmed`, `409 profile_not_ready`, `409 wizard_not_started`.
+
+Persistencia final: `devices.meta_json.calibration.source =
+"radar-studio-guided-v1"` con `wizard` (resumen de pasos, paseo y sensibilidad).

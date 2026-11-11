@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Domain\Sensors\RadarAutoTune;
 use App\Domain\Sensors\RadarDistanceReport;
 use App\Domain\Sensors\RadarDistanceReportRepository;
+use App\Domain\Sensors\RadarGuidedCalibration;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Sensors\RadarScope;
 use App\Http\Request;
@@ -166,6 +167,54 @@ final class RadarStudioController
             return $this->runtimeError($e);
         } catch (Throwable $e) {
             return Response::json(500, ['ok' => false, 'error' => 'autotune_failed', 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ── GET /dashboard-api/sensores/v2/radar/wizard ───────────────────────
+
+    public function wizard(Request $request): Response
+    {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['ok' => false, 'error' => 'room_id_required']);
+        }
+        try {
+            $device = $this->deviceForRoom($roomId);
+            if ($device === null) {
+                throw new RuntimeException('presence_device_missing');
+            }
+            return $this->store->withWizardLock($roomId, function (?array $state) use ($roomId, $device): Response {
+                return $this->wizardResponse($roomId, $device, $state);
+            });
+        } catch (RuntimeException $e) {
+            return $this->runtimeError($e);
+        } catch (Throwable $e) {
+            return Response::json(500, ['ok' => false, 'error' => 'wizard_failed', 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ── POST /dashboard-api/sensores/v2/radar/wizard ──────────────────────
+
+    public function wizardAction(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        $action = (string) ($body['action'] ?? '');
+        if ($roomId <= 0) {
+            return Response::json(400, ['ok' => false, 'error' => 'room_id_required']);
+        }
+        try {
+            $device = $this->deviceForRoom($roomId);
+            if ($device === null) {
+                throw new RuntimeException('presence_device_missing');
+            }
+            return $this->store->withWizardLock($roomId, function (?array $state) use ($roomId, $device, $action, $body): Response {
+                return $this->dispatchWizardAction($roomId, $device, $state, $action, $body);
+            });
+        } catch (RuntimeException $e) {
+            return $this->runtimeError($e);
+        } catch (Throwable $e) {
+            return Response::json(500, ['ok' => false, 'error' => 'wizard_failed', 'message' => $e->getMessage()]);
         }
     }
 
@@ -723,6 +772,323 @@ final class RadarStudioController
     // ── helpers ───────────────────────────────────────────────────────────
 
     /** @return array<string,mixed> */
+    private function wizardResponse(int $roomId, array $device, ?array $state): Response
+    {
+        $payload = $this->wizardPayload($roomId, $device, $state);
+        return Response::json(200, array_merge(['ok' => true], $payload))
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /**
+     * @param array<string,mixed> $device
+     * @param array<string,mixed>|null $state
+     * @return array<string,mixed>
+     */
+    private function wizardPayload(int $roomId, array $device, ?array $state): array
+    {
+        $status = $this->service()->status($roomId, $device);
+        $settings = (array) ($status['settings'] ?? []);
+        $configKey = RadarDistanceReport::configKey($settings);
+        $now = $this->nowIso();
+
+        if ($state !== null) {
+            $alreadyChanged = ($state['status'] ?? '') === RadarGuidedCalibration::STATUS_CONFIG_CHANGED;
+            if (!$alreadyChanged && ($state['config_key'] ?? null) !== $configKey) {
+                $state = RadarGuidedCalibration::markConfigChanged($state, $settings, $now);
+                $this->store->saveWizard($roomId, $state);
+            } elseif (($state['status'] ?? '') === RadarGuidedCalibration::STATUS_RUNNING) {
+                $ctx = $this->wizardContext($roomId, $settings, $status);
+                $state = $this->evaluateWizard($roomId, $device, $state, $ctx, $now);
+                $this->store->saveWizard($roomId, $state);
+            }
+        }
+
+        $scope = $this->scopePayload($roomId, 60);
+        $view = RadarGuidedCalibration::view($state);
+        return [
+            'wizard' => $state,
+            'current_step' => $view['current_step'],
+            'wizard_status' => $view['status'],
+            'steps' => $view['steps'],
+            'scope' => $scope,
+            'server_ts' => $now,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $settings
+     * @param array<string,mixed> $status
+     * @return array<string,mixed>
+     */
+    private function wizardContext(int $roomId, array $settings, array $status): array
+    {
+        $configKey = RadarDistanceReport::configKey($settings);
+        $sinceSql = gmdate('Y-m-d H:i:s', time() - 600);
+        $presence = $this->filterByConfig(
+            (new RadarPresenceReportRepository($this->pdo()))->recentForRoom($roomId, $sinceSql, 1000),
+            $configKey,
+            true
+        );
+        $distances = $this->filterByConfig(
+            (new RadarDistanceReportRepository($this->pdo()))->recentForRoom($roomId, $sinceSql, 1000),
+            $configKey,
+            true
+        );
+        $authentic = $this->authenticPresence($status);
+        return [
+            'settings' => $settings,
+            'authentic_state' => $authentic['state'],
+            'authentic_marker' => $authentic['marker'],
+            'stale' => (bool) ($status['stale'] ?? false),
+            'presence_reports' => $presence,
+            'distance_reports' => $distances,
+            'config_key' => $configKey,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $state
+     * @param array<string,mixed> $ctx
+     */
+    private function evaluateWizard(int $roomId, array $device, array $state, array $ctx, string $now): array
+    {
+        $current = (string) ($state['current_step'] ?? '');
+        $kind = RadarGuidedCalibration::kindOf($current);
+        if ($kind === 'manual_walk') {
+            return RadarGuidedCalibration::evaluateWalk($state, $now, $ctx);
+        }
+        if ($kind === 'sensitivity') {
+            return $this->evaluateSensitivityStep($roomId, $device, $state, $ctx, $now);
+        }
+        if (in_array($kind, ['present', 'present_reentry', 'absent'], true)) {
+            $state = RadarGuidedCalibration::evaluateAuto($state, $now, $ctx);
+            if (($state['status'] ?? '') === RadarGuidedCalibration::STATUS_DONE) {
+                $state = $this->finalizeWizard($roomId, $device, $state);
+            }
+        }
+        return $state;
+    }
+
+    /**
+     * @param array<string,mixed> $state
+     * @param array<string,mixed> $ctx
+     */
+    private function evaluateSensitivityStep(
+        int $roomId,
+        array $device,
+        array $state,
+        array $ctx,
+        string $now
+    ): array {
+        $stepId = RadarGuidedCalibration::SENSITIVITY;
+        if ((string) ($state['current_step'] ?? '') !== $stepId) {
+            return $state;
+        }
+        $step = $state['steps'][$stepId] ?? null;
+        if (!is_array($step) || ($step['status'] ?? '') !== RadarGuidedCalibration::STEP_ACTIVE) {
+            return $state;
+        }
+        $startedAt = (string) ($step['started_at'] ?? '');
+        $startMs = RadarAutoTune::toMs($startedAt);
+        $nowMs = RadarAutoTune::toMs($now);
+        $elapsed = ($startMs !== null && $nowMs !== null)
+            ? max(0, (int) round(($nowMs - $startMs) / 1000))
+            : 0;
+        if ($elapsed < RadarGuidedCalibration::SENSITIVITY_SECONDS) {
+            $remaining = max(0, RadarGuidedCalibration::SENSITIVITY_SECONDS - $elapsed);
+            $state['steps'][$stepId]['detail'] = [
+                'message' => 'Midiendo sensibilidad… quedan ' . $remaining . ' s.',
+                'countdown' => $remaining,
+            ];
+            $state['updated_at'] = $now;
+            return $state;
+        }
+        $current = (int) ($ctx['settings']['radar_sensitivity'] ?? 0);
+        $recommendation = RadarAutoTune::sensitivity(
+            (array) ($ctx['distance_reports'] ?? []),
+            (array) ($ctx['presence_reports'] ?? []),
+            $current,
+            RadarGuidedCalibration::SENSITIVITY_SECONDS,
+            $now,
+            (string) ($ctx['authentic_state'] ?? '')
+        );
+        $value = $recommendation['value'] ?? null;
+        if ($value === null || (int) $value === $current) {
+            $state = RadarGuidedCalibration::markPassed($state, $stepId, $now, [
+                'message' => 'Sin cambios de sensibilidad.',
+                'recommendation' => $recommendation,
+                'decision' => 'keep',
+            ]);
+            if (($state['status'] ?? '') === RadarGuidedCalibration::STATUS_DONE) {
+                $state = $this->finalizeWizard($roomId, $device, $state);
+            }
+            return $state;
+        }
+        return RadarGuidedCalibration::sensitivityAwaiting($state, $recommendation, $now);
+    }
+
+    /** @param array<string,mixed> $state */
+    private function finalizeWizard(int $roomId, array $device, array $state): array
+    {
+        if (($state['calibration_persisted'] ?? false) === true) {
+            return $state;
+        }
+        try {
+            $status = $this->service()->status($roomId, $device);
+            $settings = (array) ($status['settings'] ?? []);
+            $summary = (array) ($state['summary'] ?? []);
+            $saved = $this->service()->persistCalibration(
+                $device,
+                $settings,
+                $status['settings_at'] ?? null,
+                'radar-studio-guided-v1',
+                ['wizard' => $summary]
+            );
+            $state['calibration_persisted'] = true;
+            $state['calibration_error'] = null;
+            $state['saved'] = $saved;
+        } catch (Throwable $e) {
+            $state['calibration_persisted'] = false;
+            $state['calibration_error'] = $e->getMessage();
+        }
+        $state['updated_at'] = $this->nowIso();
+        return $state;
+    }
+
+    /**
+     * @param array<string,mixed> $body
+     * @param array<string,mixed> $device
+     * @param array<string,mixed>|null $state
+     */
+    private function dispatchWizardAction(
+        int $roomId,
+        array $device,
+        ?array $state,
+        string $action,
+        array $body
+    ): Response {
+        $now = $this->nowIso();
+        $status = $this->service()->status($roomId, $device);
+        $settings = (array) ($status['settings'] ?? []);
+        $configKey = RadarDistanceReport::configKey($settings);
+
+        if ($action === 'reset' || $action === 'cancel') {
+            $this->store->clearWizard($roomId);
+            return $this->wizardResponse($roomId, $device, null);
+        }
+        if ($action === 'status') {
+            return $this->wizardResponse($roomId, $device, $state);
+        }
+        if ($action === 'profile_applied') {
+            if (!ZigbeeRadarCalibrationService::isValidSettings($settings) || ($status['stale'] ?? false) === true) {
+                return Response::json(409, [
+                    'ok' => false,
+                    'error' => 'profile_not_ready',
+                    'message' => 'El radar no tiene una configuración reciente y válida. Aplica el perfil y espera la confirmación por push.',
+                ]);
+            }
+            $state = RadarGuidedCalibration::markProfileApplied($state, $roomId, $settings, $configKey, $now);
+            $this->store->saveWizard($roomId, $state);
+            return $this->wizardResponse($roomId, $device, $state);
+        }
+        if ($state === null) {
+            return Response::json(409, [
+                'ok' => false,
+                'error' => 'wizard_not_started',
+                'message' => 'Primero aplica el perfil de ajuste manual para iniciar la calibración guiada.',
+            ]);
+        }
+
+        $ctx = $this->wizardContext($roomId, $settings, $status);
+        $current = (string) ($state['current_step'] ?? '');
+
+        switch ($action) {
+            case 'step_start':
+                $stepId = (string) ($body['step_id'] ?? $current);
+                if ($stepId !== $current || !isset($state['steps'][$stepId])) {
+                    return Response::json(409, ['ok' => false, 'error' => 'step_locked', 'message' => 'Ese paso no está activo.']);
+                }
+                $state = RadarGuidedCalibration::startStep($state, $stepId, $now, $ctx);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            case 'step_pass':
+                if ($current !== RadarGuidedCalibration::WALK) {
+                    return Response::json(409, ['ok' => false, 'error' => 'step_not_manual', 'message' => 'Solo el paseo se marca manualmente.']);
+                }
+                $walk = $state['steps'][RadarGuidedCalibration::WALK] ?? [];
+                if (($walk['status'] ?? '') !== RadarGuidedCalibration::STEP_ACTIVE) {
+                    return Response::json(409, ['ok' => false, 'error' => 'step_not_started', 'message' => 'Empieza el paseo antes de marcarlo como bueno.']);
+                }
+                $state = RadarGuidedCalibration::evaluateWalk($state, $now, $ctx);
+                $state = RadarGuidedCalibration::markPassed($state, RadarGuidedCalibration::WALK, $now, [
+                    'message' => 'Prueba buena confirmada por el operador.',
+                ]);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            case 'sensitivity_accept':
+                if ($current !== RadarGuidedCalibration::SENSITIVITY) {
+                    return Response::json(409, ['ok' => false, 'error' => 'step_not_sensitivity']);
+                }
+                $sensStep = $state['steps'][RadarGuidedCalibration::SENSITIVITY] ?? [];
+                if (($sensStep['status'] ?? '') !== RadarGuidedCalibration::STEP_AWAITING) {
+                    return Response::json(409, ['ok' => false, 'error' => 'not_awaiting_decision']);
+                }
+                $recommendation = is_array($sensStep['recommendation'] ?? null) ? $sensStep['recommendation'] : null;
+                $value = $recommendation['value'] ?? null;
+                if (!is_numeric($value) || (int) $value < 0 || (int) $value > 9) {
+                    return Response::json(409, ['ok' => false, 'error' => 'no_recommendation']);
+                }
+                $apply = ZigbeeRadarCalibrationService::normalizeCommands($settings);
+                if ($apply === []) {
+                    return Response::json(409, ['ok' => false, 'error' => 'settings_unavailable']);
+                }
+                $apply['radar_sensitivity'] = (int) $value;
+                $result = $this->service()->apply($roomId, $device, $apply, true, 15, 'radar-studio-guided-v1');
+                if (($result['applied'] ?? false) !== true) {
+                    return Response::json(409, [
+                        'ok' => false,
+                        'error' => 'not_confirmed',
+                        'message' => (string) ($result['warning'] ?? 'El radar no confirmó la sensibilidad.'),
+                        'result' => $result,
+                    ]);
+                }
+                $state['settings']['radar_sensitivity'] = (int) $value;
+                $state = RadarGuidedCalibration::sensitivityDecision($state, 'accept', $now);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            case 'sensitivity_keep':
+                if ($current !== RadarGuidedCalibration::SENSITIVITY) {
+                    return Response::json(409, ['ok' => false, 'error' => 'step_not_sensitivity']);
+                }
+                $sensStep = $state['steps'][RadarGuidedCalibration::SENSITIVITY] ?? [];
+                if (($sensStep['status'] ?? '') !== RadarGuidedCalibration::STEP_AWAITING) {
+                    return Response::json(409, ['ok' => false, 'error' => 'not_awaiting_decision']);
+                }
+                $state = RadarGuidedCalibration::sensitivityDecision($state, 'keep', $now);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            case 'retry':
+                $state = RadarGuidedCalibration::retryStep($state, $now);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            case 'finish':
+                if (($state['status'] ?? '') !== RadarGuidedCalibration::STATUS_DONE) {
+                    return Response::json(409, ['ok' => false, 'error' => 'wizard_not_done']);
+                }
+                $state = $this->finalizeWizard($roomId, $device, $state);
+                $this->store->saveWizard($roomId, $state);
+                return $this->wizardResponse($roomId, $device, $state);
+
+            default:
+                return Response::json(400, ['ok' => false, 'error' => 'unknown_action']);
+        }
+    }
+
     private function scopePayload(int $roomId, int $window = 60): array
     {
         $window = max(10, min(300, $window));

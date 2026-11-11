@@ -84,6 +84,15 @@ same('sin nada → sin sugerencia', $nothing['value'], null);
 same('sin nada motivo', $nothing['reason'], 'no_motion_no_presence');
 same('sin nada confianza', $nothing['confidence'], 'low');
 
+// F125.1: si el DP1 no está disponible, el estado crudo PRESENTE evita subir
+// la sensibilidad a ciegas cuando además hay movimiento.
+$rawPresent = RadarAutoTune::sensitivity($motion, [], 7, 20, $now, 'PRESENT');
+same('raw PRESENT + ecos → mantiene', $rawPresent['value'], 7);
+same('raw PRESENT + ecos motivo', $rawPresent['reason'], 'detects_reliably');
+$rawOnly = RadarAutoTune::sensitivity([], [], 7, 20, $now, 'PRESENT');
+same('raw PRESENT sin ecos → +1', $rawOnly['value'], 8);
+same('raw PRESENT sin ecos motivo', $rawOnly['reason'], 'presence_without_motion');
+
 // ── soak ────────────────────────────────────────────────────────────────
 $soakClear = RadarAutoTune::soak([], '2026-11-11T10:00:00Z', '2026-11-11T10:01:01Z', 60, 'ABSENT');
 same('soak silencio + base ABSENT → clear', $soakClear['result'], 'clear');

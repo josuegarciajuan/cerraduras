@@ -521,6 +521,9 @@ final class ZigbeeRadarCalibrationService
                 $snap[$key] = (float) $settings[$key];
             }
         }
+        if ($extra !== []) {
+            $snap = array_merge($snap, $extra);
+        }
         $meta['calibration'] = $snap;
         $this->pdo->prepare('UPDATE devices SET meta_json = :meta WHERE id = :id')
             ->execute([

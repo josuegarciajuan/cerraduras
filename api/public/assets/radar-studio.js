@@ -19,6 +19,9 @@
     preview: null,
     recommendation: null,
     active: null,
+    wizard: null,
+    steps: [],
+    wizardStatus: 'running',
     busy: false,
     timer: null,
     lastSoak: 0,
@@ -101,14 +104,22 @@
     }
     S.roomRetries = 0;
     try {
-      var data = await api(API + '/scope?room_id=' + roomId() + '&window=60', { cache: 'no-store' });
-      S.scope = data;
+      var data = await api(API + '/wizard?room_id=' + roomId(), { cache: 'no-store' });
+      applyWizardData(data);
       // No borrar una edición local mientras el operario mueve los sliders.
       // El preview se limpia al aplicar, cambiar de sala o restaurar.
       render();
     } catch (e) {
       renderError(e.message);
     }
+  }
+
+  function applyWizardData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.wizard !== undefined) S.wizard = data.wizard;
+    if (Array.isArray(data.steps)) S.steps = data.steps;
+    if (data.wizard_status) S.wizardStatus = data.wizard_status;
+    if (data.scope) S.scope = data.scope;
   }
 
   function renderError(message) {
@@ -142,6 +153,7 @@
     if (host && window.RadarScope) host.innerHTML = window.RadarScope.buildSvg(currentScope() || sc);
     renderDiagnosis(sc);
     syncControls(sc);
+    renderWizard();
     renderActive(sc);
   }
 
@@ -271,6 +283,110 @@
     render();
   }
 
+  function renderWizard() {
+    var host = $('wizardSteps');
+    var summary = $('wizardSummary');
+    var statusEl = $('wizardStatus');
+    if (!host || !window.RadarWizard) return;
+    var steps = S.steps || [];
+    if (!steps.length) {
+      host.innerHTML = '<div class="hint">Ajusta el perfil y pulsa «Aplicar al radar» para iniciar la calibración guiada.</div>';
+      if (summary) summary.innerHTML = '';
+      return;
+    }
+    var current = S.wizard ? (S.wizard.current_step || '') : 'profile';
+    var html = '';
+    steps.forEach(function (step) {
+      var visual = window.RadarWizard.visualStatus(step.status);
+      var model = window.RadarWizard.actionModel(step);
+      var lines = window.RadarWizard.detailLines(step);
+      var isCurrent = step.id === current;
+      html += '<div class="wstep ' + esc(visual) + '">'
+        + '<div class="wstep-num">' + esc(window.RadarWizard.statusIcon(step.status)) + '</div>'
+        + '<div class="wstep-body">'
+        + '<div class="wstep-title">' + esc(step.title)
+        + ' <span class="pill ' + (visual === 'passed' ? 'ok' : visual === 'failed' ? 'bad' : visual === 'awaiting_decision' ? 'warn' : 'dim') + '">'
+        + esc(window.RadarWizard.statusLabel(step.status)) + '</span></div>'
+        + '<div class="wstep-desc">' + esc(step.description || '') + '</div>';
+      if (isCurrent && model.note) {
+        html += '<div class="wstep-detail">' + esc(model.note) + '</div>';
+      }
+      lines.forEach(function (line) {
+        html += '<div class="wstep-detail"><span class="line">' + esc(line) + '</span></div>';
+      });
+      if (isCurrent && model.buttons.length) {
+        html += '<div class="wstep-actions">';
+        model.buttons.forEach(function (btn) {
+          html += '<button class="' + (btn.primary ? 'primary' : 'ghost') + '" data-wizard="' + esc(btn.action) + '"'
+            + (btn.value != null ? ' data-value="' + esc(btn.value) + '"' : '') + '>' + esc(btn.label) + '</button>';
+        });
+        html += '</div>';
+      }
+      html += '</div></div>';
+    });
+    host.innerHTML = html;
+    if (statusEl) {
+      statusEl.textContent = S.wizard && S.wizard.status === 'config_changed'
+        ? 'La configuración del radar ha cambiado. Vuelve a aplicar el perfil para reiniciar.'
+        : '';
+    }
+    if (summary) {
+      summary.innerHTML = (S.wizard && S.wizard.status === 'done' && S.wizard.summary)
+        ? renderWizardSummary(S.wizard.summary) : '';
+    }
+  }
+
+  function renderWizardSummary(sum) {
+    if (!sum) return '';
+    var rows = [];
+    if (sum.settings) {
+      rows.push(['Perfil', 'sens ' + sum.settings.radar_sensitivity + '/9 · alcance '
+        + sum.settings.maximum_range + ' m · mín ' + sum.settings.minimum_range
+        + ' m · delay ' + sum.settings.detection_delay + ' s']);
+    }
+    if (sum.walk && sum.walk.loss_distance != null) {
+      rows.push(['Paseo', 'pérdida a ' + Number(sum.walk.loss_distance).toFixed(2) + ' m']);
+    }
+    if (sum.sensitivity) {
+      var dec = sum.sensitivity.decision || '—';
+      var rec = sum.sensitivity.recommendation && sum.sensitivity.recommendation.value != null
+        ? ' · ' + sum.sensitivity.recommendation.value + '/9' : '';
+      rows.push(['Sensibilidad', dec + rec]);
+    }
+    if (sum.finished_at) rows.push(['Fin', sum.finished_at]);
+    return '<div class="wizard-summary"><h3>Radar calibrado</h3>'
+      + rows.map(function (r) {
+        return '<div class="techrow"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  async function postWizard(action, extra) {
+    var body = Object.assign({ room_id: roomId(), action: action, operator: operator() }, extra || {});
+    return await api(API + '/wizard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function wizardAction(action, extra, statusEl) {
+    if (S.busy) return null;
+    setBusy(true, 'Ejecutando…');
+    try {
+      var data = await postWizard(action, extra);
+      applyWizardData(data);
+      render();
+      return data;
+    } catch (e) {
+      if (e.data && typeof e.data === 'object') applyWizardData(e.data);
+      if (statusEl) statusEl.textContent = e.message;
+      render();
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function renderActive(sc) {
     var state = S.active || (sc && sc.active_operation) || null;
     var auto = !!(state && state.action === 'auto_range');
@@ -364,10 +480,16 @@
       S.scope = data.scope;
       S.preview = null;
       S.active = null;
+      try {
+        var w = await postWizard('profile_applied');
+        applyWizardData(w);
+      } catch (we) {
+        toast('Perfil aplicado, pero no se pudo iniciar la guía: ' + we.message);
+      }
       var st = $('applyStatus');
       if (st) st.textContent = 'Aplicado y confirmado por push.';
       render();
-      toast('Perfil aplicado y confirmado por el radar');
+      toast('Perfil aplicado; calibración guiada reiniciada');
     } catch (e) {
       if (e.data && e.data.scope) S.scope = e.data.scope;
       var st2 = $('applyStatus');
@@ -574,7 +696,7 @@
     S.timer = setInterval(function () {
       if (document.hidden || S.busy || S.tab !== 'radar') return;
       var active = S.active || (S.scope && S.scope.scope && S.scope.scope.active_operation);
-      if (active && active.action === 'soak' && (Date.now() - S.lastSoak) >= SOAK_MS) {
+      if (!S.wizard && active && active.action === 'soak' && (Date.now() - S.lastSoak) >= SOAK_MS) {
         S.lastSoak = Date.now();
         soakCheck();
         return;
@@ -618,6 +740,29 @@
     bind('btnReentryMark', reentryMark);
     bind('btnReentryCheck', reentryCheck);
     bind('btnRestore', restoreFromToolbar);
+    bind('btnWizardReset', function () { wizardAction('reset', {}, $('wizardStatus')); });
+    var wizardHost = $('wizardSteps');
+    if (wizardHost) {
+      wizardHost.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-wizard]');
+        if (!btn || btn.disabled) return;
+        var action = btn.getAttribute('data-wizard');
+        var current = S.wizard ? (S.wizard.current_step || '') : '';
+        if (action === 'start') {
+          wizardAction('step_start', { step_id: current }, $('wizardStatus'));
+        } else if (action === 'walk_pass') {
+          wizardAction('step_pass', {}, $('wizardStatus'));
+        } else if (action === 'sensitivity_accept') {
+          wizardAction('sensitivity_accept', {}, $('wizardStatus'));
+        } else if (action === 'sensitivity_keep') {
+          wizardAction('sensitivity_keep', {}, $('wizardStatus'));
+        } else if (action === 'retry') {
+          wizardAction('retry', {}, $('wizardStatus'));
+        } else if (action === 'reset') {
+          wizardAction('reset', {}, $('wizardStatus'));
+        }
+      });
+    }
     var fromUrl = '';
     try { fromUrl = new URLSearchParams(location.search).get('tab') || ''; } catch (e) { fromUrl = ''; }
     setTab(fromUrl === 'radar' ? 'radar' : 'verify');

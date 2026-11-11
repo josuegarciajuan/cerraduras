@@ -146,6 +146,32 @@
   .at-card strong{font-size:14px}
   .at-card .actions{flex-direction:column;gap:8px}
   details summary{cursor:pointer;color:var(--text-mid);font-size:13px;margin:10px 0}
+
+  /* F125.1 · Calibración guiada */
+  .wizard{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  .wstep{display:flex;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--surface)}
+  .wstep-num{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;border:1px solid var(--line);color:var(--text-mid);flex:0 0 auto}
+  .wstep-body{min-width:0;flex:1}
+  .wstep-title{font-weight:700;font-size:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .wstep-desc{font-size:12px;color:var(--text-mid);margin-top:2px}
+  .wstep-detail{font-size:12px;color:var(--text);margin-top:6px}
+  .wstep-detail .line{margin-top:2px}
+  .wstep-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .wstep-actions button{min-height:40px;padding:6px 12px;font-size:13px}
+  .wstep.active,.wstep.pending{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(24,255,255,.12) inset}
+  .wstep.active .wstep-num,.wstep.pending .wstep-num{border-color:var(--cyan);color:var(--cyan)}
+  .wstep.passed{border-color:var(--pass)}
+  .wstep.passed .wstep-num{background:var(--pass);border-color:var(--pass);color:#04120b}
+  .wstep.failed{border-color:var(--fail)}
+  .wstep.failed .wstep-num{background:var(--fail);border-color:var(--fail);color:#1b0505}
+  .wstep.awaiting_decision{border-color:var(--warn)}
+  .wstep.awaiting_decision .wstep-num{border-color:var(--warn);color:var(--warn)}
+  .wstep.locked{opacity:.55}
+  .wstep.locked .wstep-num{border-style:dashed}
+  .wizard-summary{margin-top:12px;border:1px solid var(--pass);border-radius:12px;padding:12px;background:rgba(0,230,118,.06)}
+  .wizard-summary h3{margin:0 0 6px;font-size:16px;color:var(--pass)}
+  .wizard-summary .techrow{border-color:rgba(0,230,118,.3)}
 </style>
 </head>
 <body>
@@ -238,9 +264,21 @@
           <button class="ghost" id="btnBaseline">Restaurar ajustes iniciales</button>
         </div>
         <div class="hint" id="applyStatus"></div>
+        <div class="hint" id="profileHint">Aplicar un perfil nuevo reinicia la calibración guiada.</div>
       </div>
       <div class="card" style="margin-top:12px">
-        <h2>Autoajuste guiado</h2>
+        <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+          <h2 style="margin:0">Calibración guiada</h2>
+          <button id="btnWizardReset" class="ghost" type="button" style="min-height:40px;padding:6px 12px;font-size:12px">Reiniciar</button>
+        </div>
+        <div class="hint" id="wizardHeadHint">Sigue los pasos en orden. Solo se habilita el paso actual.</div>
+        <div id="wizardSteps" class="wizard" aria-live="polite"></div>
+        <div id="wizardStatus" class="hint"></div>
+        <div id="wizardSummary"></div>
+      </div>
+      <details class="tech" id="advancedAutotune" style="margin-top:12px">
+        <summary>Avanzado (diagnóstico)</summary>
+
         <div class="at-card">
           <strong>0 · ¿El radar te ve?</strong>
           <p class="hint">Pulsa, muévete delante del radar durante 10 s y comprobaremos si llega movimiento (distancia) o presencia.</p>
@@ -289,7 +327,7 @@
         <div class="actions">
           <button class="ghost" id="btnRestore">Restaurar ajustes desde la operación</button>
         </div>
-      </div>
+      </details>
     </aside>
   </main>
 </div>
@@ -304,7 +342,8 @@
 </dialog>
 
 <script src="assets/sensor-wizard-v2.js?v=20261103-f112d"></script>
-<script src="assets/radar-scope.js?v=20261111-f124"></script>
-<script src="assets/radar-studio.js?v=20261111-f124"></script>
+<script src="assets/radar-wizard.js?v=20261111-f1251"></script>
+<script src="assets/radar-scope.js?v=20261111-f1251"></script>
+<script src="assets/radar-studio.js?v=20261111-f1251"></script>
 </body>
 </html>
