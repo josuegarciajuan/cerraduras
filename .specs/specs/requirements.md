@@ -14149,3 +14149,29 @@ antiguas de autoajuste (se conservan en «Avanzado»).
 - Afecta a la ruta idempotente de `/radar/profile`, a la sensibilidad ya
   aplicada, al cierre del reposo exterior y al guardado final del wizard.
 - **Trazabilidad:** `ZigbeeRadarCalibrationPersistTest` y BLOCK 97.
+
+## F125.1.2 — Perfil MQTT por dispositivo (RF-362…RF-365)
+
+**Motivo:** la API publica todas las órdenes Zigbee con el `.env` de producción
+(1884). El radar de DEVELOPMENTROOM está en el broker de desarrollo (1886), por
+lo que sus cambios nunca se confirman y la UI devuelve `not_confirmed`.
+
+- **RF-362 (perfil por dispositivo):** cada dispositivo puede declarar
+  `meta.mqtt_profile`. Sin perfil se usa el `.env` actual (producción).
+- **RF-363 (perfiles seguros):** el fichero
+  `config/zigbee-mqtt-profiles.json` no contiene contraseñas; solo puerto,
+  usuario y ruta al fichero de credenciales. El perfil desconocido o inválido
+  falla cerrado y no publica.
+- **RF-364 (publicadores):** el radar (`ZigbeeRadarCalibrationService`) y la
+  luz (`ZigbeeSwitchGateway`) aplican el perfil al proceso hijo de
+  `publish-json.js`/`publish.js`/`read-state.js` sin tocar `.env`.
+- **RF-365 (operación):** `bin/zigbee-mqtt-profile.php` diagnostica y asigna el
+  perfil, con backup del meta y confirmación explícita. Solo el dispositivo dev
+  se configura; los dispositivos de producción siguen en 1884.
+
+**Fuera de alcance:** cambiar el `.env`, añadir un drop-in global de systemd o
+mover dispositivos entre brokers.
+
+**Trazabilidad:** `ZigbeeMqttProfile`, `ZigbeeRadarCalibrationService`,
+`ZigbeeSwitchGateway`, `bin/zigbee-mqtt-profile.php`,
+`ZigbeeMqttProfileTest`, `ZigbeeRadarCalibrationProfileTest`, BLOCK 98.

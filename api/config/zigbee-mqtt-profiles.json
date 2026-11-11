@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "profiles": {
+    "dev": {
+      "port": 1886,
+      "username": "zigbee2mqtt-dev",
+      "password_file": "/etc/cerraduras/zigbee-dev-mqtt.pass"
+    }
+  }
+}

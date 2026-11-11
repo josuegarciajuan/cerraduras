@@ -9736,6 +9736,98 @@ else
 fi
 
 # =============================================================================
+# BLOCK 98 — F125.1.2: perfil MQTT por dispositivo
+# Trazabilidad: F125.1.2 · requirements.md §F125.1.2 · design.md §F125.1.2
+# =============================================================================
+block "BLOCK 98 — F125.1.2: perfil MQTT por dispositivo"
+
+for F12512_FILE in \
+    config/zigbee-mqtt-profiles.json \
+    src/Infrastructure/Zigbee/ZigbeeMqttProfile.php \
+    bin/zigbee-mqtt-profile.php \
+    tests/Unit/ZigbeeMqttProfileTest.php \
+    tests/Unit/ZigbeeRadarCalibrationProfileTest.php; do
+    if [ -f "$F12512_FILE" ]; then
+        pass "F125.1.2: existe $F12512_FILE"
+    else
+        fail "F125.1.2: $F12512_FILE" "no encontrado"
+    fi
+done
+
+for F12512_MARK in 'mqtt_profile' 'ZigbeeMqttProfile' 'ZIGBEE_MQTT_PORT'; do
+    if grep -qF "$F12512_MARK" src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php 2>/dev/null \
+       || grep -qF "$F12512_MARK" src/Infrastructure/Zigbee/ZigbeeMqttProfile.php 2>/dev/null; then
+        pass "F125.1.2: marcador $F12512_MARK"
+    else
+        fail "F125.1.2: marcador $F12512_MARK" "ausente"
+    fi
+done
+
+for F12512_PHP in \
+    src/Infrastructure/Zigbee/ZigbeeMqttProfile.php \
+    src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    src/Infrastructure/Gateways/Switch/ZigbeeSwitchGateway.php \
+    bin/zigbee-mqtt-profile.php; do
+    if php -l "$F12512_PHP" >/tmp/f12512-php.log 2>&1; then
+        pass "F125.1.2: sintaxis $(basename "$F12512_PHP")"
+    else
+        fail "F125.1.2: sintaxis $(basename "$F12512_PHP")" "$(tail -2 /tmp/f12512-php.log | tr '\n' ' ')"
+    fi
+done
+
+if php tests/Unit/ZigbeeMqttProfileTest.php >/tmp/f12512-profile.log 2>&1; then
+    pass "F125.1.2: unit ZigbeeMqttProfile"
+else
+    fail "F125.1.2: unit ZigbeeMqttProfile" "$(tail -3 /tmp/f12512-profile.log | tr '\n' ' ')"
+fi
+if php tests/Unit/ZigbeeRadarCalibrationProfileTest.php >/tmp/f12512-radar.log 2>&1; then
+    pass "F125.1.2: unit radar env"
+else
+    fail "F125.1.2: unit radar env" "$(tail -3 /tmp/f12512-radar.log | tr '\n' ' ')"
+fi
+if php tests/Unit/ZigbeeSwitchGatewayTest.php >/tmp/f12512-switch.log 2>&1; then
+    pass "F125.1.2: unit switch env"
+else
+    fail "F125.1.2: unit switch env" "$(tail -3 /tmp/f12512-switch.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ] && [ -n "$(get_key ADMIN-CLI)" ]; then
+    F12512_PROD=$(php bin/zigbee-mqtt-profile.php --device=438 --json 2>/dev/null)
+    F12512_PROD_OK=$(printf '%s' "$F12512_PROD" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    print('bad_json'); raise SystemExit
+r=d.get('resolved') or {}
+print('ok' if r.get('profile')=='default' and r.get('port')==1884 else 'bad_profile')
+" 2>/dev/null)
+    if [ "$F12512_PROD_OK" = "ok" ]; then
+        pass "F125.1.2: producción (438) sigue en default/1884"
+    else
+        fail "F125.1.2: producción (438)" "json=$F12512_PROD_OK"
+    fi
+
+    F12512_DEV=$(php bin/zigbee-mqtt-profile.php --device=1339 --json 2>/dev/null)
+    F12512_DEV_OK=$(printf '%s' "$F12512_DEV" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    print('bad_json'); raise SystemExit
+r=d.get('resolved') or {}
+print('ok' if r.get('profile')=='dev' and r.get('port')==1886 else 'not_assigned')
+" 2>/dev/null)
+    if [ "$F12512_DEV_OK" = "ok" ]; then
+        pass "F125.1.2: dev (1339) en perfil dev/1886"
+    else
+        skip "F125.1.2: dev (1339)" "perfil dev no asignado"
+    fi
+else
+    skip "F125.1.2: diagnóstico de perfiles" "servidor/clave no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

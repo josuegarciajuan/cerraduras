@@ -6,6 +6,7 @@ namespace App\Infrastructure\Zigbee;
 use App\Support\Config;
 use PDO;
 use RuntimeException;
+use Throwable;
 
 /**
  * ZigbeeRadarCalibrationService — F93/RF-156.
@@ -97,16 +98,18 @@ final class ZigbeeRadarCalibrationService
         return null;
     }
 
-    /** @var callable(string,string):array{ok:bool,error:?string} */
+    /** @var callable(string,string,array=):array{ok:bool,error:?string} */
     private $publisher;
+    private ?string $profileConfigFile;
 
     /**
-     * @param callable(string,string):array{ok:bool,error:?string}|null $publisher
+     * @param callable(string,string,array=):array{ok:bool,error:?string}|null $publisher
      *        Injected in tests; production uses the Node MQTT helper.
      */
-    public function __construct(private PDO $pdo, ?callable $publisher = null)
+    public function __construct(private PDO $pdo, ?callable $publisher = null, ?string $profileConfigFile = null)
     {
         $this->publisher = $publisher ?? [$this, 'runPublisher'];
+        $this->profileConfigFile = $profileConfigFile;
     }
 
     /**
@@ -201,7 +204,22 @@ final class ZigbeeRadarCalibrationService
         }
         $beforeId = $this->latestEventId($roomId);
         $publishedAt = gmdate('Y-m-d\TH:i:s.v\Z');
-        $result = ($this->publisher)($this->setTopic($device), json_encode($commands, JSON_UNESCAPED_SLASHES));
+        try {
+            $env = $this->profileEnv($device);
+        } catch (Throwable $e) {
+            return [
+                'ok' => false,
+                'commands' => $commands,
+                'before_event_id' => $beforeId,
+                'published_at' => $publishedAt,
+                'error' => $e->getMessage(),
+            ];
+        }
+        $result = ($this->publisher)(
+            $this->setTopic($device),
+            json_encode($commands, JSON_UNESCAPED_SLASHES),
+            $env
+        );
         return [
             'ok' => (bool) ($result['ok'] ?? false),
             'commands' => $commands,
@@ -305,7 +323,21 @@ final class ZigbeeRadarCalibrationService
         $beforeId = $this->latestEventId($roomId);
         $publishedAt = gmdate('Y-m-d H:i:s.v');
 
-        $result = ($this->publisher)($topic, json_encode($commands, JSON_UNESCAPED_SLASHES));
+        try {
+            $env = $this->profileEnv($device);
+        } catch (Throwable $e) {
+            return [
+                'ok' => false,
+                'applied' => false,
+                'persisted' => false,
+                'error' => $e->getMessage(),
+                'warning' => 'No se pudo resolver el broker MQTT del dispositivo',
+                'commands' => $commands,
+                'status' => $this->status($roomId, $device),
+            ];
+        }
+
+        $result = ($this->publisher)($topic, json_encode($commands, JSON_UNESCAPED_SLASHES), $env);
         if (($result['ok'] ?? false) !== true) {
             return [
                 'ok' => false,
@@ -476,6 +508,18 @@ final class ZigbeeRadarCalibrationService
     }
 
     /**
+     * Overrides MQTT del dispositivo según `meta.mqtt_profile`.
+     *
+     * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
+     * @return array<string,string>
+     */
+    private function profileEnv(array $device): array
+    {
+        $meta = is_array($device['meta'] ?? null) ? $device['meta'] : [];
+        return ZigbeeMqttProfile::envForDevice($meta, $this->profileConfigFile);
+    }
+
+    /**
      * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
      */
     private function setTopic(array $device): string
@@ -568,7 +612,7 @@ final class ZigbeeRadarCalibrationService
     }
 
     /** @return array{ok:bool,error:?string} */
-    private function runPublisher(string $topic, string $payload): array
+    private function runPublisher(string $topic, string $payload, array $env = []): array
     {
         $apiDir = dirname(__DIR__, 3);
         $helper = $apiDir . '/bin/zigbee-ingress/publish-json.js';
@@ -581,7 +625,8 @@ final class ZigbeeRadarCalibrationService
             [$node, $helper, $topic, $payload, (string) max(1, $timeout)],
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
-            $apiDir
+            $apiDir,
+            ZigbeeMqttProfile::childEnv($env)
         );
         if (!is_resource($process)) {
             return ['ok' => false, 'error' => 'publish_process_failed'];
