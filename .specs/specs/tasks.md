@@ -11886,7 +11886,9 @@ pendientes.
 - [x] TSK-F124-05: wiring de `RoomTypeRepository` y `SwitchService` en `index.php`.
 - [x] TSK-F124-06: unit test en `QrValidateServiceTest` (éxito, cerrojo falla, tipos excluidos).
 - [x] TSK-F124-07: BLOCK 92 del runner + requirements/design/contracts/AGENTS.
-- [ ] TSK-F124-08: regresión completa y prueba física con el sensor de puerta desconectado.
+- [x] TSK-F124-08: regresión completa (1210 passed, 0 failed, 14 skipped).
+- [ ] TSK-F124-09: prueba física con el sensor de puerta desconectado.
+
 ## F125 — Radar Studio (calibración visual y autoajuste)
 
 - [x] TSK-F125-01: `RadarAutoTune` (snap, borde, sensibilidad, reposo, reentrada) + unit.

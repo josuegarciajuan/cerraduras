@@ -232,7 +232,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 
 | **F122 Retirada completa de Tuya** | **BLOCK 90 + `TuyaRetirementTest`** | **Implementado: Tuya eliminado; Zigbee única vía; migración 0147; regresión pendiente de cierre** |
 | **F123 Llaves siempre abren + sesiones autocurables** | **BLOCK 69 (ampliado) + `WorkerSessionReusePolicyTest`** | **Implementado: sin `already_inside` en llaves; reuso/TTL; cierre manual; regresión pendiente** |
-| **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; prueba física pendiente** |
+| **F124 Luz al abrir por credencial** | **BLOCK 92 + `QrValidateServiceTest` (F124)** | **Implementado: QR/ficha/QR maestro encienden la luz si el cerrojo abre; almacén/timbrado excluidos; regresión 1210/0/14; prueba física pendiente** |
 | **F125 Radar Studio: calibración visual y autoajuste** | **BLOCK 93 + `RadarScopeTest`/`RadarAutoTuneTest`** | **Implementado (código); prueba física de paseo/reposo/reentrada pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
