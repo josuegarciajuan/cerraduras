@@ -499,3 +499,22 @@ Formato CSV: `external_id,room_code` (ej. `92f57630,101`)
   locales y bajo demanda; el dashboard refresca el estado cada 20 s.
 - **Pruebas**: `api/tests/Unit/RoomControlTest.php`,
   `ResetCleanupTest.php`, BLOCK 94 del runner y regresión completa.
+
+## API unificada y códigos reales (F127)
+
+- **Dashboard**: `/dashboard` emite la cookie firmada `dashboard_session`.
+  El frontend llama a `/api/v1/rooms/...` sin login manual.
+- **Variables**: `DASHBOARD_SESSION_SECRET` (fallback `QR_SIGNING_SECRET`) y
+  `DASHBOARD_SESSION_TTL_SECONDS` (def. 28800).
+- **Rutas canónicas**: `GET /api/v1/rooms/controls`,
+  `GET /api/v1/rooms/{id}/status`, `GET /api/v1/rooms/{id}/light`,
+  `POST /api/v1/rooms/{id}/light`, `POST /api/v1/rooms/{id}/unlock` y
+  `POST /api/v1/rooms/{id}/reset`.
+- **Código real**: `GET /api/v1/rooms/by-code/{code}`. `rooms.code` coincide
+  con el `codhab` del TPV/VB6.
+- **QR**: `POST /api/v1/qr` acepta exactamente uno de `room_id` o
+  `room_code`; `codhab` incoherente devuelve `409 room_code_mismatch`.
+- **Alias**: `/dashboard-api/rooms/...` sigue funcionando con cabecera
+  `Deprecation`; no se documenta como API nueva.
+- **Herramientas**: `make-reservation-qr` usa `CERRADURAS_API_KEY`,
+  `CERRADURAS_API_BASE` y `CERRADURAS_SSH_HOST`. No contiene secretos.

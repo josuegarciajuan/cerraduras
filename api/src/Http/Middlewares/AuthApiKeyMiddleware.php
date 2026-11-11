@@ -7,6 +7,7 @@ use App\Domain\Auth\ApiClient;
 use App\Domain\Auth\ApiClientRepository;
 use App\Domain\Crm\CrmSessionRepository;
 use App\Domain\Crm\CrmUserRepository;
+use App\Domain\Dashboard\DashboardSessionService;
 use App\Http\Middleware;
 use App\Http\Request;
 use App\Http\Response;
@@ -33,15 +34,18 @@ final class AuthApiKeyMiddleware implements Middleware
     private ApiClientRepository $apiClientRepo;
     private ?CrmSessionRepository $crmSessionRepo;
     private ?CrmUserRepository $crmUserRepo;
+    private ?DashboardSessionService $dashboardSession;
 
     public function __construct(
         ApiClientRepository $apiClientRepo,
         ?CrmSessionRepository $crmSessionRepo = null,
-        ?CrmUserRepository $crmUserRepo = null
+        ?CrmUserRepository $crmUserRepo = null,
+        ?DashboardSessionService $dashboardSession = null
     ) {
         $this->apiClientRepo   = $apiClientRepo;
         $this->crmSessionRepo  = $crmSessionRepo;
         $this->crmUserRepo     = $crmUserRepo;
+        $this->dashboardSession = $dashboardSession;
     }
 
     public function handle(Request $request, callable $next): Response
@@ -53,7 +57,14 @@ final class AuthApiKeyMiddleware implements Middleware
             return $next($request);
         }
 
-        // Priority 2: X-API-Key header (standard auth)
+        // Priority 2: dashboard LAN cookie (F127, limited scopes).
+        $dashboardClient = $this->tryDashboardSession($request);
+        if ($dashboardClient !== null) {
+            $request->withAttr('api_client', $dashboardClient);
+            return $next($request);
+        }
+
+        // Priority 3: X-API-Key header (standard auth)
         $key = $request->header('x-api-key');
         if ($key === null || $key === '') {
             throw new UnauthorizedException('Missing X-API-Key header');
@@ -127,6 +138,36 @@ final class AuthApiKeyMiddleware implements Middleware
             'ADMIN',
             $scopes,
             null, // no IP whitelist for CRM
+            true
+        );
+    }
+
+    private function tryDashboardSession(Request $request): ?ApiClient
+    {
+        if ($this->dashboardSession === null || !$this->dashboardSession->enabled()) {
+            return null;
+        }
+        $token = $request->cookie($this->dashboardSession->cookieName());
+        if ($token === null || $token === '') {
+            return null;
+        }
+        $payload = $this->dashboardSession->validate($token);
+        if ($payload === null) {
+            return null;
+        }
+        $request->withAttr('dashboard_session', $payload);
+
+        return new ApiClient(
+            0,
+            'DASHBOARD-LAN',
+            'DASHBOARD',
+            [
+                'rooms:read',
+                'switches:write',
+                'locks:open',
+                'rooms:state',
+            ],
+            null,
             true
         );
     }

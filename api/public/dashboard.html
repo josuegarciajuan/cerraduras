@@ -1651,11 +1651,26 @@ function wireRoomPicker() {
 }
 wireRoomPicker();
 
+function maybeReloadDashboardForSession(res) {
+  if (res && res.status === 401) {
+    const key = 'f127_dashboard_reload';
+    if (!sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, '1');
+      location.reload();
+    }
+    return true;
+  }
+  sessionStorage.removeItem('f127_dashboard_reload');
+  return false;
+}
+
 async function fetchRooms() {
   try {
-    const res = await fetch('/dashboard-api/rooms');
+    const res = await fetch('/api/v1/rooms', { credentials: 'same-origin' });
+    if (maybeReloadDashboardForSession(res)) return;
     if (!res.ok) return;
-    roomList = await res.json();
+    const roomsPayload = await res.json();
+    roomList = roomsPayload.items || [];
     const sel = document.getElementById('room-selector');
     if (!sel) return;
     // Firma de lo que el <select> debe renderizar (id/code/status/pack).
@@ -1904,8 +1919,9 @@ async function confirmAssignPack() {
   // ── Check if another room already has this pack ──
   if (!confirmMove && modalPackId > 0) {
     try {
-      const roomsRes = await fetch('/dashboard-api/rooms');
-      const rooms = await roomsRes.json();
+      const roomsRes = await fetch('/api/v1/rooms', { credentials: 'same-origin' });
+      const roomsPayload = await roomsRes.json();
+      const rooms = roomsPayload.items || [];
       const otherRoom = rooms.find(r => r.id !== roomId && r.pack_id === modalPackId);
       if (otherRoom) {
         const label = otherRoom.code;
@@ -2005,7 +2021,8 @@ let roomControlData = null;
 
 async function refreshRoomControls() {
   try {
-    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/status`, { cache: 'no-store' });
+    const res = await fetch(`/api/v1/rooms/${currentRoomId}/status`, { cache: 'no-store', credentials: 'same-origin' });
+    if (maybeReloadDashboardForSession(res)) return;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     roomControlData = await res.json();
     renderRoomControlBar();
@@ -2033,8 +2050,9 @@ function renderRoomControlBar() {
 async function setRoomLight(state) {
   if (!currentRoomId) return;
   try {
-    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/light`, {
+    const res = await fetch(`/api/v1/rooms/${currentRoomId}/light`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ state })
     });
     const data = await res.json().catch(() => ({}));
@@ -2048,8 +2066,9 @@ async function openRoomLockRemote() {
   if (!currentRoomId) return;
   if (!confirm('¿Abrir la cerradura de esta habitación ahora?')) return;
   try {
-    const res = await fetch(`/dashboard-api/rooms/${currentRoomId}/unlock`, {
+    const res = await fetch(`/api/v1/rooms/${currentRoomId}/unlock`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ reason: 'dashboard_manual' })
     });
     const data = await res.json().catch(() => ({}));
@@ -2111,10 +2130,11 @@ async function resetRoom() {
   const btn = document.getElementById('reset-room-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Reseteando...'; }
   try {
-    const res = await fetch('/dashboard-api/rooms/reset', {
+    const res = await fetch(`/api/v1/rooms/${currentRoomId}/reset`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({room_id: currentRoomId})
+      credentials: 'same-origin',
+      body: JSON.stringify({confirm: true})
     });
     const data = await res.json();
     if (res.ok && data.ok) {

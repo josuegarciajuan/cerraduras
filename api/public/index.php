@@ -14,6 +14,7 @@ use App\Domain\Auth\ApiClientRepository;
 use App\Domain\Crm\CrmSessionRepository;
 use App\Domain\Crm\CrmUserRepository;
 use App\Domain\Crm\CrmUserService;
+use App\Domain\Dashboard\DashboardSessionService;
 use App\Domain\Devices\ApplyPackService;
 use App\Domain\Devices\DevicePackRepository;
 use App\Domain\Devices\CameraReachabilityProbe;
@@ -173,20 +174,40 @@ $router = new Router();
 $router->use(new RequestLogMiddleware($logger));
 $router->use(new ErrorHandlerMiddleware($logger));
 
+// F127: signed LAN session for the public /dashboard. It grants only the
+// room-control scopes the dashboard needs; it is not a CRM login.
+$dashboardSessionService = new DashboardSessionService();
+
 // --- Public routes ---
 $health = new HealthController();
 $router->get('/api/v1/health', [$health, 'show']);
 $router->get('/api/v1/health/deep', [$health, 'deep']);
 
-// Public dashboard HTML (F21, no auth — LAN/MVP)
+// Public dashboard HTML (F21, no auth — LAN/MVP).
+// F127: se emite una cookie firmada de dashboard para que el propio frontend
+// pueda usar las rutas canónicas /api/v1 sin un login manual.
 $router->get(
     '/dashboard',
-    function (\App\Http\Request $request): \App\Http\Response {
+    function (\App\Http\Request $request) use ($dashboardSessionService): \App\Http\Response {
         $htmlFile = __DIR__ . '/dashboard.html';
         if (!is_file($htmlFile)) {
             return \App\Http\Response::json(404, ['error' => 'dashboard HTML not found']);
         }
-        return new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+        $response = new \App\Http\Response(200, ['Content-Type' => 'text/html; charset=utf-8'], @file_get_contents($htmlFile) ?: '');
+        $token = $dashboardSessionService->issue();
+        if ($token !== null) {
+            $response->withCookie(
+                $dashboardSessionService->cookieName(),
+                $token,
+                time() + $dashboardSessionService->ttlSeconds(),
+                '/',
+                '',
+                false,
+                true,
+                'Lax'
+            );
+        }
+        return $response;
     }
 );
 
@@ -1098,7 +1119,7 @@ $router->get(
 // --- Authenticated routes ---
 // We build auth middlewares lazily using a helper so handlers without DB
 // (like /health) don't incur a connection.
-$authFactory = static function (array $requiredScopes) use ($pdoProvider): array {
+$authFactory = static function (array $requiredScopes) use ($pdoProvider, $dashboardSessionService): array {
     static $apiKey = null;
     static $pdo = null;
     if ($apiKey === null) {
@@ -1108,7 +1129,8 @@ $authFactory = static function (array $requiredScopes) use ($pdoProvider): array
         $apiKey = new AuthApiKeyMiddleware(
             new ApiClientRepository($pdo),
             $crmSessionRepo,
-            $crmUserRepo
+            $crmUserRepo,
+            $dashboardSessionService
         );
     }
     return [$apiKey, new AuthScopeMiddleware($requiredScopes)];
@@ -2255,6 +2277,12 @@ $router->get(
     [$roomController, 'index'],
     $authFactory(['rooms:read'])
 );
+// F127: room lookup by real code (TPV/VB6 codhab). Must precede /rooms/{id}.
+$router->get(
+    '/api/v1/rooms/by-code/{code}',
+    [$roomController, 'showByCode'],
+    $authFactory(['rooms:read'])
+);
 // F126: must precede /rooms/{id} so "controls" is not read as an id.
 $router->get(
     '/api/v1/rooms/controls',
@@ -2270,6 +2298,11 @@ $router->get(
     '/api/v1/rooms/{id}/light',
     [$roomControlController, 'light'],
     $authFactory(['rooms:read'])
+);
+$router->post(
+    '/api/v1/rooms/{id}/light',
+    [$roomControlController, 'lightAction'],
+    $authFactory(['switches:write'])
 );
 $router->post(
     '/api/v1/rooms/{id}/light/on',

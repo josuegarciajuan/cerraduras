@@ -14052,3 +14052,37 @@ borrado de historial y control de dispositivos no presentes en el pack.
 `RoomResetService`, `RoomControlController`, `panel-v2.js`, `dashboard.html`,
 `RoomControlStatusTest`, `RoomResetServiceTest`, `RoomControlUiTest`,
 `RoomControlTest`, `ResetCleanupTest`, BLOCK 94 del runner.
+
+## F127 — API unificada y códigos reales de habitación (RF-373…RF-380)
+
+**Motivo:** el dashboard usaba `/dashboard-api/rooms/...` para evitar el login,
+mientras la API canónica vivía en `/api/v1`; además, la emisión de QR exigía el
+`room_id` interno aunque el TPV/VB6 conoce el código real (`codhab`).
+
+- **RF-373 (rutas unificadas):** el dashboard usa las rutas canónicas
+  `/api/v1/rooms/...`; `/dashboard-api/rooms/...` queda como alias deprecado.
+- **RF-374 (sesión LAN):** `GET /dashboard` emite una cookie firmada
+  `dashboard_session` con TTL configurable. El middleware la acepta como
+  cliente `DASHBOARD-LAN` con scopes limitados.
+- **RF-375 (scopes de dashboard):** `rooms:read`, `switches:write`,
+  `locks:open` y `rooms:state`. No incluye `locks:override`.
+- **RF-376 (luz canónica):** `POST /api/v1/rooms/{id}/light` acepta
+  `{state:"ON|OFF"}`; `/light/on` y `/light/off` se mantienen como alias.
+- **RF-377 (código real):** `GET /api/v1/rooms/by-code/{code}` resuelve la sala
+  por `rooms.code`, que coincide con el `codhab` del TPV/VB6.
+- **RF-378 (QR por código):** `POST /api/v1/qr` acepta exactamente uno de
+  `room_id` o `room_code`. Ambos o ninguno → `422`; `codhab` incoherente →
+  `409 room_code_mismatch`.
+- **RF-379 (compatibilidad):** `room_id` sigue funcionando. Las respuestas de
+  emisión añaden `room_code` y `room`.
+- **RF-380 (seguridad de herramientas):** se eliminan claves y contraseñas
+  hardcodeadas de la guía VB6 y de `make-reservation-qr`; se usan variables de
+  entorno.
+
+**Fuera de alcance:** mapping multi-fuente (VB6/TPV/PMS), migraciones de datos,
+cambio de la autenticación CRM y eliminación inmediata de los alias.
+
+**Trazabilidad:** `DashboardSessionService`, `AuthApiKeyMiddleware`,
+`RoomControlController`, `QrIssueService`, `QrController`, `RoomController`,
+`dashboard.html`, `make-reservation-qr`, `DashboardSessionTest`,
+`F127ApiUnificationTest`, BLOCK 95.

@@ -73,7 +73,7 @@ checkRoomControl(str_contains($panel, 'setRoomCamera')
     && str_contains($panel, 'updateRoomFirmware')
     && str_contains($panel, 'cancelRoomFirmware'), 'panel con almacén y OTA');
 
-checkRoomControl(str_contains($dashboard, '/dashboard-api/rooms/')
+checkRoomControl(str_contains($dashboard, '/api/v1/rooms/')
     && str_contains($dashboard, 'setRoomLight')
     && str_contains($dashboard, 'openRoomLockRemote')
     && str_contains($dashboard, 'room-status-modal'), 'dashboard con barra de control y estado');
