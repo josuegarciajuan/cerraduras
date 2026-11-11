@@ -80,8 +80,9 @@ same('presencia sin ecos → sube 1', $presenceNoMotion['value'], 8);
 same('presencia sin ecos motivo', $presenceNoMotion['reason'], 'presence_without_motion');
 
 $nothing = RadarAutoTune::sensitivity([], [], 7, 20, $now);
-same('sin nada → sube 2', $nothing['value'], 9);
+same('sin nada → sin sugerencia', $nothing['value'], null);
 same('sin nada motivo', $nothing['reason'], 'no_motion_no_presence');
+same('sin nada confianza', $nothing['confidence'], 'low');
 
 // ── soak ────────────────────────────────────────────────────────────────
 $soakClear = RadarAutoTune::soak([], '2026-11-11T10:00:00Z', '2026-11-11T10:01:01Z', 60, 'ABSENT');
