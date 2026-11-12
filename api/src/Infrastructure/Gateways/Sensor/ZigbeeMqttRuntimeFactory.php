@@ -30,6 +30,7 @@ use App\Domain\Timbre\RoomRecordingCoordinator;
 use App\Domain\Timbre\TimbreRecordingService;
 use App\Domain\Warehouse\WarehouseRecordingService;
 use App\Domain\Workers\WorkerSessionRepository;
+use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use PDO;
 
 /** Builds the same domain event pipeline for the standalone MQTT worker. */
@@ -108,7 +109,8 @@ final class ZigbeeMqttRuntimeFactory
             $iotService,
             null,
             new RadarDistanceReportRepository($pdo),
-            new RadarPresenceReportRepository($pdo)
+            new RadarPresenceReportRepository($pdo),
+            new RadarCalibrationConvergence($pdo)
         );
     }
 }

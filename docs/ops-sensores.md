@@ -493,3 +493,39 @@ se actualiza con el estado que ya consulta Radar Studio.
   `/radar/live` cada 1 s. El banner/chips/último eco se actualizan sin recargar;
   el SVG/diagnóstico y el wizard van a 1,5 s.
 - El roster del header refresca `/preflight` cada 5 s.
+
+### F125.2 — La calibración guardada manda (convergencia automática)
+
+Invariante: **la configuración reportada por el radar debe coincidir con
+`devices.meta_json.calibration`**. El dispositivo nunca sobrescribe la BD.
+
+- Cada push de presencia con `settings` se compara con la calibración guardada.
+  Si difiere, se re-aplica sola por MQTT (perfil `dev`/`default` del
+  dispositivo), con cooldown `RADAR_RECONCILE_COOLDOWN_SECONDS` (def. 3 s) y
+  máximo `RADAR_RECONCILE_MAX_ATTEMPTS` (def. 6).
+- El estado queda en `devices.meta_json.calibration_state`
+  (`applied`/`converging`/`error`), con las diferencias exactas.
+- Durante `Aplicar`, wizard o autoajuste el objetivo es
+  `calibration_pending` (TTL); así la convergencia no revierte una prueba en
+  curso. Si la prueba se abandona, el TTL expira y vuelve la calibración
+  guardada.
+- Radar Studio muestra **CALIBRACIÓN APLICADA**, **CONVERGIENDO** o **ERROR**
+  y ofrece **Reaplicar calibración guardada**.
+
+Reaplicación manual (por ejemplo tras un corte de alimentación):
+
+```bash
+cd /root/cerraduras/api
+php bin/radar-apply-profile.php --room=201 --dry-run
+php bin/radar-apply-profile.php --room=201
+```
+
+Consulta directa al broker (no espera al spool ni a la BD):
+
+```bash
+curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/radar/direct?room_id=201&timeout=5' | python3 -m json.tool
+```
+
+El topic de estado de Zigbee2MQTT **no es retenido**: la lectura directa se
+suscribe y espera el siguiente mensaje (~1 s con el radar encendido). Si el
+radar está en silencio, devuelve `read_timeout` sin modificar nada.

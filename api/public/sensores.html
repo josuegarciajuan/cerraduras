@@ -191,6 +191,13 @@
   .detect-banner.bad .detect-icon{border-color:var(--fail);color:var(--fail);background:rgba(255,82,82,.14)}
   .detect-banner.dim{border-color:var(--line);background:var(--surface)}
   .detect-banner.dim .detect-icon{border-color:var(--line);color:var(--text-mid)}
+  .calibration-box{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0;background:var(--surface2)}
+  .calibration-box.ok{border-color:var(--pass);background:rgba(0,230,118,.08)}
+  .calibration-box.warn{border-color:var(--warn);background:rgba(255,145,0,.08)}
+  .calibration-box.bad{border-color:var(--fail);background:rgba(255,82,82,.08)}
+  .calibration-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700}
+  .calibration-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .calibration-actions button{min-height:42px;width:auto;padding:8px 14px}
   @keyframes detectPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.06);opacity:.82}}
   @media (max-width:520px){
     .detect-icon{width:44px;height:44px;font-size:22px}
@@ -256,6 +263,18 @@
           <div class="detect-sub" id="detectSub">Esperando al radar…</div>
         </div>
         <div class="detect-age" id="detectAge">—</div>
+      </div>
+      <div id="calibrationBox" class="calibration-box hidden" role="status" aria-live="polite">
+        <div class="calibration-head">
+          <span id="calibrationTitle">Calibración del radar</span>
+          <span id="calibrationBadge" class="badge">—</span>
+        </div>
+        <div class="hint" id="calibrationSub"></div>
+        <div class="calibration-actions">
+          <button id="btnReapplyCalibration" class="primary" type="button">Reaplicar calibración guardada</button>
+          <button id="btnDirectRead" class="ghost" type="button">Consultar ahora</button>
+        </div>
+        <div class="hint" id="calibrationDirect"></div>
       </div>
       <div class="row" id="studioChips" style="margin-bottom:10px"></div>
       <div id="scopeSvg" class="scope-svg" role="img" aria-label="Vista cenital del radar y su alcance configurado"></div>
@@ -378,6 +397,6 @@
 <script src="assets/sensor-wizard-v2.js?v=20261111-f12515"></script>
 <script src="assets/radar-wizard.js?v=20261111-f12515"></script>
 <script src="assets/radar-scope.js?v=20261111-f12515"></script>
-<script src="assets/radar-studio.js?v=20261111-f12515"></script>
+<script src="assets/radar-studio.js?v=20261112-f1252"></script>
 </body>
 </html>

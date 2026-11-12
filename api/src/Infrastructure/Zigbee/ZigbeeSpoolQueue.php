@@ -84,6 +84,21 @@ final class ZigbeeSpoolQueue
         @unlink($this->path('processing') . DIRECTORY_SEPARATOR . basename($file));
     }
 
+    /**
+     * Devuelve un registro a `incoming` sin consumir intentos.
+     * Se usa para errores transitorios de infraestructura (p. ej. conexión
+     * MySQL perdida), que no deben contar como mensaje veneno.
+     *
+     * @param array<string,mixed> $record
+     */
+    public function defer(string $file, array $record, string $error): void
+    {
+        $record['last_error'] = $error;
+        $record['deferred_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
+        $this->writeAtomic('incoming', $file, $record);
+        @unlink($this->path('processing') . DIRECTORY_SEPARATOR . basename($file));
+    }
+
     public function quarantine(string $file, ?array $record, string $error): void
     {
         $safe = basename($file);

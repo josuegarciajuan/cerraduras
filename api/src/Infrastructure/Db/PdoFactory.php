@@ -79,4 +79,23 @@ final class PdoFactory
             return false;
         }
     }
+
+    /**
+     * Un error de conexión (servidor caído, wait_timeout, red) no es un
+     * mensaje veneno: se debe reconectar y reintentar sin cuarentenar.
+     */
+    public static function isConnectionError(\Throwable $e): bool
+    {
+        if ($e instanceof \PDOException) {
+            $driverCode = (int) ($e->errorInfo[1] ?? 0);
+            if (in_array($driverCode, [2006, 2013], true)) {
+                return true;
+            }
+        }
+        $message = strtolower($e->getMessage());
+        return str_contains($message, 'server has gone away')
+            || str_contains($message, 'lost connection')
+            || str_contains($message, 'error while sending')
+            || str_contains($message, 'broken pipe');
+    }
 }

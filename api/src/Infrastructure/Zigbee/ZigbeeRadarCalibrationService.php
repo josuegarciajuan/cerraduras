@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Zigbee;
 
 use App\Domain\Sensors\RadarFreshness;
+use App\Infrastructure\Gateways\Sensor\ZigbeeMqttMessageMapper;
 use App\Support\Config;
 use PDO;
 use RuntimeException;
@@ -39,6 +40,14 @@ final class ZigbeeRadarCalibrationService
         'detection_delay'   => 0.1,
         'fading_time'       => 15.5,
     ];
+
+    /**
+     * F125.2: objetivo temporal mientras se aplica/prueba una configuración.
+     * El reconciliador lo usa para no revertir una prueba en curso. Si expira,
+     * vuelve a mandar la calibración guardada.
+     */
+    public const PENDING_KEY = 'calibration_pending';
+    public const PENDING_UNTIL_KEY = 'calibration_pending_until';
 
     public const PARAMETERS = [
         'radar_sensitivity' => ['min' => 0.0, 'max' => 9.0,  'step' => 1.0,  'unit' => null],
@@ -200,7 +209,7 @@ final class ZigbeeRadarCalibrationService
      * @param array<string,mixed> $input
      * @return array{ok:bool,commands:array<string,int|float>,before_event_id:int,published_at:string,error:?string}
      */
-    public function publish(int $roomId, array $device, array $input): array
+    public function publish(int $roomId, array $device, array $input, bool $markPending = true): array
     {
         $commands = self::normalizeCommands($input);
         if ($commands === []) {
@@ -209,9 +218,15 @@ final class ZigbeeRadarCalibrationService
         }
         $beforeId = $this->latestEventId($roomId);
         $publishedAt = gmdate('Y-m-d\TH:i:s.v\Z');
+        if ($markPending) {
+            $this->setPending($device, $commands, 300);
+        }
         try {
             $env = $this->profileEnv($device);
         } catch (Throwable $e) {
+            if ($markPending) {
+                $this->clearPending($device);
+            }
             return [
                 'ok' => false,
                 'commands' => $commands,
@@ -225,13 +240,93 @@ final class ZigbeeRadarCalibrationService
             json_encode($commands, JSON_UNESCAPED_SLASHES),
             $env
         );
+        $ok = (bool) ($result['ok'] ?? false);
+        if ($markPending && !$ok) {
+            $this->clearPending($device);
+        }
         return [
-            'ok' => (bool) ($result['ok'] ?? false),
+            'ok' => $ok,
             'commands' => $commands,
             'before_event_id' => $beforeId,
             'published_at' => $publishedAt,
-            'error' => ($result['ok'] ?? false) ? null : (string) ($result['error'] ?? 'publish_failed'),
+            'error' => $ok ? null : (string) ($result['error'] ?? 'publish_failed'),
         ];
+    }
+
+    /**
+     * F125.2: lectura directa del siguiente estado del radar, sin esperar a que
+     * el spool lo persista. Se suscribe al topic con el perfil MQTT del
+     * dispositivo y devuelve el primer mensaje. No publica ni persiste.
+     *
+     * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
+     * @return array<string,mixed>
+     */
+    public function readDirect(array $device, int $timeoutSeconds = 5): array
+    {
+        $apiDir = dirname(__DIR__, 3);
+        $helper = $apiDir . '/bin/zigbee-ingress/read-next.js';
+        if (!is_file($helper)) {
+            return ['ok' => false, 'error' => 'read_helper_missing'];
+        }
+        try {
+            $env = $this->profileEnv($device);
+        } catch (Throwable $e) {
+            return ['ok' => false, 'error' => $e->getMessage()];
+        }
+        $topic = $this->stateTopic($device);
+        if (!$this->isValidStateTopic($topic)) {
+            return ['ok' => false, 'error' => 'invalid_topic'];
+        }
+        $node = (string) (Config::get('ZIGBEE_NODE_BIN', 'node') ?? 'node');
+        $timeout = max(1, min(15, $timeoutSeconds));
+        $process = proc_open(
+            [$node, $helper, $topic, (string) $timeout],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            $apiDir,
+            ZigbeeMqttProfile::childEnv($env)
+        );
+        if (!is_resource($process)) {
+            return ['ok' => false, 'error' => 'read_process_failed'];
+        }
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]) ?: '';
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]) ?: '';
+        fclose($pipes[2]);
+        $code = proc_close($process);
+        if ($code !== 0) {
+            $error = trim($stderr) !== '' ? trim($stderr) : 'read_timeout';
+            return ['ok' => false, 'error' => substr($error, 0, 300)];
+        }
+        $decoded = json_decode($stdout, true);
+        if (!is_array($decoded)) {
+            return ['ok' => false, 'error' => 'read_invalid_json'];
+        }
+        $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+        return [
+            'ok' => true,
+            'error' => null,
+            'topic' => (string) ($decoded['topic'] ?? $topic),
+            'received_at' => $decoded['received_at'] ?? null,
+            'payload' => $payload,
+            'settings' => ZigbeeMqttMessageMapper::radarSettings((object) $payload),
+            'presence' => $payload['presence'] ?? null,
+            'target_distance' => $payload['target_distance'] ?? null,
+        ];
+    }
+
+    private function stateTopic(array $device): string
+    {
+        return preg_replace('/\/set$/', '', $this->setTopic($device)) ?? $this->setTopic($device);
+    }
+
+    private function isValidStateTopic(string $topic): bool
+    {
+        if ($topic === '' || strlen($topic) > 220 || str_contains(strtolower($topic), '-oficina')) {
+            return false;
+        }
+        return preg_match('/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/', $topic) === 1;
     }
 
     /**
@@ -328,9 +423,14 @@ final class ZigbeeRadarCalibrationService
         $beforeId = $this->latestEventId($roomId);
         $publishedAt = gmdate('Y-m-d H:i:s.v');
 
+        // F125.2: mientras se aplica o prueba una configuración, el objetivo de
+        // convergencia es este candidato, no la calibración guardada.
+        $this->setPending($device, $commands, $persist ? 300 : 600);
+
         try {
             $env = $this->profileEnv($device);
         } catch (Throwable $e) {
+            $this->clearPending($device);
             return [
                 'ok' => false,
                 'applied' => false,
@@ -344,6 +444,7 @@ final class ZigbeeRadarCalibrationService
 
         $result = ($this->publisher)($topic, json_encode($commands, JSON_UNESCAPED_SLASHES), $env);
         if (($result['ok'] ?? false) !== true) {
+            $this->clearPending($device);
             return [
                 'ok' => false,
                 'applied' => false,
@@ -402,6 +503,7 @@ final class ZigbeeRadarCalibrationService
         if ($applied && $invalidReason !== null) {
             // El dispositivo confirmó el comando pero quedó en un estado inválido
             // (p. ej. max 0,01 m). No se persiste ni se sigue calibrando.
+            $this->clearPending($device);
             return [
                 'ok' => true,
                 'applied' => false,
@@ -416,6 +518,9 @@ final class ZigbeeRadarCalibrationService
         $saved = null;
         if ($persist && $applied) {
             $saved = $this->persistSnapshot($device, $commands, $snapshotForStatus['last_at'], $source);
+            // La calibración ya es la fuente de verdad; se retira el objetivo
+            // temporal para que la convergencia use `calibration`.
+            $this->clearPending($device);
             // Refresca el meta del dispositivo para que `status.saved` refleje
             // exactamente la calibración recién persistida.
             $fresh = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
@@ -424,6 +529,9 @@ final class ZigbeeRadarCalibrationService
             if (is_array($decoded)) {
                 $device['meta'] = $decoded;
             }
+        } elseif (!$applied) {
+            // No se confirmó el candidato: se vuelve al objetivo guardado.
+            $this->clearPending($device);
         }
         $status = $this->status($roomId, $device);
 
@@ -539,6 +647,69 @@ final class ZigbeeRadarCalibrationService
             $base = substr($base, 0, -4);
         }
         return $base . '/set';
+    }
+
+    /**
+     * Fija el objetivo temporal de convergencia. Se mezcla con la calibración
+     * guardada para que el objetivo sea siempre una configuración completa.
+     *
+     * @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device
+     * @param array<string,mixed> $settings
+     */
+    public function setPending(array $device, array $settings, int $ttlSeconds = 300): void
+    {
+        $commands = self::normalizeCommands($settings);
+        if ($commands === []) {
+            return;
+        }
+        $ttlSeconds = max(30, min(900, $ttlSeconds));
+        $meta = $this->loadMeta((int) $device['id']);
+        $base = [];
+        foreach ([self::PENDING_KEY, 'calibration', 'calibration_previous'] as $key) {
+            if (is_array($meta[$key] ?? null)) {
+                $base = $meta[$key];
+                break;
+            }
+        }
+        $target = array_merge($base, $commands);
+        if (!self::isValidSettings($target)) {
+            return;
+        }
+        $meta[self::PENDING_KEY] = $target;
+        $meta[self::PENDING_UNTIL_KEY] = gmdate('Y-m-d\TH:i:s\Z', time() + $ttlSeconds);
+        $this->saveMeta((int) $device['id'], $meta);
+    }
+
+    /** @param array{id:int,external_id:string,meta?:array<string,mixed>|null} $device */
+    public function clearPending(array $device): void
+    {
+        $meta = $this->loadMeta((int) $device['id']);
+        if (!array_key_exists(self::PENDING_KEY, $meta)
+            && !array_key_exists(self::PENDING_UNTIL_KEY, $meta)) {
+            return;
+        }
+        unset($meta[self::PENDING_KEY], $meta[self::PENDING_UNTIL_KEY]);
+        $this->saveMeta((int) $device['id'], $meta);
+    }
+
+    /** @return array<string,mixed> */
+    private function loadMeta(int $deviceId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT meta_json FROM devices WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $deviceId]);
+        $raw = $stmt->fetchColumn();
+        $decoded = json_decode((string) ($raw === false ? '' : $raw), true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /** @param array<string,mixed> $meta */
+    private function saveMeta(int $deviceId, array $meta): void
+    {
+        $this->pdo->prepare('UPDATE devices SET meta_json = :meta WHERE id = :id')
+            ->execute([
+                ':meta' => json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                ':id' => $deviceId,
+            ]);
     }
 
     /**

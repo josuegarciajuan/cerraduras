@@ -10,7 +10,9 @@ use App\Domain\Presence\PresenceEvent;
 use App\Domain\Presence\IotSessionService;
 use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarPresenceReportRepository;
+use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use InvalidArgumentException;
+use Throwable;
 
 /** Resolves configured Zigbee identities and delegates state changes to the domain writer. */
 final class ZigbeeMqttEventProcessor
@@ -20,7 +22,8 @@ final class ZigbeeMqttEventProcessor
         private IotSessionService $iotSessions,
         private ?ZigbeeSwitchStateService $switchStates = null,
         private ?RadarDistanceReportRepository $distanceReports = null,
-        private ?RadarPresenceReportRepository $presenceReports = null
+        private ?RadarPresenceReportRepository $presenceReports = null,
+        private ?RadarCalibrationConvergence $calibrationConvergence = null
     ) {
         $this->switchStates ??= new ZigbeeSwitchStateService($devices);
     }
@@ -167,6 +170,26 @@ final class ZigbeeMqttEventProcessor
         // A real push proves the device is alive, regardless of the later
         // domain decision (duplicate/stale still means it reported).
         $this->devices->updateLastSeen($device->id);
+
+        // F125.2: el radar reporta su configuración en cada push. Si difiere de
+        // la calibración guardada, se re-aplica sola. La convergencia nunca
+        // bloquea la ingesta ni sustituye la calibración de la BD.
+        if ($sensor === 'PRESENCE'
+            && !$isBootstrap
+            && $this->calibrationConvergence !== null
+            && is_array($meta['settings'] ?? null)
+            && $meta['settings'] !== []) {
+            try {
+                $this->calibrationConvergence->onReport(
+                    $roomId,
+                    (int) $device->id,
+                    $externalId,
+                    $meta['settings']
+                );
+            } catch (Throwable $e) {
+                error_log('[radar-convergence] ' . $e->getMessage());
+            }
+        }
 
         // F97.3: identidad del sensor en el hecho auditado. Permite que la
         // proyección física quede ligada al dispositivo correcto.

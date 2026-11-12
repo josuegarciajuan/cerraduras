@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Sensors;
 
 use App\Domain\Sensors\RadarFreshness;
+use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use PDO;
 use RuntimeException;
@@ -85,6 +86,10 @@ final class RadarLiveService
             'presence_mode' => $this->presenceMode($roomId),
             'presence_stale' => (bool) ($live['presence_stale'] ?? false),
             'stale_seconds' => (int) ($status['stale_seconds'] ?? RadarFreshness::staleSeconds()),
+            'calibration' => RadarCalibrationConvergence::statusFor(
+                is_array($device['meta'] ?? null) ? $device['meta'] : [],
+                is_array($settings) ? $settings : []
+            ),
         ];
     }
 

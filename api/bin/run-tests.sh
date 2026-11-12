@@ -5938,6 +5938,20 @@ if grep -qF -- "--requeue requiere --yes" bin/zigbee-spool-worker.php \
 else
     fail "F91: replay sin confirmación/auditoría"
 fi
+# F125.2: el spool reconecta tras un hueco de MySQL y no cuarentena por ello.
+if grep -qF "PdoFactory::ping()" bin/zigbee-spool-worker.php \
+    && grep -qF "isConnectionError" bin/zigbee-spool-worker.php \
+    && grep -qF "public function defer(" src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php; then
+    pass "F125.2: spool reconecta y difiere errores de conexión"
+else
+    fail "F125.2: spool sin reconexión/defer" "revisar zigbee-spool-worker.php"
+fi
+if grep -qF "RADAR_RECONCILE_COOLDOWN_SECONDS" .env.example \
+    && grep -qF "RADAR_RECONCILE_MAX_ATTEMPTS" .env.example; then
+    pass "F125.2: límites de convergencia documentados"
+else
+    fail "F125.2: límites de convergencia" "ausentes en .env.example"
+fi
 if grep -qF "ZIGBEE_INGRESS_ENABLED=false" .env.example \
     && grep -qF "ZIGBEE_SPOOL_ENABLED=false" .env.example; then
     pass "F91: ingress y spool deshabilitados por defecto"
@@ -9398,6 +9412,101 @@ print('ok' if d.get('ok') is True and isinstance(d.get('scope'), dict) else 'bad
     rm -f /tmp/f125-scope.json
 else
     skip "F125: scope HTTP" "servidor o radar no disponible"
+fi
+
+# =============================================================================
+# BLOCK 93B — F125.2: convergencia de la calibración del radar
+# Trazabilidad: RF-350..RF-355 · invariante "reportado == guardado"
+# =============================================================================
+block "BLOCK 93B — F125.2: convergencia de calibración"
+
+for F1252_FILE in \
+    src/Infrastructure/Zigbee/RadarCalibrationConvergence.php \
+    bin/zigbee-ingress/read-next.js \
+    tests/Unit/RadarCalibrationConvergenceTest.php; do
+    if [ -f "$F1252_FILE" ]; then
+        pass "F125.2: existe $F1252_FILE"
+    else
+        fail "F125.2: falta $F1252_FILE"
+    fi
+done
+
+for F1252_ROUTE in '/radar/direct' '/radar/reapply'; do
+    if grep -qF "$F1252_ROUTE" public/index.php 2>/dev/null; then
+        pass "F125.2: ruta $F1252_ROUTE"
+    else
+        fail "F125.2: ruta $F1252_ROUTE" "ausente"
+    fi
+done
+
+for F1252_MARK in \
+    'RadarCalibrationConvergence::statusFor' \
+    'RadarCalibrationConvergence::desired' \
+    'readDirect' \
+    'calibration_state'; do
+    if grep -RqsF "$F1252_MARK" src/Infrastructure/Zigbee/RadarCalibrationConvergence.php \
+        src/Http/Controllers/RadarStudioController.php \
+        src/Infrastructure/Sensors/RadarLiveService.php 2>/dev/null; then
+        pass "F125.2: marcador $F1252_MARK"
+    else
+        fail "F125.2: marcador $F1252_MARK" "ausente"
+    fi
+done
+
+if grep -qF 'calibration_pending' src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    && grep -qF 'setPending' src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php; then
+    pass "F125.2: objetivo temporal durante pruebas"
+else
+    fail "F125.2: objetivo temporal durante pruebas" "ausente"
+fi
+
+for F1252_PHP in \
+    src/Infrastructure/Zigbee/RadarCalibrationConvergence.php \
+    src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    src/Http/Controllers/RadarStudioController.php \
+    src/Infrastructure/Sensors/RadarLiveService.php; do
+    if php -l "$F1252_PHP" >/tmp/f1252-php.log 2>&1; then
+        pass "F125.2: sintaxis $(basename "$F1252_PHP")"
+    else
+        fail "F125.2: sintaxis $(basename "$F1252_PHP")" "$(tail -2 /tmp/f1252-php.log | tr '\n' ' ')"
+    fi
+done
+
+if command -v node >/dev/null 2>&1; then
+    if node --check bin/zigbee-ingress/read-next.js >/tmp/f1252-node.log 2>&1; then
+        pass "F125.2: sintaxis read-next.js"
+    else
+        fail "F125.2: sintaxis read-next.js" "$(tail -3 /tmp/f1252-node.log | tr '\n' ' ')"
+    fi
+else
+    skip "F125.2: sintaxis read-next.js" "node no disponible"
+fi
+
+if php tests/Unit/RadarCalibrationConvergenceTest.php >/tmp/f1252-unit.log 2>&1; then
+    pass "F125.2: unit RadarCalibrationConvergence"
+else
+    fail "F125.2: unit RadarCalibrationConvergence" "$(tail -3 /tmp/f1252-unit.log | tr '\n' ' ')"
+fi
+
+if [ "$SERVER_UP" = true ] && [ -n "$RADAR_ROOM" ]; then
+    F1252_DIRECT_CODE=$(curl -s -o /tmp/f1252-direct.json -w '%{http_code}' --max-time 10 \
+        "$API_BASE/dashboard-api/sensores/v2/radar/direct?room_id=$RADAR_ROOM&timeout=2" 2>/dev/null)
+    F1252_DIRECT_OK=$(python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/f1252-direct.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+print('ok' if d.get('ok') is True and isinstance(d.get('direct'), dict) else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F1252_DIRECT_CODE" = "200" ] && [ "$F1252_DIRECT_OK" = "ok" ]; then
+        pass "F125.2: direct HTTP"
+    else
+        fail "F125.2: direct HTTP" "http=$F1252_DIRECT_CODE json=$F1252_DIRECT_OK"
+    fi
+    rm -f /tmp/f1252-direct.json
+else
+    skip "F125.2: direct HTTP" "servidor o radar no disponible"
 fi
 
 
