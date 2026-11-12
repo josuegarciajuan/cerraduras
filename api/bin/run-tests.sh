@@ -9531,6 +9531,60 @@ else
     else
         pass "F126: sala temporal creada (id=$F126_ROOM_ID)"
 
+        # Regresión fix room-status: una sala con estancia y QR emitido no debe
+        # devolver 500 (antes: QrWindows con namespace incorrecto).
+        F126_JTI=$(python3 -c 'import uuid;print(uuid.uuid4())' 2>/dev/null)
+        db_exec "INSERT INTO stays (room_id, status, duracion_minutos, reserved_at)
+                 VALUES ($F126_ROOM_ID, 'RESERVED', 60, UTC_TIMESTAMP(3));
+                 SET @f126_stay = LAST_INSERT_ID();
+                 INSERT INTO qr_credentials (stay_id, room_id, jti, token_hash, issued_at, expires_at)
+                 VALUES (@f126_stay, $F126_ROOM_ID, '$F126_JTI', SHA2('$F126_JTI', 256),
+                         UTC_TIMESTAMP(3), DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 60 MINUTE));" >/dev/null 2>&1
+        F126_STAY_ID=$($MYSQL -sN -e "SELECT id FROM stays WHERE room_id=$F126_ROOM_ID ORDER BY id DESC LIMIT 1" 2>/dev/null)
+
+        F126_STATUS_CODE=$(curl -s -o /tmp/f126-status.json -w '%{http_code}' \
+            -H "X-API-Key: $F126_ADMIN_KEY" "${API_BASE}/api/v1/rooms/$F126_ROOM_ID/status" 2>/dev/null)
+        F126_STATUS_QR=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f126-status.json'))
+    q=d.get('qr',{})
+    print(q.get('present'), q.get('state'), q.get('stay_id'))
+except Exception:
+    print('bad')
+" 2>/dev/null)
+        if [ "$F126_STATUS_CODE" = "200" ] && [ "$F126_STATUS_QR" = "True ok_unused $F126_STAY_ID" ]; then
+            pass "F126: status con estancia+QR devuelve 200 y bloque qr coherente"
+        else
+            fail "F126: status con estancia+QR" "http=$F126_STATUS_CODE qr='$F126_STATUS_QR' stay=$F126_STAY_ID"
+        fi
+        rm -f /tmp/f126-status.json
+
+        http_test GET "/api/v1/rooms/by-code/$F126_CODE/status" 200 \
+            "F126: status by-code con estancia+QR" --key ADMIN-CLI
+
+        # Sala ocupada: la reserva y la ocupación deben reflejarse sin error.
+        db_exec "UPDATE stays SET status='OCCUPIED',
+                    first_entry_at=UTC_TIMESTAMP(3),
+                    entry_confirmed_at=UTC_TIMESTAMP(3)
+                 WHERE id=$F126_STAY_ID;" >/dev/null 2>&1
+        F126_OCC_CODE=$(curl -s -o /tmp/f126-occ.json -w '%{http_code}' \
+            -H "X-API-Key: $F126_ADMIN_KEY" "${API_BASE}/api/v1/rooms/$F126_ROOM_ID/status" 2>/dev/null)
+        F126_OCC_FLAGS=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f126-occ.json'))
+    print(d.get('reservation',{}).get('active'), d.get('occupancy',{}).get('guest_inside'))
+except Exception:
+    print('bad')
+" 2>/dev/null)
+        if [ "$F126_OCC_CODE" = "200" ] && [ "$F126_OCC_FLAGS" = "True True" ]; then
+            pass "F126: status de sala ocupada devuelve 200 con reserva activa"
+        else
+            fail "F126: status de sala ocupada" "http=$F126_OCC_CODE flags='$F126_OCC_FLAGS'"
+        fi
+        rm -f /tmp/f126-occ.json
+
         http_test GET "/api/v1/rooms/$F126_ROOM_ID/status" 200 \
             "F126: GET /rooms/{id}/status" --key ADMIN-CLI
         http_test GET "/api/v1/rooms/$F126_ROOM_ID/light" 200 \

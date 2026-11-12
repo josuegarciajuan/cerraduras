@@ -7,6 +7,8 @@ declare(strict_types=1);
  * Run: php tests/Unit/RoomControlTest.php
  */
 
+require __DIR__ . '/../../src/Support/Autoload.php';
+
 $passed = 0;
 $failed = 0;
 function checkRoomControl(bool $cond, string $message): void
@@ -49,6 +51,10 @@ checkRoomControl(str_contains($status, 'function controls')
     && str_contains($status, "'room_id'")
     && str_contains($status, 'workers_inside')
     && str_contains($controller, "'items' => \$this->status->controls()"), 'resumen masivo de controles');
+// Regresión 500 con sala ocupada/QR: el import debe apuntar a la clase real.
+checkRoomControl(str_contains($status, 'use App\\Domain\\Qr\\QrWindows;'), 'QrWindows importado desde App\\Domain\\Qr');
+checkRoomControl(!str_contains($status, 'use App\\Support\\Qr\\QrWindows;'), 'sin import roto App\\Support\\Qr\\QrWindows');
+checkRoomControl(class_exists(\App\Domain\Qr\QrWindows::class), 'App\\Domain\\Qr\\QrWindows cargable por autoload');
 checkRoomControl(str_contains($reset, 'qr_revoked') && str_contains($reset, 'stays_closed')
     && str_contains($reset, 'debts_deleted') && str_contains($reset, 'light_off'), 'reset devuelve contadores');
 checkRoomControl(str_contains($reset, "status = 'FREE'") && str_contains($reset, 'cycleResetter->reset'), 'reset limpia estado y ciclo');

@@ -8,7 +8,7 @@ use App\Domain\Warehouse\RemoteDoorOpenPolicy;
 use App\Support\Clock;
 use App\Support\Config;
 use App\Support\Errors\NotFoundException;
-use App\Support\Qr\QrWindows;
+use App\Domain\Qr\QrWindows;
 use PDO;
 
 /**
