@@ -88,6 +88,18 @@ same('mismatch: máximo guardado', (float) ($mismatch['desired']['maximum_range'
 same('mismatch: máximo reportado', (float) ($mismatch['reported']['maximum_range'] ?? 0), 6.0);
 check('mismatch incluye estado del reconciliador', array_key_exists('state', $mismatch));
 
+$invalidReported = RadarCalibrationConvergence::statusFor(
+    ['calibration' => $saved],
+    ['maximum_range' => -334889.04, 'minimum_range' => 0, 'radar_sensitivity' => 7,
+        'detection_delay' => 0.1, 'fading_time' => 5.0]
+);
+same('reporte imposible → invalid_reported', $invalidReported['status'] ?? null,
+    RadarCalibrationConvergence::STATUS_INVALID_REPORTED);
+same('reporte imposible → motivo', $invalidReported['invalid_reason'] ?? null, 'maximum_range_out_of_bounds');
+same('reporte imposible no es deriva', count($invalidReported['differences'] ?? []), 0);
+same('reporte imposible conserva la guardada',
+    (float) ($invalidReported['desired']['maximum_range'] ?? 0), 0.9);
+
 $missing = RadarCalibrationConvergence::statusFor([], $reported);
 same('sin calibración → missing', $missing['status'] ?? null, RadarCalibrationDrift::STATUS_MISSING);
 

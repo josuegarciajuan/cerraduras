@@ -11997,3 +11997,12 @@ pendientes.
 - [x] TSK-F125.1.6-03: campos aditivos de distancia en `/radar/live`.
 - [x] TSK-F125.1.6-04: `freshDistance` y textos del banner en `radar-scope.js`.
 - [x] TSK-F125.1.6-05: tests PHP/JS, BLOCK 99 y documentación.
+
+## F125.3 — Apply/reapply del radar sin bloqueos ni bucles
+
+- [x] TSK-F125.3-01: `STATUS_INVALID_REPORTED` en convergencia; sin publicar ni contar intentos.
+- [x] TSK-F125.3-02: `statusFor()` devuelve `invalid_reported` con `invalid_reason`.
+- [x] TSK-F125.3-03: `apply()` ignora snapshots inválidos y corta tras 3 consecutivos.
+- [x] TSK-F125.3-04: `409 reported_settings_invalid` en `profile`/`reapply`.
+- [x] TSK-F125.3-05: UI muestra REPORTE INVÁLIDO y limpia el estado final de reaplicación.
+- [x] TSK-F125.3-06: `RadarApplyInvalidReportTest`, ampliación de convergencia y BLOCK 93B.

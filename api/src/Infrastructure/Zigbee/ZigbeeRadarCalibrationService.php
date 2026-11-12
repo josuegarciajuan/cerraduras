@@ -459,6 +459,9 @@ final class ZigbeeRadarCalibrationService
         // Se acepta solo un evento NUEVO (id > beforeId) que refleje lo pedido.
         $applied = false;
         $latest = null;
+        $invalidReports = 0;
+        $invalidReasonSeen = null;
+        $consecutiveInvalid = 0;
         for ($attempt = 0; $attempt < max(1, $waitAttempts); $attempt++) {
             if ($attempt > 0) {
                 usleep(700_000);
@@ -467,6 +470,20 @@ final class ZigbeeRadarCalibrationService
             if ($snapshot['id'] === null || $snapshot['id'] <= $beforeId) {
                 continue;
             }
+            // F125.3: un reporte fuera de rango (p. ej. maximum_range=-334889.04
+            // en el broker dev) no confirma ni niega la orden. Se ignora y, si
+            // se repite, se corta la espera con un error accionable.
+            $snapshotInvalid = self::settingsInvalidReason($snapshot['settings']);
+            if ($snapshotInvalid !== null) {
+                $invalidReports++;
+                $invalidReasonSeen = $snapshotInvalid;
+                $consecutiveInvalid++;
+                if ($consecutiveInvalid >= 3) {
+                    break;
+                }
+                continue;
+            }
+            $consecutiveInvalid = 0;
             $latest = $snapshot;
             $applied = true;
             foreach ($commands as $key => $expected) {
@@ -496,6 +513,23 @@ final class ZigbeeRadarCalibrationService
                 $confirmedBy = 'stored_state';
                 $latest = $stored;
             }
+        }
+
+        if (!$applied && $invalidReasonSeen !== null) {
+            // El radar solo publicó valores imposibles: no hay confirmación
+            // posible hasta corregir el broker/converter. Se devuelve el motivo
+            // exacto en lugar de un `not_confirmed` genérico.
+            $this->clearPending($device);
+            return [
+                'ok' => true,
+                'applied' => false,
+                'persisted' => false,
+                'error' => null,
+                'warning' => 'reported_settings_invalid:' . $invalidReasonSeen,
+                'settings_invalid_reason' => $invalidReasonSeen,
+                'invalid_reports' => $invalidReports,
+                'status' => $this->status($roomId, $device),
+            ];
         }
 
         $snapshotForStatus = $latest ?? $this->latestSnapshot($roomId);

@@ -33,6 +33,9 @@
     wizardSeq: 0,
     liveSeq: 0,
     busy: false,
+    busyTimer: null,
+    busyStarted: 0,
+    busyMessage: '',
     timer: null,
     wizardTimer: null,
     ageTimer: null,
@@ -244,9 +247,7 @@
   }
 
   function refreshAll() {
-    fetchLive();
-    fetchScope();
-    fetchWizard();
+    return Promise.all([fetchLive(), fetchScope(), fetchWizard()]);
   }
 
   function tickLiveAge() {
@@ -338,7 +339,8 @@
     var effective = state.status || '';
     var status = cal.status;
     var isError = status === 'error' || effective === 'error' || status === 'missing';
-    var isConverging = !isError && (status === 'mismatch' || effective === 'converging');
+    var isInvalidReported = status === 'invalid_reported';
+    var isConverging = !isError && !isInvalidReported && (status === 'mismatch' || effective === 'converging');
     var tone = status === 'applied' && !isError && !isConverging ? 'ok' : (isError ? 'bad' : 'warn');
     box.className = 'calibration-box ' + tone;
 
@@ -365,6 +367,17 @@
     }
     if (btn) btn.classList.remove('hidden');
 
+    if (isInvalidReported) {
+      var maxReported = cal.reported && cal.reported.maximum_range != null
+        ? Number(cal.reported.maximum_range) : null;
+      var reasonText = cal.invalid_reason ? String(cal.invalid_reason) : 'configuración fuera de rango';
+      if (title) title.textContent = 'Reporte inválido del radar';
+      if (badge) { badge.textContent = 'REPORTE INVÁLIDO'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = 'El radar publica un valor imposible (' + reasonText
+        + (maxReported != null ? ' · máximo ' + maxReported.toFixed(2) + ' m' : '')
+        + '). No se modifica la calibración guardada: revisa el broker/converter Zigbee2MQTT.';
+      return;
+    }
     if (status === 'applied' && effective !== 'error' && effective !== 'converging') {
       if (title) title.textContent = 'Calibración aplicada';
       if (badge) { badge.textContent = 'OK'; badge.className = 'badge ok'; }
@@ -396,10 +409,14 @@
         S.live = Object.assign({}, S.live || {}, { calibration: data.calibration });
       }
       if (out) out.textContent = 'Calibración guardada publicada y confirmada por push.';
+      var okStatus = $('applyStatus');
+      if (okStatus) okStatus.textContent = 'Calibración guardada reaplicada.';
       toast('Calibración guardada reaplicada');
       await refreshAll();
     } catch (e) {
       if (out) out.textContent = 'No se pudo reaplicar: ' + e.message;
+      var errStatus = $('applyStatus');
+      if (errStatus) errStatus.textContent = 'No se pudo reaplicar: ' + e.message;
       toast(e.message);
     } finally {
       setBusy(false);
@@ -836,16 +853,33 @@
 
   function setBusy(on, message) {
     S.busy = !!on;
+    if (S.busyTimer) {
+      clearInterval(S.busyTimer);
+      S.busyTimer = null;
+    }
     if (on) {
       S.liveSeq++;
       S.scopeSeq++;
       S.wizardSeq++;
+      S.busyStarted = Date.now();
+      S.busyMessage = message || '';
+      var initial = $('applyStatus');
+      if (S.busyMessage && initial) initial.textContent = S.busyMessage;
+      if (S.busyMessage) {
+        S.busyTimer = setInterval(function () {
+          if (!S.busy) return;
+          var st = $('applyStatus');
+          if (!st) return;
+          var seconds = Math.round((Date.now() - S.busyStarted) / 1000);
+          if (seconds >= 2) st.textContent = S.busyMessage + ' (' + seconds + ' s)';
+        }, 1000);
+      }
+    } else {
+      S.busyMessage = '';
     }
     Array.prototype.forEach.call(document.querySelectorAll('#view-radar button'), function (b) {
       b.disabled = !!on;
     });
-    var st = $('applyStatus');
-    if (on && message && st) st.textContent = message;
   }
 
   async function autoRangeStart() {

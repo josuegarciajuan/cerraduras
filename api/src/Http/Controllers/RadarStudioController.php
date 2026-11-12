@@ -159,12 +159,10 @@ final class RadarStudioController
             }
             $result = $this->service()->apply($roomId, $device, $commands, true, 15, 'radar-reapply');
             if (($result['applied'] ?? false) !== true) {
-                return Response::json(409, [
-                    'ok' => false,
-                    'error' => 'not_confirmed',
-                    'message' => (string) ($result['warning'] ?? 'El radar no ha confirmado la calibración guardada.'),
-                    'result' => $result,
-                ]);
+                return $this->notConfirmedResponse(
+                    $result,
+                    'El radar no ha confirmado la calibración guardada.'
+                );
             }
             return Response::json(200, [
                 'ok' => true,
@@ -238,13 +236,11 @@ final class RadarStudioController
                 'radar-studio-v1'
             );
             if (($result['applied'] ?? false) !== true) {
-                return Response::json(409, [
-                    'ok' => false,
-                    'error' => 'not_confirmed',
-                    'message' => (string) ($result['warning'] ?? 'El radar no ha confirmado la nueva configuración por push.'),
-                    'result' => $result,
-                    'scope' => $this->scopePayload($roomId, 60),
-                ]);
+                return $this->notConfirmedResponse(
+                    $result,
+                    'El radar no ha confirmado la nueva configuración por push.',
+                    $this->scopePayload($roomId, 60)
+                );
             }
             $this->store->clear($roomId);
             return Response::json(200, [
@@ -1394,6 +1390,34 @@ final class RadarStudioController
             return gmdate('Y-m-d H:i:s', time() - 60);
         }
         return gmdate('Y-m-d H:i:s', intdiv($ts, 1000));
+    }
+
+    /**
+     * F125.3: distingue un reporte inválido del radar (valor imposible del
+     * broker/converter) de una confirmación que simplemente no ha llegado.
+     *
+     * @param array<string,mixed> $result
+     * @param array<string,mixed>|null $extra
+     */
+    private function notConfirmedResponse(array $result, string $fallback, ?array $extra = null): Response
+    {
+        $warning = (string) ($result['warning'] ?? $fallback);
+        $invalidReason = isset($result['settings_invalid_reason'])
+            ? (string) $result['settings_invalid_reason'] : null;
+        $isInvalid = $invalidReason !== null || str_starts_with($warning, 'reported_settings_invalid');
+        $payload = [
+            'ok' => false,
+            'error' => $isInvalid ? 'reported_settings_invalid' : 'not_confirmed',
+            'message' => $isInvalid
+                ? 'El radar está reportando un valor inválido (' . ($invalidReason ?? 'configuración fuera de rango')
+                    . '). Revisa el broker/converter Zigbee2MQTT; la calibración no se ha modificado.'
+                : $warning,
+            'result' => $result,
+        ];
+        if ($extra !== null) {
+            $payload = array_merge($payload, $extra);
+        }
+        return Response::json(409, $payload);
     }
 
     private function runtimeError(RuntimeException $e): Response
