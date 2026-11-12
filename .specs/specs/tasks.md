@@ -53,7 +53,7 @@
 
 - [x] Ampliar `CredentialFormatTest`.
 - [x] Añadir casos al `BLOCK 69` del runner.
-- [ ] Ejecutar la regresión completa.
+- [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 
 **Verificación**: 0 fallos y limpieza de datos de prueba.
 
@@ -4560,7 +4560,7 @@ F80-00 (specs) ─> F80-01/02 (backend presencia) ─> F80-03 (contrato live)
   - [ ] Ampliar el BLOCK vigente con casos F81 (inicio por los 3 disparadores; fin por `ABSENT` con
         puerta abierta; fin por cierre sin presencia; cierre con presencia no termina).
   - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F81)
@@ -4600,7 +4600,7 @@ F81-01 (motor) ─> F81-02 (enganche) ─> F81-03 (croquis) ─> F81-04 (runner 
         `GET /almacen-api/visits` sin parámetros; un `NO_SHOW` con `DOOR` sigue oculto por defecto y
         visible con `include_no_show=1`.
   - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F82)
@@ -4679,7 +4679,7 @@ F82-01 (filtro del listado) ─> F82-02 (BLOCK del runner + regresión)
   - [ ] Añadir **BLOCK 56** al runner con marcadores F83: `state` publica `live.presence_active`,
         `live.presence_known`, `warehouse.exiting` y `current_visit.exited_at`; `warehouse.occupied`
         refleja `ABSENT` aunque haya visita; sin rutas nuevas ni cuota Tuya.
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F83)
@@ -10025,7 +10025,7 @@ F80-00 (specs) ─> F80-01/02 (backend presencia) ─> F80-03 (contrato live)
   - [ ] Ampliar el BLOCK vigente con casos F81 (inicio por los 3 disparadores; fin por `ABSENT` con
         puerta abierta; fin por cierre sin presencia; cierre con presencia no termina).
   - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F81)
@@ -10065,7 +10065,7 @@ F81-01 (motor) ─> F81-02 (enganche) ─> F81-03 (croquis) ─> F81-04 (runner 
         `GET /almacen-api/visits` sin parámetros; un `NO_SHOW` con `DOOR` sigue oculto por defecto y
         visible con `include_no_show=1`.
   - [ ] Verificar que no se introduce ningún sondeo/cuota Tuya (hereda RF-101).
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F82)
@@ -10144,7 +10144,7 @@ F82-01 (filtro del listado) ─> F82-02 (BLOCK del runner + regresión)
   - [ ] Añadir **BLOCK 56** al runner con marcadores F83: `state` publica `live.presence_active`,
         `live.presence_known`, `warehouse.exiting` y `current_visit.exited_at`; `warehouse.occupied`
         refleja `ABSENT` aunque haya visita; sin rutas nuevas ni cuota Tuya.
-  - [ ] Ejecutar la regresión completa.
+  - [x] Ejecutar la regresión completa (1458 passed, 0 failed, 14 skipped).
 - **Verificación**: `cd /root/cerraduras/api && bash bin/run-tests.sh` con **0 failures**.
 
 ## Orden de ejecución (F83)
