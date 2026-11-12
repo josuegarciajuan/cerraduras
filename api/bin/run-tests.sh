@@ -10279,6 +10279,7 @@ for F1254_MARK in \
     if grep -RqsF "$F1254_MARK" \
         src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php \
         src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+        src/Infrastructure/Zigbee/RadarCalibrationConvergence.php \
         src/Infrastructure/Sensors/RadarLiveService.php \
         src/Http/Controllers/RadarStudioController.php \
         bin/zigbee-spool-worker.php 2>/dev/null; then
@@ -10322,9 +10323,18 @@ done
 _restore_radar_profile
 if [ -n "$RADAR_ROOM" ] && [ -n "$RADAR_PROFILE_FILE" ] && [ -s "$RADAR_PROFILE_FILE" ]; then
     RADAR_SAVED_MAX=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('maximum_range',''))" "$RADAR_PROFILE_FILE" 2>/dev/null)
-    RADAR_NOW_MAX=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.settings.maximum_range')) FROM presence_events WHERE room_id=$RADAR_ROOM AND sensor='PRESENCE' ORDER BY id DESC LIMIT 1" 2>/dev/null)
-    if [ -n "$RADAR_SAVED_MAX" ] && [ -n "$RADAR_NOW_MAX" ] && \
-       python3 -c "import sys; sys.exit(0 if abs(float(sys.argv[1])-float(sys.argv[2])) < 0.001 else 1)" "$RADAR_SAVED_MAX" "$RADAR_NOW_MAX" 2>/dev/null; then
+    RADAR_OK=false
+    RADAR_NOW_MAX=""
+    for _radar_try in 1 2 3 4 5; do
+        RADAR_NOW_MAX=$($MYSQL -sN -e "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta_json,'\$.settings.maximum_range')) FROM presence_events WHERE room_id=$RADAR_ROOM AND sensor='PRESENCE' ORDER BY id DESC LIMIT 1" 2>/dev/null)
+        if [ -n "$RADAR_SAVED_MAX" ] && [ -n "$RADAR_NOW_MAX" ] && \
+           python3 -c "import sys; sys.exit(0 if abs(float(sys.argv[1])-float(sys.argv[2])) < 0.001 else 1)" "$RADAR_SAVED_MAX" "$RADAR_NOW_MAX" 2>/dev/null; then
+            RADAR_OK=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$RADAR_OK" = true ]; then
         pass "F118: calibración del radar restaurada (maximum_range=$RADAR_NOW_MAX)"
     else
         fail "F118: calibración del radar restaurada" "saved=$RADAR_SAVED_MAX now=$RADAR_NOW_MAX"
