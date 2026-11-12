@@ -2811,6 +2811,7 @@ $router->get('/api/v1/analytics/warehouse/visits/{id}', [$analyticsController, '
 $router->get('/api/v1/analytics/occupations',     [$analyticsController, 'occupations'],   $authFactory(['rooms:read']));
 $router->get('/api/v1/analytics/occupations/{kind}/{id}', [$analyticsController, 'occupationDetail'], $authFactory(['rooms:read']));
 $router->get('/api/v1/analytics/search',          [$analyticsController, 'search'],        $authFactory(['rooms:read']));
+$router->get('/api/v1/analytics/events',          [$analyticsController, 'events'],        $authFactory(['audit:read']));
 
 // --- Routes: Permisos del almacén (F62/RF-69.5, público LAN) ---
 $warehouseAccessController = new WarehouseAccessController($pdo, $warehouseAccessPolicy);

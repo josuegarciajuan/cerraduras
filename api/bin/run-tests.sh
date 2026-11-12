@@ -10134,6 +10134,67 @@ else
 fi
 
 # =============================================================================
+# BLOCK 100 — F129: registro de eventos unificado del panel
+# Trazabilidad: F129 · contracts.md §F129
+# =============================================================================
+block "BLOCK 100 — F129: registro de eventos"
+
+if [ -f "$PROJECT_DIR/migrations/0149_event_log_indexes.sql" ] && \
+   grep -q "idx_pe_time" "$PROJECT_DIR/migrations/0149_event_log_indexes.sql" && \
+   grep -q "idx_sce_time" "$PROJECT_DIR/migrations/0149_event_log_indexes.sql"; then
+    pass "F129: migración 0149 con índices de tiempo"
+else
+    fail "F129: migración 0149 con índices de tiempo" "falta el fichero o los índices"
+fi
+
+http_test GET '/api/v1/analytics/events?days=7' 200 \
+    "F129: GET /api/v1/analytics/events → 200" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&limit=5' 200 \
+    "F129: limit aceptado" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&limit=999' 200 \
+    "F129: limit fuera de rango se acota" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&category=door&limit=5' 200 \
+    "F129: filtro category=door" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&category=light&limit=5' 200 \
+    "F129: filtro category=light" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&category=presence&limit=5' 200 \
+    "F129: filtro category=presence" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&type=QR&limit=5' 200 \
+    "F129: filtro type=QR" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&result=FAIL&limit=5' 200 \
+    "F129: filtro result=FAIL" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&applied=0&limit=5' 200 \
+    "F129: filtro applied=0" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&room_id=999999&limit=5' 200 \
+    "F129: room_id inexistente → lista vacía" --key ADMIN-CLI
+http_test GET '/api/v1/analytics/events?days=7&from=2026-01-01T00:00&to=2026-12-31T23:59&limit=5' 200 \
+    "F129: rango exacto from/to" --key ADMIN-CLI
+
+if curl -s -o /tmp/f129-events.json -w '%{http_code}' \
+    -H "Authorization: Bearer $(get_key ADMIN-CLI)" \
+    "$API_BASE/api/v1/analytics/events?days=7&limit=3" 2>/dev/null | grep -q '^200$'; then
+    F129_SHAPE=$(python3 - <<'PY' 2>/dev/null
+import json
+try:
+    d = json.load(open('/tmp/f129-events.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+ok = isinstance(d.get('items'), list) and isinstance(d.get('summary'), dict) and isinstance(d.get('meta'), dict)
+ok = ok and all(k in d['meta'] for k in ('count','limit','has_more'))
+print('ok' if ok else 'bad_shape')
+PY
+)
+    if [ "$F129_SHAPE" = "ok" ]; then
+        pass "F129: forma de respuesta items/summary/meta"
+    else
+        fail "F129: forma de respuesta items/summary/meta" "$F129_SHAPE"
+    fi
+else
+    fail "F129: forma de respuesta items/summary/meta" "sin respuesta 200"
+fi
+rm -f /tmp/f129-events.json
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile
