@@ -118,8 +118,14 @@ if ($dryRun) {
 $pdo = PdoFactory::make();
 $processor = ZigbeeMqttRuntimeFactory::create($pdo);
 
+$existingStatus = is_file($statusFile) ? json_decode((string) @file_get_contents($statusFile), true) : null;
+$processedBase = is_array($existingStatus)
+    ? (int) ($existingStatus['processed_total'] ?? $existingStatus['counts']['processed'] ?? 0)
+    : 0;
+
 $counters = [
     'processed' => 0,
+    'processed_total' => $processedBase,
     'discarded' => 0,
     'quarantined' => 0,
     'retried' => 0,
@@ -133,10 +139,24 @@ function logLine(string $message): void
     fwrite(STDERR, '[zigbee-spool ' . gmdate('Y-m-d\TH:i:s\Z') . '] ' . $message . "\n");
 }
 
-function writeStatus(string $file, array $counters, ZigbeeSpoolQueue $queue): void
+function writeStatus(string $file, array $counters, ZigbeeSpoolQueue $queue, bool $force = false): void
 {
+    // F125.4: no escribir en cada mensaje. `processed` puede tener cientos de
+    // miles de ficheros y un glob por mensaje dejaba al worker sin aire.
+    static $lastWriteAt = 0.0;
+    $now = microtime(true);
+    if (!$force && ($now - $lastWriteAt) < 1.0) {
+        return;
+    }
+    $lastWriteAt = $now;
+    $light = $queue->lightCounts();
     $payload = array_merge($counters, [
-        'counts' => $queue->counts(),
+        'counts' => [
+            'incoming' => $light['incoming'],
+            'processing' => $light['processing'],
+            'quarantine' => $light['quarantine'],
+            'processed' => (int) ($counters['processed_total'] ?? $counters['processed']),
+        ],
         'updated_at' => gmdate('Y-m-d\TH:i:s.v\Z'),
     ]);
     $dir = dirname($file);
@@ -147,6 +167,15 @@ function writeStatus(string $file, array $counters, ZigbeeSpoolQueue $queue): vo
     file_put_contents($tmp, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
     @chmod($tmp, 0600);
     rename($tmp, $file);
+}
+
+function pruneSpool(ZigbeeSpoolQueue $queue, int $processedDays, int $quarantineDays): void
+{
+    $processed = $queue->pruneOlderThan('processed', $processedDays);
+    $quarantine = $queue->pruneOlderThan('quarantine', $quarantineDays);
+    if ($processed > 0 || $quarantine > 0) {
+        logLine("pruned processed={$processed} quarantine={$quarantine}");
+    }
 }
 
 function processPending(
@@ -210,6 +239,7 @@ function processPending(
             }
             $queue->complete($name);
             $counters['processed']++;
+            $counters['processed_total'] = (int) ($counters['processed_total'] ?? 0) + 1;
             $counters['last_processed_at'] = gmdate('Y-m-d\TH:i:s.v\Z');
             logLine("processed {$name}");
             writeStatus($statusFile, $counters, $queue);
@@ -240,11 +270,17 @@ function processPending(
             writeStatus($statusFile, $counters, $queue);
         }
     }
+    writeStatus($statusFile, $counters, $queue, true);
     return $handled;
 }
 
+$processedRetentionDays = max(0, (int) (Config::get('ZIGBEE_SPOOL_PROCESSED_RETENTION_DAYS', '2') ?? 2));
+$quarantineRetentionDays = max(0, (int) (Config::get('ZIGBEE_SPOOL_QUARANTINE_RETENTION_DAYS', '14') ?? 14));
+
 if ($watch) {
     logLine('watching spool ' . $spoolDir);
+    pruneSpool($queue, $processedRetentionDays, $quarantineRetentionDays);
+    $lastPruneAt = time();
     while (true) {
         // Si el radar estuvo horas en silencio, MySQL puede haber cerrado la
         // conexión inactiva (wait_timeout). Se comprueba en cada vuelta para
@@ -252,6 +288,10 @@ if ($watch) {
         if (!PdoFactory::ping()) {
             logLine('db connection lost while idle; reconnecting');
             $processor = ZigbeeMqttRuntimeFactory::create(PdoFactory::make());
+        }
+        if (time() - $lastPruneAt >= 3600) {
+            pruneSpool($queue, $processedRetentionDays, $quarantineRetentionDays);
+            $lastPruneAt = time();
         }
         $processed = processPending($queue, $mapper, $processor, $limit, $counters, $statusFile);
         if ($processed === 0) {

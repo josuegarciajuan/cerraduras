@@ -100,6 +100,24 @@ same('validateRecord rejects bad attempts', ZigbeeSpoolQueue::validateRecord(arr
 $counts = $q->counts();
 check('counts expose all queue states', $counts['incoming'] >= 2 && $counts['processed'] === 1 && $counts['quarantine'] === 1);
 
+// F125.4: conteo ligero y purga por antigüedad.
+$light = $q->lightCounts();
+check('lightCounts expone incoming/processing/quarantine',
+    isset($light['incoming'], $light['processing'], $light['quarantine'])
+    && !isset($light['processed']));
+$recent = $dir . '/processed/recent.json';
+file_put_contents($recent, '{}');
+$old = $dir . '/processed/old.json';
+file_put_contents($old, '{}');
+touch($old, time() - (3 * 86400));
+$dry = $q->pruneOlderThan('processed', 2, true);
+check('dry-run cuenta sin borrar', $dry === 1 && is_file($old));
+$removed = $q->pruneOlderThan('processed', 2);
+check('purga borra solo los antiguos', $removed === 1 && !is_file($old) && is_file($recent));
+$light2 = $q->lightCounts();
+check('lightCounts sigue barato tras purgar',
+    isset($light2['incoming'], $light2['processing'], $light2['quarantine']));
+
 // Cleanup recursively.
 $it = new RecursiveIteratorIterator(
     new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),

@@ -100,6 +100,10 @@ same('reporte imposible no es deriva', count($invalidReported['differences'] ?? 
 same('reporte imposible conserva la guardada',
     (float) ($invalidReported['desired']['maximum_range'] ?? 0), 0.9);
 
+$noData = RadarCalibrationConvergence::statusFor(['calibration' => $saved], []);
+same('sin reporte reciente → unknown', $noData['status'] ?? null, RadarCalibrationDrift::STATUS_UNKNOWN);
+same('sin reporte no es invalid_reported', $noData['status'] !== RadarCalibrationConvergence::STATUS_INVALID_REPORTED, true);
+
 $missing = RadarCalibrationConvergence::statusFor([], $reported);
 same('sin calibración → missing', $missing['status'] ?? null, RadarCalibrationDrift::STATUS_MISSING);
 

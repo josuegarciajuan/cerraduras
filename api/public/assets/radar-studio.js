@@ -340,7 +340,8 @@
     var status = cal.status;
     var isError = status === 'error' || effective === 'error' || status === 'missing';
     var isInvalidReported = status === 'invalid_reported';
-    var isConverging = !isError && !isInvalidReported && (status === 'mismatch' || effective === 'converging');
+    var isUnknown = status === 'unknown';
+    var isConverging = !isError && !isInvalidReported && !isUnknown && (status === 'mismatch' || effective === 'converging');
     var tone = status === 'applied' && !isError && !isConverging ? 'ok' : (isError ? 'bad' : 'warn');
     box.className = 'calibration-box ' + tone;
 
@@ -378,10 +379,23 @@
         + '). No se modifica la calibración guardada: revisa el broker/converter Zigbee2MQTT.';
       return;
     }
+    if (isUnknown) {
+      if (title) title.textContent = 'Sin datos recientes del radar';
+      if (badge) { badge.textContent = 'SIN DATOS'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = 'No hay un reporte reciente para comparar con la calibración guardada.';
+      return;
+    }
     if (status === 'applied' && effective !== 'error' && effective !== 'converging') {
       if (title) title.textContent = 'Calibración aplicada';
       if (badge) { badge.textContent = 'OK'; badge.className = 'badge ok'; }
-      if (sub) sub.textContent = 'El radar reporta exactamente la configuración guardada en la BD.';
+      if (sub) {
+        sub.textContent = 'El radar reporta exactamente la configuración guardada en la BD.';
+        if (cal.reported_invalid) {
+          sub.textContent += ' Algún reporte aislado trajo un valor inválido ('
+            + (cal.reported_invalid_reason || 'fuera de rango')
+            + '); se usa la última lectura válida y no se cambia la calibración.';
+        }
+      }
     } else if (isError) {
       if (title) title.textContent = 'No se pudo aplicar la calibración';
       if (badge) { badge.textContent = 'ERROR'; badge.className = 'badge warn'; }

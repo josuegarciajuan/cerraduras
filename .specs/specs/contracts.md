@@ -17163,3 +17163,40 @@ Nuevo error `409`:
 ```
 
 `not_confirmed` sigue existiendo para la ausencia real de confirmación.
+
+## F125.4 — Spool y estado del radar
+
+### Variables nuevas
+
+| Variable | Defecto | Significado |
+|---|---|---|
+| `ZIGBEE_SPOOL_PROCESSED_RETENTION_DAYS` | `2` | Días que se conservan los ficheros de `processed` (`0` no purga) |
+| `ZIGBEE_SPOOL_QUARANTINE_RETENTION_DAYS` | `14` | Días de `quarantine` |
+| `RADAR_DIRECT_CONFIRM_ENABLED` | `true` | Confirma apply/reset por MQTT directo |
+| `RADAR_DIRECT_CONFIRM_TIMEOUT_SECONDS` | `6` | Ventana máxima de confirmación directa |
+
+### `config.zigbee-spool-status.json`
+
+`counts.processed` pasa a ser un contador acumulado persistido
+(`processed_total`), no el número exacto de ficheros en disco. `incoming`,
+`processing` y `quarantine` siguen siendo conteos reales. Se añade
+`processed_total` al JSON.
+
+### `radar/live` y `radar/scope` (aditivo)
+
+`calibration` añade:
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `reported_invalid` | `bool` | El último push traía un valor imposible |
+| `reported_invalid_reason` | `string \| null` | Motivo (`maximum_range_out_of_bounds`, etc.) |
+| `latest_reported_settings` | `object` | Último reporte tal cual (diagnóstico) |
+
+`status` (interno) añade `reported_invalid`, `reported_invalid_reason`,
+`latest_reported_settings` y `using_valid_snapshot`. Los campos existentes no
+cambian de forma.
+
+### `apply/reset`
+
+`confirmed_by` puede ser `direct_push` además de `push`/`stored_state`. El
+`status.settings` de la respuesta refleja la lectura directa confirmada.

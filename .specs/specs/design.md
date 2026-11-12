@@ -27330,3 +27330,54 @@ convergencia. `reapplyCalibration()` escribe siempre el resultado en
 `RadarApplyInvalidReportTest` (convergencia sin publicar + apply que corta),
 `RadarCalibrationConvergenceTest` (`statusFor` inválido), BLOCK 93B y regresión
 completa.
+
+## F125.4 — Spool, confirmación directa y panel estable
+
+### Spool
+
+```text
+cada mensaje -> processPending
+  claim/map/process
+  writeStatus (throttle 1 s; forzado al final del lote)
+    lightCounts(): incoming/processing/quarantine (cache 5 s)
+    counts.processed = processed_total persistido
+  prune cada hora (processed N días, quarantine M días)
+```
+
+`processed_total` se recupera del `zigbee-spool-status.json` anterior al
+arrancar. La purga usa `DirectoryIterator` (streaming), nunca `glob` masivo.
+
+### Confirmación directa
+
+```text
+publish(commands)
+  awaitDirectConfirmation(device, commands, timeout)
+    readDirect() -> primer mensaje del state topic
+    si settingsMatch(commands, settings) -> confirmed_by=direct_push
+  si no confirma -> read-back por BD (máx. 5 intentos) con corte F125.3
+  status final se sobrescribe con los settings directos confirmados
+```
+
+No hay polling continuo: una suscripción corta por operación, con timeout
+`RADAR_DIRECT_CONFIRM_TIMEOUT_SECONDS`.
+
+### Estado estable del panel
+
+`status()` obtiene el último snapshot. Si su `settings` es inválido:
+
+1. busca la última lectura válida dentro de `stale_seconds`;
+2. si existe, usa esa lectura para `settings`, presencia, frescura y
+   `calibration.statusFor()`;
+3. expone `reported_invalid=true`, `reported_invalid_reason` y
+   `latest_reported_settings` para el aviso secundario;
+4. si no existe, conserva el snapshot inválido y `statusFor()` devuelve
+   `invalid_reported` estable.
+
+`calibrationInfo()` de la UI sigue prefiriendo `live` y usa `scope` solo si
+falta; ambos comparten la misma lógica de servidor, así que no alternan.
+
+### Verificación
+
+`ZigbeeSpoolQueueTest`, `ZigbeeSpoolWorkerTest`, `RadarDirectConfirmationTest`,
+`RadarStatusStabilityTest`, `RadarApplyInvalidReportTest`, BLOCK 93B/101 y
+regresión completa.

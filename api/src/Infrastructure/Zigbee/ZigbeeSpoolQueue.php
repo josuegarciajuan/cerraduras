@@ -14,6 +14,10 @@ use Throwable;
  */
 final class ZigbeeSpoolQueue
 {
+    /** @var array{incoming:int,processing:int,quarantine:int}|null */
+    private ?array $lightCache = null;
+    private int $lightCacheAt = 0;
+
     public function __construct(private string $dir)
     {
         $this->ensureLayout();
@@ -155,15 +159,90 @@ final class ZigbeeSpoolQueue
         return null;
     }
 
-    /** @return array{incoming:int,processing:int,processed:int,quarantine:int} */
+    /**
+     * Conteo completo. OJO: `processed` puede contener cientos de miles de
+     * ficheros; no debe llamarse por cada mensaje. El worker usa `lightCounts()`
+     * y mantiene el total de `processed` como contador persistido.
+     *
+     * @return array{incoming:int,processing:int,processed:int,quarantine:int}
+     */
     public function counts(): array
     {
         return [
-            'incoming' => count(glob($this->path('incoming') . '/*.json') ?: []),
-            'processing' => count(glob($this->path('processing') . '/*.json') ?: []),
-            'processed' => count(glob($this->path('processed') . '/*.json') ?: []),
-            'quarantine' => count(glob($this->path('quarantine') . '/*.json') ?: []),
+            'incoming' => $this->countFiles('incoming'),
+            'processing' => $this->countFiles('processing'),
+            'processed' => $this->countFiles('processed'),
+            'quarantine' => $this->countFiles('quarantine'),
         ];
+    }
+
+    /**
+     * Conteo barato para el estado frecuente del worker: solo `incoming`,
+     * `processing` y `quarantine` (dirs pequeños), con caché corta. `processed`
+     * lo aporta el contador persistido del worker.
+     *
+     * @return array{incoming:int,processing:int,quarantine:int}
+     */
+    public function lightCounts(int $ttlSeconds = 5): array
+    {
+        $now = time();
+        if ($this->lightCache !== null && ($now - $this->lightCacheAt) < max(1, $ttlSeconds)) {
+            return $this->lightCache;
+        }
+        $this->lightCache = [
+            'incoming' => $this->countFiles('incoming'),
+            'processing' => $this->countFiles('processing'),
+            'quarantine' => $this->countFiles('quarantine'),
+        ];
+        $this->lightCacheAt = $now;
+        return $this->lightCache;
+    }
+
+    public function countFiles(string $subdir): int
+    {
+        $dir = $this->path($subdir);
+        if (!is_dir($dir)) {
+            return 0;
+        }
+        $count = 0;
+        foreach (new \DirectoryIterator($dir) as $file) {
+            if ($file->isFile() && str_ends_with($file->getFilename(), '.json')) {
+                $count++;
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Elimina ficheros de un subdirectorio más antiguos que `$days`.
+     * `processed` y `quarantine` son auditoría operativa, no datos de negocio.
+     */
+    public function pruneOlderThan(string $subdir, int $days, bool $dryRun = false): int
+    {
+        if ($days <= 0) {
+            return 0;
+        }
+        $dir = $this->path($subdir);
+        if (!is_dir($dir)) {
+            return 0;
+        }
+        $cutoff = time() - ($days * 86400);
+        $removed = 0;
+        foreach (new \DirectoryIterator($dir) as $file) {
+            if (!$file->isFile() || !str_ends_with($file->getFilename(), '.json')) {
+                continue;
+            }
+            if ($file->getMTime() >= $cutoff) {
+                continue;
+            }
+            if (!$dryRun && @unlink($file->getPathname())) {
+                $removed++;
+            } elseif ($dryRun) {
+                $removed++;
+            }
+        }
+        $this->lightCache = null;
+        return $removed;
     }
 
     /**

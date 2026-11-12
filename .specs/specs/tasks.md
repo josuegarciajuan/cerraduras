@@ -12006,3 +12006,14 @@ pendientes.
 - [x] TSK-F125.3-04: `409 reported_settings_invalid` en `profile`/`reapply`.
 - [x] TSK-F125.3-05: UI muestra REPORTE INVÁLIDO y limpia el estado final de reaplicación.
 - [x] TSK-F125.3-06: `RadarApplyInvalidReportTest`, ampliación de convergencia y BLOCK 93B.
+
+## F125.4 — Spool, confirmación directa y panel estable
+
+- [x] TSK-F125.4-01: `lightCounts()` y contador `processed_total` sin glob masivo.
+- [x] TSK-F125.4-02: throttle de `writeStatus()` (1 s / fin de lote).
+- [x] TSK-F125.4-03: retención de `processed`/`quarantine` y `bin/zigbee-spool-prune.php`.
+- [x] TSK-F125.4-04: `awaitDirectConfirmation()` y uso en `apply()`/`resetToBaseline()`.
+- [x] TSK-F125.4-05: `status()` con última lectura válida y aviso `reported_invalid`.
+- [x] TSK-F125.4-06: UI estable y aviso secundario de reporte inválido.
+- [x] TSK-F125.4-07: SKIP de F95/F102 si el spool supera 60 s.
+- [x] TSK-F125.4-08: tests units/JS, BLOCK 93B/101 y documentación.
