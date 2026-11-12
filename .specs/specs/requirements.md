@@ -9,6 +9,56 @@
 
 ---
 
+# Fase 131: Fichas EM con número decimal impreso
+
+**Motivo**: el número impreso en las fichas EM es el identificador decimal de
+10 dígitos. El alta debe poder hacerse sin lector y la lectura del R35D-B
+(UID hexadecimal de 8 caracteres) debe seguir abriendo la misma ficha.
+
+## RF-401: Alta por número impreso
+
+- **RF-401.1**: una ficha nueva se registra con el número decimal impreso de
+  10 dígitos, conservando los ceros iniciales.
+- **RF-401.2**: el panel muestra un único campo «Número impreso» y lo envía
+  como `number` visible y como `code` validable.
+- **RF-401.3**: si no se envía `number`, la API usa el código canónico.
+- **RF-401.4**: el código se guarda solo como hash; `code_last4` corresponde a
+  los cuatro últimos dígitos del código canónico.
+
+## RF-402: Lectura en ambos formatos
+
+- **RF-402.1**: una lectura de 10 dígitos decimales se valida directamente.
+- **RF-402.2**: una lectura de 8 hexadecimales se convierte a decimal de 10
+  dígitos antes de buscar la ficha.
+- **RF-402.3**: una ficha nueva registrada en decimal abre con la lectura
+  decimal y con la lectura hexadecimal equivalente.
+
+## RF-403: Compatibilidad con fichas existentes
+
+- **RF-403.1**: la ficha existente `number=EM-00EFA5BB` conserva su hash de
+  `00EFA5BB` y sigue abriendo sin migración ni edición.
+- **RF-403.2**: la validación intenta primero el hash canónico y, si no existe,
+  el hash hexadecimal legado.
+- **RF-403.3**: el alta rechaza duplicados entre representaciones equivalentes
+  decimal y hexadecimal.
+- **RF-403.4**: los códigos de texto libre existentes mantienen su flujo.
+
+## RF-404: Alcance
+
+- **RF-404.1**: sin migración de base de datos.
+- **RF-404.2**: sin cambios en el firmware, el protocolo QR, permisos ni
+  cerradura.
+- **RF-404.3**: sin llamadas a Tuya ni pollers nuevos.
+
+## RF-405: Verificación
+
+- **RF-405.1**: unit de conversión, límites de 32 bits y candidatos heredados.
+- **RF-405.2**: `BLOCK 69` cubre alta decimal, apertura con decimal y con
+  hexadecimal, y compatibilidad de la ficha heredada.
+- **RF-405.3**: regresión completa sin fallos nuevos.
+
+---
+
 # Fase 122: Retirada completa de Tuya — Zigbee como única vía
 
 ## Contexto

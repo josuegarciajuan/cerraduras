@@ -245,6 +245,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
 | **F129 Registro de eventos del panel** | **BLOCK 100 + `PanelEventsTest`** | **Implementado: cronología unificada de sensores, accesos y luz en `/panel` con filtros, CSV y live tail; validación visual pendiente** |
+| **F131 Fichas EM con número decimal impreso** | **BLOCK 69 + `CredentialFormatTest`/`NfcCardFormatTest`** | **Implementado: alta por 10 dígitos, lectura decimal/hexadecimal y compatibilidad con la ficha heredada `EM-00EFA5BB`** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1560,3 +1561,20 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   sensibilidad ya aplicada, el cierre del reposo y el guardado del wizard.
 - **Verificación**: `ZigbeeRadarCalibrationPersistTest` (18 checks, reflexión +
   PDO falso), BLOCK 97 y regresión completa.
+
+### F131 — Fichas EM con número decimal impreso (RF-401…RF-405)
+
+- **Alta**: el número impreso de 10 dígitos (con ceros iniciales) es el
+  `number` visible y el `code` validable. Si `number` falta, se usa el canónico.
+- **Canónico**: `CredentialFormat::canonicalFichaCode()` convierte un UID EM de
+  8 hexadecimales a decimal de 10 dígitos (`00EFA5BB` → `0015705531`) y deja
+  intactos los textos no EM.
+- **Lectura**: `00EFA5BB` y `0015705531` abren la misma ficha. Se prueba el hash
+  canónico y después el hexadecimal legado.
+- **Compatibilidad**: la ficha existente `EM-00EFA5BB` conserva su hash
+  `00EFA5BB`, su llave y su número; no hay migración ni edición de datos.
+- **Duplicados**: el alta rechaza la misma ficha registrada en decimal o en
+  hexadecimal equivalente.
+- **UI**: `/panel` pide únicamente «Número impreso de la ficha» y envía el mismo
+  valor como `number` y `code`.
+- **Verificación**: `CredentialFormatTest`, `NfcCardFormatTest` y BLOCK 69.

@@ -7509,6 +7509,60 @@ f113_expect_error "F113: token corrupto → qr_invalid_signature" "/api/v1/qr/va
   '{"qr_text":"abc.def.ghi","room_id":1,"device_id":"ESP32-TEST"}' \
   403 qr_invalid_signature
 
+# ── F131: ficha EM por decimal impreso y lectura hexadecimal ────────────
+# Trazabilidad: RF-401…RF-403. El alta usa 10 dígitos; ambas lecturas abren.
+F131_HEX=$(printf '%08X' "$F113_TS")
+F131_DEC=$(printf '%010d' "$F113_TS")
+F131_CARD=$(f113_card_id "F131-DEC-$F113_TS" "$F131_DEC")
+F131_KEY=$(f113_key_id "F131-DEC-$F113_TS" "$F131_CARD" "$ROOM_TYPE_PRIMARY")
+if [ -n "$F131_CARD" ] && [ -n "$F131_KEY" ]; then
+  for F131_READ in "$F131_DEC" "$F131_HEX"; do
+    F131_RESP=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}/api/v1/qr/validate" \
+      -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
+      -d "{\"qr_text\":\"$F131_READ\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}")
+    F131_CODE=$(printf '%s' "$F131_RESP" | tail -1)
+    F131_BODY=$(printf '%s' "$F131_RESP" | sed '$d')
+    if [ "$F131_CODE" = "200" ] \
+       && printf '%s' "$F131_BODY" | grep -q '"allow":true' \
+       && printf '%s' "$F131_BODY" | grep -q "\"key_id\":$F131_KEY"; then
+      pass "F131: ficha decimal abre con lectura $F131_READ"
+    else
+      fail "F131: lectura $F131_READ" "HTTP $F131_CODE $(printf '%s' "$F131_BODY" | head -c 300)"
+    fi
+  done
+
+  http_test POST /api/v1/nfc-cards 409 "F131: alta hexadecimal equivalente → duplicado" --key ADMIN-CLI \
+    --body "{\"number\":\"F131-DUP-$F113_TS\",\"code\":\"$F131_HEX\"}"
+else
+  fail "F131: crear ficha/llave decimal" "card=$F131_CARD key=$F131_KEY"
+fi
+
+# Compatibilidad real: ficha heredada con hash del UID hexadecimal.
+F131_LEG_TS=$((F113_TS + 1))
+F131_LEG_HEX=$(printf '%08X' "$F131_LEG_TS")
+F131_LEG_DEC=$(printf '%010d' "$F131_LEG_TS")
+$MYSQL -e "INSERT INTO nfc_cards (number, code_hash, code_last4, status, notes) VALUES ('F131-LEGACY-$F113_TS', SHA2('$F131_LEG_HEX', 256), '${F131_LEG_HEX: -4}', 'AVAILABLE', 'F131 legacy')" >/dev/null 2>&1 || true
+F131_LEG_CARD=$($MYSQL -sN -e "SELECT id FROM nfc_cards WHERE number='F131-LEGACY-$F113_TS' LIMIT 1" 2>/dev/null)
+F131_LEG_KEY=$(f113_key_id "F131-LEGACY-$F113_TS" "$F131_LEG_CARD" "$ROOM_TYPE_PRIMARY")
+if [ -n "$F131_LEG_CARD" ] && [ -n "$F131_LEG_KEY" ]; then
+  for F131_LEG_READ in "$F131_LEG_HEX" "$F131_LEG_DEC"; do
+    F131_LEG_RESP=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}/api/v1/qr/validate" \
+      -H "X-API-Key: $(get_key RPI-DEV)" -H 'Content-Type: application/json' \
+      -d "{\"qr_text\":\"$F131_LEG_READ\",\"room_id\":1,\"device_id\":\"ESP32-TEST\"}")
+    F131_LEG_CODE=$(printf '%s' "$F131_LEG_RESP" | tail -1)
+    F131_LEG_BODY=$(printf '%s' "$F131_LEG_RESP" | sed '$d')
+    if [ "$F131_LEG_CODE" = "200" ] \
+       && printf '%s' "$F131_LEG_BODY" | grep -q '"allow":true' \
+       && printf '%s' "$F131_LEG_BODY" | grep -q "\"key_id\":$F131_LEG_KEY"; then
+      pass "F131: ficha heredada abre con lectura $F131_LEG_READ"
+    else
+      fail "F131: heredada lectura $F131_LEG_READ" "HTTP $F131_LEG_CODE $(printf '%s' "$F131_LEG_BODY" | head -c 300)"
+    fi
+  done
+else
+  fail "F131: crear ficha heredada" "card=$F131_LEG_CARD key=$F131_LEG_KEY"
+fi
+
 # Limpieza de datos de prueba
 if [ -n "$F96_W_ID" ]; then
   $MYSQL -e "DELETE FROM worker_sessions WHERE worker_id=$F96_W_ID; UPDATE workers SET active=0 WHERE id=$F96_W_ID; DELETE FROM workers WHERE id=$F96_W_ID" >/dev/null 2>&1 || true
@@ -7516,8 +7570,9 @@ fi
 $MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F96-%'; DELETE FROM access_keys WHERE label LIKE 'F96-%'; DELETE FROM nfc_cards WHERE number LIKE 'F96-%'; DELETE FROM key_access_events WHERE key_id IS NULL AND occurred_at >= '$F96_START'" >/dev/null 2>&1 || true
 pass "F96: limpieza de datos de prueba"
 
-$MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F113-%'; DELETE FROM access_keys WHERE label LIKE 'F113-%'; DELETE FROM nfc_cards WHERE number LIKE 'F113-%';" >/dev/null 2>&1 || true
+$MYSQL -e "DELETE e FROM key_access_events e JOIN access_keys k ON k.id=e.key_id WHERE k.label LIKE 'F113-%' OR k.label LIKE 'F131-%'; DELETE FROM access_keys WHERE label LIKE 'F113-%' OR label LIKE 'F131-%'; DELETE FROM nfc_cards WHERE number LIKE 'F113-%' OR number LIKE 'F131-%';" >/dev/null 2>&1 || true
 pass "F113: limpieza de datos de prueba"
+pass "F131: limpieza de datos de prueba"
 
 
 # =============================================================================

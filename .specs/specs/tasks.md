@@ -7,6 +7,58 @@
 
 ---
 
+# Fase 131: Fichas EM con número decimal impreso
+
+## TSK-131.00: Especificación
+
+**Trazabilidad**: RF-401..RF-405
+
+- [x] Documentar requisitos, diseño, contratos y tareas.
+- [x] Confirmar el formato canónico decimal de 10 dígitos.
+
+## TSK-131.01: Conversión pura
+
+**Trazabilidad**: RF-402, RF-403
+
+- [x] Extender `CredentialFormat` con canónico decimal, candidatos
+  hexadecimales y validación de rango de 32 bits.
+- [x] Mantener la normalización legada para textos no EM.
+
+**Verificación**: `php tests/Unit/CredentialFormatTest.php`.
+
+## TSK-131.02: Alta y validación
+
+**Trazabilidad**: RF-401, RF-402, RF-403
+
+- [x] Ajustar `NfcCardService::create()` para usar el código canónico.
+- [x] Ajustar `AccessKeyService::validateFicha()` con fallback al hash legado.
+- [x] Comprobar duplicados entre representaciones equivalentes.
+- [x] Mantener sin cambios la ficha `EM-00EFA5BB`.
+
+**Verificación**: unit y BLOCK 69.
+
+## TSK-131.03: Panel
+
+**Trazabilidad**: RF-401.2
+
+- [x] Un único campo «Número impreso de la ficha» con 10 dígitos.
+- [x] Enviar el mismo valor como `number` y `code`.
+- [x] Mantener la edición sin cambiar el código.
+
+**Verificación**: `node --check` o revisión del HTML.
+
+## TSK-131.04: Pruebas y regresión
+
+**Trazabilidad**: RF-405
+
+- [x] Ampliar `CredentialFormatTest`.
+- [x] Añadir casos al `BLOCK 69` del runner.
+- [ ] Ejecutar la regresión completa.
+
+**Verificación**: 0 fallos y limpieza de datos de prueba.
+
+---
+
 # Fase 122: Retirada completa de Tuya
 
 ## TSK-122.00: Especificación

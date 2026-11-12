@@ -31,22 +31,34 @@ final class NfcCardService
 
     public function create(array $data): array
     {
-        $number = trim((string) ($data['number'] ?? ''));
-        $code   = CredentialFormat::normaliseCode((string) ($data['code'] ?? ''));
-        $notes  = isset($data['notes']) && trim((string) $data['notes']) !== ''
+        $rawCode = trim((string) ($data['code'] ?? ''));
+        $code    = CredentialFormat::canonicalFichaCode($rawCode);
+        $number  = trim((string) ($data['number'] ?? ''));
+        if ($number === '') {
+            $number = $code;
+        }
+        $notes = isset($data['notes']) && trim((string) $data['notes']) !== ''
             ? trim((string) $data['notes']) : null;
 
         $this->validateNumber($number);
-        if (mb_strlen($code) < 4 || mb_strlen($code) > 64) {
+        if (mb_strlen($code) < CredentialFormat::MIN_FICHA_LENGTH
+            || mb_strlen($code) > CredentialFormat::MAX_FICHA_LENGTH) {
             throw new UnprocessableException('validation_error', 'code must be between 4 and 64 chars');
+        }
+        if (CredentialFormat::isPrintedDecimal($rawCode)
+            && !CredentialFormat::isDecimalUidInRange($rawCode)) {
+            throw new UnprocessableException('validation_error', 'code must be a 32-bit decimal UID');
         }
         if ($this->repo->numberExists($number)) {
             throw new ConflictException('nfc_number_exists', 'NFC card number already exists', ['number' => $number]);
         }
-        $hash = hash('sha256', $code);
-        if ($this->repo->codeExists($hash)) {
-            throw new ConflictException('nfc_code_exists', 'NFC card code already exists');
+
+        foreach (CredentialFormat::fichaCandidates($rawCode) as $candidate) {
+            if ($this->repo->codeExists(hash('sha256', $candidate))) {
+                throw new ConflictException('nfc_code_exists', 'NFC card code already exists');
+            }
         }
+        $hash = hash('sha256', $code);
 
         $id = $this->repo->insert($number, $hash, mb_substr($code, -4), $notes);
         return $this->get($id);
