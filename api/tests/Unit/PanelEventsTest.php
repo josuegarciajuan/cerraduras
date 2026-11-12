@@ -38,6 +38,9 @@ evCheck(str_contains($routes, "'/api/v1/analytics/events'"), 'ruta /api/v1/analy
 evCheck(str_contains($routes, "'events'],        \$authFactory(['audit:read'])"), 'la ruta exige audit:read');
 
 // ── Fuentes ───────────────────────────────────────────────────────────────
+evCheck(str_contains($controller, "pe.value <> 'ABSENT'"), 'la presencia ausente se excluye del registro');
+evCheck(!str_contains($panel, "['ABSENT', 'Ausente']"), 'el filtro Ausente ya no se ofrece');
+
 foreach ([
     ['presence_events pe', 'presencia/puerta'],
     ['access_events e', 'accesos de puerta'],

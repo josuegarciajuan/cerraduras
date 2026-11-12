@@ -1982,7 +1982,7 @@
     o.eventTypeOptions = function (selected) {
       var groups = [
         ['Puerta', [['OPEN', 'Apertura'], ['CLOSED', 'Cierre']]],
-        ['Presencia', [['PRESENT', 'Presente'], ['ABSENT', 'Ausente']]],
+        ['Presencia', [['PRESENT', 'Presente']]],
         ['Accesos', [
           ['QR_VALIDATE', 'QR validado'], ['OPEN', 'Apertura'], ['AUTO_LOCK', 'Cierre automático'],
           ['MANUAL_LOCK', 'Cierre manual'], ['DENIED', 'Denegado'], ['WORKER_EXIT', 'Salida de empleado']

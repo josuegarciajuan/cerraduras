@@ -10197,7 +10197,7 @@ http_test GET '/api/v1/analytics/events?days=7&from=2026-01-01T00:00&to=2026-12-
 
 if curl -s -o /tmp/f129-events.json -w '%{http_code}' \
     -H "X-API-Key: $(get_key ADMIN-CLI)" \
-    "$API_BASE/api/v1/analytics/events?days=7&limit=3" 2>/dev/null | grep -q '^200$'; then
+    "$API_BASE/api/v1/analytics/events?days=7&category=presence&limit=100" 2>/dev/null | grep -q '^200$'; then
     F129_SHAPE=$(python3 - <<'PY' 2>/dev/null
 import json
 try:
@@ -10206,16 +10206,17 @@ except Exception:
     print('bad_json'); raise SystemExit
 ok = isinstance(d.get('items'), list) and isinstance(d.get('summary'), dict) and isinstance(d.get('meta'), dict)
 ok = ok and all(k in d['meta'] for k in ('count','limit','has_more'))
+ok = ok and all((it.get('action') or '') != 'ABSENT' for it in d.get('items', []))
 print('ok' if ok else 'bad_shape')
 PY
 )
     if [ "$F129_SHAPE" = "ok" ]; then
-        pass "F129: forma de respuesta items/summary/meta"
+        pass "F129: forma de respuesta y sin ABSENT"
     else
-        fail "F129: forma de respuesta items/summary/meta" "$F129_SHAPE"
+        fail "F129: forma de respuesta y sin ABSENT" "$F129_SHAPE"
     fi
 else
-    fail "F129: forma de respuesta items/summary/meta" "sin respuesta 200"
+    fail "F129: forma de respuesta y sin ABSENT" "sin respuesta 200"
 fi
 rm -f /tmp/f129-events.json
 
