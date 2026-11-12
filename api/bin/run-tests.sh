@@ -9759,6 +9759,7 @@ fi
 block "BLOCK 96 — F128: control de sala por código real"
 
 F128_KEY=$(get_key "ADMIN-CLI")
+F128_VB6_KEY=$(get_key "VB6-MAIN")
 if [ -z "$F128_KEY" ]; then
     skip "F128 completo" "clave ADMIN-CLI no disponible"
 elif [ "$SERVER_UP" != true ]; then
@@ -9782,9 +9783,19 @@ else
         http_test POST "/api/v1/rooms/by-code/$F128_CODE/light" 404 \
             "F128: luz por código sin SWITCH → 404" --key ADMIN-CLI \
             --body '{"state":"ON"}'
-        http_test POST "/api/v1/rooms/by-code/$F128_CODE/unlock" 200 \
-            "F128: unlock por código" --key ADMIN-CLI \
-            --idem "f128-unlock-$F128_ROOM_ID-$(date +%s)" --body '{"reason":"run-tests"}'
+        if [ -n "$F128_VB6_KEY" ]; then
+            http_test POST "/api/v1/rooms/by-code/$F128_CODE/light" 400 \
+                "F128: VB6-MAIN pasa switches:write (estado inválido → 400)" --key VB6-MAIN \
+                --body '{"state":"BAD"}'
+            http_test POST "/api/v1/rooms/by-code/$F128_CODE/unlock" 200 \
+                "F128: VB6-MAIN pasa locks:open al abrir por código" --key VB6-MAIN \
+                --idem "f128-vb6-unlock-$F128_ROOM_ID-$(date +%s)" --body '{"reason":"run-tests-vb6"}'
+        else
+            skip "F128: scopes de sala de VB6-MAIN" "clave VB6-MAIN no disponible"
+            http_test POST "/api/v1/rooms/by-code/$F128_CODE/unlock" 200 \
+                "F128: unlock por código" --key ADMIN-CLI \
+                --idem "f128-unlock-$F128_ROOM_ID-$(date +%s)" --body '{"reason":"run-tests"}'
+        fi
         http_test POST "/api/v1/rooms/by-code/$F128_CODE/reset" 422 \
             "F128: reset por código sin confirm → 422" --key ADMIN-CLI --body '{}'
         http_test POST "/api/v1/rooms/by-code/$F128_CODE/reset" 200 \
