@@ -27244,3 +27244,40 @@ evento. Al volver a la pestaña se refresca todo. `sensor-wizard-v2.js` refresca
 `RadarFreshnessTest` (12), `radar-scope.test.js` (39),
 `radar-wizard.test.js` (27), BLOCK 99 (`/radar/live` y SSE) y regresión
 completa.
+
+## F125.1.6 — Distancia actual del banner
+
+El banner de Radar Studio (`detectionModel` en `radar-scope.js`) usa una
+distancia solo si es **actual**. La fuente se resuelve en el servidor:
+
+```text
+maxAge = stale_seconds (30 s por defecto)
+candidatos =
+  target_distance si > 0 y age <= maxAge
+  última DP9 positiva si > 0, age <= maxAge y config_key coincide
+elegir el candidato con menor edad
+si no hay candidato -> last_distance = null
+```
+
+`RadarLiveService` consulta `RadarDistanceReportRepository` solo cuando el
+`target_distance` no es positivo/fresco. La lectura DP9 se filtra por la
+`config_key` vigente para no mezclar ajustes de calibración distintos.
+
+`GET /radar/live` añade de forma aditiva `last_distance`, `last_distance_at`,
+`last_distance_age_s` y `last_distance_source`, y replica `last_distance` en
+`stats`. El SSE usa el mismo payload.
+
+En el cliente, `freshDistance(scope)` prioriza `last_distance`, luego
+`stats.last_distance` y por último la serie `/scope`. Descarta valores `<= 0` y
+edades superiores a `stale_seconds`. Los estados son:
+
+- `PRESENT` con distancia: `Presencia confirmada · distancia X m`.
+- `PRESENT` sin distancia fresca: `Presencia confirmada · distancia no disponible`.
+- `MOTION` con distancia: `El radar ve ecos a X m...`.
+
+No se conserva una distancia al pasar a `ABSENT` ni entre episodios.
+
+### Verificación
+
+`RadarLiveDistanceTest`, `RadarDistanceReportRepositoryTest`,
+`radar-scope.test.js` (casos F125.1.6) y BLOCK 99.

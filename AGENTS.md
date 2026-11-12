@@ -238,6 +238,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F125.1.2 Perfil MQTT por dispositivo** | **BLOCK 98 + `ZigbeeMqttProfileTest`/`ZigbeeRadarCalibrationProfileTest`** | **Implementado: perfil dev asignado (1339→1886), producción en 1884, regresión 1315/0/14** |
 | **F125.1.3 Indicador visual de detección** | **BLOCK 97 + `radar-scope.test.js`** | **Implementado (código); validación visual pendiente** |
 | **F125.1.4/1.5 Frescura real y Radar Studio en vivo** | **BLOCK 99 + `RadarFreshnessTest` + `/radar/live`/SSE** | **Implementado (código); validación en vivo pendiente** |
+| **F125.1.6 Distancia actual en el banner** | **BLOCK 99 + `RadarLiveDistanceTest`/`radar-scope.test.js`** | **Implementado (código); validación en vivo pendiente** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
@@ -1442,6 +1443,28 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarFreshnessTest` (12), `radar-scope.test.js` (39),
   `radar-wizard.test.js` (27), BLOCK 99 y regresión completa. Pendiente
   validación en vivo con el radar desconectado/reconectado.
+
+### F125.1.6 — Distancia actual en el banner de detección (RF-386…RF-389)
+
+- **Motivo**: el banner mostraba `TE DETECTA`, pero `target_distance` suele
+  llegar a 0 entre lecturas DP9; el operador no veía la distancia aunque hubiera
+  una lectura positiva reciente.
+- **Regla**: solo se muestra una distancia **actual**. Se usa el
+  `target_distance` positivo del último push o, si no, la última DP9 positiva
+  con antigüedad ≤ 30 s y misma `config_key`.
+- **Sin lectura fresca**: `Presencia confirmada · distancia no disponible`. No
+  se reutilizan distancias de episodios anteriores.
+- **Backend**: `RadarLiveDistance` (selector puro) +
+  `RadarDistanceReportRepository::latestPositiveForRoom()`. `/radar/live` añade
+  `last_distance`, `last_distance_at`, `last_distance_age_s` y
+  `last_distance_source` de forma aditiva.
+- **Frontend**: `freshDistance()` en `radar-scope.js`; prioriza los campos del
+  live, luego `stats` y por último la serie del scope. Descarta valores ≤ 0 y
+  edades fuera de umbral.
+- **Sin migración, sin Tuya y sin pollers nuevos.**
+- **Verificación**: `RadarLiveDistanceTest` (18),
+  `RadarDistanceReportRepositoryTest` (11), `radar-scope.test.js` y BLOCK 99.
+  Regresión completa pendiente de ejecución.
 
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 

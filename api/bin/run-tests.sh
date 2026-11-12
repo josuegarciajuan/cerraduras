@@ -9953,9 +9953,13 @@ block "BLOCK 99 — F125.1.4/1.5: frescura y Radar Studio en vivo"
 
 for F12515_FILE in \
     src/Domain/Sensors/RadarFreshness.php \
+    src/Domain/Sensors/RadarDistanceReportRepository.php \
+    src/Domain/Sensors/RadarLiveDistance.php \
     src/Infrastructure/Sensors/RadarLiveService.php \
     src/Http/Controllers/RadarEventStreamController.php \
-    tests/Unit/RadarFreshnessTest.php; do
+    tests/Unit/RadarFreshnessTest.php \
+    tests/Unit/RadarLiveDistanceTest.php \
+    tests/Unit/RadarDistanceReportRepositoryTest.php; do
     if [ -f "$F12515_FILE" ]; then
         pass "F125.1.4: existe $F12515_FILE"
     else
@@ -9979,6 +9983,8 @@ done
 
 for F12515_PHP in \
     src/Domain/Sensors/RadarFreshness.php \
+    src/Domain/Sensors/RadarDistanceReportRepository.php \
+    src/Domain/Sensors/RadarLiveDistance.php \
     src/Infrastructure/Sensors/SensorContextBuilder.php \
     src/Infrastructure/Sensors/RadarLiveService.php \
     src/Http/Controllers/RadarEventStreamController.php \
@@ -10019,6 +10025,18 @@ else
     fail "F125.1.4: unit RadarFreshness" "$(tail -3 /tmp/f12515-fresh.log | tr '\n' ' ')"
 fi
 
+if php tests/Unit/RadarLiveDistanceTest.php >/tmp/f12516-distance.log 2>&1; then
+    pass "F125.1.6: unit RadarLiveDistance"
+else
+    fail "F125.1.6: unit RadarLiveDistance" "$(tail -3 /tmp/f12516-distance.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/RadarDistanceReportRepositoryTest.php >/tmp/f12516-repo.log 2>&1; then
+    pass "F125.1.6: unit RadarDistanceReportRepository"
+else
+    fail "F125.1.6: unit RadarDistanceReportRepository" "$(tail -3 /tmp/f12516-repo.log | tr '\n' ' ')"
+fi
+
 if [ "$SERVER_UP" = true ]; then
     F12515_LIVE_CODE=$(curl -s -o /tmp/f12515-live.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/live?room_id=201" 2>/dev/null)
     F12515_LIVE_OK=$(python3 -c "
@@ -10027,7 +10045,10 @@ try:
     d=json.load(open('/tmp/f12515-live.json'))
 except Exception:
     print('bad_json'); raise SystemExit
-print('ok' if d.get('ok') is True and isinstance(d.get('raw'), dict) and isinstance(d.get('device'), dict) else 'bad_shape')
+ok = (d.get('ok') is True and isinstance(d.get('raw'), dict) and isinstance(d.get('device'), dict)
+      and 'last_distance' in d and 'last_distance_at' in d and 'last_distance_age_s' in d
+      and isinstance(d.get('stats'), dict) and 'last_distance' in d['stats'])
+print('ok' if ok else 'bad_shape')
 " 2>/dev/null)
     if [ "$F12515_LIVE_CODE" = "200" ] && [ "$F12515_LIVE_OK" = "ok" ]; then
         pass "F125.1.5: /radar/live HTTP"

@@ -17108,3 +17108,21 @@ contraseña.
 `mqtt_profiles_config_invalid`.
 
 El fallo de resolución impide publicar; no se cae al broker por defecto.
+
+## F125.1.6 — Distancia actual en `/radar/live`
+
+Aditivo en `GET /dashboard-api/sensores/v2/radar/live?room_id=<id>`:
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `last_distance` | `number \| null` | Distancia positiva actual en metros |
+| `last_distance_at` | `string \| null` | Instante UTC de la lectura elegida |
+| `last_distance_age_s` | `integer \| null` | Antigüedad de la lectura elegida |
+| `last_distance_source` | `"target" \| "report" \| null` | Origen de la distancia |
+| `stats.last_distance` | `number \| null` | Igual que `last_distance` |
+| `stats.last_distance_age_s` | `integer \| null` | Igual que `last_distance_age_s` |
+
+Solo se devuelve una distancia con antigüedad ≤ `stale_seconds` (30 s por
+defecto). Si no hay lectura positiva fresca, los campos de distancia son
+`null`. Los campos existentes (`raw`, `stats`, `series`, `settings`, etc.) no
+cambian de forma ni de significado.

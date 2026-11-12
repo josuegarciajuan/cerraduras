@@ -11989,3 +11989,11 @@ pendientes.
 - [x] TSK-F125.1.5-03: SSE/fallback, split scope/wizard, secuencias y render incremental.
 - [x] TSK-F125.1.5-04: tick local de edad/stale y preflight del roster cada 5 s.
 - [x] TSK-F125.1.5-05: tests, BLOCK 99 y documentación.
+
+## F125.1.6 — Distancia actual en el banner de detección
+
+- [x] TSK-F125.1.6-01: selector puro `RadarLiveDistance`.
+- [x] TSK-F125.1.6-02: `latestPositiveForRoom` en `RadarDistanceReportRepository`.
+- [x] TSK-F125.1.6-03: campos aditivos de distancia en `/radar/live`.
+- [x] TSK-F125.1.6-04: `freshDistance` y textos del banner en `radar-scope.js`.
+- [x] TSK-F125.1.6-05: tests PHP/JS, BLOCK 99 y documentación.

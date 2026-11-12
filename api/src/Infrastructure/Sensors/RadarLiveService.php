@@ -3,19 +3,22 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Sensors;
 
+use App\Domain\Sensors\RadarDistanceReport;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarFreshness;
+use App\Domain\Sensors\RadarLiveDistance;
 use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use PDO;
 use RuntimeException;
 
 /**
- * RadarLiveService — F125.1.5.
+ * RadarLiveService — F125.1.5 / F125.1.6.
  *
  * Construye el payload ligero del canal en vivo de Radar Studio:
- * presencia cruda, frescura, salud, ajustes, movimiento/último eco, puerta y
- * modo de presencia. No incluye la serie de 60 s ni el diagnóstico (eso lo
- * aporta `/radar/scope` a 1,5 s).
+ * presencia cruda, frescura, salud, ajustes, movimiento/último eco, distancia
+ * actual, puerta y modo de presencia. No incluye la serie de 60 s ni el
+ * diagnóstico (eso lo aporta `/radar/scope` a 1,5 s).
  */
 final class RadarLiveService
 {
@@ -57,8 +60,34 @@ final class RadarLiveService
         }
 
         $live = $ctx->live($roomId);
-        $motion = !$stale && $target !== null;
-        $series = $motion ? [['distance_m' => round($target, 3), 'age_s' => $age]] : [];
+        $maxAge = isset($status['stale_seconds']) && is_numeric($status['stale_seconds'])
+            ? max(5, min(300, (int) $status['stale_seconds']))
+            : RadarFreshness::staleSeconds();
+        $settingsAt = isset($status['settings_at']) && is_string($status['settings_at'])
+            ? $status['settings_at'] : null;
+        $latestReport = null;
+        if ($target === null || $age === null || $age > $maxAge) {
+            $since = gmdate('Y-m-d H:i:s', time() - $maxAge);
+            $configKey = RadarDistanceReport::configKey($settings);
+            $latestReport = (new RadarDistanceReportRepository($this->pdo))
+                ->latestPositiveForRoom($roomId, $since, $configKey);
+        }
+        $distance = RadarLiveDistance::choose(
+            $target,
+            $age,
+            $settingsAt,
+            $latestReport,
+            $maxAge,
+            gmdate('Y-m-d\TH:i:s.v\Z')
+        );
+        $distanceM = $distance['distance_m'];
+        $distanceAge = $distance['age_seconds'];
+        $distanceAt = $distance['at'];
+        $distanceSource = $distance['source'];
+        $motion = !$stale && $distanceM !== null;
+        $series = $motion
+            ? [['distance_m' => $distanceM, 'age_s' => $distanceAge]]
+            : [];
 
         return [
             'ok' => true,
@@ -78,10 +107,14 @@ final class RadarLiveService
             'stats' => [
                 'motion_recent' => $motion,
                 'last_age_s' => $age,
-                'last_distance' => $target,
+                'last_distance' => $distanceM,
+                'last_distance_age_s' => $distanceAge,
             ],
             'series' => $series,
-            'last_distance' => $target,
+            'last_distance' => $distanceM,
+            'last_distance_at' => $distanceAt,
+            'last_distance_age_s' => $distanceAge,
+            'last_distance_source' => $distanceSource,
             'door_state' => $live['door_state'] ?? null,
             'presence_mode' => $this->presenceMode($roomId),
             'presence_stale' => (bool) ($live['presence_stale'] ?? false),
