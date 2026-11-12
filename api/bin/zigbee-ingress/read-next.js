@@ -102,7 +102,10 @@ client.on('connect', () => {
   });
 });
 
+let done = false;
 client.on('message', (receivedTopic, payload) => {
+  if (done) return;
+  done = true;
   clearTimeout(timer);
   let decoded = null;
   try {
@@ -115,6 +118,8 @@ client.on('message', (receivedTopic, payload) => {
     received_at: new Date().toISOString(),
     payload: decoded === null ? { raw: payload.toString().slice(0, 4096) } : decoded,
   };
-  process.stdout.write(JSON.stringify(output) + '\n');
-  client.end(false, {}, () => process.exit(0));
+  process.stdout.write(JSON.stringify(output) + '\n', () => {
+    try { client.end(true); } catch (_) { /* ignore */ }
+    process.exit(0);
+  });
 });
