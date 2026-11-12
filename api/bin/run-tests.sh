@@ -7511,10 +7511,11 @@ f113_expect_error "F113: token corrupto → qr_invalid_signature" "/api/v1/qr/va
 
 # ── F131: ficha EM por decimal impreso y lectura hexadecimal ────────────
 # Trazabilidad: RF-401…RF-403. El alta usa 10 dígitos; ambas lecturas abren.
-F131_HEX=$(printf '%08X' "$F113_TS")
-F131_DEC=$(printf '%010d' "$F113_TS")
-F131_CARD=$(f113_card_id "F131-DEC-$F113_TS" "$F131_DEC")
-F131_KEY=$(f113_key_id "F131-DEC-$F113_TS" "$F131_CARD" "$ROOM_TYPE_PRIMARY")
+F131_TS=$((F113_TS + 2))
+F131_HEX=$(printf '%08X' "$F131_TS")
+F131_DEC=$(printf '%010d' "$F131_TS")
+F131_CARD=$(f113_card_id "F131-DEC-$F131_TS" "$F131_DEC")
+F131_KEY=$(f113_key_id "F131-DEC-$F131_TS" "$F131_CARD" "$ROOM_TYPE_PRIMARY")
 if [ -n "$F131_CARD" ] && [ -n "$F131_KEY" ]; then
   for F131_READ in "$F131_DEC" "$F131_HEX"; do
     F131_RESP=$(curl -s -w '\n%{http_code}' -X POST "${API_BASE}/api/v1/qr/validate" \
@@ -7532,7 +7533,7 @@ if [ -n "$F131_CARD" ] && [ -n "$F131_KEY" ]; then
   done
 
   http_test POST /api/v1/nfc-cards 409 "F131: alta hexadecimal equivalente → duplicado" --key ADMIN-CLI \
-    --body "{\"number\":\"F131-DUP-$F113_TS\",\"code\":\"$F131_HEX\"}"
+    --body "{\"number\":\"F131-DUP-$F131_TS\",\"code\":\"$F131_HEX\"}"
 else
   fail "F131: crear ficha/llave decimal" "card=$F131_CARD key=$F131_KEY"
 fi
