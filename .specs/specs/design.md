@@ -8,6 +8,69 @@
 
 ---
 
+# Fase 131: Fichas EM con número decimal impreso
+
+## Decisión
+
+El formato canónico de una ficha EM es el decimal de 10 dígitos con ceros
+iniciales. La conversión vive en `CredentialFormat`, una función pura sin BD ni
+red, y se aplica en el alta y en la validación.
+
+```text
+lectura 00EFA5BB -> decimal 15705531 -> canónico 0015705531
+lectura 0015705531 ------------------> canónico 0015705531
+```
+
+- Un texto de exactamente 10 dígitos se considera decimal y no se reinterpreta
+  como hexadecimal.
+- Un texto de exactamente 8 caracteres hexadecimales se convierte a entero de
+  32 bits y se rellena a 10 posiciones.
+- Cualquier otro texto conserva la normalización legada.
+
+## Alta
+
+`NfcCardService::create()` normaliza el código y persiste:
+
+- `number`: el número visible; si falta, el código canónico.
+- `code_hash`: SHA-256 del código canónico.
+- `code_last4`: últimos cuatro caracteres del código canónico.
+
+Antes de insertar comprueba todos los candidatos equivalentes (canónico,
+hexadecimal legado y forma decimal derivada) para impedir duplicados entre
+formatos. Los códigos de texto libre siguen admitiéndose como hoy.
+
+## Validación
+
+`AccessKeyService::validateFicha()` obtiene el canónico y prueba en orden:
+
+1. `SHA-256(canónico)`.
+2. Los candidatos hexadecimales equivalentes de 8 caracteres.
+3. La forma normalizada legada del texto recibido.
+
+La primera ficha encontrada sigue el flujo actual de estado, llave, permisos,
+vigencia, sesión y auditoría. La ficha `EM-00EFA5BB` no se modifica: su hash
+`00EFA5BB` se encuentra en el paso 2 o 3.
+
+## UI
+
+El formulario de `/panel` sustituye los campos «Número» y «Código» por un único
+campo «Número impreso de la ficha», con validación de 10 dígitos y ayuda sobre
+los ceros iniciales. El mismo valor se envía como `number` y `code`.
+
+## Errores y límites
+
+- Decimal fuera de `0..4294967295` -> `422 validation_error`.
+- Código vacío o de longitud inválida -> `422 validation_error`.
+- Duplicado en cualquier representación -> `409 nfc_code_exists`.
+- No se revela el código completo; se mantiene `code_masked`.
+
+## Verificación
+
+`CredentialFormatTest`, pruebas de alta/validación y `BLOCK 69` del runner.
+Sin migración ni cambios de contrato de rutas.
+
+---
+
 # Fase 99: Reactivación de llaves desactivadas
 
 ## Decisión

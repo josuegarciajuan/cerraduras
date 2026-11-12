@@ -8,6 +8,52 @@
 
 ---
 
+# Fase 131: Contratos de fichas EM decimales
+
+## `POST /api/v1/nfc-cards`
+
+Sin ruta nueva. El cuerpo acepta:
+
+```json
+{
+  "number": "0015705531",
+  "code": "0015705531",
+  "notes": "Lote noviembre"
+}
+```
+
+- `number` es opcional; si falta se usa el código canónico.
+- `code` admite 10 dígitos decimales o 8 hexadecimales equivalentes; ambos se
+  guardan con el mismo hash decimal canónico.
+- Respuesta `201` sin cambios de forma: `data.id`, `data.number`,
+  `data.code_masked`, `data.status`, etc.
+- Errores:
+  - `422 validation_error` si el código está vacío, fuera de longitud o fuera
+    del rango de 32 bits.
+  - `409 nfc_code_exists` si ya existe la misma ficha en cualquier
+    representación.
+
+## `PATCH /api/v1/nfc-cards/{id}`
+
+Sin cambios: `number` y `notes` se pueden editar; el código no cambia.
+
+## `POST /api/v1/qr/validate` y `POST /api/v1/keys/validate`
+
+Sin cambios de cuerpo ni respuesta. Para `qr_text` o `ficha_code`:
+
+- `"0015705531"` valida el hash decimal canónico.
+- `"00EFA5BB"` se convierte a `"0015705531"` y valida el mismo hash.
+- Si no hay hash canónico, se prueba el hash hexadecimal legado `"00EFA5BB"`,
+  por lo que la ficha existente sigue abriendo.
+
+## Compatibilidad
+
+- No hay migración.
+- `GET /api/v1/nfc-cards` mantiene `number`, `code_last4` y `code_masked`.
+- La ficha `number=EM-00EFA5BB` conserva sus datos y su llave.
+
+---
+
 # Fase 122: Contratos de la retirada de Tuya
 
 ## Rutas eliminadas

@@ -578,8 +578,10 @@ final class AccessKeyService
     }
 
     /**
-     * Validate a physical NFC card code (F96/F113). The R35D-B reader sends
-     * the card id as plain text; it is normalised before hashing.
+     * Validate a physical NFC card code (F96/F113/F131). The R35D-B reader
+     * sends the EM UID as 8 hex; fichas store the printed 10-digit decimal.
+     * The canonical hash is tried first, then the legacy hex representation so
+     * existing cards keep opening without a migration.
      *
      * @return array<string,mixed>
      */
@@ -590,8 +592,13 @@ final class AccessKeyService
         string $provider,
         string $correlationId
     ): array {
-        $code = CredentialFormat::normaliseCode($code);
-        $card = $this->cards->findByCodeHash(hash('sha256', $code));
+        $card = null;
+        foreach (CredentialFormat::fichaCandidates($code) as $candidate) {
+            $card = $this->cards->findByCodeHash(hash('sha256', $candidate));
+            if ($card !== null) {
+                break;
+            }
+        }
         if ($card === null) {
             $this->recordAccess([
                 'room_id' => $roomId,

@@ -41,7 +41,7 @@ final class NfcCardController
     {
         $body = JsonBody::require($request->jsonBody);
         $data = [
-            'number' => JsonBody::string($body, 'number', 32),
+            'number' => JsonBody::stringOpt($body, 'number', 32) ?? '',
             'code'   => JsonBody::string($body, 'code', 64),
         ];
         if (array_key_exists('notes', $body)) {
