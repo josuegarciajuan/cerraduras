@@ -494,6 +494,18 @@ se actualiza con el estado que ya consulta Radar Studio.
   el SVG/diagnóstico y el wizard van a 1,5 s.
 - El roster del header refresca `/preflight` cada 5 s.
 
+### F125.1.6 — Distancia actual en el banner
+
+- Con **TE DETECTA**, el banner muestra la distancia en metros si existe una
+  lectura positiva **actual**.
+- “Actual” significa DP9 positiva con antigüedad ≤ **30 s**
+  (`RADAR_PRESENCE_STALE_SECONDS`). Se usa `target_distance` del último push o,
+  si viene a 0, la última DP9 positiva de `radar_distance_reports` con la misma
+  configuración.
+- Si no hay lectura fresca, el banner muestra
+  `Presencia confirmada · distancia no disponible`.
+- No se conserva ni se muestra una distancia de un episodio anterior.
+
 ### F125.2 — La calibración guardada manda (convergencia automática)
 
 Invariante: **la configuración reportada por el radar debe coincidir con

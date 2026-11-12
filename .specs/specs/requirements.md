@@ -14233,3 +14233,29 @@ operación posterior), Tuya, migraciones o cambiar la ocupación de negocio.
 **Trazabilidad:** `RadarFreshness`, `RadarLiveService`,
 `RadarEventStreamController`, `radar-studio.js`, `sensor-wizard-v2.js`,
 `dashboard.html`, `RadarFreshnessTest`, `radar-scope.test.js`, BLOCK 99.
+
+## F125.1.6 — Distancia actual en el banner de detección (RF-386…RF-389)
+
+**Motivo:** el banner mostraba `TE DETECTA`, pero el radar suele publicar
+`target_distance = 0` entre lecturas DP9. El operador no sabía a qué distancia
+estaba siendo detectado aunque el radar sí tuviera una lectura positiva
+reciente.
+
+- **RF-386 (distancia en el banner):** con `PRESENT`, el banner muestra la
+  distancia positiva actual en metros.
+- **RF-387 (solo actual):** se considera actual una lectura DP9 positiva con
+  antigüedad ≤ umbral de frescura del radar (`RADAR_PRESENCE_STALE_SECONDS`,
+  30 s por defecto). No se muestran distancias de episodios anteriores.
+- **RF-388 (sin lectura fresca):** si no hay `target_distance` positivo ni DP9
+  positiva fresca, el banner muestra `Presencia confirmada · distancia no
+  disponible`.
+- **RF-389 (contrato aditivo):** `GET /radar/live` añade `last_distance`,
+  `last_distance_at`, `last_distance_age_s` y `last_distance_source` sin
+  cambiar los campos existentes.
+
+**Fuera de alcance:** ocupación de negocio, calibración del radar, migraciones,
+Tuya o polling periódico.
+
+**Trazabilidad:** `RadarLiveDistance`, `RadarDistanceReportRepository`,
+`RadarLiveService`, `radar-scope.js`, `RadarLiveDistanceTest`,
+`RadarDistanceReportRepositoryTest`, `radar-scope.test.js` y BLOCK 99.

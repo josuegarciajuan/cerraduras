@@ -90,6 +90,35 @@
   }
 
   /**
+   * F125.1.6: distancia positiva que puede considerarse ACTUAL. Se descarta
+   * cualquier lectura fuera del umbral de frescura del radar.
+   */
+  function freshDistance(scope) {
+    if (!scope) return null;
+    var maxAge = Number(scope.stale_seconds);
+    if (!isFinite(maxAge) || maxAge <= 0) maxAge = 30;
+    function accept(value, age) {
+      var d = Number(value);
+      if (!isFinite(d) || d <= 0) return null;
+      var a = age != null ? Number(age) : null;
+      if (a != null && (!isFinite(a) || a < 0 || a > maxAge)) return null;
+      return { value: d, ageSeconds: a };
+    }
+    var direct = accept(scope.last_distance, scope.last_distance_age_s);
+    if (direct) return direct;
+    var stats = scope.stats || {};
+    var fromStats = accept(stats.last_distance, stats.last_distance_age_s);
+    if (fromStats) return fromStats;
+    var series = scope.series || [];
+    for (var i = series.length - 1; i >= 0; i--) {
+      var point = series[i] || {};
+      var fromSeries = accept(point.distance_m, point.age_s);
+      if (fromSeries) return fromSeries;
+    }
+    return null;
+  }
+
+  /**
    * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
    * Verde = TE DETECTA; ámbar = movimiento sin presencia; rojo = NO TE DETECTA;
    * gris = SIN DATOS.
@@ -101,23 +130,26 @@
     var age = raw.age_seconds != null
       ? Number(raw.age_seconds)
       : (stats.last_age_s != null ? Number(stats.last_age_s) : null);
-    var lastDistance = null;
-    var series = (scope && scope.series) || [];
-    if (series.length) {
-      var d = Number(series[series.length - 1].distance_m);
-      if (isFinite(d) && d > 0) lastDistance = d;
-    }
+    var distance = freshDistance(scope);
+    var lastDistance = distance ? distance.value : null;
+    var distanceAge = distance ? distance.ageSeconds : null;
+    var distanceText = lastDistance != null
+      ? 'distancia ' + lastDistance.toFixed(2) + ' m'
+        + (distanceAge != null && distanceAge >= 5 ? ' · hace ' + Math.round(distanceAge) + ' s' : '')
+      : 'distancia no disponible';
     if (visual.state === 'PRESENT') {
       return {
         state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
-        subtitle: 'Presencia confirmada' + (lastDistance != null ? ' · último eco ' + lastDistance.toFixed(2) + ' m' : ''),
+        subtitle: 'Presencia confirmada · ' + distanceText,
         ageSeconds: age, lastDistance: lastDistance
       };
     }
     if (visual.state === 'MOTION') {
       return {
         state: 'MOTION', tone: 'warn', icon: '≈', title: 'MOVIMIENTO SIN PRESENCIA',
-        subtitle: 'El radar ve ecos, pero no ha confirmado presencia.',
+        subtitle: lastDistance != null
+          ? 'El radar ve ecos a ' + lastDistance.toFixed(2) + ' m, pero no ha confirmado presencia.'
+          : 'El radar ve ecos, pero no ha confirmado presencia.',
         ageSeconds: age, lastDistance: lastDistance
       };
     }

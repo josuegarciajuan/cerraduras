@@ -63,6 +63,53 @@ check('banner PRESENT → verde', dmPresent.tone === 'ok' && dmPresent.title ===
 check('banner PRESENT incluye distancia', dmPresent.subtitle.indexOf('1.20 m') >= 0);
 check('banner PRESENT incluye edad', dmPresent.ageSeconds === 1);
 
+const dmPresentExplicit = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true, last_distance: 0.57, last_distance_age_s: 2 },
+  series: [],
+});
+check('F125.1.6: PRESENT usa last_distance sin serie', dmPresentExplicit.subtitle.indexOf('0.57 m') >= 0);
+check('F125.1.6: PRESENT explícito no dice no disponible', dmPresentExplicit.subtitle.indexOf('no disponible') < 0);
+check('F125.1.6: lastDistance devuelto', dmPresentExplicit.lastDistance === 0.57);
+
+const dmPresentNoDistance = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: false },
+  series: [],
+});
+check('F125.1.6: PRESENT sin distancia → no disponible', dmPresentNoDistance.subtitle.indexOf('distancia no disponible') >= 0);
+check('F125.1.6: PRESENT sin distancia → lastDistance null', dmPresentNoDistance.lastDistance === null);
+
+const dmPresentZero = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  last_distance: 0,
+  last_distance_age_s: 1,
+  series: [],
+});
+check('F125.1.6: distancia cero se ignora', dmPresentZero.subtitle.indexOf('distancia no disponible') >= 0);
+
+const dmPresentOld = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stale_seconds: 30,
+  last_distance: 1.2,
+  last_distance_age_s: 45,
+  series: [],
+});
+check('F125.1.6: distancia vieja se descarta', dmPresentOld.subtitle.indexOf('distancia no disponible') >= 0);
+
+const dmPresentOldSeries = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stale_seconds: 30,
+  series: [{ distance_m: 1.2, age_s: 45 }],
+});
+check('F125.1.6: serie vieja se descarta', dmPresentOldSeries.subtitle.indexOf('distancia no disponible') >= 0);
+
+const dmMotionDistance = RadarScope.detectionModel({
+  raw: { state: 'ABSENT' },
+  stats: { motion_recent: true, last_distance: 1.4, last_distance_age_s: 3 },
+});
+check('F125.1.6: MOTION incluye distancia', dmMotionDistance.subtitle.indexOf('1.40 m') >= 0);
+
 const dmAbsent = RadarScope.detectionModel({
   raw: { state: 'ABSENT', age_seconds: 2 },
   stats: { motion_recent: false },
