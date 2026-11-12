@@ -1541,11 +1541,14 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   (`before_at`/`before_source`/`before_id`) y `limit` (1..200).
 - **Live tail**: `since` + polling de 5 s activable; se pausa con la pestaña
   oculta y se detiene al salir de la sección. Sin SSE ni pollers de sistema.
+- **Presencia**: los eventos `ABSENT` se excluyen **siempre** del registro
+  (el radar los emite cada ~1,5 s y saturan la cronología). No se borran de
+  `presence_events`; siguen disponibles para el resto de módulos.
 - **UI**: cards por categoría, tabla con detalle en drawer, enlaces a sala y
   trabajador, y exportación CSV.
 - **Índices**: migración aditiva `0149` (`idx_pe_time`, `idx_sce_time`).
 - **Sin Tuya, sin migración destructiva y sin cambios en contratos existentes.**
-- **Verificación**: `PanelEventsTest` (50), BLOCK 100 y regresión completa.
+- **Verificación**: `PanelEventsTest` (52), BLOCK 100 y regresión completa.
 
 ### F125.1.1 — Corrección de `persistCalibration` con `$extra`
 

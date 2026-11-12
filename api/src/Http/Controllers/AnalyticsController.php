@@ -1657,6 +1657,8 @@ final class AnalyticsController
                 $prefix = $sensor === 'PROXIMITY' ? 'pe_door' : 'pe_pres';
                 [$where, $params] = $timeConditions($prefix, 'pe.occurred_at');
                 $where[] = "pe.sensor = '{$sensor}'";
+                // F129 — ABSENT satura el registro (el radar lo emite cada ~1,5 s).
+                if ($sensor === 'PRESENCE') { $where[] = "pe.value <> 'ABSENT'"; }
                 if ($roomId !== null) { $where[] = 'pe.room_id = :' . $prefix . '_room'; $params[':' . $prefix . '_room'] = (string) $roomId; }
                 if ($valueFilter !== null) {
                     $where[] = 'UPPER(pe.value) = :' . $prefix . '_type';
