@@ -10196,7 +10196,7 @@ http_test GET '/api/v1/analytics/events?days=7&from=2026-01-01T00:00&to=2026-12-
     "F129: rango exacto from/to" --key ADMIN-CLI
 
 if curl -s -o /tmp/f129-events.json -w '%{http_code}' \
-    -H "Authorization: Bearer $(get_key ADMIN-CLI)" \
+    -H "X-API-Key: $(get_key ADMIN-CLI)" \
     "$API_BASE/api/v1/analytics/events?days=7&limit=3" 2>/dev/null | grep -q '^200$'; then
     F129_SHAPE=$(python3 - <<'PY' 2>/dev/null
 import json
