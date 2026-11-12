@@ -541,3 +541,31 @@ curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/radar/direct?room_id=20
 El topic de estado de Zigbee2MQTT **no es retenido**: la lectura directa se
 suscribe y espera el siguiente mensaje (~1 s con el radar encendido). Si el
 radar está en silencio, devuelve `read_timeout` sin modificar nada.
+
+## F130 — alcance operativo estricto
+
+El radar puede informar ecos por encima de `maximum_range` (reflexión o
+multitrayecto). Desde F130 ese eco se conserva como evidencia, pero **no
+acredita presencia**:
+
+- `PRESENT` con DP9 marcada y dentro del alcance → puede aplicarse.
+- `PRESENT` con DP9 marcada por encima del alcance → se convierte en `ABSENT`
+  efectivo y siguen las guardas normales de salida.
+- `PRESENT` sin DP9 nueva correlacionada → `range_unverified`: no crea
+  ocupación, no refresca la frescura ni dispara luz/visitas/grabaciones.
+- `target_distance` cacheado sin marcador DP9 no es autoridad.
+
+La comparación es en centímetros enteros: `1.95 m` se admite con máximo
+`1.95 m`; `1.96 m` se descarta. El calibrador y las pruebas físicas siguen
+leyendo DP1/DP9 brutos.
+
+Comprobación en vivo:
+
+```bash
+curl -s 'http://127.0.0.1:8080/dashboard-api/sensores/v2/radar/live?room_id=201' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'raw':d.get('raw'),'decision':d.get('presence_decision'),'range':d.get('range_evaluation')},indent=2,ensure_ascii=False))"
+```
+
+Si `range_evaluation.status` es `out_of_range`, Radar Studio muestra
+**FUERA DEL ALCANCE** aunque el DP1 bruto siga en `PRESENT`. Revisa la
+calibración y reduce el alcance si el radar detecta el pasillo.

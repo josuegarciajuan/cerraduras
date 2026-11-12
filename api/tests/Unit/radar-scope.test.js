@@ -176,6 +176,77 @@ check('SVG con movimiento pinta pulso', svgMotion.indexOf('scope-motion') >= 0);
 const svgEmpty = RadarScope.buildSvg(null);
 check('SVG sin datos devuelve vacío', svgEmpty === '');
 
+// ─── F130: alcance operativo ─────────────────────────────────────────────
+const outOfRange = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  settings: { maximum_range: 1.95 },
+  last_distance: 2.64,
+  last_distance_age_s: 1,
+  presence_decision: { apply: true, state: 'ABSENT_CONFIRMED', discard_reason: null },
+  range_evaluation: {
+    status: 'out_of_range',
+    reason: 'distance_above_maximum_range',
+    distance_m: 2.64,
+    maximum_range_m: 1.95,
+  },
+});
+check('F130 fuera de alcance → FILTERED', outOfRange.state === 'FILTERED' && outOfRange.tone === 'bad');
+check('F130 fuera de alcance → título', outOfRange.title === 'FUERA DEL ALCANCE');
+check('F130 fuera de alcance → eco y máximo', outOfRange.subtitle.indexOf('2.64 m') >= 0 && outOfRange.subtitle.indexOf('1.95 m') >= 0);
+check('F130 fuera de alcance no dice confirmada', outOfRange.subtitle.indexOf('confirmada') < 0);
+
+const unverified = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: false },
+  settings: { maximum_range: 1.95 },
+  presence_decision: { apply: false, discard_reason: 'range_unverified' },
+  range_evaluation: { status: 'unverified', reason: 'no_dp9', distance_m: null, maximum_range_m: 1.95 },
+});
+check('F130 sin DP9 → UNVERIFIED', unverified.state === 'UNVERIFIED' && unverified.tone === 'warn');
+check('F130 sin DP9 → título', unverified.title === 'PRESENCIA NO VERIFICADA');
+
+const notApplied = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  presence_decision: { apply: false, discard_reason: 'uncorroborated' },
+});
+check('F130 no aplicada → NOT_APPLIED', notApplied.state === 'NOT_APPLIED');
+check('F130 no aplicada expone motivo', notApplied.subtitle.indexOf('uncorroborated') >= 0);
+
+const noop = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  last_distance: 1.2,
+  last_distance_age_s: 1,
+  presence_decision: { apply: false, state: 'PRESENT_CONFIRMED', discard_reason: 'noop' },
+});
+check('F130 noop no se pinta como no aplicada', noop.title === 'TE DETECTA' && noop.tone === 'ok');
+
+const inRange = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  settings: { maximum_range: 1.95 },
+  last_distance: 1.4,
+  last_distance_age_s: 1,
+  presence_decision: { apply: true, state: 'PRESENT_CONFIRMED', discard_reason: null },
+  range_evaluation: { status: 'in_range', distance_m: 1.4, maximum_range_m: 1.95 },
+});
+check('F130 dentro de alcance → TE DETECTA', inRange.title === 'TE DETECTA' && inRange.tone === 'ok');
+
+const svgOut = RadarScope.buildSvg({
+  settings: { maximum_range: 1.95, radar_sensitivity: 7 },
+  axes: { max_m: 3.0 },
+  raw: { state: 'PRESENT', stale: false },
+  stats: { motion_recent: true, p90: 2.64 },
+  series: [{ distance_m: 2.64 }],
+  presence_decision: { apply: true, state: 'ABSENT_CONFIRMED' },
+  range_evaluation: { status: 'out_of_range', distance_m: 2.64, maximum_range_m: 1.95 },
+});
+check('F130 SVG no pinta glow verde fuera de alcance', svgOut.indexOf('scope-presence') < 0);
+check('F130 SVG marca el bloqueo', svgOut.indexOf('scope-range-blocked') >= 0);
+check('F130 SVG etiqueta eco fuera', svgOut.indexOf('fuera') >= 0);
+
 // ─── Resumen ─────────────────────────────────────────────────────────────
 console.log('\nTotal: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

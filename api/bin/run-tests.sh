@@ -10318,6 +10318,109 @@ for F1254_TEST in tests/Unit/RadarDirectConfirmationTest.php tests/Unit/RadarSta
 done
 
 # =============================================================================
+# BLOCK 102 — F130: alcance operativo estricto del radar
+# Trazabilidad: F130 (RF-404…RF-408) · contracts.md §F130
+# =============================================================================
+block "BLOCK 102 — F130: alcance operativo del radar"
+
+for F130_FILE in \
+    src/Domain/Presence/RadarOperationalRangeDecision.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Domain/Sensors/RadarScope.php \
+    tests/Unit/RadarOperationalRangeDecisionTest.php; do
+    if [ -f "$F130_FILE" ]; then
+        pass "F130: existe $F130_FILE"
+    else
+        fail "F130: $F130_FILE" "no encontrado"
+    fi
+done
+
+for F130_PHP in \
+    src/Domain/Presence/RadarOperationalRangeDecision.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Domain/Sensors/RadarScope.php; do
+    if php -l "$F130_PHP" >/tmp/f130-php.log 2>&1; then
+        pass "F130: sintaxis $(basename "$F130_PHP")"
+    else
+        fail "F130: sintaxis $(basename "$F130_PHP")" "$(tail -2 /tmp/f130-php.log | tr '\n' ' ')"
+    fi
+done
+
+for F130_MARK in 'RadarOperationalRangeDecision' 'range_exceeded' 'range_unverified' 'maximum_range'; do
+    if grep -qF "$F130_MARK" src/Domain/Presence/IotSessionService.php 2>/dev/null; then
+        pass "F130: marcador $F130_MARK"
+    else
+        fail "F130: marcador $F130_MARK" "ausente"
+    fi
+done
+
+if php tests/Unit/RadarOperationalRangeDecisionTest.php >/tmp/f130-unit.log 2>&1; then
+    pass "F130: unit RadarOperationalRangeDecision"
+else
+    fail "F130: unit RadarOperationalRangeDecision" "$(tail -3 /tmp/f130-unit.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/IotSessionServiceTest.php >/tmp/f130-iot.log 2>&1; then
+    pass "F130: unit IotSessionService"
+else
+    fail "F130: unit IotSessionService" "$(tail -3 /tmp/f130-iot.log | tr '\n' ' ')"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    if node tests/Unit/radar-scope.test.js >/tmp/f130-js.log 2>&1; then
+        pass "F130: unit radar-scope"
+    else
+        fail "F130: unit radar-scope" "$(tail -3 /tmp/f130-js.log | tr '\n' ' ')"
+    fi
+else
+    skip "F130: JS" "node no disponible"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F130_LIVE_CODE=$(curl -s -o /tmp/f130-live.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/live?room_id=201" 2>/dev/null)
+    F130_LIVE_OK=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f130-live.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+ok = (d.get('ok') is True
+      and 'presence_decision' in d
+      and 'range_evaluation' in d
+      and 'range_gate' in d)
+print('ok' if ok else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F130_LIVE_CODE" = "200" ] && [ "$F130_LIVE_OK" = "ok" ]; then
+        pass "F130: /radar/live expone range_evaluation"
+    else
+        fail "F130: /radar/live range_evaluation" "http=$F130_LIVE_CODE json=$F130_LIVE_OK"
+    fi
+    rm -f /tmp/f130-live.json
+
+    F130_SCOPE_CODE=$(curl -s -o /tmp/f130-scope.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/scope?room_id=201&window=60" 2>/dev/null)
+    F130_SCOPE_OK=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f130-scope.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+scope=d.get('scope') or {}
+codes=[x.get('code') for x in (scope.get('diagnosis') or []) if isinstance(x,dict)]
+print('ok' if d.get('ok') is True else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F130_SCOPE_CODE" = "200" ] && [ "$F130_SCOPE_OK" = "ok" ]; then
+        pass "F130: /radar/scope HTTP"
+    else
+        fail "F130: /radar/scope HTTP" "http=$F130_SCOPE_CODE json=$F130_SCOPE_OK"
+    fi
+    rm -f /tmp/f130-scope.json
+else
+    skip "F130: live/scope HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

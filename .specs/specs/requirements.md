@@ -14346,3 +14346,33 @@ dev, Tuya, migraciones o polling periódico.
 
 **Trazabilidad:** `RadarCalibrationConvergence`, `ZigbeeRadarCalibrationService`,
 `radar-studio.js`, `RadarConvergenceStabilityTest`, `RadarStatusStabilityTest`.
+
+### F130 — Alcance operativo estricto del radar (RF-404…RF-408)
+
+- **RF-404 (límite operativo):** `maximum_range` es el límite máximo de
+  detección acreditable. Un `PRESENT` cuya DP9 nueva, marcada y correlacionada
+  supere ese máximo **no** puede mantener ni crear presencia operativa; se
+  convierte en `ABSENT` efectivo siguiendo las guardas normales de salida.
+- **RF-405 (comparación):** la distancia se compara con el máximo en
+  centímetros enteros, sin margen oculto. El valor igual al máximo se admite;
+  un centímetro por encima se descarta. La DP9 bruta se conserva siempre como
+  evidencia y para diagnóstico/calibración.
+- **RF-406 (sin DP9):** un `PRESENT` sin una DP9 nueva y correlacionada con la
+  misma `config_key` no acredita presencia (`range_unverified`). No actualiza la
+  frescura operativa, no confirma entrada, no crea visitas ni dispara luz,
+  grabaciones o salidas. `target_distance` cacheado sin marcador no es autoridad.
+- **RF-407 (correlación):** solo cuenta el `distance_report` de la propia trama.
+  Nunca se usa la última distancia de la sala, la serie de 60 s ni una lectura
+  con otra configuración para decidir sobre un `PRESENT`.
+- **RF-408 (compatibilidad):** un dispositivo de presencia Zigbee sin
+  configuración de radar (`maximum_range`/DP9) conserva su comportamiento
+  anterior. `ABSENT` nunca se bloquea por distancia. No hay migración, Tuya,
+  sondeos ni pollers nuevos.
+
+**Fuera de alcance:** alterar el conversor de Zigbee2MQTT, el calibrador o la
+semántica física del firmware. El calibrador y las pruebas físicas siguen
+leyendo DP1/DP9 brutos.
+
+**Trazabilidad:** `RadarOperationalRangeDecision`, `IotSessionService`,
+`RadarLiveService`, `RadarScope`, `radar-scope.js`, `radar-studio.js`,
+`RadarOperationalRangeDecisionTest`, `radar-scope.test.js`, BLOCK 102.

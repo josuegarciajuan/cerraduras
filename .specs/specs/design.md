@@ -389,6 +389,9 @@ CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
   decisión operativa; la operación usa `radar_door` como referencia segura y las discrepancias
   se auditan.
 - `target_distance`, iluminancia y LQI no intervienen en la decisión.
+  F130: la **DP9 marcada en la misma trama** sí actúa como límite operativo de
+  alcance (`RF-404…RF-408`); el campo `target_distance` cacheado sin marcador
+  sigue sin ser autoridad (RF-148.7).
 
 ### Integración con el motor del almacén
 
@@ -6498,6 +6501,9 @@ CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
   decisión operativa; la operación usa `radar_door` como referencia segura y las discrepancias
   se auditan.
 - `target_distance`, iluminancia y LQI no intervienen en la decisión.
+  F130: la **DP9 marcada en la misma trama** sí actúa como límite operativo de
+  alcance (`RF-404…RF-408`); el campo `target_distance` cacheado sin marcador
+  sigue sin ser autoridad (RF-148.7).
 
 ### Integración con el motor del almacén
 
@@ -12809,6 +12815,9 @@ CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
   decisión operativa; la operación usa `radar_door` como referencia segura y las discrepancias
   se auditan.
 - `target_distance`, iluminancia y LQI no intervienen en la decisión.
+  F130: la **DP9 marcada en la misma trama** sí actúa como límite operativo de
+  alcance (`RF-404…RF-408`); el campo `target_distance` cacheado sin marcador
+  sigue sin ser autoridad (RF-148.7).
 
 ### Integración con el motor del almacén
 
@@ -18918,6 +18927,9 @@ CANDIDATE_ABSENT --PRESENT--> PRESENT_CONFIRMED
   decisión operativa; la operación usa `radar_door` como referencia segura y las discrepancias
   se auditan.
 - `target_distance`, iluminancia y LQI no intervienen en la decisión.
+  F130: la **DP9 marcada en la misma trama** sí actúa como límite operativo de
+  alcance (`RF-404…RF-408`); el campo `target_distance` cacheado sin marcador
+  sigue sin ser autoridad (RF-148.7).
 
 ### Integración con el motor del almacén
 
@@ -27393,3 +27405,47 @@ tres variantes. La UI prioriza este estado sobre `applied`/`mismatch`.
 una publicación incrementa la racha sin resetear `attempts`; solo al alcanzar
 `RADAR_RECONCILE_SETTLE_REPORTS` se marca `applied` y se vuelve a 0. Un reporte
 con deriva resetea la racha e incrementa `attempts` como antes.
+
+### F130 — Alcance operativo estricto del radar
+
+El radar puede informar ecos por encima de `maximum_range` (reflexión,
+multitrayecto o comportamiento del firmware). Hasta F129 la distancia solo se
+mostraba: un `PRESENT` fuera de alcance podía confirmar entrada, mantener
+ocupación, crear visitas y encender luz. F130 añade una barrera de
+admisibilidad antes de cualquier decisión de presencia.
+
+**Punto único de decisión:** `IotSessionService::processEvent()` dentro de la
+transacción, con la sesión bloqueada y antes de `RadarPresenceEdgeDecision`,
+`RadarPresenceDecision` y `SensorEventDecision`.
+
+**Clase pura:** `App\Domain\Presence\RadarOperationalRangeDecision::evaluate()`
+devuelve uno de:
+
+| Estado | Efecto |
+|---|---|
+| `in_range` | El PRESENT continúa por el flujo actual |
+| `out_of_range` | Se convierte en ABSENT efectivo; el DP9 bruto se conserva |
+| `unverified` | El PRESENT se audita pero no se aplica |
+| `not_applicable` | ABSENT o dispositivo sin configuración de radar |
+
+**Autoridad:** solo `meta.distance_report` de la misma trama, con marcador no
+vacío, distancia positiva, `config_key` igual a `RadarDistanceReport::configKey()`
+de `meta.settings` y, si existe, DP1 con la misma huella. `target_distance` sin
+marcador, la serie histórica y la última DP9 de la sala no deciden.
+
+**Comparación:** `round(distance_m * 100) > round(maximum_range_m * 100)`. Sin
+epsilon adicional.
+
+**Auditoría:**
+- fuera de alcance: `presence_events.value` pasa al valor efectivo `ABSENT`,
+  `meta.radar_decision.range_gate` conserva estado, distancia, máximo y marcador;
+- sin verificar: `applied=0`, `discard_reason='range_unverified'`, sin refrescar
+  `lastPresenceEventAt`;
+- el histórico de `RadarPresenceDecision` excluye `range_unverified` para que un
+  PRESENT descartado no acredite después por acumulación temporal.
+
+**Presentación:** `/radar/live`, SSE y `/radar/scope` exponen de forma aditiva
+`presence_decision` y `range_evaluation`. Radar Studio no rotula “Presencia
+confirmada” cuando el dominio no la aplicó: muestra `FUERA DEL ALCANCE`,
+`PRESENCIA NO VERIFICADA` o `PRESENCIA NO APLICADA`. El SVG conserva los ecos
+exteriores con trazo ámbar discontinuo y sin glow verde.

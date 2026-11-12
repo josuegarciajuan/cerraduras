@@ -12025,3 +12025,13 @@ pendientes.
 - [x] TSK-F125.4.1-03: UI **REPORTE INESTABLE** con variantes.
 - [x] TSK-F125.4.1-04: `applied_streak` y `RADAR_RECONCILE_SETTLE_REPORTS`.
 - [x] TSK-F125.4.1-05: `RadarConvergenceStabilityTest` y BLOCK 101.
+
+### F130 — Alcance operativo estricto del radar
+
+- [x] TSK-F130-01: `RadarOperationalRangeDecision` con correlación DP1/DP9 y `config_key`.
+- [x] TSK-F130-02: barrera en `IotSessionService` antes de las decisiones de presencia.
+- [x] TSK-F130-03: conversión a ABSENT efectivo y auditoría `range_exceeded`.
+- [x] TSK-F130-04: descarte estricto sin DP9 (`range_unverified`) y exclusión del histórico.
+- [x] TSK-F130-05: `range_gate` en `radar/live`, SSE, `scope` y diagnóstico de alcance.
+- [x] TSK-F130-06: Radar Studio muestra fuera de alcance / no verificado / no aplicado.
+- [x] TSK-F130-07: `RadarOperationalRangeDecisionTest` (37) y casos F130 en `radar-scope.test.js`.
