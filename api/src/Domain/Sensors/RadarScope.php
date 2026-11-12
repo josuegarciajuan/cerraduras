@@ -288,7 +288,13 @@ final class RadarScope
         $minimum = self::num($settings['minimum_range'] ?? null);
         $p90 = isset($stats['p90']) && is_numeric($stats['p90']) ? (float) $stats['p90'] : null;
         $median = isset($stats['median']) && is_numeric($stats['median']) ? (float) $stats['median'] : null;
-        if ($maximum !== null && $p90 !== null && $p90 >= $maximum - 0.05) {
+        if ($maximum !== null && $p90 !== null && self::toCm($p90) > self::toCm($maximum)) {
+            // F130: los ecos por encima del alcance se conservan como evidencia,
+            // pero la presencia asociada ya no se aplica.
+            $out[] = self::item('distance_outside_configured_range', 'warn',
+                'Hay ecos brutos a ' . number_format($p90, 2, ',', '') . ' m, por encima del alcance configurado ('
+                . number_format($maximum, 2, ',', '') . ' m). La presencia fuera de ese límite se descarta automáticamente.');
+        } elseif ($maximum !== null && $p90 !== null && $p90 >= $maximum - 0.05) {
             $out[] = self::item('distance_at_range_edge', 'warn',
                 'La distancia observada (' . number_format($p90, 2, ',', '') . ' m) toca el alcance configurado ('
                 . number_format($maximum, 2, ',', '') . ' m). Si detecta fuera, reduce el alcance; si no te detecta dentro, auméntalo.');
@@ -328,6 +334,11 @@ final class RadarScope
     private static function item(string $code, string $severity, string $message): array
     {
         return ['code' => $code, 'severity' => $severity, 'message' => $message];
+    }
+
+    private static function toCm(float $meters): int
+    {
+        return (int) round($meters * 100.0);
     }
 
     /** @param list<float|int> $values */

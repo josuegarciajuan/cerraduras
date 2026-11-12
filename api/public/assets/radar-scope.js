@@ -119,9 +119,21 @@
   }
 
   /**
+   * F130: evaluación de alcance de la última decisión operativa. El eco bruto
+   * puede quedar fuera del máximo, pero la presencia solo se acredita dentro.
+   */
+  function rangeEvaluation(scope) {
+    if (!scope) return null;
+    if (scope.range_evaluation && typeof scope.range_evaluation === 'object') return scope.range_evaluation;
+    if (scope.range_gate && typeof scope.range_gate === 'object') return scope.range_gate;
+    var decision = scope.presence_decision || {};
+    return decision.range_gate && typeof decision.range_gate === 'object' ? decision.range_gate : null;
+  }
+
+  /**
    * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
    * Verde = TE DETECTA; ámbar = movimiento sin presencia; rojo = NO TE DETECTA;
-   * gris = SIN DATOS.
+   * gris = SIN DATOS. F130: fuera de alcance o sin DP9 no es "confirmada".
    */
   function detectionModel(scope) {
     var visual = presenceVisual(scope);
@@ -137,6 +149,35 @@
       ? 'distancia ' + lastDistance.toFixed(2) + ' m'
         + (distanceAge != null && distanceAge >= 5 ? ' · hace ' + Math.round(distanceAge) + ' s' : '')
       : 'distancia no disponible';
+    var decision = (scope && scope.presence_decision) || null;
+    var gate = rangeEvaluation(scope);
+    var gateStatus = gate && gate.status ? String(gate.status) : '';
+
+    if (gateStatus === 'out_of_range') {
+      return {
+        state: 'FILTERED', tone: 'bad', icon: '⊘', title: 'FUERA DEL ALCANCE',
+        subtitle: 'Presencia descartada · eco bruto ' + formatM(gate.distance_m)
+          + ' · máximo ' + formatM(gate.maximum_range_m),
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (gateStatus === 'unverified') {
+      return {
+        state: 'UNVERIFIED', tone: 'warn', icon: '?', title: 'PRESENCIA NO VERIFICADA',
+        subtitle: 'El radar reporta presencia, pero no hay una distancia nueva correlacionada.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    var passiveReasons = { noop: 1, duplicate: 1, stale: 1, refresh: 1 };
+    if (decision && decision.apply === false && decision.discard_reason
+        && !passiveReasons[decision.discard_reason]) {
+      return {
+        state: 'NOT_APPLIED', tone: 'warn', icon: '!', title: 'PRESENCIA NO APLICADA',
+        subtitle: 'El radar te ve, pero la decisión operativa no se aplicó ('
+          + decision.discard_reason + ').',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
     if (visual.state === 'PRESENT') {
       return {
         state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
@@ -190,6 +231,8 @@
     var maxRange = clamp(num(settings.maximum_range, maxM), 0.15, maxM);
     var minRange = clamp(num(settings.minimum_range, 0), 0, maxM);
     var visual = presenceVisual(scope);
+    var gate = rangeEvaluation(scope);
+    var outside = gate && String(gate.status) === 'out_of_range';
     var parts = [];
     var labelEvery = maxM <= 6 ? 1 : 2;
 
@@ -217,8 +260,10 @@
       if (!isFinite(d) || d <= 0 || d > maxM) return;
       var count = hist.bins[key];
       var opacity = 0.12 + 0.55 * (count / Math.max(1, hist.max));
+      var ringColor = d > maxRange ? '#ff9100' : color;
+      var dash = d > maxRange ? ' stroke-dasharray="4 4"' : '';
       parts.push('<circle cx="200" cy="200" r="' + (d * ppm).toFixed(2)
-        + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-opacity="' + opacity.toFixed(2) + '"/>');
+        + '" fill="none" stroke="' + ringColor + '" stroke-width="2" stroke-opacity="' + opacity.toFixed(2) + '"' + dash + '/>');
     });
 
     // Hueco del mínimo: lo que está demasiado cerca no se detecta.
@@ -246,13 +291,20 @@
       var last = series[series.length - 1];
       var ld = clamp(num(last.distance_m, 0), 0, maxM);
       var lx = CENTER + ld * ppm;
-      parts.push('<circle cx="' + lx.toFixed(2) + '" cy="200" r="4" fill="#e0e0e8"/>');
-      parts.push('<line x1="200" y1="200" x2="' + lx.toFixed(2) + '" y2="200" stroke="#e0e0e8" stroke-width="1" stroke-opacity="0.4"/>');
-      parts.push('<text x="' + (lx + 6).toFixed(1) + '" y="216" fill="#9a9ab0" font-size="10">eco ' + formatM(ld) + '</text>');
+      var lastOutside = ld > maxRange;
+      var lastColor = lastOutside ? '#ff9100' : '#e0e0e8';
+      parts.push('<circle cx="' + lx.toFixed(2) + '" cy="200" r="4" fill="' + lastColor + '"/>');
+      parts.push('<line x1="200" y1="200" x2="' + lx.toFixed(2) + '" y2="200" stroke="' + lastColor + '" stroke-width="1" stroke-opacity="0.4"/>');
+      parts.push('<text x="' + (lx + 6).toFixed(1) + '" y="216" fill="' + lastColor + '" font-size="10">eco ' + formatM(ld) + (lastOutside ? ' · fuera' : '') + '</text>');
     }
 
-    // Presencia: verde si DP 1 es PRESENT; ámbar si solo hay movimiento.
-    if (visual.state === 'PRESENT') {
+    // Presencia: verde solo si DP 1 es PRESENT y el alcance la acredita.
+    var gateBlocks = gate && (String(gate.status) === 'out_of_range' || String(gate.status) === 'unverified');
+    if (visual.state === 'PRESENT' && gateBlocks) {
+      var blockColor = String(gate.status) === 'out_of_range' ? '#ff9100' : '#8a8aa0';
+      parts.push('<circle class="scope-range-blocked" cx="200" cy="200" r="' + Math.min(RADIUS, maxRange * ppm).toFixed(2)
+        + '" fill="none" stroke="' + blockColor + '" stroke-width="3" stroke-dasharray="6 5" opacity="0.9"/>');
+    } else if (visual.state === 'PRESENT') {
       parts.push('<circle class="scope-presence" cx="200" cy="200" r="' + (Math.min(RADIUS, maxRange * ppm + 10)).toFixed(2) + '" fill="rgba(0,230,118,0.16)"/>');
       parts.push('<circle cx="200" cy="200" r="' + Math.min(RADIUS, maxRange * ppm).toFixed(2) + '" fill="none" stroke="#00e676" stroke-width="3" opacity="0.9"/>');
     } else if (visual.state === 'MOTION') {
@@ -275,6 +327,9 @@
     // Leyenda inferior.
     parts.push('<text x="12" y="378" fill="#9a9ab0" font-size="10">Anillos = densidad de ecos (distancia). El radar no informa ángulo.</text>');
     parts.push('<text x="12" y="392" fill="#9a9ab0" font-size="10">Círculo grande = alcance configurado. Borde = pérdida real de presencia.</text>');
+    if (outside) {
+      parts.push('<text x="12" y="364" fill="#ff9100" font-size="10">Ecos ámbar = fuera del alcance: evidencia, no presencia operativa.</text>');
+    }
 
     parts.push('</svg>');
     return parts.join('');
@@ -293,6 +348,7 @@
     scaleFor: scaleFor,
     pxPerM: pxPerM,
     presenceVisual: presenceVisual,
+    rangeEvaluation: rangeEvaluation,
     detectionModel: detectionModel,
     histogram: histogram,
     buildSvg: buildSvg

@@ -167,6 +167,76 @@ final class IotSessionService
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
 
+                // F130: barrera de alcance ANTES de cualquier decisión de
+                // presencia. El radar puede detectar más allá de
+                // `maximum_range`, pero operativamente solo acredita hasta ese
+                // límite. Se ejecuta con la sesión bloqueada porque puede
+                // convertir un PRESENT en ABSENT efectivo.
+                $rangeGate = null;
+                $rangeConverted = false;
+                if ($processable
+                    && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
+                    && $sensor === PresenceEvent::SENSOR_PRESENCE
+                ) {
+                    $rangeGate = RadarOperationalRangeDecision::evaluate(
+                        $this->framePresenceValue($event, $meta),
+                        $meta
+                    );
+
+                    if ($rangeGate['status'] === RadarOperationalRangeDecision::STATUS_UNVERIFIED) {
+                        // Un PRESENT sin DP9 nueva y correlacionada no acredita
+                        // presencia: se audita, pero no crea ocupación, no
+                        // refresca la frescura y no dispara efectos.
+                        $radarDecision = [
+                            'mode' => $radarMode ?? 'range_gate',
+                            'state' => RadarPresenceDecision::STATE_CANDIDATE_PRESENT,
+                            'raw' => PresenceEvent::VALUE_PRESENT,
+                            'apply' => false,
+                            'discard_reason' => RadarOperationalRangeDecision::DISCARD_UNVERIFIED,
+                            'stale' => false,
+                            'range_gate' => $rangeGate,
+                            'at' => $now->format('Y-m-d\TH:i:s.v\Z'),
+                        ];
+                        $this->presenceEvents->updateMetaJson(
+                            $rawEvent->id,
+                            ['radar_decision' => $radarDecision]
+                        );
+                        $this->presenceEvents->markAudit(
+                            $rawEvent->id,
+                            false,
+                            RadarOperationalRangeDecision::DISCARD_UNVERIFIED
+                        );
+                        $this->iotSessions->commit();
+                        break;
+                    }
+
+                    if ($rangeGate['status'] === RadarOperationalRangeDecision::STATUS_OUT_OF_RANGE) {
+                        // F130: el eco supera el alcance configurado. Se
+                        // conserva el DP9 bruto en la auditoría, pero el valor
+                        // efectivo pasa a ABSENT y sigue el flujo normal de
+                        // ausencia (guardas de salida, visitas y luz).
+                        $rangeConverted = true;
+                        $effectiveValue = PresenceEvent::VALUE_ABSENT;
+                        $event['value'] = PresenceEvent::VALUE_ABSENT;
+                        $value = PresenceEvent::VALUE_ABSENT;
+                        $radarDecision = [
+                            'mode' => $radarMode ?? 'range_gate',
+                            'state' => RadarPresenceDecision::STATE_ABSENT_CONFIRMED,
+                            'raw' => PresenceEvent::VALUE_PRESENT,
+                            'apply' => true,
+                            'discard_reason' => null,
+                            'stale' => false,
+                            'converted_from' => PresenceEvent::VALUE_PRESENT,
+                            'range_gate' => $rangeGate,
+                            'at' => $now->format('Y-m-d\TH:i:s.v\Z'),
+                        ];
+                        $this->presenceEvents->updateMetaJson(
+                            $rawEvent->id,
+                            ['radar_decision' => $radarDecision]
+                        );
+                    }
+                }
+
                 // F93/RF-154.1/154.3: la decisión radar se calcula DENTRO de la
                 // transacción, con la sesión bloqueada, para que dos eventos
                 // concurrentes no construyan su evidencia sobre una fotografía
@@ -174,6 +244,7 @@ final class IotSessionService
                 // número arbitrario de filas.
                 if ($processable
                     && $radarMode !== null
+                    && !$rangeConverted
                     && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                 ) {
@@ -184,6 +255,12 @@ final class IotSessionService
                     $radarDecision = $edgeDecision ?? $this->computeRadarDecision(
                         $room, $roomType, $radarMode, $session, $now
                     );
+                    if ($radarDecision !== null
+                        && is_array($rangeGate)
+                        && ($rangeGate['status'] ?? '') === RadarOperationalRangeDecision::STATUS_IN_RANGE
+                    ) {
+                        $radarDecision['range_gate'] = $rangeGate;
+                    }
                     if ($edgeDecision !== null) {
                         $edgeValue = (string) ($edgeDecision['value'] ?? '');
                         if (in_array($edgeValue, [PresenceEvent::VALUE_PRESENT, PresenceEvent::VALUE_ABSENT], true)) {
@@ -268,6 +345,26 @@ final class IotSessionService
                 );
 
                 if ($decision !== SensorEventDecision::APPLY) {
+                    if ($rangeConverted) {
+                        // El eco exterior ya dejó la sesión en ABSENT (o ya lo
+                        // estaba). Se audita el motivo real y se refresca la
+                        // frescura sin repetir efectos.
+                        if ($decision !== SensorEventDecision::STALE
+                            && !SensorEventDecision::isStale($event, $session)
+                            && $session->lastPresenceEventAt !== $evtUtc
+                        ) {
+                            $session->lastPresenceEventAt = $evtUtc;
+                            $this->iotSessions->updateState($session);
+                        }
+                        $this->presenceEvents->markAudit(
+                            $rawEvent->id,
+                            false,
+                            RadarOperationalRangeDecision::DISCARD_OUT_OF_RANGE,
+                            $effectiveValue
+                        );
+                        $this->iotSessions->commit();
+                        break;
+                    }
                     // F86 (RF-115): REFRESH de puerta: mismo valor, instante nuevo
                     // (reporte real edge). Actualiza la frescura sin tocar el estado.
                     if ($decision === SensorEventDecision::REFRESH
@@ -841,6 +938,27 @@ final class IotSessionService
     }
 
     /**
+     * F130: valor DP1 de la propia trama cuando viene marcado. Sin marcador se
+     * usa el valor canónico mapeado, pero la distancia solo se acepta si el
+     * frame trae su propio DP9 correlacionado.
+     *
+     * @param array<string,mixed> $event
+     * @param array<string,mixed>|null $meta
+     */
+    private function framePresenceValue(array $event, ?array $meta): string
+    {
+        $report = is_array($meta) && is_array($meta['presence_report'] ?? null)
+            ? $meta['presence_report'] : null;
+        $value = $report !== null
+            ? strtoupper(trim((string) ($report['value'] ?? '')))
+            : '';
+        if (in_array($value, [PresenceEvent::VALUE_PRESENT, PresenceEvent::VALUE_ABSENT], true)) {
+            return $value;
+        }
+        return strtoupper(trim((string) ($event['value'] ?? '')));
+    }
+
+    /**
      * Instante del frame en UTC. El mapper entrega ISO con ms; si llega algo
      * inesperado se usa el reloj del proceso como fallback.
      */
@@ -899,6 +1017,11 @@ final class IotSessionService
 
         $history = [];
         foreach ($this->presenceEvents->listForRoomSince($room->id, $now->modify('-' . $horizon . ' seconds'), 5000) as $h) {
+            // F130: un PRESENT sin DP9 verificable no acredita presencia y no
+            // debe reutilizarse después como evidencia temporal.
+            if ($h->discardReason === RadarOperationalRangeDecision::DISCARD_UNVERIFIED) {
+                continue;
+            }
             $history[] = [
                 'sensor' => $h->sensor,
                 'value' => $h->value,

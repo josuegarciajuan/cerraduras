@@ -99,6 +99,12 @@ final class RadarLiveService
         $calibration['reported_unstable'] = (bool) ($status['reported_unstable'] ?? false);
         $calibration['reported_variants'] = $status['reported_variants'] ?? [];
 
+        // F130: decisión operativa y barrera de alcance del último frame. El
+        // eco bruto sigue exponiéndose aparte; el cliente no debe rotular
+        // "presencia confirmada" si el dominio no la aplicó.
+        $decision = $this->latestRadarDecision($roomId);
+        $rangeGate = is_array($decision['range_gate'] ?? null) ? $decision['range_gate'] : null;
+
         return [
             'ok' => true,
             'room_id' => $roomId,
@@ -130,7 +136,41 @@ final class RadarLiveService
             'presence_stale' => (bool) ($live['presence_stale'] ?? false),
             'stale_seconds' => (int) ($status['stale_seconds'] ?? RadarFreshness::staleSeconds()),
             'calibration' => $calibration,
+            'presence_decision' => $decision !== null ? [
+                'state' => $decision['state'] ?? null,
+                'apply' => $decision['apply'] ?? null,
+                'discard_reason' => $decision['discard_reason'] ?? null,
+                'at' => $decision['at'] ?? null,
+                'converted_from' => $decision['converted_from'] ?? null,
+            ] : null,
+            'range_gate' => $rangeGate,
+            'range_evaluation' => $rangeGate,
         ];
+    }
+
+    /**
+     * F130: última decisión radar persistida para la sala. Es aditiva y sirve
+     * para que Radar Studio no confunda presencia cruda con presencia aplicada.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function latestRadarDecision(int $roomId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT meta_json
+               FROM presence_events
+              WHERE room_id = :rid AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+              ORDER BY occurred_at DESC, id DESC
+              LIMIT 1"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $raw = $stmt->fetchColumn();
+        if ($raw === false || $raw === null) {
+            return null;
+        }
+        $meta = json_decode((string) $raw, true);
+        return is_array($meta) && is_array($meta['radar_decision'] ?? null)
+            ? $meta['radar_decision'] : null;
     }
 
     private function presenceMode(int $roomId): ?string

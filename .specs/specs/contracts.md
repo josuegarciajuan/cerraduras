@@ -17213,3 +17213,46 @@ cambian de forma.
 Variables nuevas: `RADAR_UNSTABLE_WINDOW_SECONDS` (def. 10) y
 `RADAR_RECONCILE_SETTLE_REPORTS` (def. 5). `calibration_state` añade
 `applied_streak`.
+
+### F130 — Alcance operativo del radar
+
+`GET /dashboard-api/sensores/v2/radar/live`, su SSE y `scope` añaden de forma
+aditiva:
+
+```json
+{
+  "presence_decision": {
+    "state": "ABSENT_CONFIRMED",
+    "apply": true,
+    "discard_reason": null,
+    "at": "2026-11-12T15:12:26.124Z",
+    "converted_from": "PRESENT"
+  },
+  "range_gate": {
+    "status": "out_of_range",
+    "reason": "distance_above_maximum_range",
+    "allow_present": false,
+    "convert_to_absent": true,
+    "discard_reason": "range_exceeded",
+    "distance_m": 2.64,
+    "maximum_range_m": 1.95,
+    "distance_marker": "v1|...",
+    "precision_m": 0.01
+  },
+  "range_evaluation": { "...": "mismo objeto que range_gate" }
+}
+```
+
+Estados de `range_gate.status`: `in_range`, `out_of_range`, `unverified`,
+`not_applicable`. Motivos: `within_configured_range`,
+`distance_above_maximum_range`, `no_dp9`, `zero_dp9`, `config_mismatch`,
+`invalid_maximum_range`, `not_range_capable`, `absent`.
+
+`presence_events.meta_json.radar_decision` incorpora `range_gate`. Los motivos
+de descarte nuevos son `range_unverified` y `range_exceeded` (caben en la
+columna vigente). El diagnóstico de `/radar/scope` añade
+`distance_outside_configured_range`.
+
+Los campos previos (`raw`, `last_distance`, `series`, `settings`) no cambian.
+Un `PRESENT` fuera de alcance se refleja como `ABSENT` en `presence_state`,
+pero el DP9 bruto permanece en `series`/`radar_distance_reports`.

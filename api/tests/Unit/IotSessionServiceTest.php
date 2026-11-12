@@ -29,6 +29,7 @@ use App\Domain\Rooms\Room;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomType;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
+use App\Domain\Sensors\RadarDistanceReport;
 use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
@@ -724,6 +725,137 @@ if ($zbSess !== null && $zbSess->presenceState === IotSession::PRESENCE_PRESENT)
     ok('F118: Zigbee PRESENT con ventana de entrada → aplica');
 } else {
     bad('F118: Zigbee PRESENT con ventana debería aplicar', 'got ' . ($zbSess->presenceState ?? 'null'));
+}
+
+// ============================================================================
+// F130 · alcance operativo estricto del radar
+// ============================================================================
+echo "\nF130 · alcance operativo del radar\n";
+
+$radarSettings = [
+    'maximum_range' => 1.95,
+    'minimum_range' => 0,
+    'radar_sensitivity' => 7,
+    'fading_time' => 5,
+    'detection_delay' => 0.1,
+];
+$radarKey = RadarDistanceReport::configKey($radarSettings);
+
+function makeRadarFrame(
+    int $roomId,
+    string $value,
+    string $occurredAt,
+    string $srcId,
+    float $distance,
+    bool $withDp9 = true
+): array {
+    global $radarSettings, $radarKey;
+    $meta = [
+        'source' => 'zigbee2mqtt',
+        'settings' => $radarSettings,
+        'presence_report' => [
+            'marker' => 'p1|sess|' . substr(md5($srcId), 0, 6) . '|' . $value . '|push',
+            'value' => $value,
+            'config_key' => $radarKey,
+        ],
+    ];
+    if ($withDp9) {
+        $meta['distance_report'] = [
+            'marker' => 'v1|sess|' . substr(md5($srcId), 0, 6) . '|' . number_format($distance, 3, '.', '') . '|push',
+            'distance_m' => $distance,
+            'config_key' => $radarKey,
+        ];
+    }
+    return ['room_id'=>$roomId,'sensor'=>PresenceEvent::SENSOR_PRESENCE,'value'=>$value,
+            'provider'=>PresenceEvent::PROVIDER_ZIGBEE2MQTT,'occurred_at'=>$occurredAt,
+            'source_event_id'=>$srcId,'meta'=>$meta];
+}
+
+// Sala 5 STANDARD: la ventana de entrada de la puerta permite aislar la
+// barrera F130 del contexto F48. Sin la barrera, un PRESENT aplicaría.
+Clock::freeze(new DateTimeImmutable('2026-04-28T18:10:00Z', new DateTimeZone('UTC')));
+$iotRepo->sessions[5]->lastDoorValue = PresenceEvent::VALUE_CLOSED;
+$iotRepo->sessions[5]->doorState = IotSession::DOOR_CLOSED;
+$svc->processEvent(
+    makeEvent(5, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T18:10:00Z', 'f130-open-1'),
+    'corr-f130-open-1'
+);
+
+// PRESENT dentro del alcance → aplica.
+$iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[5]->lastPresenceEventAt = null;
+$svc->processEvent(
+    makeRadarFrame(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T18:10:01Z', 'f130-in', 1.40),
+    'corr-f130-in'
+);
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_PRESENT) {
+    ok('F130: PRESENT 1.40 m con máximo 1.95 → aplica');
+} else {
+    bad('F130: dentro del alcance debería aplicar', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+
+// PRESENT fuera del alcance estando dentro → pasa a ABSENT.
+$iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_PRESENT;
+$iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_PRESENT;
+$iotRepo->sessions[5]->lastPresenceEventAt = '2026-04-28 18:10:01.000';
+$svc->processEvent(
+    makeRadarFrame(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T18:10:05Z', 'f130-out', 2.64),
+    'corr-f130-out'
+);
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSENT) {
+    ok('F130: PRESENT 2.64 m con máximo 1.95 → ABSENT efectivo');
+} else {
+    bad('F130: fuera del alcance debería convertir a ABSENT', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+
+// Nueva ventana de entrada; PRESENT sin DP9 → no acredita (sigue ABSENT).
+$iotRepo->sessions[5]->lastDoorValue = PresenceEvent::VALUE_CLOSED;
+$iotRepo->sessions[5]->doorState = IotSession::DOOR_CLOSED;
+$svc->processEvent(
+    makeEvent(5, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T18:10:07Z', 'f130-open-2'),
+    'corr-f130-open-2'
+);
+$iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$iotRepo->sessions[5]->lastPresenceEventAt = '2026-04-28 18:10:05.000';
+$svc->processEvent(
+    makeRadarFrame(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T18:10:08Z', 'f130-nodp9', 1.40, false),
+    'corr-f130-nodp9'
+);
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSENT) {
+    ok('F130: PRESENT sin DP9 → no acredita (sigue ABSENT)');
+} else {
+    bad('F130: sin DP9 no debería aplicar', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+
+// target_distance cacheado (sin marcador DP9) tampoco acredita.
+$iotRepo->sessions[5]->lastDoorValue = PresenceEvent::VALUE_CLOSED;
+$iotRepo->sessions[5]->doorState = IotSession::DOOR_CLOSED;
+$svc->processEvent(
+    makeEvent(5, PresenceEvent::SENSOR_PROXIMITY, PresenceEvent::VALUE_OPEN, '2026-04-28T18:10:11Z', 'f130-open-3'),
+    'corr-f130-open-3'
+);
+$iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_ABSENT;
+$iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+$cachedFrame = makeRadarFrame(5, PresenceEvent::VALUE_PRESENT, '2026-04-28T18:10:12Z', 'f130-cached', 0.80, false);
+$cachedFrame['meta']['settings']['target_distance'] = 0.80;
+$svc->processEvent($cachedFrame, 'corr-f130-cached');
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSENT) {
+    ok('F130: target_distance cacheado no es evidencia');
+} else {
+    bad('F130: el target cacheado no debería aplicar', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+
+// ABSENT con un eco exterior sigue siendo ABSENT (nunca se bloquea).
+$svc->processEvent(
+    makeRadarFrame(5, PresenceEvent::VALUE_ABSENT, '2026-04-28T18:10:16Z', 'f130-absent', 2.64),
+    'corr-f130-absent'
+);
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSENT) {
+    ok('F130: ABSENT con eco exterior sigue ABSENT');
+} else {
+    bad('F130: ABSENT no debe bloquearse', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
 }
 
 Clock::unfreeze();

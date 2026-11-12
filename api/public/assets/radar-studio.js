@@ -463,10 +463,15 @@
       }
       var s = d.settings || {};
       var payload = d.payload || {};
+      var directDistance = d.target_distance != null ? Number(d.target_distance) : null;
+      var directMax = s.maximum_range != null ? Number(s.maximum_range) : null;
+      var directOutside = directDistance != null && directMax != null && isFinite(directDistance) && isFinite(directMax)
+        && Math.round(directDistance * 100) > Math.round(directMax * 100);
       var parts = [
         'presencia=' + String(d.presence),
-        'distancia=' + (d.target_distance != null ? Number(d.target_distance).toFixed(2) + ' m' : '—'),
-        'alcance=' + (s.maximum_range != null ? Number(s.maximum_range).toFixed(2) + ' m' : '—'),
+        'distancia=' + (directDistance != null ? directDistance.toFixed(2) + ' m' : '—')
+          + (directOutside ? ' (fuera de alcance)' : ''),
+        'alcance=' + (directMax != null ? directMax.toFixed(2) + ' m' : '—'),
         'mínimo=' + (s.minimum_range != null ? Number(s.minimum_range).toFixed(2) + ' m' : '—'),
         'LQI=' + (payload.linkquality != null ? payload.linkquality : '—')
       ];

@@ -1279,6 +1279,13 @@ final class RadarStudioController
                 'active_operation' => $state,
             ]
         );
+        // F130: decisión operativa y evaluación de alcance del último frame.
+        $decision = $this->latestRadarDecision($roomId);
+        $rangeGate = is_array($decision['range_gate'] ?? null) ? $decision['range_gate'] : null;
+        $scope['presence_decision'] = $decision;
+        $scope['range_gate'] = $rangeGate;
+        $scope['range_evaluation'] = $rangeGate;
+
         return [
             'room_id' => $roomId,
             'room' => $room,
@@ -1299,6 +1306,30 @@ final class RadarStudioController
             'baseline' => ZigbeeRadarCalibrationService::BASELINE,
             'scope' => $scope,
         ];
+    }
+
+    /**
+     * F130: última decisión radar persistida (aditiva, solo lectura).
+     *
+     * @return array<string,mixed>|null
+     */
+    private function latestRadarDecision(int $roomId): ?array
+    {
+        $stmt = $this->pdo()->prepare(
+            "SELECT meta_json
+               FROM presence_events
+              WHERE room_id = :rid AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+              ORDER BY occurred_at DESC, id DESC
+              LIMIT 1"
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $raw = $stmt->fetchColumn();
+        if ($raw === false || $raw === null) {
+            return null;
+        }
+        $meta = json_decode((string) $raw, true);
+        return is_array($meta) && is_array($meta['radar_decision'] ?? null)
+            ? $meta['radar_decision'] : null;
     }
 
     /** @return array<string,mixed>|null */
