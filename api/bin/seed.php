@@ -30,7 +30,7 @@ echo "[seed] Seeding api_clients ...\n";
 
 // (code, kind, scopes, ip_whitelist)
 $clients = [
-    ['VB6-MAIN',     'VB6',         'qr:issue,qr:revoke,rooms:read,rooms:state,time-slots:read,stays:read,stays:write,debts:read,presence:read', null],
+    ['VB6-MAIN',     'VB6',         'qr:issue,qr:revoke,rooms:read,rooms:state,time-slots:read,stays:read,stays:write,debts:read,presence:read,switches:write,locks:open', null],
     ['RPI-DEV',      'RPI',         'qr:validate', null],
     ['FACTORY-DEVICE','RPI',        'factory:announce', null],
     ['ADMIN-CLI',    'ADMIN',       'audit:read,factory:claim,rooms:read,rooms:write,rooms:state,time-slots:read,time-slots:write,locks:open,locks:lock,locks:override,stays:read,stays:write,qr:revoke,debts:read,debts:sync,presence:read,presence:write,switches:write,keys:read,keys:write,nfc-cards:read,nfc-cards:write,workers:read,workers:write,worker-roles:read,sim:*', null],

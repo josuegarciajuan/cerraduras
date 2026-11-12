@@ -86,7 +86,7 @@ Las claves API están en `api/seeds/dev_api_keys.txt`.
 
 | Cliente | Uso |
 |---|---|
-| VB6-MAIN | Emitir QR (recepción) |
+| VB6-MAIN | Emitir QR (recepción) + control de sala (luz, apertura, reset) |
 | RPI-DEV | Validar QR (lector en puerta) |
 | ADMIN-CLI | Admin total |
 | SIM-CLIENT | Simular sensores |
