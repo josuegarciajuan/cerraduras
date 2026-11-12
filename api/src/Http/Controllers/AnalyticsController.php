@@ -1558,14 +1558,13 @@ final class AnalyticsController
                             CAST(e.id AS UNSIGNED) AS ref_id, e.kind AS kind, e.kind AS action, e.result AS result,
                             NULL AS applied, e.reason AS reason, e.room_id AS room_id, r.code AS room_code,
                             ws.worker_id AS worker_id, w.name AS worker_name, NULL AS key_id, NULL AS key_label,
-                            NULL AS device_id, e.occurred_at AS occurred_at,
-                            JSON_OBJECT('provider', e.provider, 'stay_id', e.stay_id,
-                                'correlation_id', e.correlation_id, 'meta', e.meta_json) AS detail
+                            NULL AS device_id, e.occurred_at AS occurred_at
                      FROM access_events e
                      LEFT JOIN rooms r ON r.id = e.room_id
                      LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id
                      LEFT JOIN workers w ON w.id = ws.worker_id
                      WHERE " . implode(' AND ', $where),
+                    'prefix' => 'ae', 'time_col' => 'e.occurred_at', 'id_col' => 'e.id', 'source' => 'access', 'category' => 'access',
                     'params' => $params,
                 ];
             }
@@ -1591,15 +1590,13 @@ final class AnalyticsController
                             e.result AS result, NULL AS applied, e.reason AS reason, e.room_id AS room_id,
                             r.code AS room_code, e.worker_id AS worker_id, w.name AS worker_name,
                             e.key_id AS key_id, k.label AS key_label, e.device_id AS device_id,
-                            e.occurred_at AS occurred_at,
-                            JSON_OBJECT('owner_type', e.owner_type, 'role_id', e.role_id,
-                                'correlation_id', e.correlation_id, 'worker_session_id', e.worker_session_id,
-                                'provider', e.provider) AS detail
+                            e.occurred_at AS occurred_at
                      FROM key_access_events e
                      LEFT JOIN rooms r ON r.id = e.room_id
                      LEFT JOIN workers w ON w.id = e.worker_id
                      LEFT JOIN access_keys k ON k.id = e.key_id
                      WHERE " . implode(' AND ', $where),
+                    'prefix' => 'ke', 'time_col' => 'e.occurred_at', 'id_col' => 'e.id', 'source' => 'key', 'category' => 'key',
                     'params' => $params,
                 ];
             }
@@ -1627,13 +1624,11 @@ final class AnalyticsController
                         CASE WHEN sce.publish_ok = 1 THEN 'OK' WHEN sce.publish_ok = 0 THEN 'FAIL' ELSE NULL END AS result,
                         sce.publish_ok AS applied, sce.diagnosis AS reason, sce.room_id AS room_id,
                         r.code AS room_code, NULL AS worker_id, sce.actor AS worker_name, NULL AS key_id,
-                        NULL AS key_label, sce.external_id AS device_id, sce.requested_at AS occurred_at,
-                        JSON_OBJECT('verdict', sce.verdict, 'origin', sce.origin, 'provider', sce.provider,
-                            'prior_state', sce.prior_state, 'reported_state', sce.reported_state,
-                            'reported_at', sce.reported_at, 'fresh', sce.fresh) AS detail
+                        NULL AS key_label, sce.external_id AS device_id, sce.requested_at AS occurred_at
                  FROM switch_command_evidence sce
                  LEFT JOIN rooms r ON r.id = sce.room_id
                  WHERE " . implode(' AND ', $where),
+                'prefix' => 'se', 'time_col' => 'sce.requested_at', 'id_col' => 'sce.id', 'source' => 'light', 'category' => 'light',
                 'params' => $params,
             ];
         }
@@ -1681,11 +1676,11 @@ final class AnalyticsController
                             CAST(pe.id AS UNSIGNED) AS ref_id, pe.sensor AS kind, pe.value AS action,
                             NULL AS result, pe.applied AS applied, pe.discard_reason AS reason,
                             pe.room_id AS room_id, r.code AS room_code, NULL AS worker_id, NULL AS worker_name,
-                            NULL AS key_id, NULL AS key_label, NULL AS device_id, pe.occurred_at AS occurred_at,
-                            JSON_OBJECT('provider', pe.provider, 'received_at', pe.received_at, 'meta', pe.meta_json) AS detail
+                            NULL AS key_id, NULL AS key_label, NULL AS device_id, pe.occurred_at AS occurred_at
                      FROM presence_events pe
                      LEFT JOIN rooms r ON r.id = pe.room_id
                      WHERE " . implode(' AND ', $where),
+                    'prefix' => $prefix, 'time_col' => 'pe.occurred_at', 'id_col' => 'pe.id', 'source' => 'presence', 'category' => $cat,
                     'params' => $params,
                 ];
             }
@@ -1700,40 +1695,53 @@ final class AnalyticsController
 
         $items = [];
         if ($parts !== []) {
-            $union = implode(' UNION ALL ', $parts);
+            // Cursor, `since` y LIMIT por rama: el top-N global está contenido
+            // en la unión de los top-N de cada fuente, así no se materializa
+            // todo el rango para ordenarlo después.
+            $itemParts  = [];
+            $itemParams = [];
+            foreach ($branches as $branch) {
+                $sql    = $branch['sql'];
+                $branchParams = $branch['params'];
+                $prefix = (string) $branch['prefix'];
+                $timeCol = (string) $branch['time_col'];
+                $idCol   = (string) $branch['id_col'];
+                $source  = (string) $branch['source'];
+                $cond    = [];
 
-            $outerWhere  = [];
-            $itemParams  = $params;
-            if ($beforeAt !== null && $beforeSource !== null) {
-                // Orden: occurred_at DESC, source ASC, ref_id DESC.
-                // MariaDB no permite reutilizar el mismo placeholder nativo.
-                $outerWhere[] = '(ev.occurred_at < :b_at1
-                    OR (ev.occurred_at = :b_at2 AND ev.source > :b_src1)
-                    OR (ev.occurred_at = :b_at3 AND ev.source = :b_src2 AND ev.ref_id < :b_id))';
-                $itemParams[':b_at1']  = $beforeAt;
-                $itemParams[':b_at2']  = $beforeAt;
-                $itemParams[':b_at3']  = $beforeAt;
-                $itemParams[':b_src1'] = $beforeSource;
-                $itemParams[':b_src2'] = $beforeSource;
-                $itemParams[':b_id']   = (string) $beforeId;
+                if ($beforeAt !== null && $beforeSource !== null) {
+                    // Orden global: occurred_at DESC, source ASC, ref_id DESC.
+                    if (strcmp($source, $beforeSource) < 0) {
+                        $cond[] = "{$timeCol} < :{$prefix}_ba";
+                        $branchParams[":{$prefix}_ba"] = $beforeAt;
+                    } elseif (strcmp($source, $beforeSource) === 0) {
+                        $cond[] = "({$timeCol} < :{$prefix}_ba OR ({$timeCol} = :{$prefix}_bb AND {$idCol} < :{$prefix}_bid))";
+                        $branchParams[":{$prefix}_ba"]  = $beforeAt;
+                        $branchParams[":{$prefix}_bb"]  = $beforeAt;
+                        $branchParams[":{$prefix}_bid"] = (string) $beforeId;
+                    } else {
+                        $cond[] = "{$timeCol} <= :{$prefix}_ba";
+                        $branchParams[":{$prefix}_ba"] = $beforeAt;
+                    }
+                }
+                if ($since !== null) {
+                    $cond[] = "{$timeCol} > :{$prefix}_since";
+                    $branchParams[":{$prefix}_since"] = $since;
+                }
+                if ($cond !== []) {
+                    $sql .= ' AND (' . implode(' AND ', $cond) . ')';
+                }
+                $sql .= " ORDER BY {$timeCol} DESC LIMIT {$limit}";
+                $itemParts[] = '(' . $sql . ')';
+                $itemParams += $branchParams;
             }
-            if ($since !== null) {
-                $outerWhere[] = 'ev.occurred_at > :since';
-                $itemParams[':since'] = $since;
-            }
-            $whereSql = $outerWhere !== [] ? ' WHERE ' . implode(' AND ', $outerWhere) : '';
 
             $rows = $this->rows(
-                "SELECT * FROM ({$union}) ev{$whereSql}
-                 ORDER BY ev.occurred_at DESC, ev.source ASC, ev.ref_id DESC LIMIT {$limit}",
+                'SELECT * FROM (' . implode(' UNION ALL ', $itemParts) . ') ev
+                 ORDER BY ev.occurred_at DESC, ev.source ASC, ev.ref_id DESC LIMIT ' . $limit,
                 $itemParams
             );
             foreach ($rows as $row) {
-                $detail = null;
-                if (!empty($row['detail'])) {
-                    $decoded = json_decode((string) $row['detail'], true);
-                    $detail = is_array($decoded) ? $decoded : null;
-                }
                 $items[] = [
                     'key' => (string) $row['event_key'],
                     'source' => (string) $row['source'],
@@ -1751,20 +1759,28 @@ final class AnalyticsController
                     'key_label' => $row['key_label'],
                     'device_id' => $row['device_id'],
                     'occurred_at' => $row['occurred_at'],
-                    'detail' => $detail,
+                    'detail' => null,
                 ];
+            }
+            // El meta_json solo se materializa para la página devuelta.
+            $details = $this->eventDetails($items);
+            foreach ($items as $i => $item) {
+                $items[$i]['detail'] = $details[$item['key']] ?? null;
             }
         }
 
         $summary = [];
-        if ($parts !== []) {
-            $summaryRows = $this->rows(
-                'SELECT category, COUNT(*) AS c FROM (' . implode(' UNION ALL ', $parts) . ') ev GROUP BY category',
-                $params
-            );
-            foreach ($summaryRows as $row) {
-                $summary[(string) $row['category']] = (int) $row['c'];
+        // Conteo por rama sin materializar el rango entero ni el JSON.
+        foreach ($branches as $branch) {
+            $sql = (string) $branch['sql'];
+            $fromPos = stripos($sql, ' FROM ');
+            if ($fromPos === false) {
+                continue;
             }
+            $countSql = 'SELECT COUNT(*) AS c FROM ' . substr($sql, $fromPos + 6);
+            $count = $this->scalar($countSql, $branch['params']);
+            $category = (string) $branch['category'];
+            $summary[$category] = ($summary[$category] ?? 0) + (int) $count;
         }
 
         $last = $items !== [] ? $items[count($items) - 1] : null;
@@ -1782,6 +1798,60 @@ final class AnalyticsController
                 'has_more' => count($items) === $limit,
             ],
         ]);
+    }
+
+    /**
+     * Detalle técnico de la página de eventos. Evita materializar el JSON de
+     * todo el rango en el UNION: solo se consulta para los ids devueltos.
+     *
+     * @param list<array<string,mixed>> $items
+     * @return array<string,array<string,mixed>|null>
+     */
+    private function eventDetails(array $items): array
+    {
+        if ($items === []) {
+            return [];
+        }
+
+        $ids = ['presence' => [], 'access' => [], 'key' => [], 'light' => []];
+        foreach ($items as $item) {
+            $source = (string) $item['source'];
+            $key = (string) $item['key'];
+            $pos = strrpos($key, ':');
+            $id = $pos === false ? 0 : (int) substr($key, $pos + 1);
+            if ($id > 0 && isset($ids[$source])) {
+                $ids[$source][] = $id;
+            }
+        }
+
+        $queries = [
+            'presence' => "SELECT id, JSON_OBJECT('provider', provider, 'received_at', received_at,
+                    'meta', meta_json) AS detail FROM presence_events WHERE id IN (%s)",
+            'access' => "SELECT id, JSON_OBJECT('provider', provider, 'stay_id', stay_id,
+                    'correlation_id', correlation_id, 'meta', meta_json) AS detail
+                    FROM access_events WHERE id IN (%s)",
+            'key' => "SELECT id, JSON_OBJECT('owner_type', owner_type, 'role_id', role_id,
+                    'correlation_id', correlation_id, 'worker_session_id', worker_session_id,
+                    'provider', provider) AS detail FROM key_access_events WHERE id IN (%s)",
+            'light' => "SELECT id, JSON_OBJECT('verdict', verdict, 'origin', origin, 'provider', provider,
+                    'prior_state', prior_state, 'reported_state', reported_state,
+                    'reported_at', reported_at, 'fresh', fresh) AS detail
+                    FROM switch_command_evidence WHERE id IN (%s)",
+        ];
+
+        $map = [];
+        foreach ($ids as $source => $list) {
+            $list = array_values(array_unique($list));
+            if ($list === []) {
+                continue;
+            }
+            $placeholders = implode(',', array_fill(0, count($list), '?'));
+            foreach ($this->rows(sprintf($queries[$source], $placeholders), $list) as $row) {
+                $decoded = json_decode((string) $row['detail'], true);
+                $map[$source . ':' . $row['id']] = is_array($decoded) ? $decoded : null;
+            }
+        }
+        return $map;
     }
 
     public function search(Request $request): Response
