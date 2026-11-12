@@ -305,6 +305,7 @@
     if (!live) return;
     renderDetection(live);
     renderChips(live);
+    renderCalibration();
   }
 
   function renderScope() {
@@ -315,6 +316,124 @@
     renderDiagnosis(sc);
     syncControls(sc);
     renderActive(sc);
+    renderCalibration();
+  }
+
+  function calibrationInfo() {
+    if (S.live && S.live.calibration) return S.live.calibration;
+    if (S.scope && S.scope.calibration) return S.scope.calibration;
+    return null;
+  }
+
+  function renderCalibration() {
+    var box = $('calibrationBox');
+    if (!box) return;
+    var cal = calibrationInfo();
+    if (!cal || !cal.status) {
+      box.classList.add('hidden');
+      return;
+    }
+    box.classList.remove('hidden');
+    var state = cal.state || {};
+    var effective = state.status || '';
+    var status = cal.status;
+    var isError = status === 'error' || effective === 'error' || status === 'missing';
+    var isConverging = !isError && (status === 'mismatch' || effective === 'converging');
+    var tone = status === 'applied' && !isError && !isConverging ? 'ok' : (isError ? 'bad' : 'warn');
+    box.className = 'calibration-box ' + tone;
+
+    var labels = {
+      maximum_range: 'alcance',
+      minimum_range: 'mínimo',
+      radar_sensitivity: 'sensibilidad',
+      detection_delay: 'retardo',
+      fading_time: 'fading'
+    };
+    var differences = cal.differences || [];
+    var diffText = differences.map(function (d) { return labels[d.key] || d.key; }).join(', ');
+    var title = $('calibrationTitle');
+    var badge = $('calibrationBadge');
+    var sub = $('calibrationSub');
+    var btn = $('btnReapplyCalibration');
+
+    if (status === 'missing') {
+      if (title) title.textContent = 'Sin calibración guardada';
+      if (badge) { badge.textContent = 'SIN CALIBRACIÓN'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = 'La ficha del radar no tiene una calibración válida; no se inventa ningún valor.';
+      if (btn) btn.classList.add('hidden');
+      return;
+    }
+    if (btn) btn.classList.remove('hidden');
+
+    if (status === 'applied' && effective !== 'error' && effective !== 'converging') {
+      if (title) title.textContent = 'Calibración aplicada';
+      if (badge) { badge.textContent = 'OK'; badge.className = 'badge ok'; }
+      if (sub) sub.textContent = 'El radar reporta exactamente la configuración guardada en la BD.';
+    } else if (isError) {
+      if (title) title.textContent = 'No se pudo aplicar la calibración';
+      if (badge) { badge.textContent = 'ERROR'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = (state.last_error ? 'Último error: ' + state.last_error + '. ' : '')
+        + 'El sistema no deja el radar con una configuración distinta: revisa el perfil y pulsa «Reaplicar».';
+    } else {
+      if (title) title.textContent = 'Convergiendo a la calibración guardada';
+      if (badge) { badge.textContent = 'CONVERGIENDO'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = 'El radar reporta distinto (' + (diffText || 'configuración') + '). '
+        + 'Se está re-aplicando automáticamente la calibración de la BD.';
+    }
+  }
+
+  async function reapplyCalibration() {
+    if (!roomId() || S.busy) return;
+    setBusy(true, 'Reaplicando calibración guardada…');
+    var out = $('calibrationDirect');
+    try {
+      var data = await api(API + '/reapply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId() })
+      });
+      if (data.calibration) {
+        S.live = Object.assign({}, S.live || {}, { calibration: data.calibration });
+      }
+      if (out) out.textContent = 'Calibración guardada publicada y confirmada por push.';
+      toast('Calibración guardada reaplicada');
+      await refreshAll();
+    } catch (e) {
+      if (out) out.textContent = 'No se pudo reaplicar: ' + e.message;
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function directRead() {
+    var out = $('calibrationDirect');
+    if (!roomId()) return;
+    if (out) out.textContent = 'Consultando el estado directo al radar…';
+    try {
+      var data = await api(API + '/direct?room_id=' + roomId(), { cache: 'no-store' });
+      var d = data.direct || {};
+      if (!d.ok) {
+        if (out) out.textContent = 'Lectura directa: ' + (d.error || 'sin datos');
+        return;
+      }
+      var s = d.settings || {};
+      var payload = d.payload || {};
+      var parts = [
+        'presencia=' + String(d.presence),
+        'distancia=' + (d.target_distance != null ? Number(d.target_distance).toFixed(2) + ' m' : '—'),
+        'alcance=' + (s.maximum_range != null ? Number(s.maximum_range).toFixed(2) + ' m' : '—'),
+        'mínimo=' + (s.minimum_range != null ? Number(s.minimum_range).toFixed(2) + ' m' : '—'),
+        'LQI=' + (payload.linkquality != null ? payload.linkquality : '—')
+      ];
+      if (out) out.textContent = 'Lectura directa: ' + parts.join(' · ');
+      if (data.calibration) {
+        S.live = Object.assign({}, S.live || {}, { calibration: data.calibration });
+        renderCalibration();
+      }
+    } catch (e) {
+      if (out) out.textContent = 'Lectura directa falló: ' + e.message;
+    }
   }
 
   function renderDetection(sc) {
@@ -921,6 +1040,8 @@
       sel.addEventListener('change', function () {
         S.scope = null; S.live = null; S.wizard = null; S.steps = [];
         S.preview = null; S.recommendation = null; S.active = null;
+        var directOut = $('calibrationDirect');
+        if (directOut) directOut.textContent = '';
         if (S.motionTimer) { clearInterval(S.motionTimer); S.motionTimer = null; }
         if (S.tab === 'radar') { stopPolling(); startPolling(); }
       });
@@ -931,6 +1052,8 @@
     });
     bind('btnMotionTest', motionTest);
     bind('btnApplyProfile', applyProfile);
+    bind('btnReapplyCalibration', reapplyCalibration);
+    bind('btnDirectRead', directRead);
     bind('btnBaseline', restoreBaseline);
     bind('btnAutoRangeStart', autoRangeStart);
     bind('btnAutoRangeFinish', autoRangeFinish);

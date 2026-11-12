@@ -260,7 +260,7 @@ final class ZigbeeMqttMessageMapper
      *
      * @return array<string,int|float>
      */
-    private static function radarSettings(\stdClass $decoded): array
+    public static function radarSettings(\stdClass $decoded): array
     {
         $allowed = [
             'radar_sensitivity',

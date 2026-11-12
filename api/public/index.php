@@ -641,6 +641,8 @@ $radarStudio = new \App\Http\Controllers\RadarStudioController(
 );
 $router->get('/dashboard-api/sensores/v2/radar/scope', [$radarStudio, 'scope']);
 $router->get('/dashboard-api/sensores/v2/radar/live', [$radarStudio, 'live']);
+$router->get('/dashboard-api/sensores/v2/radar/direct', [$radarStudio, 'direct']);
+$router->post('/dashboard-api/sensores/v2/radar/reapply', [$radarStudio, 'reapply']);
 $router->post('/dashboard-api/sensores/v2/radar/profile', [$radarStudio, 'profile']);
 $router->post('/dashboard-api/sensores/v2/radar/autotune', [$radarStudio, 'autotune']);
 $router->get('/dashboard-api/sensores/v2/radar/wizard', [$radarStudio, 'wizard']);

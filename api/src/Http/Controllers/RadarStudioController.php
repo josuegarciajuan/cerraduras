@@ -15,6 +15,7 @@ use App\Http\Response;
 use App\Infrastructure\Sensors\RadarLiveService;
 use App\Infrastructure\Sensors\RadarStudioStore;
 use App\Infrastructure\Sensors\SensorContextBuilder;
+use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use PDO;
 use RuntimeException;
@@ -84,6 +85,99 @@ final class RadarStudioController
             return $this->runtimeError($e);
         } catch (Throwable $e) {
             return Response::json(500, ['ok' => false, 'error' => 'live_failed', 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ── GET /dashboard-api/sensores/v2/radar/direct ───────────────────────
+
+    /**
+     * Lectura directa del broker: no espera a que el spool persista el reporte.
+     * Solo observa; no publica ni modifica la calibración.
+     */
+    public function direct(Request $request): Response
+    {
+        $roomId = (int) ($request->query['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['ok' => false, 'error' => 'room_id_required']);
+        }
+        $timeout = (int) ($request->query['timeout'] ?? 5);
+        try {
+            $device = $this->deviceForRoom($roomId);
+            if ($device === null) {
+                throw new RuntimeException('presence_device_missing');
+            }
+            $read = $this->service()->readDirect($device, $timeout);
+            $reported = is_array($read['settings'] ?? null) ? $read['settings'] : [];
+            return Response::json(200, [
+                'ok' => true,
+                'room_id' => $roomId,
+                'direct' => $read,
+                'calibration' => RadarCalibrationConvergence::statusFor(
+                    is_array($device['meta'] ?? null) ? $device['meta'] : [],
+                    $reported
+                ),
+            ])->withHeader('Cache-Control', 'no-store');
+        } catch (RuntimeException $e) {
+            return $this->runtimeError($e);
+        } catch (Throwable $e) {
+            return Response::json(500, ['ok' => false, 'error' => 'direct_failed', 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ── POST /dashboard-api/sensores/v2/radar/reapply ─────────────────────
+
+    /**
+     * Fuerza la convergencia a la calibración guardada. La fuente de verdad es
+     * siempre `devices.meta_json.calibration`; nunca se lee del dispositivo.
+     */
+    public function reapply(Request $request): Response
+    {
+        $body = $request->jsonBody ?? [];
+        $roomId = (int) ($body['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return Response::json(400, ['ok' => false, 'error' => 'room_id_required']);
+        }
+        try {
+            $device = $this->deviceForRoom($roomId);
+            if ($device === null) {
+                throw new RuntimeException('presence_device_missing');
+            }
+            $meta = is_array($device['meta'] ?? null) ? $device['meta'] : [];
+            $desired = RadarCalibrationConvergence::desired($meta);
+            if ($desired === null) {
+                return Response::json(409, [
+                    'ok' => false,
+                    'error' => 'calibration_missing',
+                    'message' => 'La ficha del radar no tiene una calibración guardada válida.',
+                ]);
+            }
+            $commands = [];
+            foreach (['maximum_range', 'minimum_range', 'radar_sensitivity', 'detection_delay', 'fading_time'] as $key) {
+                if (isset($desired['settings'][$key]) && is_numeric($desired['settings'][$key])) {
+                    $commands[$key] = (float) $desired['settings'][$key];
+                }
+            }
+            $result = $this->service()->apply($roomId, $device, $commands, true, 15, 'radar-reapply');
+            if (($result['applied'] ?? false) !== true) {
+                return Response::json(409, [
+                    'ok' => false,
+                    'error' => 'not_confirmed',
+                    'message' => (string) ($result['warning'] ?? 'El radar no ha confirmado la calibración guardada.'),
+                    'result' => $result,
+                ]);
+            }
+            return Response::json(200, [
+                'ok' => true,
+                'result' => $result,
+                'calibration' => RadarCalibrationConvergence::statusFor(
+                    $meta,
+                    (array) (($result['status']['settings'] ?? []))
+                ),
+            ]);
+        } catch (RuntimeException $e) {
+            return $this->runtimeError($e);
+        } catch (Throwable $e) {
+            return Response::json(500, ['ok' => false, 'error' => 'reapply_failed', 'message' => $e->getMessage()]);
         }
     }
 
@@ -1176,6 +1270,10 @@ final class RadarStudioController
                 'last_seen_at' => $device['last_seen_at'] ?? null,
             ],
             'saved' => $status['saved'] ?? null,
+            'calibration' => RadarCalibrationConvergence::statusFor(
+                is_array($device['meta'] ?? null) ? $device['meta'] : [],
+                $settings
+            ),
             'baseline' => ZigbeeRadarCalibrationService::BASELINE,
             'scope' => $scope,
         ];

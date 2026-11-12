@@ -289,3 +289,12 @@ php api/bin/zigbee-mqtt-profile.php --device=1339 --clear --apply --confirm
 El script guarda un backup del `meta_json` anterior en `api/run/` y nunca
 imprime la contraseña. Los dispositivos de producción no se tocan y siguen
 resolviendo al perfil `default` (1884).
+
+## F125.2 — Reconexión del spool tras un hueco
+
+`zigbee-spool-worker.php --watch` comprueba `PdoFactory::ping()` en cada vuelta.
+Si MySQL cerró la conexión inactiva (`wait_timeout`), reconecta y recrea el
+pipeline antes de procesar. Además, un `2006/2013` durante el procesamiento se
+trata como error transitorio: el mensaje se devuelve a `incoming` sin consumir
+intentos ni ir a cuarentena. Un radar apagado horas ya no deja el panel en
+`SIN DATOS` al volver.

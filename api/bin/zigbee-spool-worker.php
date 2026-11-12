@@ -123,6 +123,7 @@ $counters = [
     'discarded' => 0,
     'quarantined' => 0,
     'retried' => 0,
+    'deferred' => 0,
     'errors' => 0,
     'last_processed_at' => null,
 ];
@@ -151,7 +152,7 @@ function writeStatus(string $file, array $counters, ZigbeeSpoolQueue $queue): vo
 function processPending(
     ZigbeeSpoolQueue $queue,
     ZigbeeMqttMessageMapper $mapper,
-    $processor,
+    &$processor,
     int $limit,
     array &$counters,
     string $statusFile
@@ -213,6 +214,18 @@ function processPending(
             logLine("processed {$name}");
             writeStatus($statusFile, $counters, $queue);
         } catch (Throwable $e) {
+            // Un corte de conexión no es un mensaje veneno: se reconecta y se
+            // devuelve el fichero a `incoming` sin consumir intentos.
+            if (PdoFactory::isConnectionError($e)) {
+                logLine("db connection lost; reconnecting: " . $e->getMessage());
+                PdoFactory::ping();
+                $processor = ZigbeeMqttRuntimeFactory::create(PdoFactory::make());
+                $queue->defer($name, $record, $e->getMessage());
+                $counters['deferred']++;
+                logLine("deferred {$name} after db reconnect");
+                writeStatus($statusFile, $counters, $queue);
+                continue;
+            }
             $counters['errors']++;
             $attempts = (int) ($record['attempts'] ?? 0);
             if ($attempts + 1 < MAX_ATTEMPTS) {
@@ -233,6 +246,13 @@ function processPending(
 if ($watch) {
     logLine('watching spool ' . $spoolDir);
     while (true) {
+        // Si el radar estuvo horas en silencio, MySQL puede haber cerrado la
+        // conexión inactiva (wait_timeout). Se comprueba en cada vuelta para
+        // que el primer mensaje tras el hueco no se pierda.
+        if (!PdoFactory::ping()) {
+            logLine('db connection lost while idle; reconnecting');
+            $processor = ZigbeeMqttRuntimeFactory::create(PdoFactory::make());
+        }
         $processed = processPending($queue, $mapper, $processor, $limit, $counters, $statusFile);
         if ($processed === 0) {
             usleep(500000);
