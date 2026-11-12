@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Domain\Analytics\AccessMovementCollapser;
 use App\Http\Request;
 use App\Http\Response;
 use App\Support\Config;
@@ -794,8 +795,8 @@ final class AnalyticsController
         $recentParams = [];
         if ($useAccess) {
             $recentParts[] = "SELECT e.id, e.occurred_at, 'ACCESS' AS source, e.room_id AS room_id, r.code AS room_code,
-                    e.kind AS type, e.result, e.reason, ws.worker_id AS worker_id,
-                    NULL AS worker_name, NULL AS key_label
+                    e.kind AS type, e.result, e.reason, e.correlation_id AS correlation_id,
+                    ws.worker_id AS worker_id, NULL AS worker_name, NULL AS key_label
                  FROM access_events e
                  JOIN rooms r ON r.id = e.room_id
                  LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id
@@ -804,8 +805,8 @@ final class AnalyticsController
         }
         if ($useKey) {
             $recentParts[] = "SELECT e.id, e.occurred_at, 'KEY' AS source, e.room_id AS room_id, r.code AS room_code,
-                    e.credential_type AS type, e.result, e.reason, e.worker_id AS worker_id,
-                    w.name AS worker_name, k.label AS key_label
+                    e.credential_type AS type, e.result, e.reason, e.correlation_id AS correlation_id,
+                    e.worker_id AS worker_id, w.name AS worker_name, k.label AS key_label
                  FROM key_access_events e
                  LEFT JOIN rooms r ON r.id = e.room_id
                  LEFT JOIN workers w ON w.id = e.worker_id
@@ -814,9 +815,10 @@ final class AnalyticsController
             $recentParams += $keyParams;
         }
         $recent = $recentParts === [] ? [] : $this->rows(
-            'SELECT * FROM (' . implode(' UNION ALL ', $recentParts) . ') x ORDER BY x.occurred_at DESC LIMIT 100',
+            'SELECT * FROM (' . implode(' UNION ALL ', $recentParts) . ') x ORDER BY x.occurred_at DESC LIMIT 300',
             $recentParams
         );
+        $recent = AccessMovementCollapser::collapse($recent);
 
         $total = array_sum($byResult);
         $ok = $byResult['OK'] ?? 0;
