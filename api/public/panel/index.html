@@ -319,7 +319,7 @@ function crm(){return{
   async loadAccessKeysForFilter(){try{let d=await this.api('/api/v1/keys');this.accessKeys=d.data||[]}catch(e){}},
   async loadNfcCards(){try{let p=new URLSearchParams();if(this.nfcFilter.status)p.set('status',this.nfcFilter.status);if(this.nfcFilter.q)p.set('q',this.nfcFilter.q);let d=await this.api('/api/v1/nfc-cards'+(p.toString()?'?'+p:''));this.nfcCards=d.data||[]}catch(e){this.toastErr(e.message)}},
   async loadKeyAccesses(){try{let p=new URLSearchParams();let f=this.accessFilters;['worker_id','key_id','result','from','to'].forEach(k=>{if(f[k])p.set(k,f[k])});let d=await this.api('/api/v1/keys/accesses'+(p.toString()?'?'+p:''));this.keyAccesses=d.data||[]}catch(e){this.toastErr(e.message)}},
-  fmtKeyDate(v){if(!v)return '—';try{return new Date(String(v).replace(' ','T')+'Z').toLocaleString('es-ES')}catch(e){return v}},
+  fmtKeyDate(v){if(!v)return '—';try{let d=new Date(String(v).replace(' ','T')+'Z');if(isNaN(d.getTime()))return v;let p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())}catch(e){return v}},
   keyOwner(k){return k.owner_type==='WORKER'?'👤 '+(k.worker_name||('Trabajador #'+k.worker_id)):'🏷️ Rol: '+(k.role_name||('#'+k.role_id))},
   keyStatusBadge(k){let s=k.effective_status||k.status;let m={ACTIVE:['Activa','rgba(76,175,147,.2)','var(--success)'],EXPIRED:['Caducada','rgba(224,185,78,.2)','var(--warning)'],REVOKED:['Revocada','rgba(224,85,106,.2)','var(--danger)']};let x=m[s]||[s,'rgba(139,143,163,.2)','var(--dim)'];return '<span class="badge" style="background:'+x[1]+';color:'+x[2]+'">'+x[0]+'</span>'},
   keyPerms(k){return k.all_room_types?'Todos los tipos':((k.room_type_ids||[]).length+' tipo(s)')},
@@ -897,7 +897,7 @@ function crm(){return{
         let pilot=p.code==='PACK_ZIGBEE'?'<span class="tchip" style="--tc:#8aa4ff;--tcbg:rgba(108,142,224,.16)">ZIGBEE</span>':'';
         let devs=p.devices||[];
         let list=devs.length?'<ul class="pack-devs">'+devs.map(d=>this.packDevRow(d)).join('')+'</ul>':'<div class="pdev pdev--empty">Ningún dispositivo en este pack · <button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Añadir</button></div>';
-        let up=(p.updated_at||'').replace('T',' ').substring(0,16);
+        let up=window.PanelFormat?window.PanelFormat.dateTime(p.updated_at):(p.updated_at||'—');
         return'<article class="pack-card" style="--i:'+i+'"><header class="pack-head"><div class="pack-id"><span class="pack-code mono">'+this.esc(p.code)+'</span> <h3 class="pack-name">'+this.esc(p.name)+'</h3>'+pilot+'</div>'+room+'</header>'+this.packSigHtml(p)+list+'<footer class="pack-foot"><span class="mono">'+devs.length+' dispositivo'+(devs.length===1?'':'s')+'</span><span class="dim">'+up+'</span><span class="pack-acts"><button class="btn btn-o btn-xs" @click="openPackForm('+p.id+')">Editar</button><button class="btn btn-d btn-xs" @click="deletePack('+p.id+')">Eliminar</button></span></footer></article>';
       }).join('')+'</div>'
       :'<div class="empty"><div class="empty-glyph">'+this.boxSvg()+'</div><h2>No hay packs todavía</h2><p>Crea tu primer pack para agrupar los dispositivos de una habitación.</p><button class="btn btn-p" @click="openPackForm()">+ Nuevo pack</button></div>';

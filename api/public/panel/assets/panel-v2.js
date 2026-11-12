@@ -1439,7 +1439,7 @@
         + this.v2Kpi('Reserva', stayText, timeText, res.started ? '#16a34a' : '#2563eb', '📅')
         + this.v2Kpi('Dentro', peopleText, 'presencia ' + (occ.presence_state || 'UNKNOWN') + (occ.presence_stale ? ' · sin datos' : ''), occ.any_inside ? '#16a34a' : '#64748b', '👤')
         + this.v2Kpi('Puerta', door.state || 'UNKNOWN', door.stale ? 'sin datos frescos' : (door.age_seconds != null ? door.age_seconds + ' s' : '—'), door.state === 'OPEN' ? '#dc2626' : '#0ea5e9', '🚪')
-        + this.v2Kpi('Luz', light.installed ? (light.state || 'UNKNOWN') : 'Sin luz', light.pending_confirmation ? 'pendiente de confirmar' : (light.state_at || '—'), light.state === 'ON' ? '#eab308' : '#64748b', '💡')
+        + this.v2Kpi('Luz', light.installed ? (light.state || 'UNKNOWN') : 'Sin luz', light.pending_confirmation ? 'pendiente de confirmar' : (light.state_at ? F.dateTime(light.state_at) : '—'), light.state === 'ON' ? '#eab308' : '#64748b', '💡')
         + '</div>'
         + '<div class="row-actions" style="flex-wrap:wrap;gap:6px">'
         + (s.capabilities && s.capabilities.light

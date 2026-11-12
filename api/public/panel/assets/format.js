@@ -32,7 +32,8 @@
   function fmtDateTime(value, fallback) {
     var d = toDate(value);
     if (!d) return fallback == null ? '—' : fallback;
-    return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
+      + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
 
   function fmtShort(value, fallback) {
