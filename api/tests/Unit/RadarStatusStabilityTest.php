@@ -36,7 +36,7 @@ final class RadarStatusStatement extends PDOStatement
 
     public function fetch(int $mode = PDO::FETCH_DEFAULT, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
     {
-        if (str_contains($this->query, 'ORDER BY id DESC LIMIT 50')) {
+        if (str_contains($this->query, 'ORDER BY id DESC LIMIT 100')) {
             return $this->pdo->nextValidRow();
         }
         if (str_contains($this->query, 'ORDER BY id DESC LIMIT 1')) {
@@ -124,6 +124,8 @@ same('status: sin motivo inválido en la lectura elegida', $status['settings_inv
 same('status: fresco', $status['stale'] ?? null, false);
 same('status: guarda el último inválido para diagnóstico',
     (float) ($status['latest_reported_settings']['maximum_range'] ?? 0), -334889.04);
+same('status: detecta configuraciones contradictorias', $status['reported_unstable'] ?? null, true);
+same('status: expone las variantes', count($status['reported_variants'] ?? []), 2);
 
 // Solo reportes inválidos recientes → invalid_reported estable.
 $pdo2 = new RadarStatusPDO();
@@ -136,6 +138,15 @@ same('status sin válido: conserva el imposible',
     (float) ($status2['settings']['maximum_range'] ?? 0), -334889.04);
 same('status sin válido: motivo',
     $status2['settings_invalid_reason'] ?? null, 'maximum_range_out_of_bounds');
+same('status sin válido: no es inestable', $status2['reported_unstable'] ?? null, false);
+
+// Última lectura válida + variante antigua fuera de la ventana → estable.
+$pdo3 = new RadarStatusPDO();
+$pdo3->latestRow = row(400, 2.55, 2);
+$pdo3->validRows = [row(399, 2.55, 2), row(398, 2.55, 4), row(397, 2.55, 40)];
+$status3 = (new ZigbeeRadarCalibrationService($pdo3))->status(201, $device);
+same('status estable: aplicado', (float) ($status3['settings']['maximum_range'] ?? 0), 2.55);
+same('status estable: no inestable', $status3['reported_unstable'] ?? null, false);
 
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);

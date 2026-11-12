@@ -10257,7 +10257,8 @@ for F1254_FILE in \
     bin/zigbee-spool-worker.php \
     bin/zigbee-spool-prune.php \
     tests/Unit/RadarDirectConfirmationTest.php \
-    tests/Unit/RadarStatusStabilityTest.php; do
+    tests/Unit/RadarStatusStabilityTest.php \
+    tests/Unit/RadarConvergenceStabilityTest.php; do
     if [ -f "$F1254_FILE" ]; then
         pass "F125.4: existe $F1254_FILE"
     else
@@ -10272,6 +10273,8 @@ for F1254_MARK in \
     'awaitDirectConfirmation' \
     'direct_push' \
     'reported_invalid' \
+    'reported_unstable' \
+    'settleReports' \
     'using_valid_snapshot'; do
     if grep -RqsF "$F1254_MARK" \
         src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php \
@@ -10305,7 +10308,7 @@ for F1254_PHP in \
     fi
 done
 
-for F1254_TEST in tests/Unit/RadarDirectConfirmationTest.php tests/Unit/RadarStatusStabilityTest.php tests/Unit/ZigbeeSpoolQueueTest.php; do
+for F1254_TEST in tests/Unit/RadarDirectConfirmationTest.php tests/Unit/RadarStatusStabilityTest.php tests/Unit/RadarConvergenceStabilityTest.php tests/Unit/ZigbeeSpoolQueueTest.php; do
     if php "$F1254_TEST" >/tmp/f1254-unit.log 2>&1; then
         pass "F125.4: unit $(basename "$F1254_TEST")"
     else

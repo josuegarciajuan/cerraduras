@@ -240,7 +240,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F125.1.4/1.5 Frescura real y Radar Studio en vivo** | **BLOCK 99 + `RadarFreshnessTest` + `/radar/live`/SSE** | **Implementado (código); validación en vivo pendiente** |
 | **F125.1.6 Distancia actual en el banner** | **BLOCK 99 + `RadarLiveDistanceTest`/`radar-scope.test.js`** | **Implementado (código); validación en vivo pendiente** |
 | **F125.3 Apply/reapply sin bloqueos ni bucles** | **BLOCK 93B + `RadarApplyInvalidReportTest`/`RadarCalibrationConvergenceTest`** | **Implementado (código); pendiente validación en vivo de room 201** |
-| **F125.4 Spool sin atraso, confirmación directa y panel estable** | **BLOCK 93B/101 + `RadarDirectConfirmationTest`/`RadarStatusStabilityTest`** | **Implementado (código); pendiente drenaje del spool y validación en vivo** |
+| **F125.4 Spool sin atraso, confirmación directa y panel estable** | **BLOCK 101 + `RadarDirectConfirmationTest`/`RadarStatusStabilityTest`/`RadarConvergenceStabilityTest`** | **Implementado (código); spool drenado y validación en vivo en curso** |
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |

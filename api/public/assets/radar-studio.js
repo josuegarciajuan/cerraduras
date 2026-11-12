@@ -340,8 +340,10 @@
     var status = cal.status;
     var isError = status === 'error' || effective === 'error' || status === 'missing';
     var isInvalidReported = status === 'invalid_reported';
+    var isUnstable = !!cal.reported_unstable;
     var isUnknown = status === 'unknown';
-    var isConverging = !isError && !isInvalidReported && !isUnknown && (status === 'mismatch' || effective === 'converging');
+    var isConverging = !isError && !isInvalidReported && !isUnstable && !isUnknown
+      && (status === 'mismatch' || effective === 'converging');
     var tone = status === 'applied' && !isError && !isConverging ? 'ok' : (isError ? 'bad' : 'warn');
     box.className = 'calibration-box ' + tone;
 
@@ -377,6 +379,17 @@
       if (sub) sub.textContent = 'El radar publica un valor imposible (' + reasonText
         + (maxReported != null ? ' · máximo ' + maxReported.toFixed(2) + ' m' : '')
         + '). No se modifica la calibración guardada: revisa el broker/converter Zigbee2MQTT.';
+      return;
+    }
+    if (isUnstable) {
+      var variants = (cal.reported_variants || []).slice(0, 3).map(function (v) {
+        return Number(v.maximum_range).toFixed(2) + ' m';
+      }).join(' / ');
+      if (title) title.textContent = 'Reportes contradictorios del radar';
+      if (badge) { badge.textContent = 'REPORTE INESTABLE'; badge.className = 'badge warn'; }
+      if (sub) sub.textContent = 'El radar alterna entre configuraciones distintas'
+        + (variants ? ' (' + variants + ')' : '')
+        + '. No se evalúa una calibración estable: revisa el dispositivo y el converter Zigbee2MQTT.';
       return;
     }
     if (isUnknown) {

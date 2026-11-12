@@ -14332,3 +14332,17 @@ dev, Tuya, migraciones o polling periódico.
 `RadarStudioController`, `radar-studio.js`, `ZigbeeSpoolQueueTest`,
 `ZigbeeSpoolWorkerTest`, `RadarDirectConfirmationTest`,
 `RadarStatusStabilityTest`, BLOCK 93B/101.
+
+### F125.4.1 — Inestabilidad del radar y fin del ping-pong (RF-402…RF-403)
+
+- **RF-402 (estado inestable):** si dentro de `RADAR_UNSTABLE_WINDOW_SECONDS`
+  (def. 10) hay dos o más configuraciones válidas distintas, el panel muestra un
+  único estado **REPORTE INESTABLE** con las variantes; no alterna entre
+  `applied` y `mismatch`.
+- **RF-403 (racha estable):** tras publicar, un solo reporte aplicado no resetea
+  `attempts`; se exige `RADAR_RECONCILE_SETTLE_REPORTS` (def. 5) reportes
+  aplicados consecutivos. Si el radar alterna, la convergencia llega al máximo de
+  intentos y deja de publicar.
+
+**Trazabilidad:** `RadarCalibrationConvergence`, `ZigbeeRadarCalibrationService`,
+`radar-studio.js`, `RadarConvergenceStabilityTest`, `RadarStatusStabilityTest`.
