@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Zigbee;
 
+use App\Domain\Sensors\RadarCalibrationDrift;
 use App\Domain\Sensors\RadarFreshness;
 use App\Infrastructure\Gateways\Sensor\ZigbeeMqttMessageMapper;
 use App\Support\Config;
@@ -145,16 +146,19 @@ final class ZigbeeRadarCalibrationService
             ? null : self::settingsInvalidReason($latestSettings);
         $reportedInvalid = $reportedInvalidReason !== null;
         $latestReportedSettings = $latestSettings;
-        if ($reportedInvalid) {
-            // F125.4: el radar puede intercalar reportes imposibles con válidos.
-            // Para no hacer parpadear el panel, se usa la última lectura VÁLIDA
-            // dentro de la ventana de frescura; el reporte inválido queda como
-            // aviso secundario.
-            $validSnapshot = $this->latestValidSnapshot($roomId, $staleSeconds);
-            if ($validSnapshot !== null) {
-                $snapshot = $validSnapshot;
-            }
+        $valid = $this->recentValidSnapshots(
+            $roomId,
+            $staleSeconds,
+            self::unstableWindowSeconds()
+        );
+        if ($valid['latest'] !== null) {
+            // F125.4: el radar puede intercalar reportes inválidos o valores
+            // contradictorios. Se usa la última lectura VÁLIDA y se marca la
+            // inestabilidad como un estado único para no hacer parpadear el panel.
+            $snapshot = $valid['latest'];
         }
+        $reportedUnstable = (bool) ($valid['unstable'] ?? false);
+        $reportedVariants = (array) ($valid['variants'] ?? []);
         $settings = is_array($snapshot['settings']) ? $snapshot['settings'] : [];
         $meta = $device['meta'] ?? [];
         $saved = is_array($meta) && isset($meta['calibration']) && is_array($meta['calibration'])
@@ -225,7 +229,9 @@ final class ZigbeeRadarCalibrationService
             'reported_invalid'   => $reportedInvalid,
             'reported_invalid_reason' => $reportedInvalidReason,
             'latest_reported_settings' => $latestReportedSettings,
-            'using_valid_snapshot' => $reportedInvalid && $snapshot['id'] !== null && $snapshot['id'] !== $latestId,
+            'reported_unstable' => $reportedUnstable,
+            'reported_variants' => $reportedVariants,
+            'using_valid_snapshot' => $snapshot['id'] !== null && $snapshot['id'] !== $latestId,
             'saved'              => $saved,
         ];
     }
@@ -385,6 +391,13 @@ final class ZigbeeRadarCalibrationService
             }
         }
         return null;
+    }
+
+    public static function unstableWindowSeconds(): int
+    {
+        $raw = Config::get('RADAR_UNSTABLE_WINDOW_SECONDS', '10') ?? '10';
+        $value = is_numeric($raw) ? (int) $raw : 10;
+        return max(3, min(60, $value));
     }
 
     public static function directConfirmTimeoutSeconds(): int
@@ -684,6 +697,8 @@ final class ZigbeeRadarCalibrationService
             $status['reported_invalid'] = false;
             $status['reported_invalid_reason'] = null;
             $status['latest_reported_settings'] = $directSettings;
+            $status['reported_unstable'] = false;
+            $status['reported_variants'] = [];
             $status['using_valid_snapshot'] = true;
             if (isset($status['device']) && is_array($status['device'])) {
                 $status['device']['online'] = true;
@@ -767,23 +782,27 @@ final class ZigbeeRadarCalibrationService
     }
 
     /**
-     * Última lectura VÁLIDA dentro de la ventana de frescura. Se usa cuando el
-     * último push trae un valor imposible para no hacer parpadear el panel.
+     * Lecturas VÁLIDAS recientes. Devuelve la más reciente y, si hay varias
+     * configuraciones distintas dentro de la ventana de inestabilidad, las
+     * variantes. Así el panel puede mostrar un único estado "inestable" en vez
+     * de alternar entre applied/mismatch.
      *
-     * @return array{id:?int,value:?string,last_at:?string,age_seconds:?int,
-     *               settings:array<string,mixed>,report:?array<string,mixed>}|null
+     * @return array{latest:?array<string,mixed>,variants:list<array<string,mixed>>,unstable:bool}
      */
-    private function latestValidSnapshot(int $roomId, int $maxAgeSeconds): ?array
+    private function recentValidSnapshots(int $roomId, int $maxAgeSeconds, int $unstableWindowSeconds): array
     {
         $since = gmdate('Y-m-d H:i:s', time() - max(1, $maxAgeSeconds));
+        $windowSince = time() - max(1, $unstableWindowSeconds);
         $stmt = $this->pdo->prepare(
             "SELECT id, value, occurred_at, meta_json
                FROM presence_events
               WHERE room_id = :rid AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
                 AND occurred_at >= :since
-              ORDER BY id DESC LIMIT 50"
+              ORDER BY id DESC LIMIT 100"
         );
         $stmt->execute([':rid' => $roomId, ':since' => $since]);
+        $latest = null;
+        $variants = [];
         while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
             $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
             $settings = is_array($meta) && is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
@@ -792,22 +811,57 @@ final class ZigbeeRadarCalibrationService
             }
             $lastAt = (string) ($row['occurred_at'] ?? '');
             $age = null;
-            if ($lastAt !== '') {
-                $ts = strtotime($lastAt . ' UTC');
-                if ($ts !== false) {
-                    $age = max(0, time() - $ts);
+            $ts = $lastAt === '' ? false : strtotime($lastAt . ' UTC');
+            if ($ts !== false) {
+                $age = max(0, time() - $ts);
+            }
+            if ($latest === null) {
+                $latest = [
+                    'id' => (int) $row['id'],
+                    'value' => (string) ($row['value'] ?? ''),
+                    'last_at' => $lastAt === '' ? null : $lastAt,
+                    'age_seconds' => $age,
+                    'settings' => $settings,
+                    'report' => is_array($meta['presence_report'] ?? null) ? $meta['presence_report'] : null,
+                ];
+            }
+            if ($ts !== false && $ts >= $windowSince) {
+                $key = self::settingsSignature($settings);
+                if (!isset($variants[$key])) {
+                    $variants[$key] = self::comparableSettings($settings);
                 }
             }
-            return [
-                'id' => (int) $row['id'],
-                'value' => (string) ($row['value'] ?? ''),
-                'last_at' => $lastAt === '' ? null : $lastAt,
-                'age_seconds' => $age,
-                'settings' => $settings,
-                'report' => is_array($meta['presence_report'] ?? null) ? $meta['presence_report'] : null,
-            ];
         }
-        return null;
+        return [
+            'latest' => $latest,
+            'variants' => array_values($variants),
+            'unstable' => count($variants) > 1,
+        ];
+    }
+
+    /** @param array<string,mixed> $settings */
+    private static function settingsSignature(array $settings): string
+    {
+        $parts = [];
+        foreach (RadarCalibrationDrift::KEYS as $key) {
+            $parts[$key] = isset($settings[$key]) && is_numeric($settings[$key])
+                ? round((float) $settings[$key], 3) : null;
+        }
+        return json_encode($parts, JSON_UNESCAPED_SLASHES) ?: '';
+    }
+
+    /**
+     * @param array<string,mixed> $settings
+     * @return array<string,float|null>
+     */
+    private static function comparableSettings(array $settings): array
+    {
+        $out = [];
+        foreach (RadarCalibrationDrift::KEYS as $key) {
+            $out[$key] = isset($settings[$key]) && is_numeric($settings[$key])
+                ? (float) $settings[$key] : null;
+        }
+        return $out;
     }
 
     private function latestEventId(int $roomId): int

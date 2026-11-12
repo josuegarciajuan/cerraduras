@@ -27381,3 +27381,15 @@ falta; ambos comparten la misma lógica de servidor, así que no alternan.
 `ZigbeeSpoolQueueTest`, `ZigbeeSpoolWorkerTest`, `RadarDirectConfirmationTest`,
 `RadarStatusStabilityTest`, `RadarApplyInvalidReportTest`, BLOCK 93B/101 y
 regresión completa.
+
+### F125.4.1 — Estabilidad de reportes y convergencia
+
+`status()` analiza los reportes válidos de los últimos
+`RADAR_UNSTABLE_WINDOW_SECONDS` y calcula una firma por configuración. Si hay
+más de una firma, `reported_unstable=true` y `reported_variants` contiene hasta
+tres variantes. La UI prioriza este estado sobre `applied`/`mismatch`.
+
+`RadarCalibrationConvergence` guarda `applied_streak`. Un reporte aplicado tras
+una publicación incrementa la racha sin resetear `attempts`; solo al alcanzar
+`RADAR_RECONCILE_SETTLE_REPORTS` se marca `applied` y se vuelve a 0. Un reporte
+con deriva resetea la racha e incrementa `attempts` como antes.

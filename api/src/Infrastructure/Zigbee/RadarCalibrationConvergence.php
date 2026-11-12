@@ -96,10 +96,37 @@ final class RadarCalibrationConvergence
 
         if ($drift['status'] === RadarCalibrationDrift::STATUS_APPLIED) {
             $previousState = is_array($meta[self::STATE_KEY] ?? null) ? $meta[self::STATE_KEY] : [];
-            $convergedAt = ($previousState['status'] ?? '') === self::STATUS_APPLIED
-                && isset($previousState['converged_at'])
-                ? $previousState['converged_at']
-                : $now;
+            $previousStatus = (string) ($previousState['status'] ?? '');
+            $previousAttempts = (int) ($previousState['attempts'] ?? 0);
+            $previousStreak = (int) ($previousState['applied_streak'] ?? 0);
+
+            if ($previousStatus === self::STATUS_APPLIED) {
+                $streak = 1;
+                $convergedAt = isset($previousState['converged_at'])
+                    ? $previousState['converged_at'] : $now;
+            } else {
+                // Tras publicar, un único reporte aplicado no basta: el radar
+                // puede alternar 2.55/9.5/inválido. Se exige una racha estable
+                // para no resetear `attempts` y entrar en ping-pong de publishes.
+                $streak = $previousStreak + 1;
+                if ($streak < self::settleReports()) {
+                    $state = $this->stateFor(
+                        $desired,
+                        $reported,
+                        $drift,
+                        self::STATUS_CONVERGING,
+                        $previousAttempts,
+                        null
+                    );
+                    $state['applied_streak'] = $streak;
+                    $state['last_attempt_at'] = $previousState['last_attempt_at'] ?? null;
+                    $state['converged_at'] = $previousState['converged_at'] ?? null;
+                    $this->persistIfChanged($deviceId, $meta, $state);
+                    return $state;
+                }
+                $convergedAt = $now;
+            }
+
             $state = [
                 'status' => self::STATUS_APPLIED,
                 'desired_source' => $desired['source'],
@@ -107,6 +134,7 @@ final class RadarCalibrationConvergence
                 'reported' => self::comparable($reported),
                 'differences' => [],
                 'attempts' => 0,
+                'applied_streak' => max(1, $streak),
                 'last_error' => null,
                 'converged_at' => $convergedAt,
                 'updated_at' => $now,
@@ -137,6 +165,7 @@ final class RadarCalibrationConvergence
                 $attempts,
                 (string) ($previous['last_error'] ?? 'max_attempts')
             );
+            $state['applied_streak'] = 0;
             $state['last_attempt_at'] = $previous['last_attempt_at'] ?? null;
             $state['updated_at'] = $now;
             $this->persistIfChanged($deviceId, $meta, $state);
@@ -180,6 +209,7 @@ final class RadarCalibrationConvergence
             $attempts + 1,
             $error
         );
+        $state['applied_streak'] = 0;
         $state['last_attempt_at'] = $now;
         $state['updated_at'] = $now;
         $this->persistIfChanged($deviceId, $meta, $state);
@@ -263,6 +293,13 @@ final class RadarCalibrationConvergence
         $raw = Config::get('RADAR_RECONCILE_COOLDOWN_SECONDS', (string) self::DEFAULT_COOLDOWN_SECONDS);
         $value = is_numeric($raw) ? (int) $raw : self::DEFAULT_COOLDOWN_SECONDS;
         return max(1, min(300, $value));
+    }
+
+    public static function settleReports(): int
+    {
+        $raw = Config::get('RADAR_RECONCILE_SETTLE_REPORTS', '5') ?? '5';
+        $value = is_numeric($raw) ? (int) $raw : 5;
+        return max(2, min(20, $value));
     }
 
     public static function maxAttempts(): int

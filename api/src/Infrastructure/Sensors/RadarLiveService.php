@@ -96,6 +96,8 @@ final class RadarLiveService
         $calibration['reported_invalid'] = (bool) ($status['reported_invalid'] ?? false);
         $calibration['reported_invalid_reason'] = $status['reported_invalid_reason'] ?? null;
         $calibration['latest_reported_settings'] = $status['latest_reported_settings'] ?? null;
+        $calibration['reported_unstable'] = (bool) ($status['reported_unstable'] ?? false);
+        $calibration['reported_variants'] = $status['reported_variants'] ?? [];
 
         return [
             'ok' => true,

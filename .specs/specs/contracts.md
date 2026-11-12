@@ -17200,3 +17200,16 @@ cambian de forma.
 
 `confirmed_by` puede ser `direct_push` además de `push`/`stored_state`. El
 `status.settings` de la respuesta refleja la lectura directa confirmada.
+
+### F125.4.1 — Inestabilidad
+
+`calibration` añade:
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `reported_unstable` | `bool` | Hay ≥2 configuraciones válidas distintas en la ventana |
+| `reported_variants` | `array` | Lista de configuraciones válidas observadas (máx. 3) |
+
+Variables nuevas: `RADAR_UNSTABLE_WINDOW_SECONDS` (def. 10) y
+`RADAR_RECONCILE_SETTLE_REPORTS` (def. 5). `calibration_state` añade
+`applied_streak`.

@@ -116,6 +116,8 @@ final class RadarStudioController
             $directCalibration['reported_invalid'] = $directInvalidReason !== null;
             $directCalibration['reported_invalid_reason'] = $directInvalidReason;
             $directCalibration['latest_reported_settings'] = $reported;
+            $directCalibration['reported_unstable'] = false;
+            $directCalibration['reported_variants'] = [];
             return Response::json(200, [
                 'ok' => true,
                 'room_id' => $roomId,
@@ -1221,6 +1223,8 @@ final class RadarStudioController
         $calibration['reported_invalid'] = (bool) ($status['reported_invalid'] ?? false);
         $calibration['reported_invalid_reason'] = $status['reported_invalid_reason'] ?? null;
         $calibration['latest_reported_settings'] = $status['latest_reported_settings'] ?? null;
+        $calibration['reported_unstable'] = (bool) ($status['reported_unstable'] ?? false);
+        $calibration['reported_variants'] = $status['reported_variants'] ?? [];
         return $calibration;
     }
 

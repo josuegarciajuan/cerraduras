@@ -12017,3 +12017,11 @@ pendientes.
 - [x] TSK-F125.4-06: UI estable y aviso secundario de reporte inválido.
 - [x] TSK-F125.4-07: SKIP de F95/F102 si el spool supera 60 s.
 - [x] TSK-F125.4-08: tests units/JS, BLOCK 93B/101 y documentación.
+
+### F125.4.1 — Inestabilidad y racha
+
+- [x] TSK-F125.4.1-01: `recentValidSnapshots()` con firmas y variantes.
+- [x] TSK-F125.4.1-02: `reported_unstable`/`reported_variants` en live/scope/direct.
+- [x] TSK-F125.4.1-03: UI **REPORTE INESTABLE** con variantes.
+- [x] TSK-F125.4.1-04: `applied_streak` y `RADAR_RECONCILE_SETTLE_REPORTS`.
+- [x] TSK-F125.4.1-05: `RadarConvergenceStabilityTest` y BLOCK 101.
