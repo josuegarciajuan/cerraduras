@@ -14259,3 +14259,35 @@ Tuya o polling periódico.
 **Trazabilidad:** `RadarLiveDistance`, `RadarDistanceReportRepository`,
 `RadarLiveService`, `radar-scope.js`, `RadarLiveDistanceTest`,
 `RadarDistanceReportRepositoryTest`, `radar-scope.test.js` y BLOCK 99.
+
+## F125.3 — Aplicar/re aplicar radar: reportes inválidos y estado de UI (RF-390…RF-393)
+
+**Motivo:** en `DEVELOPMENTROOM` (sala 201, device 1339) el broker dev publica
+`maximum_range=-334889.04` intercalado con valores válidos. El panel lo
+interpretaba como deriva, republicaba la calibración cada 3 s y cada
+`Aplicar`/`Reaplicar` esperaba hasta 15 intentos (~10,5 s) para terminar en
+`409`. Además, `Reaplicando calibración guardada…` quedaba visible para siempre
+porque el éxito se escribía en otro nodo de la UI.
+
+- **RF-390 (reporte inválido no es deriva):** un push con
+  `settingsInvalidReason()!=null` (p. ej. `maximum_range` fuera de `[0.15,9.5]`)
+  no se compara como deriva, no publica MQTT, no incrementa intentos y no pisa
+  `devices.meta_json.calibration`.
+- **RF-391 (estado explícito):** `/dashboard-api/sensores/v2/radar/{live,scope,direct}`
+  exponen `calibration.status='invalid_reported'` con `invalid_reason` y el
+  `reported` exacto. El panel muestra **REPORTE INVÁLIDO** y recomienda revisar
+  el broker/converter Zigbee2MQTT; no muestra “Convergiendo”.
+- **RF-392 (apply acotado):** la confirmación de `Aplicar`/`Reaplicar` ignora
+  snapshots inválidos y corta tras 3 reportes inválidos consecutivos, sin
+  esperar los 15 intentos. Respuesta `409 reported_settings_invalid` con
+  `result.settings_invalid_reason` e `invalid_reports`.
+- **RF-393 (UI sin mensaje pegado):** al terminar `Reaplicar`, `#applyStatus`
+  muestra el resultado final (éxito o error), no el texto de progreso; mientras
+  dura la acción se muestra el tiempo transcurrido.
+
+**Fuera de alcance:** corregir el converter/versión de Zigbee2MQTT del broker
+dev, cambiar la calibración guardada, Tuya, migraciones o polling periódico.
+
+**Trazabilidad:** `RadarCalibrationConvergence`, `ZigbeeRadarCalibrationService`,
+`RadarStudioController`, `radar-studio.js`, `RadarApplyInvalidReportTest`,
+`RadarCalibrationConvergenceTest`, BLOCK 93B.

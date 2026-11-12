@@ -34,6 +34,12 @@ final class RadarCalibrationConvergence
     public const STATUS_ERROR = 'error';
     public const STATUS_MISSING = 'missing';
     public const STATUS_SUSPENDED = 'suspended';
+    /**
+     * F125.3: el radar publicó una configuración imposible (p. ej.
+     * `maximum_range=-334889.04`). No es una deriva real: no se publica nada,
+     * no se cuentan intentos y no se pisa la calibración guardada.
+     */
+    public const STATUS_INVALID_REPORTED = 'invalid_reported';
 
     public const DEFAULT_COOLDOWN_SECONDS = 3;
     public const DEFAULT_MAX_ATTEMPTS = 6;
@@ -66,6 +72,22 @@ final class RadarCalibrationConvergence
         $desired = self::desired($meta);
         if ($desired === null) {
             return ['status' => self::STATUS_MISSING, 'reason' => 'calibration_missing'];
+        }
+
+        $invalidReason = ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
+        if ($invalidReason !== null) {
+            // No es una deriva que se pueda corregir publicando: el broker o
+            // el converter está entregando un valor imposible. Se audita en la
+            // respuesta y NO se toca `calibration_state`.
+            return [
+                'status' => self::STATUS_INVALID_REPORTED,
+                'reason' => 'reported_settings_invalid',
+                'invalid_reason' => $invalidReason,
+                'desired_source' => $desired['source'],
+                'desired' => self::comparable($desired['settings']),
+                'reported' => self::comparable($reported),
+                'differences' => [],
+            ];
         }
 
         $drift = RadarCalibrationDrift::evaluate($desired['settings'], $reported);
@@ -205,6 +227,19 @@ final class RadarCalibrationConvergence
                 'status' => self::STATUS_MISSING,
                 'desired_source' => null,
                 'desired' => null,
+                'reported' => self::comparable($reported),
+                'differences' => [],
+                'state' => $state,
+            ];
+        }
+        $invalidReason = ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
+        if ($invalidReason !== null) {
+            return [
+                'status' => self::STATUS_INVALID_REPORTED,
+                'reason' => 'reported_settings_invalid',
+                'invalid_reason' => $invalidReason,
+                'desired_source' => $desired['source'],
+                'desired' => self::comparable($desired['settings']),
                 'reported' => self::comparable($reported),
                 'differences' => [],
                 'state' => $state,

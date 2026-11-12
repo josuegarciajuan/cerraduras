@@ -17126,3 +17126,40 @@ Solo se devuelve una distancia con antigüedad ≤ `stale_seconds` (30 s por
 defecto). Si no hay lectura positiva fresca, los campos de distancia son
 `null`. Los campos existentes (`raw`, `stats`, `series`, `settings`, etc.) no
 cambian de forma ni de significado.
+
+## F125.3 — Reporte inválido del radar
+
+### `calibration` en `/radar/{live,scope,direct}`
+
+Aditivo: `calibration.status` puede ser `invalid_reported`. En ese caso:
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `status` | `"invalid_reported"` | El radar publicó una configuración imposible |
+| `reason` | `"reported_settings_invalid"` | Motivo estable |
+| `invalid_reason` | `string` | `maximum_range_out_of_bounds`, etc. |
+| `reported` | `object` | Valores recibidos, sin sanear |
+| `desired` | `object` | Calibración guardada (fuente de verdad) |
+| `differences` | `[]` | Un reporte inválido no es una deriva |
+
+Los campos existentes no cambian de forma.
+
+### `POST /dashboard-api/sensores/v2/radar/profile` y `/reapply`
+
+Nuevo error `409`:
+
+```json
+{
+  "ok": false,
+  "error": "reported_settings_invalid",
+  "message": "El radar está reportando un valor inválido (...). Revisa el broker/converter Zigbee2MQTT; la calibración no se ha modificado.",
+  "result": {
+    "applied": false,
+    "warning": "reported_settings_invalid:maximum_range_out_of_bounds",
+    "settings_invalid_reason": "maximum_range_out_of_bounds",
+    "invalid_reports": 3
+  }
+}
+```
+
+`not_confirmed` sigue existiendo para la ausencia real de confirmación.

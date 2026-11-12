@@ -27281,3 +27281,52 @@ No se conserva una distancia al pasar a `ABSENT` ni entre episodios.
 
 `RadarLiveDistanceTest`, `RadarDistanceReportRepositoryTest`,
 `radar-scope.test.js` (casos F125.1.6) y BLOCK 99.
+
+## F125.3 — Reportes inválidos y estado de la UI
+
+### Backend
+
+`RadarCalibrationConvergence::onReport()` comprueba
+`ZigbeeRadarCalibrationService::settingsInvalidReason($reported)` antes del
+drift. Si el reporte es imposible:
+
+```text
+status = invalid_reported
+reason = reported_settings_invalid
+invalid_reason = maximum_range_out_of_bounds | ...
+differences = []
+```
+
+No publica MQTT, no incrementa `attempts` y no escribe `calibration_state` (se
+conserva el último estado válido). `statusFor()` hace la misma comprobación para
+que el panel no muestre `mismatch` con un valor corrupto.
+
+### Confirmación de `apply()`
+
+El bucle de read-back por push (15 × 0,7 s) ignora los snapshots inválidos. Si
+llegan **3 reportes inválidos consecutivos** sin una confirmación válida, corta
+la espera y devuelve:
+
+```text
+applied=false
+warning=reported_settings_invalid:<motivo>
+settings_invalid_reason=<motivo>
+invalid_reports=N
+```
+
+`RadarStudioController` mapea ese caso a `409 reported_settings_invalid` con un
+mensaje accionable. El resto de `not_confirmed` no cambia.
+
+### UI
+
+`renderCalibration()` reconoce `invalid_reported`, pinta el badge
+**REPORTE INVÁLIDO**, muestra el máximo reportado y no presenta el estado como
+convergencia. `reapplyCalibration()` escribe siempre el resultado en
+`#applyStatus` (`Calibración guardada reaplicada.` o `No se pudo reaplicar: …`).
+`setBusy()` muestra el tiempo transcurrido a partir de 2 s.
+
+### Verificación
+
+`RadarApplyInvalidReportTest` (convergencia sin publicar + apply que corta),
+`RadarCalibrationConvergenceTest` (`statusFor` inválido), BLOCK 93B y regresión
+completa.

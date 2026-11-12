@@ -9488,6 +9488,31 @@ else
     fail "F125.2: unit RadarCalibrationConvergence" "$(tail -3 /tmp/f1252-unit.log | tr '\n' ' ')"
 fi
 
+# F125.3: un reporte imposible del radar no publica ni confirma por error.
+if [ -f tests/Unit/RadarApplyInvalidReportTest.php ]; then
+    pass "F125.3: existe tests/Unit/RadarApplyInvalidReportTest.php"
+else
+    fail "F125.3: falta tests/Unit/RadarApplyInvalidReportTest.php"
+fi
+for F1253_MARK in 'STATUS_INVALID_REPORTED' 'reported_settings_invalid' 'invalid_reported'; do
+    if grep -RqsF "$F1253_MARK" src/Infrastructure/Zigbee/RadarCalibrationConvergence.php         src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php         src/Http/Controllers/RadarStudioController.php 2>/dev/null; then
+        pass "F125.3: marcador $F1253_MARK"
+    else
+        fail "F125.3: marcador $F1253_MARK" "ausente"
+    fi
+done
+if grep -qF 'REPORTE INVÁLIDO' public/assets/radar-studio.js 2>/dev/null \
+    && grep -qF 'Calibración guardada reaplicada.' public/assets/radar-studio.js 2>/dev/null; then
+    pass "F125.3: UI limpia el estado de reaplicación"
+else
+    fail "F125.3: UI limpia el estado de reaplicación" "marcadores ausentes"
+fi
+if php tests/Unit/RadarApplyInvalidReportTest.php >/tmp/f1253-unit.log 2>&1; then
+    pass "F125.3: unit reportes inválidos"
+else
+    fail "F125.3: unit reportes inválidos" "$(tail -3 /tmp/f1253-unit.log | tr '\n' ' ')"
+fi
+
 if [ "$SERVER_UP" = true ] && [ -n "$RADAR_ROOM" ]; then
     F1252_DIRECT_CODE=$(curl -s -o /tmp/f1252-direct.json -w '%{http_code}' --max-time 10 \
         "$API_BASE/dashboard-api/sensores/v2/radar/direct?room_id=$RADAR_ROOM&timeout=2" 2>/dev/null)
