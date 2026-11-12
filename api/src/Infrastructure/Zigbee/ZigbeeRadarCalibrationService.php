@@ -372,6 +372,7 @@ final class ZigbeeRadarCalibrationService
         }
         $reader = $this->directReader ?? [$this, 'readDirect'];
         $deadline = microtime(true) + $timeout;
+        $invalidStreak = 0;
         while (microtime(true) < $deadline) {
             $remaining = max(1, (int) ceil($deadline - microtime(true)));
             $read = $reader($device, (int) min(4, $remaining));
@@ -388,6 +389,23 @@ final class ZigbeeRadarCalibrationService
             $settings = is_array($read['settings'] ?? null) ? $read['settings'] : [];
             if ($settings !== [] && self::settingsMatch($commands, $settings)) {
                 return $read;
+            }
+            // F125.4.1: si el radar solo emite valores imposibles, no se agota
+            // la ventana entera: se devuelve el motivo para cortar en ~2 s.
+            $invalidReason = $settings === [] ? null : self::settingsInvalidReason($settings);
+            if ($invalidReason !== null) {
+                $invalidStreak++;
+                if ($invalidStreak >= 2) {
+                    return [
+                        'ok' => false,
+                        'error' => 'reported_settings_invalid',
+                        'invalid_reason' => $invalidReason,
+                        'settings' => $settings,
+                        'received_at' => $read['received_at'] ?? null,
+                    ];
+                }
+            } else {
+                $invalidStreak = 0;
             }
         }
         return null;
@@ -551,6 +569,20 @@ final class ZigbeeRadarCalibrationService
         // que bloqueaba apply/reset cuando el spool iba atrasado.
         $directEnabled = Config::getBool('RADAR_DIRECT_CONFIRM_ENABLED', true);
         $direct = $directEnabled ? $this->awaitDirectConfirmation($device, $commands) : null;
+        if (is_array($direct) && ($direct['error'] ?? '') === 'reported_settings_invalid') {
+            $this->clearPending($device);
+            $reason = (string) ($direct['invalid_reason'] ?? 'reported_settings_invalid');
+            return [
+                'ok' => true,
+                'applied' => false,
+                'persisted' => false,
+                'error' => null,
+                'warning' => 'reported_settings_invalid:' . $reason,
+                'settings_invalid_reason' => $reason,
+                'invalid_reports' => 2,
+                'status' => $this->status($roomId, $device),
+            ];
+        }
 
         $applied = false;
         $latest = null;

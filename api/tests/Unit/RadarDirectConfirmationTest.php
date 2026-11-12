@@ -115,5 +115,31 @@ $saved = json_decode($pdo->metaJson, true);
 same('apply: meta guarda calibration.maximum_range',
     (float) ($saved['calibration']['maximum_range'] ?? 0), 2.55);
 
+// F125.4.1: dos lecturas directas inválidas cortan sin esperar al spool.
+$pdo2 = new RadarDirectPDO($meta);
+$published2 = 0;
+$reads2 = 0;
+$service2 = new ZigbeeRadarCalibrationService(
+    $pdo2,
+    static function () use (&$published2): array { $published2++; return ['ok' => true, 'error' => null]; },
+    null,
+    static function (array $device, int $timeout) use (&$reads2): array {
+        $reads2++;
+        return ['ok' => true,
+            'settings' => ['maximum_range' => -334889.04, 'minimum_range' => 0,
+                'radar_sensitivity' => 7, 'detection_delay' => 0.1, 'fading_time' => 5],
+            'received_at' => '2026-11-12T12:00:00Z', 'presence' => false];
+    }
+);
+$started2 = microtime(true);
+$result2 = $service2->apply(201, ['id' => 1339, 'external_id' => '0xa4c138718a950dcf', 'meta' => $meta],
+    $commands, true, 15, 'test-direct-invalid');
+$elapsed2 = microtime(true) - $started2;
+same('directo inválido: no aplica', $result2['applied'] ?? null, false);
+same('directo inválido: motivo', $result2['settings_invalid_reason'] ?? null, 'maximum_range_out_of_bounds');
+same('directo inválido: dos lecturas', $reads2, 2);
+check('directo inválido: corta rápido', $elapsed2 < 3.0, 'tardó ' . number_format($elapsed2, 2) . ' s');
+same('directo inválido: una publicación', $published2, 1);
+
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);
