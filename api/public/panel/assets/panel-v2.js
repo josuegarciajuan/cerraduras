@@ -31,6 +31,7 @@
     cl: ['API Clients', 'Credenciales de integración'],
     an: ['Anomalías', 'Detección y seguimiento de incidencias'],
     ana: ['Analítica', 'Explorador de datos de uso'],
+    ev: ['Registro de eventos', 'Cronología unificada de sensores, accesos y luz'],
     he: ['Salud', 'Estado de servicios e integraciones'],
     cfg: ['Configuración', 'Parámetros en tiempo de ejecución']
   };
@@ -81,6 +82,14 @@
     o.debtFilters = { status: '', room_id: '', from: '', to: '' };
     o.keyFilters = { worker_id: '', status: '', q: '', key_type: '' };
     o.monitorFilters = { room_id: '', kind: '', result: '' };
+    // F129 — registro de eventos unificado.
+    o.eventFilters = { room_id: '', category: '', type: '', result: '', applied: '', worker_id: '', q: '', from: '', to: '' };
+    o.events = [];
+    o.eventsMeta = null;
+    o.eventSummary = {};
+    o.eventsLoading = false;
+    o.eventsLive = false;
+    o._eventsTimer = null;
     o.drawer = { show: false, title: '', subtitle: '', content: '', footer: '' };
     o._v2Timer = null;
     o._liveClock = null;
@@ -526,8 +535,11 @@
       this.p = p;
       this.drawer.show = false;
       this.sidebarOpen = false;
+      if (this._eventsTimer) { clearInterval(this._eventsTimer); this._eventsTimer = null; }
+      if (p !== 'ev') this.eventsLive = false;
       if (this.parseHash().page !== p) history.replaceState(null, '', '#' + p);
       baseNav.call(this, p);
+      if (p === 'ev') this.enterEventsV2();
       if (p === 'st') this.loadOccupationsV2();
       if (p === 'db') this.refreshAll();
       if (p === 'ana') this.refreshAll();
@@ -561,6 +573,7 @@
         case 'cl': return this.apiClientPageV2();
         case 'an': return this.anomalyPageV2();
         case 'ana': return this.analyticsPageV2();
+        case 'ev': return this.eventsPageV2();
         case 'he': return this.healthPageV2();
         case 'cfg': return this.settingsPageV2();
         default: return this.dbV2();
@@ -1949,6 +1962,246 @@
         + '<input type="datetime-local" @change="setAccessFilterV2(\'to\',$event.target.value)" title="Hasta" value="' + F.escape(this.dtLocalValue(f.to)) + '">'
         + '<button class="btn btn-o btn-sm" @click="clearAccessFiltersV2()">Limpiar</button></div>'
         + this.v2Table(['Fecha', 'Sala', 'Tipo', 'Trabajador', 'Llave', 'Resultado', 'Motivo'], rows, 'Sin accesos');
+    };
+
+    /* ═══════════════════════════════════════════════════════════════
+       F129 — REGISTRO DE EVENTOS UNIFICADO
+       ═══════════════════════════════════════════════════════════════ */
+    o.eventCategoryLabel = function (category) {
+      var map = { door: 'Puerta', presence: 'Presencia', access: 'Accesos', key: 'Llaves / fichas', light: 'Luz' };
+      return map[category] || (category || '—');
+    };
+
+    o.eventCategoryOptions = function (selected) {
+      return '<option value="">Todas las categorías</option>'
+        + [['door', 'Puerta'], ['presence', 'Presencia'], ['access', 'Accesos'], ['key', 'Llaves / fichas'], ['light', 'Luz']].map(function (x) {
+          return '<option value="' + x[0] + '"' + (selected === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
+        }).join('');
+    };
+
+    o.eventTypeOptions = function (selected) {
+      var groups = [
+        ['Puerta', [['OPEN', 'Apertura'], ['CLOSED', 'Cierre']]],
+        ['Presencia', [['PRESENT', 'Presente'], ['ABSENT', 'Ausente']]],
+        ['Accesos', [
+          ['QR_VALIDATE', 'QR validado'], ['OPEN', 'Apertura'], ['AUTO_LOCK', 'Cierre automático'],
+          ['MANUAL_LOCK', 'Cierre manual'], ['DENIED', 'Denegado'], ['WORKER_EXIT', 'Salida de empleado']
+        ]],
+        ['Llaves / fichas', [['QR', 'QR de llave'], ['NFC', 'Ficha NFC']]],
+        ['Luz', [['on', 'Encendido'], ['off', 'Apagado']]]
+      ];
+      return '<option value="">Todos los tipos</option>' + groups.map(function (g) {
+        return '<optgroup label="' + g[0] + '">' + g[1].map(function (x) {
+          return '<option value="' + x[0] + '"' + (selected === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
+        }).join('') + '</optgroup>';
+      }).join('');
+    };
+
+    o.eventLabel = function (e) {
+      var a = String(e.action || e.kind || '').toUpperCase();
+      if (e.category === 'door') return a === 'OPEN' ? 'Puerta abierta' : 'Puerta cerrada';
+      if (e.category === 'presence') return a === 'PRESENT' ? 'Presencia detectada' : 'Presencia ausente';
+      if (e.category === 'light') return a === 'ON' ? 'Luz encendida' : 'Luz apagada';
+      if (e.category === 'key') return (a === 'NFC' ? 'Ficha NFC' : 'QR de llave') + (e.result ? ' · ' + e.result : '');
+      return this.accessTypeLabel(e.action || e.kind);
+    };
+
+    o.eventQueryParams = function () {
+      var f = this.eventFilters || {};
+      var p = ['days=' + this.analyticsDays];
+      if (f.room_id) p.push('room_id=' + encodeURIComponent(f.room_id));
+      if (f.category) p.push('category=' + encodeURIComponent(f.category));
+      if (f.type) p.push('type=' + encodeURIComponent(f.type));
+      if (f.result) p.push('result=' + encodeURIComponent(f.result));
+      if (f.applied !== '' && f.applied !== undefined) p.push('applied=' + encodeURIComponent(f.applied));
+      if (f.worker_id) p.push('worker_id=' + encodeURIComponent(f.worker_id));
+      if (f.q) p.push('q=' + encodeURIComponent(f.q));
+      if (f.from) p.push('from=' + encodeURIComponent(f.from));
+      if (f.to) p.push('to=' + encodeURIComponent(f.to));
+      return p;
+    };
+
+    o.enterEventsV2 = async function () {
+      if (!this.rooms || !this.rooms.length) { try { await this.loadDashboard(); } catch (e) { } }
+      if (!this.workers || !this.workers.length) { try { await this.loadWorkers(); } catch (e) { } }
+      this.loadEvents();
+    };
+
+    o.setEventFilterV2 = function (key, value) {
+      this.eventFilters[key] = value;
+      if (key === 'category' && value === '') this.eventFilters.type = '';
+      this.loadEvents();
+    };
+
+    o.clearEventFiltersV2 = function () {
+      this.eventFilters = { room_id: '', category: '', type: '', result: '', applied: '', worker_id: '', q: '', from: '', to: '' };
+      this.loadEvents();
+    };
+
+    o.loadEvents = async function (more) {
+      if (this.eventsLoading) return;
+      this.eventsLoading = true;
+      try {
+        var p = this.eventQueryParams();
+        p.push('limit=100');
+        if (more === true && this.eventsMeta && this.eventsMeta.next_before_at) {
+          p.push('before_at=' + encodeURIComponent(this.eventsMeta.next_before_at));
+          p.push('before_source=' + encodeURIComponent(this.eventsMeta.next_before_source || ''));
+          p.push('before_id=' + encodeURIComponent(this.eventsMeta.next_before_id || 0));
+        }
+        var d = await this.api('/api/v1/analytics/events?' + p.join('&'));
+        var items = d.items || [];
+        if (more === true) {
+          var seen = {};
+          this.events.forEach(function (e) { seen[e.key] = true; });
+          this.events = this.events.concat(items.filter(function (e) { return !seen[e.key]; }));
+        } else {
+          this.events = items;
+          this.eventSummary = d.summary || {};
+        }
+        this.eventsMeta = d.meta || null;
+      } catch (e) {
+        this.events = [];
+        this.eventSummary = {};
+        this.eventsMeta = null;
+        this.toast = { show: true, type: 'error', msg: e.message || 'No se pudo cargar el registro' };
+      } finally {
+        this.eventsLoading = false;
+      }
+    };
+
+    o.loadEventsNewer = async function () {
+      if (!this.eventsLive || this.eventsLoading || !this.events.length) return;
+      this.eventsLoading = true;
+      try {
+        var p = this.eventQueryParams();
+        p.push('limit=200');
+        p.push('since=' + encodeURIComponent(this.events[0].occurred_at));
+        var d = await this.api('/api/v1/analytics/events?' + p.join('&'));
+        var seen = {};
+        this.events.forEach(function (e) { seen[e.key] = true; });
+        var fresh = (d.items || []).filter(function (e) { return !seen[e.key]; });
+        if (fresh.length) this.events = fresh.concat(this.events);
+      } catch (e) {
+        // El live tail es best-effort: no interrumpe la vista.
+      } finally {
+        this.eventsLoading = false;
+      }
+    };
+
+    o.toggleEventsLive = function () {
+      this.eventsLive = !this.eventsLive;
+      if (this._eventsTimer) { clearInterval(this._eventsTimer); this._eventsTimer = null; }
+      if (this.eventsLive) {
+        this.loadEventsNewer();
+        this._eventsTimer = setInterval(function () {
+          if (document.hidden) return;
+          this.loadEventsNewer();
+        }.bind(this), 5000);
+      }
+    };
+
+    o.eventDetailAt = function (index) {
+      var e = this.events[index];
+      if (!e) return;
+      var detail = e.detail ? JSON.stringify(e.detail, null, 2) : '';
+      var rows = [
+        ['Categoría', this.eventCategoryLabel(e.category)],
+        ['Evento', this.eventLabel(e)],
+        ['Sala', e.room_code ? e.room_code : (e.room_id ? '#' + e.room_id : '—')],
+        ['Actor', e.worker_name || e.key_label || e.device_id || '—'],
+        ['Resultado', e.result || '—'],
+        ['Aplicado', e.applied === null ? '—' : (e.applied ? 'Sí' : 'No')],
+        ['Motivo', e.reason || '—'],
+        ['Instante', F.dateTime(e.occurred_at)]
+      ];
+      var body = '<div class="card"><div class="card-head"><h3>Detalle</h3></div><div class="card-body"><div class="table-wrap"><table><tbody>'
+        + rows.map(function (r) { return '<tr><th style="width:34%">' + F.escape(r[0]) + '</th><td>' + F.escape(String(r[1])) + '</td></tr>'; }).join('')
+        + '</tbody></table></div></div></div>';
+      if (detail) {
+        body += '<div class="card"><div class="card-head"><h3>Datos técnicos</h3></div><div class="card-body">'
+          + '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;margin:0">' + F.escape(detail) + '</pre></div></div>';
+      }
+      var footer = '<button class="btn btn-o" @click="drawer.show=false">Cerrar</button>';
+      if (e.room_id) footer += '<button class="btn btn-o" @click="drawer.show=false;openRoomDrawer(' + e.room_id + ')">Ver sala</button>';
+      if (e.worker_id) footer += '<button class="btn btn-o" @click="drawer.show=false;openWorkerDrawer(' + e.worker_id + ')">Ver trabajador</button>';
+      this.drawer = {
+        show: true,
+        title: this.eventLabel(e),
+        subtitle: (e.room_code ? e.room_code + ' · ' : '') + F.dateTime(e.occurred_at),
+        content: body,
+        footer: footer
+      };
+    };
+
+    o.exportEventsCsv = function () {
+      function cell(v) { return '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"'; }
+      var lines = [['fecha', 'sala', 'categoria', 'evento', 'actor', 'resultado', 'aplicado', 'motivo'].map(cell).join(',')];
+      this.events.forEach(function (e) {
+        lines.push([
+          e.occurred_at, e.room_code || e.room_id, this.eventCategoryLabel(e.category), this.eventLabel(e),
+          e.worker_name || e.key_label || e.device_id || '', e.result || '',
+          e.applied === null ? '' : (e.applied ? 'si' : 'no'), e.reason || ''
+        ].map(cell).join(','));
+      }.bind(this));
+      var blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'registro-eventos.csv';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    };
+
+    o.eventsPageV2 = function () {
+      var f = this.eventFilters || {};
+      var s = this.eventSummary || {};
+      var cats = ['door', 'presence', 'access', 'key', 'light'];
+      var workerOpts = '<option value="">Todos los trabajadores</option>' + (this.workers || []).map(function (w) {
+        return '<option value="' + w.id + '"' + (String(f.worker_id) === String(w.id) ? ' selected' : '') + '>' + F.escape(w.name) + '</option>';
+      }).join('');
+      var rows = this.events.map(function (e, i) {
+        var actor = e.worker_name || e.key_label || e.device_id || '—';
+        return '<tr style="cursor:pointer" @click="eventDetailAt(' + i + ')">'
+          + '<td class="small" style="white-space:nowrap">' + F.dateTime(e.occurred_at) + '</td>'
+          + '<td>' + (e.room_code ? '<b>' + F.escape(e.room_code) + '</b>' : '<span class="muted">—</span>') + '</td>'
+          + '<td><span class="badge badge-soft">' + F.escape(this.eventCategoryLabel(e.category)) + '</span></td>'
+          + '<td>' + F.escape(this.eventLabel(e)) + '</td>'
+          + '<td class="small">' + F.escape(actor) + '</td>'
+          + '<td>' + (e.result ? F.badge(e.result) : '<span class="muted">—</span>') + '</td>'
+          + '<td>' + (e.applied === null ? '<span class="muted">—</span>' : (e.applied ? 'Sí' : '<span style="color:#dc2626">No</span>')) + '</td>'
+          + '<td class="small muted">' + F.escape(e.reason || '') + '</td></tr>';
+      }.bind(this)).join('');
+
+      var filters = '<div class="fbar" style="margin-bottom:12px">'
+        + '<select @change="setEventFilterV2(\'room_id\',$event.target.value)">' + this.roomFilterOptions(f.room_id) + '</select>'
+        + '<select @change="setEventFilterV2(\'category\',$event.target.value)">' + this.eventCategoryOptions(f.category) + '</select>'
+        + '<select @change="setEventFilterV2(\'type\',$event.target.value)">' + this.eventTypeOptions(f.type) + '</select>'
+        + '<select @change="setEventFilterV2(\'result\',$event.target.value)"><option value="">Todos los resultados</option>'
+        + '<option value="OK"' + (f.result === 'OK' ? ' selected' : '') + '>OK</option>'
+        + '<option value="FAIL"' + (f.result === 'FAIL' ? ' selected' : '') + '>FAIL</option></select>'
+        + '<select @change="setEventFilterV2(\'applied\',$event.target.value)"><option value="">Aplicados y descartados</option>'
+        + '<option value="1"' + (String(f.applied) === '1' ? ' selected' : '') + '>Solo aplicados</option>'
+        + '<option value="0"' + (String(f.applied) === '0' ? ' selected' : '') + '>Solo descartados</option></select>'
+        + '<select @change="setEventFilterV2(\'worker_id\',$event.target.value)">' + workerOpts + '</select>'
+        + '<input type="datetime-local" @change="setEventFilterV2(\'from\',$event.target.value)" title="Desde" value="' + F.escape(this.dtLocalValue(f.from)) + '">'
+        + '<input type="datetime-local" @change="setEventFilterV2(\'to\',$event.target.value)" title="Hasta" value="' + F.escape(this.dtLocalValue(f.to)) + '">'
+        + '<input type="search" placeholder="Buscar motivo, sala, actor…" value="' + F.escape(f.q || '') + '" @keydown.enter="setEventFilterV2(\'q\',$event.target.value)">'
+        + '<button class="btn btn-o btn-sm" @click="loadEvents()">Buscar</button>'
+        + '<button class="btn btn-o btn-sm" @click="clearEventFiltersV2()">Limpiar</button></div>';
+
+      return '<div class="ph"><div><h1>Registro de eventos</h1><p>Cronología unificada · sensores, accesos y luz' + (this.eventsLive ? ' · <span style="color:#16a34a">en vivo</span>' : '') + '</p></div>'
+        + '<div class="page-actions">'
+        + '<button class="btn ' + (this.eventsLive ? 'btn-p' : 'btn-o') + ' btn-sm" @click="toggleEventsLive()">' + (this.eventsLive ? '● En vivo' : '○ En vivo') + '</button>'
+        + '<button class="btn btn-o btn-sm" @click="exportEventsCsv()">CSV</button>'
+        + '<button class="btn btn-o btn-sm" @click="loadEvents()">↻ Actualizar</button></div></div>'
+        + '<div class="kpi-grid">'
+        + cats.map(function (c) {
+          return this.v2Kpi(this.eventCategoryLabel(c), F.number(s[c] || 0), 'eventos en el rango', '#2563eb', c === 'door' ? '🚪' : c === 'presence' ? '👤' : c === 'access' ? '📜' : c === 'key' ? '🔑' : '💡');
+        }.bind(this)).join('')
+        + '</div>'
+        + this.v2Card('Eventos', 'Hasta 100 por página · pulse una fila para ver el detalle', filters
+          + this.v2Table(['Fecha', 'Sala', 'Categoría', 'Evento', 'Actor', 'Resultado', 'Aplicado', 'Motivo'], rows, this.eventsLoading ? 'Cargando…' : 'Sin eventos para los filtros seleccionados')
+          + (this.eventsMeta && this.eventsMeta.has_more ? '<div style="text-align:center;margin-top:12px"><button class="btn btn-o" @click="loadEvents(true)">Cargar más</button></div>' : ''));
     };
 
     /* ═══════════════════════════════════════════════════════════════

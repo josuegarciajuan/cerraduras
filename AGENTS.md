@@ -243,6 +243,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F126 Control remoto de habitaciones** | **BLOCK 94 + `RoomControlTest`** | **Implementado: estado, luz, apertura, reset, almacén y OTA; prueba física pendiente** |
 | **F127 API unificada y códigos reales** | **BLOCK 95 + `DashboardSessionTest`/`F127ApiUnificationTest`** | **Implementado: dashboard en `/api/v1`, cookie LAN, QR por `room_code` y alias deprecados** |
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
+| **F129 Registro de eventos del panel** | **BLOCK 100 + `PanelEventsTest`** | **Implementado: cronología unificada de sensores, accesos y luz en `/panel` con filtros, CSV y live tail; validación visual pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1525,6 +1526,26 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Compatibilidad**: `/api/v1/rooms/{id}/...` sigue igual. El dashboard y el
   panel usan `id`; el TPV/VB6 usa `by-code/{codhab}`.
 - **Verificación**: `F128ByCodeRoutesTest` y BLOCK 96 del runner.
+
+### F129 — Registro de eventos del panel (RF-386…RF-390)
+
+- **Motivo**: el panel tenía accesos, monitor, anomalías y logs del almacén por
+  separado, sin una cronología única de sensores, accesos y luz.
+- **Sección**: `Análisis → Registro de eventos` (`#ev`). Solo lectura.
+- **API**: `GET /api/v1/analytics/events` (`audit:read`) con `UNION ALL` en
+  tiempo de consulta sobre `presence_events`, `access_events`,
+  `key_access_events` y `switch_command_evidence`. Sin tabla nueva ni escrituras.
+- **Filtros**: `days`, `from`/`to`, `room_id`, `category`
+  (`door|presence|access|key|light`), `type`, `result`, `applied`,
+  `worker_id`, `key_id`, `device_id`, `q`; paginación por cursor
+  (`before_at`/`before_source`/`before_id`) y `limit` (1..200).
+- **Live tail**: `since` + polling de 5 s activable; se pausa con la pestaña
+  oculta y se detiene al salir de la sección. Sin SSE ni pollers de sistema.
+- **UI**: cards por categoría, tabla con detalle en drawer, enlaces a sala y
+  trabajador, y exportación CSV.
+- **Índices**: migración aditiva `0149` (`idx_pe_time`, `idx_sce_time`).
+- **Sin Tuya, sin migración destructiva y sin cambios en contratos existentes.**
+- **Verificación**: `PanelEventsTest` (50), BLOCK 100 y regresión completa.
 
 ### F125.1.1 — Corrección de `persistCalibration` con `$extra`
 

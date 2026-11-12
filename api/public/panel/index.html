@@ -203,6 +203,7 @@ tr:hover td{background:rgba(108,142,224,.05)}
     <div class="nav-group">
       <div class="nav-group-title">Análisis</div>
       <a :class="{active:p==='ana'}" role="button" tabindex="0" @click="nav('ana')" @keydown.enter="nav('ana')" @keydown.space.prevent="nav('ana')"><span class="ic">📈</span>Analítica</a>
+      <a :class="{active:p==='ev'}" role="button" tabindex="0" @click="nav('ev')" @keydown.enter="nav('ev')" @keydown.space.prevent="nav('ev')"><span class="ic">🗒️</span>Registro de eventos</a>
       <a :class="{active:p==='an'}" role="button" tabindex="0" @click="nav('an')" @keydown.enter="nav('an')" @keydown.space.prevent="nav('an')"><span class="ic">⚠️</span>Anomalías<span x-show="anomalyCount>0" class="sidebar-badge" x-text="anomalyCount"></span></a>
     </div>
     <div class="nav-group">

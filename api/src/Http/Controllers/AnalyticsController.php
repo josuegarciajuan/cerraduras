@@ -1451,6 +1451,339 @@ final class AnalyticsController
         ]);
     }
 
+    /**
+     * F129 — Registro de eventos unificado (solo lectura).
+     *
+     * Cronología de sensores (puerta/presencia), accesos de puerta, accesos
+     * con llave y órdenes de luz. Sin tabla nueva: UNION ALL en tiempo de
+     * consulta sobre las tablas auditadas. Sin Tuya, sin pollers, sin escrituras.
+     *
+     * Filtros: days | from/to (hora local) | room_id | category | type |
+     * result | applied | worker_id | key_id | device_id | q | since |
+     * before_at+before_source+before_id | limit.
+     */
+    public function events(Request $request): Response
+    {
+        [$from, $to, $days, , $fromLocal, $toLocal] = $this->range($request);
+
+        // Rango exacto opcional (hora local del panel → UTC).
+        $tz  = new DateTimeZone(date_default_timezone_get());
+        $utc = new DateTimeZone('UTC');
+        foreach (['from', 'to'] as $bound) {
+            $raw = trim((string) ($request->query($bound) ?? ''));
+            if ($raw === '') {
+                continue;
+            }
+            try {
+                $dt = new DateTimeImmutable(str_replace(' ', 'T', $raw), $tz);
+                if ($bound === 'from') {
+                    $from = $dt->setTimezone($utc)->format('Y-m-d H:i:s');
+                    $fromLocal = $dt;
+                } else {
+                    $to = $dt->setTimezone($utc)->format('Y-m-d H:i:s');
+                    $toLocal = $dt;
+                }
+            } catch (\Throwable $e) {
+                // Fecha inválida: se conserva el rango por días.
+            }
+        }
+
+        $allowedCategories = ['door', 'presence', 'access', 'key', 'light'];
+        $category = strtolower(trim((string) ($request->query('category') ?? '')));
+        $category = in_array($category, $allowedCategories, true) ? $category : null;
+
+        $type = strtoupper(trim((string) ($request->query('type') ?? '')));
+        $type = $type !== '' ? $type : null;
+
+        $resultFilter = strtoupper(trim((string) ($request->query('result') ?? '')));
+        $resultFilter = in_array($resultFilter, ['OK', 'FAIL'], true) ? $resultFilter : null;
+
+        $appliedRaw = trim((string) ($request->query('applied') ?? ''));
+        $appliedFilter = in_array($appliedRaw, ['0', '1'], true) ? (int) $appliedRaw : null;
+
+        $roomRaw   = $request->query('room_id');
+        $roomId    = $roomRaw !== null && $roomRaw !== '' ? (int) $roomRaw : null;
+        $workerRaw = $request->query('worker_id');
+        $workerId  = $workerRaw !== null && $workerRaw !== '' ? (int) $workerRaw : null;
+        $keyRaw    = $request->query('key_id');
+        $keyId     = $keyRaw !== null && $keyRaw !== '' ? (int) $keyRaw : null;
+
+        $deviceId = trim((string) ($request->query('device_id') ?? ''));
+        $deviceId = $deviceId !== '' ? $deviceId : null;
+
+        $q = trim((string) ($request->query('q') ?? ''));
+        $q = $q !== '' ? $q : null;
+
+        $limit = (int) ($request->query('limit') ?? 100);
+        $limit = max(1, min(200, $limit));
+
+        $beforeAt = trim((string) ($request->query('before_at') ?? ''));
+        $beforeAt = $beforeAt !== '' ? $beforeAt : null;
+        $beforeSource = strtolower(trim((string) ($request->query('before_source') ?? '')));
+        $beforeSource = $beforeSource !== '' ? $beforeSource : null;
+        $beforeId = (int) ($request->query('before_id') ?? 0);
+
+        $since = trim((string) ($request->query('since') ?? ''));
+        $since = $since !== '' ? $since : null;
+
+        /**
+         * Rango de fechas de una rama. El cursor y el live tail se aplican
+         * sobre el UNION ya materializado (columnas occurred_at/source/ref_id).
+         *
+         * @return array{0:list<string>,1:array<string,string>}
+         */
+        $timeConditions = static function (string $prefix, string $timeCol) use ($from, $to): array {
+            return [
+                ["{$timeCol} BETWEEN :{$prefix}_from AND :{$prefix}_to"],
+                [":{$prefix}_from" => $from, ":{$prefix}_to" => $to],
+            ];
+        };
+
+        $branches = [];
+
+        // ── Accesos de puerta ────────────────────────────────────────────
+        if ($category === null || $category === 'access') {
+            [$where, $params] = $timeConditions('ae', 'e.occurred_at');
+            if ($roomId !== null) { $where[] = 'e.room_id = :ae_room'; $params[':ae_room'] = (string) $roomId; }
+            if ($type !== null) { $where[] = 'UPPER(e.kind) = :ae_type'; $params[':ae_type'] = $type; }
+            if ($resultFilter !== null) { $where[] = 'e.result = :ae_result'; $params[':ae_result'] = $resultFilter; }
+            if ($workerId !== null) { $where[] = 'ws.worker_id = :ae_worker'; $params[':ae_worker'] = (string) $workerId; }
+            if ($q !== null) {
+                $where[] = '(e.reason LIKE :ae_q1 OR e.kind LIKE :ae_q2 OR r.code LIKE :ae_q3 OR w.name LIKE :ae_q4)';
+                foreach (['1', '2', '3', '4'] as $n) { $params[":ae_q{$n}"] = '%' . $q . '%'; }
+            }
+            if ($appliedFilter === null) {
+                $branches[] = [
+                    'sql' => "SELECT CONCAT('access:', e.id) AS event_key, 'access' AS source, 'access' AS category,
+                            CAST(e.id AS UNSIGNED) AS ref_id, e.kind AS kind, e.kind AS action, e.result AS result,
+                            NULL AS applied, e.reason AS reason, e.room_id AS room_id, r.code AS room_code,
+                            ws.worker_id AS worker_id, w.name AS worker_name, NULL AS key_id, NULL AS key_label,
+                            NULL AS device_id, e.occurred_at AS occurred_at,
+                            JSON_OBJECT('provider', e.provider, 'stay_id', e.stay_id,
+                                'correlation_id', e.correlation_id, 'meta', e.meta_json) AS detail
+                     FROM access_events e
+                     LEFT JOIN rooms r ON r.id = e.room_id
+                     LEFT JOIN worker_sessions ws ON ws.id = e.worker_session_id
+                     LEFT JOIN workers w ON w.id = ws.worker_id
+                     WHERE " . implode(' AND ', $where),
+                    'params' => $params,
+                ];
+            }
+        }
+
+        // ── Accesos con llave / ficha ────────────────────────────────────
+        if ($category === null || $category === 'key') {
+            [$where, $params] = $timeConditions('ke', 'e.occurred_at');
+            if ($roomId !== null) { $where[] = 'e.room_id = :ke_room'; $params[':ke_room'] = (string) $roomId; }
+            if ($type !== null) { $where[] = 'UPPER(e.credential_type) = :ke_type'; $params[':ke_type'] = $type; }
+            if ($resultFilter !== null) { $where[] = 'e.result = :ke_result'; $params[':ke_result'] = $resultFilter; }
+            if ($workerId !== null) { $where[] = 'e.worker_id = :ke_worker'; $params[':ke_worker'] = (string) $workerId; }
+            if ($keyId !== null) { $where[] = 'e.key_id = :ke_key'; $params[':ke_key'] = (string) $keyId; }
+            if ($deviceId !== null) { $where[] = 'e.device_id = :ke_device'; $params[':ke_device'] = $deviceId; }
+            if ($q !== null) {
+                $where[] = '(e.reason LIKE :ke_q1 OR e.credential_type LIKE :ke_q2 OR r.code LIKE :ke_q3 OR w.name LIKE :ke_q4 OR k.label LIKE :ke_q5)';
+                foreach (['1', '2', '3', '4', '5'] as $n) { $params[":ke_q{$n}"] = '%' . $q . '%'; }
+            }
+            if ($appliedFilter === null) {
+                $branches[] = [
+                    'sql' => "SELECT CONCAT('key:', e.id) AS event_key, 'key' AS source, 'key' AS category,
+                            CAST(e.id AS UNSIGNED) AS ref_id, e.credential_type AS kind, e.credential_type AS action,
+                            e.result AS result, NULL AS applied, e.reason AS reason, e.room_id AS room_id,
+                            r.code AS room_code, e.worker_id AS worker_id, w.name AS worker_name,
+                            e.key_id AS key_id, k.label AS key_label, e.device_id AS device_id,
+                            e.occurred_at AS occurred_at,
+                            JSON_OBJECT('owner_type', e.owner_type, 'role_id', e.role_id,
+                                'correlation_id', e.correlation_id, 'worker_session_id', e.worker_session_id,
+                                'provider', e.provider) AS detail
+                     FROM key_access_events e
+                     LEFT JOIN rooms r ON r.id = e.room_id
+                     LEFT JOIN workers w ON w.id = e.worker_id
+                     LEFT JOIN access_keys k ON k.id = e.key_id
+                     WHERE " . implode(' AND ', $where),
+                    'params' => $params,
+                ];
+            }
+        }
+
+        // ── Órdenes de luz ───────────────────────────────────────────────
+        if ($category === null || $category === 'light') {
+            [$where, $params] = $timeConditions('se', 'sce.requested_at');
+            if ($roomId !== null) { $where[] = 'sce.room_id = :se_room'; $params[':se_room'] = (string) $roomId; }
+            if ($type !== null) { $where[] = 'UPPER(sce.action) = :se_type'; $params[':se_type'] = $type; }
+            if ($resultFilter !== null) {
+                $where[] = $resultFilter === 'OK' ? 'sce.publish_ok = 1' : '(sce.publish_ok = 0 OR sce.publish_ok IS NULL)';
+            }
+            if ($deviceId !== null) { $where[] = 'sce.external_id = :se_device'; $params[':se_device'] = $deviceId; }
+            if ($q !== null) {
+                $where[] = '(sce.diagnosis LIKE :se_q1 OR sce.actor LIKE :se_q2 OR sce.action LIKE :se_q3 OR r.code LIKE :se_q4 OR sce.origin LIKE :se_q5)';
+                foreach (['1', '2', '3', '4', '5'] as $n) { $params[":se_q{$n}"] = '%' . $q . '%'; }
+            }
+            if ($appliedFilter !== null) {
+                $where[] = $appliedFilter === 1 ? 'sce.publish_ok = 1' : '(sce.publish_ok = 0 OR sce.publish_ok IS NULL)';
+            }
+            $branches[] = [
+                'sql' => "SELECT CONCAT('light:', sce.id) AS event_key, 'light' AS source, 'light' AS category,
+                        CAST(sce.id AS UNSIGNED) AS ref_id, 'SWITCH' AS kind, sce.action AS action,
+                        CASE WHEN sce.publish_ok = 1 THEN 'OK' WHEN sce.publish_ok = 0 THEN 'FAIL' ELSE NULL END AS result,
+                        sce.publish_ok AS applied, sce.diagnosis AS reason, sce.room_id AS room_id,
+                        r.code AS room_code, NULL AS worker_id, sce.actor AS worker_name, NULL AS key_id,
+                        NULL AS key_label, sce.external_id AS device_id, sce.requested_at AS occurred_at,
+                        JSON_OBJECT('verdict', sce.verdict, 'origin', sce.origin, 'provider', sce.provider,
+                            'prior_state', sce.prior_state, 'reported_state', sce.reported_state,
+                            'reported_at', sce.reported_at, 'fresh', sce.fresh) AS detail
+                 FROM switch_command_evidence sce
+                 LEFT JOIN rooms r ON r.id = sce.room_id
+                 WHERE " . implode(' AND ', $where),
+                'params' => $params,
+            ];
+        }
+
+        // ── Sensores de puerta / presencia ───────────────────────────────
+        if (($category === null || $category === 'door' || $category === 'presence') && $resultFilter === null) {
+            $sensorBranches = ['PROXIMITY', 'PRESENCE'];
+            if ($category === 'door') {
+                $sensorBranches = ['PROXIMITY'];
+            } elseif ($category === 'presence') {
+                $sensorBranches = ['PRESENCE'];
+            } elseif ($type !== null) {
+                if (in_array($type, ['OPEN', 'CLOSED', 'PROXIMITY'], true)) {
+                    $sensorBranches = ['PROXIMITY'];
+                } elseif (in_array($type, ['PRESENT', 'ABSENT', 'PRESENCE'], true)) {
+                    $sensorBranches = ['PRESENCE'];
+                } else {
+                    // El tipo pertenece a otra categoría (QR, NFC, on/off...).
+                    $sensorBranches = [];
+                }
+            }
+            // PROXIMITY/PRESENCE seleccionan el sensor; el resto filtra el valor.
+            $valueFilter = in_array($type, ['OPEN', 'CLOSED', 'PRESENT', 'ABSENT'], true) ? $type : null;
+
+            foreach ($sensorBranches as $sensor) {
+                $prefix = $sensor === 'PROXIMITY' ? 'pe_door' : 'pe_pres';
+                [$where, $params] = $timeConditions($prefix, 'pe.occurred_at');
+                $where[] = "pe.sensor = '{$sensor}'";
+                if ($roomId !== null) { $where[] = 'pe.room_id = :' . $prefix . '_room'; $params[':' . $prefix . '_room'] = (string) $roomId; }
+                if ($valueFilter !== null) {
+                    $where[] = 'UPPER(pe.value) = :' . $prefix . '_type';
+                    $params[':' . $prefix . '_type'] = $valueFilter;
+                }
+                if ($appliedFilter !== null) {
+                    $where[] = 'pe.applied = :' . $prefix . '_applied';
+                    $params[':' . $prefix . '_applied'] = (string) $appliedFilter;
+                }
+                if ($q !== null) {
+                    $where[] = '(pe.value LIKE :' . $prefix . '_q1 OR pe.discard_reason LIKE :' . $prefix . '_q2 OR r.code LIKE :' . $prefix . '_q3)';
+                    foreach (['1', '2', '3'] as $n) { $params[':' . $prefix . "_q{$n}"] = '%' . $q . '%'; }
+                }
+                $cat = $sensor === 'PROXIMITY' ? 'door' : 'presence';
+                $branches[] = [
+                    'sql' => "SELECT CONCAT('presence:', pe.id) AS event_key, 'presence' AS source, '{$cat}' AS category,
+                            CAST(pe.id AS UNSIGNED) AS ref_id, pe.sensor AS kind, pe.value AS action,
+                            NULL AS result, pe.applied AS applied, pe.discard_reason AS reason,
+                            pe.room_id AS room_id, r.code AS room_code, NULL AS worker_id, NULL AS worker_name,
+                            NULL AS key_id, NULL AS key_label, NULL AS device_id, pe.occurred_at AS occurred_at,
+                            JSON_OBJECT('provider', pe.provider, 'received_at', pe.received_at, 'meta', pe.meta_json) AS detail
+                     FROM presence_events pe
+                     LEFT JOIN rooms r ON r.id = pe.room_id
+                     WHERE " . implode(' AND ', $where),
+                    'params' => $params,
+                ];
+            }
+        }
+
+        $params = [];
+        $parts  = [];
+        foreach ($branches as $branch) {
+            $parts[] = $branch['sql'];
+            $params += $branch['params'];
+        }
+
+        $items = [];
+        if ($parts !== []) {
+            $union = implode(' UNION ALL ', $parts);
+
+            $outerWhere  = [];
+            $itemParams  = $params;
+            if ($beforeAt !== null && $beforeSource !== null) {
+                // Orden: occurred_at DESC, source ASC, ref_id DESC.
+                // MariaDB no permite reutilizar el mismo placeholder nativo.
+                $outerWhere[] = '(ev.occurred_at < :b_at1
+                    OR (ev.occurred_at = :b_at2 AND ev.source > :b_src1)
+                    OR (ev.occurred_at = :b_at3 AND ev.source = :b_src2 AND ev.ref_id < :b_id))';
+                $itemParams[':b_at1']  = $beforeAt;
+                $itemParams[':b_at2']  = $beforeAt;
+                $itemParams[':b_at3']  = $beforeAt;
+                $itemParams[':b_src1'] = $beforeSource;
+                $itemParams[':b_src2'] = $beforeSource;
+                $itemParams[':b_id']   = (string) $beforeId;
+            }
+            if ($since !== null) {
+                $outerWhere[] = 'ev.occurred_at > :since';
+                $itemParams[':since'] = $since;
+            }
+            $whereSql = $outerWhere !== [] ? ' WHERE ' . implode(' AND ', $outerWhere) : '';
+
+            $rows = $this->rows(
+                "SELECT * FROM ({$union}) ev{$whereSql}
+                 ORDER BY ev.occurred_at DESC, ev.source ASC, ev.ref_id DESC LIMIT {$limit}",
+                $itemParams
+            );
+            foreach ($rows as $row) {
+                $detail = null;
+                if (!empty($row['detail'])) {
+                    $decoded = json_decode((string) $row['detail'], true);
+                    $detail = is_array($decoded) ? $decoded : null;
+                }
+                $items[] = [
+                    'key' => (string) $row['event_key'],
+                    'source' => (string) $row['source'],
+                    'category' => (string) $row['category'],
+                    'kind' => $row['kind'],
+                    'action' => $row['action'],
+                    'result' => $row['result'],
+                    'applied' => $row['applied'] === null ? null : (bool) $row['applied'],
+                    'reason' => $row['reason'],
+                    'room_id' => $row['room_id'] === null ? null : (int) $row['room_id'],
+                    'room_code' => $row['room_code'],
+                    'worker_id' => $row['worker_id'] === null ? null : (int) $row['worker_id'],
+                    'worker_name' => $row['worker_name'],
+                    'key_id' => $row['key_id'] === null ? null : (int) $row['key_id'],
+                    'key_label' => $row['key_label'],
+                    'device_id' => $row['device_id'],
+                    'occurred_at' => $row['occurred_at'],
+                    'detail' => $detail,
+                ];
+            }
+        }
+
+        $summary = [];
+        if ($parts !== []) {
+            $summaryRows = $this->rows(
+                'SELECT category, COUNT(*) AS c FROM (' . implode(' UNION ALL ', $parts) . ') ev GROUP BY category',
+                $params
+            );
+            foreach ($summaryRows as $row) {
+                $summary[(string) $row['category']] = (int) $row['c'];
+            }
+        }
+
+        $last = $items !== [] ? $items[count($items) - 1] : null;
+
+        return Response::json(200, [
+            'range' => ['from' => $fromLocal->format('Y-m-d H:i:s'), 'to' => $toLocal->format('Y-m-d H:i:s'), 'days' => $days],
+            'items' => $items,
+            'summary' => $summary,
+            'meta' => [
+                'count' => count($items),
+                'limit' => $limit,
+                'next_before_at' => $last['occurred_at'] ?? null,
+                'next_before_source' => $last['source'] ?? null,
+                'next_before_id' => $last !== null ? (int) substr((string) $last['key'], strrpos((string) $last['key'], ':') + 1) : null,
+                'has_more' => count($items) === $limit,
+            ],
+        ]);
+    }
+
     public function search(Request $request): Response
     {
         $q = trim((string) ($request->query('q') ?? ''));
