@@ -10349,7 +10349,8 @@ for F130_PHP in \
 done
 
 for F130_MARK in 'RadarOperationalRangeDecision' 'range_exceeded' 'range_unverified' 'maximum_range'; do
-    if grep -qF "$F130_MARK" src/Domain/Presence/IotSessionService.php 2>/dev/null; then
+    if grep -qF "$F130_MARK" src/Domain/Presence/IotSessionService.php 2>/dev/null \
+       || grep -qF "$F130_MARK" src/Domain/Presence/RadarOperationalRangeDecision.php 2>/dev/null; then
         pass "F130: marcador $F130_MARK"
     else
         fail "F130: marcador $F130_MARK" "ausente"
