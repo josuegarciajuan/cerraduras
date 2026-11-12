@@ -89,6 +89,14 @@ final class RadarLiveService
             ? [['distance_m' => $distanceM, 'age_s' => $distanceAge]]
             : [];
 
+        $calibration = RadarCalibrationConvergence::statusFor(
+            is_array($device['meta'] ?? null) ? $device['meta'] : [],
+            is_array($settings) ? $settings : []
+        );
+        $calibration['reported_invalid'] = (bool) ($status['reported_invalid'] ?? false);
+        $calibration['reported_invalid_reason'] = $status['reported_invalid_reason'] ?? null;
+        $calibration['latest_reported_settings'] = $status['latest_reported_settings'] ?? null;
+
         return [
             'ok' => true,
             'room_id' => $roomId,
@@ -119,10 +127,7 @@ final class RadarLiveService
             'presence_mode' => $this->presenceMode($roomId),
             'presence_stale' => (bool) ($live['presence_stale'] ?? false),
             'stale_seconds' => (int) ($status['stale_seconds'] ?? RadarFreshness::staleSeconds()),
-            'calibration' => RadarCalibrationConvergence::statusFor(
-                is_array($device['meta'] ?? null) ? $device['meta'] : [],
-                is_array($settings) ? $settings : []
-            ),
+            'calibration' => $calibration,
         ];
     }
 

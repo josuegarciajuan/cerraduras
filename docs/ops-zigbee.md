@@ -298,3 +298,60 @@ pipeline antes de procesar. Además, un `2006/2013` durante el procesamiento se
 trata como error transitorio: el mensaje se devuelve a `incoming` sin consumir
 intentos ni ir a cuarentena. Un radar apagado horas ya no deja el panel en
 `SIN DATOS` al volver.
+
+## F125.4 — Rendimiento del spool, retención y confirmación directa
+
+### Por qué el spool se atrasaba
+
+`ZigbeeSpoolQueue::counts()` hacía `glob()` sobre `processed` en **cada**
+mensaje y `writeStatus()` se ejecutaba después de cada uno. Con cientos de
+miles de ficheros en `processed`, el worker no podía seguir el ritmo del
+ingress: el retraso crecía y los eventos del radar llegaban a la BD minutos
+tarde.
+
+Ahora:
+
+- `lightCounts()` cuenta solo `incoming`, `processing` y `quarantine` (dirs
+  pequeños), con caché corta.
+- `counts.processed` se mantiene con un contador persistido (`processed_total`)
+  y no con un `glob`.
+- El estado se escribe como máximo una vez por segundo (o al terminar cada
+  lote).
+- `processed` y `quarantine` se purgan por antigüedad.
+
+Variables:
+
+```dotenv
+ZIGBEE_SPOOL_PROCESSED_RETENTION_DAYS=2
+ZIGBEE_SPOOL_QUARANTINE_RETENTION_DAYS=14
+```
+
+Purga manual (dry-run por defecto; `--apply` borra):
+
+```bash
+cd /root/cerraduras/api
+php bin/zigbee-spool-prune.php
+php bin/zigbee-spool-prune.php --apply
+php bin/zigbee-spool-prune.php --dir=run/zigbee-spool-dev --processed-days=2 --apply
+```
+
+Nunca toca `incoming` ni `processing`.
+
+### Confirmación directa del radar
+
+`ZigbeeRadarCalibrationService::apply()` y `resetToBaseline()` confirman la
+orden suscribiéndose al topic de estado del radar (`readDirect`), sin esperar a
+que el spool la persista. Si el broker no responde, se cae al read-back por BD.
+
+```dotenv
+RADAR_DIRECT_CONFIRM_ENABLED=true
+RADAR_DIRECT_CONFIRM_TIMEOUT_SECONDS=6
+```
+
+### Panel estable
+
+Si el último push trae un valor imposible (`maximum_range=-334889.04`), pero
+hay una lectura válida dentro de la ventana de frescura, el estado usa la
+válida y deja el inválido como aviso secundario (`reported_invalid`). Sin
+lectura válida reciente se mantiene `invalid_reported` de forma estable; no se
+alterna con `converging`.

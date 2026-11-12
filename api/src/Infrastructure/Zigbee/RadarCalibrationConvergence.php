@@ -74,7 +74,8 @@ final class RadarCalibrationConvergence
             return ['status' => self::STATUS_MISSING, 'reason' => 'calibration_missing'];
         }
 
-        $invalidReason = ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
+        $invalidReason = $reported === []
+            ? null : ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
         if ($invalidReason !== null) {
             // No es una deriva que se pueda corregir publicando: el broker o
             // el converter está entregando un valor imposible. Se audita en la
@@ -232,7 +233,8 @@ final class RadarCalibrationConvergence
                 'state' => $state,
             ];
         }
-        $invalidReason = ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
+        $invalidReason = $reported === []
+            ? null : ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
         if ($invalidReason !== null) {
             return [
                 'status' => self::STATUS_INVALID_REPORTED,

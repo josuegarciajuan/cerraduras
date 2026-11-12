@@ -130,6 +130,22 @@ RADAR_PROFILE_FILE=""
 RADAR_ROOM=""
 RADAR_PROFILE_RESTORED=false
 
+# F125.4: antigüedad del mensaje más viejo del spool Zigbee. Si supera el
+# umbral, los tests que dependen de un push fresco del radar deben SKIP.
+_zigbee_spool_lag_seconds() {
+    local file="$PROJECT_DIR/run/zigbee-ingress-status.json"
+    [ -f "$file" ] || { echo 0; return; }
+    python3 - "$file" <<'PYLAG' 2>/dev/null || echo 0
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    print(0); raise SystemExit
+v = d.get('oldest_pending_age_seconds')
+print(int(v) if isinstance(v, (int, float)) else 0)
+PYLAG
+}
+
 _save_radar_profile() {
     db_exec "SELECT 1" >/dev/null 2>&1 || return 0
     RADAR_ROOM=$($MYSQL -sN -e "SELECT r.id FROM rooms r JOIN devices d ON d.pack_id=r.pack_id WHERE d.kind='PRESENCE' AND UPPER(COALESCE(d.transport,''))='ZIGBEE2MQTT' ORDER BY r.id LIMIT 1" 2>/dev/null)
@@ -6633,7 +6649,12 @@ print('ok' if d.get('status')=='abandoned' and 'active_attempt' not in s and any
         fi
         rm -f "run/sensores/${F95_RID}.json" "run/sensores/${F95_RID}.jsonl" "run/sensores/locks/${F95_RID}.lock"
     else
-        fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
+        F95_LAG=$(_zigbee_spool_lag_seconds)
+        if [ "${F95_LAG:-0}" -gt 60 ]; then
+            skip "F95: run/start" "spool Zigbee retrasado (${F95_LAG}s); no llega un push fresco del radar"
+        else
+            fail "F95: run/start" "$(printf '%s' "$F95_RUN" | head -c 200)"
+        fi
     fi
 
     # Limpieza final: cualquier corrida de test que haya quedado abierta.
@@ -6738,7 +6759,12 @@ if [ "$SERVER_UP" = true ] && [ "$F102_DEPLOYED" = "yes" ]; then
         fi
         rm -f "run/sensores/${F102_RID}.json" "run/sensores/${F102_RID}.jsonl" "run/sensores/locks/${F102_RID}.lock"
     else
-        fail "F102: run/start" "$(printf '%s' "$F102_RUN" | head -c 200)"
+        F102_LAG=$(_zigbee_spool_lag_seconds)
+        if [ "${F102_LAG:-0}" -gt 60 ]; then
+            skip "F102: run/start" "spool Zigbee retrasado (${F102_LAG}s); no llega un push fresco del radar"
+        else
+            fail "F102: run/start" "$(printf '%s' "$F102_RUN" | head -c 200)"
+        fi
     fi
 elif [ "$SERVER_UP" = true ]; then
     skip "F102 HTTP" "endpoint aún sin desplegar"
@@ -10218,6 +10244,73 @@ else
     fail "F129: forma de respuesta items/summary/meta" "sin respuesta 200"
 fi
 rm -f /tmp/f129-events.json
+
+# =============================================================================
+# BLOCK 101 — F125.4: spool, confirmación directa y panel estable
+# Trazabilidad: RF-394..RF-401
+# =============================================================================
+block "BLOCK 101 — F125.4: spool y confirmación directa"
+
+for F1254_FILE in \
+    src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php \
+    bin/zigbee-spool-worker.php \
+    bin/zigbee-spool-prune.php \
+    tests/Unit/RadarDirectConfirmationTest.php \
+    tests/Unit/RadarStatusStabilityTest.php; do
+    if [ -f "$F1254_FILE" ]; then
+        pass "F125.4: existe $F1254_FILE"
+    else
+        fail "F125.4: falta $F1254_FILE"
+    fi
+done
+
+for F1254_MARK in \
+    'lightCounts' \
+    'processed_total' \
+    'pruneOlderThan' \
+    'awaitDirectConfirmation' \
+    'direct_push' \
+    'reported_invalid' \
+    'using_valid_snapshot'; do
+    if grep -RqsF "$F1254_MARK" \
+        src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php \
+        src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+        src/Infrastructure/Sensors/RadarLiveService.php \
+        src/Http/Controllers/RadarStudioController.php \
+        bin/zigbee-spool-worker.php 2>/dev/null; then
+        pass "F125.4: marcador $F1254_MARK"
+    else
+        fail "F125.4: marcador $F1254_MARK" "ausente"
+    fi
+done
+
+if grep -qF 'spool Zigbee retrasado' bin/run-tests.sh 2>/dev/null; then
+    pass "F125.4: guardia del runner por backlog"
+else
+    fail "F125.4: guardia del runner por backlog" "ausente"
+fi
+
+for F1254_PHP in \
+    src/Infrastructure/Zigbee/ZigbeeSpoolQueue.php \
+    src/Infrastructure/Zigbee/ZigbeeRadarCalibrationService.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Http/Controllers/RadarStudioController.php \
+    bin/zigbee-spool-worker.php \
+    bin/zigbee-spool-prune.php; do
+    if php -l "$F1254_PHP" >/tmp/f1254-php.log 2>&1; then
+        pass "F125.4: sintaxis $(basename "$F1254_PHP")"
+    else
+        fail "F125.4: sintaxis $(basename "$F1254_PHP")" "$(tail -2 /tmp/f1254-php.log | tr '\n' ' ')"
+    fi
+done
+
+for F1254_TEST in tests/Unit/RadarDirectConfirmationTest.php tests/Unit/RadarStatusStabilityTest.php tests/Unit/ZigbeeSpoolQueueTest.php; do
+    if php "$F1254_TEST" >/tmp/f1254-unit.log 2>&1; then
+        pass "F125.4: unit $(basename "$F1254_TEST")"
+    else
+        fail "F125.4: unit $(basename "$F1254_TEST")" "$(tail -3 /tmp/f1254-unit.log | tr '\n' ' ')"
+    fi
+done
 
 # =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar

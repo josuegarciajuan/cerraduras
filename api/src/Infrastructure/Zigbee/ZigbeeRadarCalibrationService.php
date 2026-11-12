@@ -110,16 +110,25 @@ final class ZigbeeRadarCalibrationService
 
     /** @var callable(string,string,array=):array{ok:bool,error:?string} */
     private $publisher;
+    /** @var callable(array,int=):array{ok:bool,error:?string,settings?:array<string,mixed>,received_at?:?string,presence?:mixed}|null */
+    private $directReader;
     private ?string $profileConfigFile;
 
     /**
      * @param callable(string,string,array=):array{ok:bool,error:?string}|null $publisher
      *        Injected in tests; production uses the Node MQTT helper.
+     * @param callable(array,int=):array<string,mixed>|null $directReader
+     *        Injected in tests; production uses `readDirect()`.
      */
-    public function __construct(private PDO $pdo, ?callable $publisher = null, ?string $profileConfigFile = null)
-    {
+    public function __construct(
+        private PDO $pdo,
+        ?callable $publisher = null,
+        ?string $profileConfigFile = null,
+        ?callable $directReader = null
+    ) {
         $this->publisher = $publisher ?? [$this, 'runPublisher'];
         $this->profileConfigFile = $profileConfigFile;
+        $this->directReader = $directReader;
     }
 
     /**
@@ -129,7 +138,24 @@ final class ZigbeeRadarCalibrationService
     public function status(int $roomId, array $device): array
     {
         $snapshot = $this->latestSnapshot($roomId);
-        $settings = $snapshot['settings'];
+        $latestId = $snapshot['id'];
+        $staleSeconds = RadarFreshness::staleSeconds();
+        $latestSettings = is_array($snapshot['settings']) ? $snapshot['settings'] : [];
+        $reportedInvalidReason = $latestSettings === []
+            ? null : self::settingsInvalidReason($latestSettings);
+        $reportedInvalid = $reportedInvalidReason !== null;
+        $latestReportedSettings = $latestSettings;
+        if ($reportedInvalid) {
+            // F125.4: el radar puede intercalar reportes imposibles con válidos.
+            // Para no hacer parpadear el panel, se usa la última lectura VÁLIDA
+            // dentro de la ventana de frescura; el reporte inválido queda como
+            // aviso secundario.
+            $validSnapshot = $this->latestValidSnapshot($roomId, $staleSeconds);
+            if ($validSnapshot !== null) {
+                $snapshot = $validSnapshot;
+            }
+        }
+        $settings = is_array($snapshot['settings']) ? $snapshot['settings'] : [];
         $meta = $device['meta'] ?? [];
         $saved = is_array($meta) && isset($meta['calibration']) && is_array($meta['calibration'])
             ? $meta['calibration']
@@ -150,7 +176,6 @@ final class ZigbeeRadarCalibrationService
         // F93/RF-157.3 / F125.1.4: el radar publica cada ~1,5 s; 30 s sin
         // mensajes ya es "sin datos". El estado de negocio de la sala se
         // calcula aparte.
-        $staleSeconds = RadarFreshness::staleSeconds();
         $stale = $snapshot['age_seconds'] === null || $snapshot['age_seconds'] > $staleSeconds;
         $presence = $stale ? null : $snapshot['value'];
 
@@ -197,6 +222,10 @@ final class ZigbeeRadarCalibrationService
             'settings_age_seconds' => $snapshot['age_seconds'],
             'stale'              => $stale,
             'stale_seconds'      => $staleSeconds,
+            'reported_invalid'   => $reportedInvalid,
+            'reported_invalid_reason' => $reportedInvalidReason,
+            'latest_reported_settings' => $latestReportedSettings,
+            'using_valid_snapshot' => $reportedInvalid && $snapshot['id'] !== null && $snapshot['id'] !== $latestId,
             'saved'              => $saved,
         ];
     }
@@ -314,6 +343,55 @@ final class ZigbeeRadarCalibrationService
             'presence' => $payload['presence'] ?? null,
             'target_distance' => $payload['target_distance'] ?? null,
         ];
+    }
+
+    /**
+     * F125.4: confirma la orden leyendo el topic de estado directamente del
+     * broker, sin esperar a que el spool la persista. Así `apply` y
+     * `resetToBaseline` no dependen del backlog del spool.
+     *
+     * @param array{id:int,external_id:string,label?:string,meta?:array<string,mixed>|null} $device
+     * @param array<string,int|float> $commands
+     * @return array<string,mixed>|null
+     */
+    public function awaitDirectConfirmation(array $device, array $commands, ?int $timeoutSeconds = null): ?array
+    {
+        $enabled = Config::getBool('RADAR_DIRECT_CONFIRM_ENABLED', true);
+        if (!$enabled) {
+            return null;
+        }
+        $timeout = $timeoutSeconds ?? self::directConfirmTimeoutSeconds();
+        if ($timeout <= 0) {
+            return null;
+        }
+        $reader = $this->directReader ?? [$this, 'readDirect'];
+        $deadline = microtime(true) + $timeout;
+        while (microtime(true) < $deadline) {
+            $remaining = max(1, (int) ceil($deadline - microtime(true)));
+            $read = $reader($device, (int) min(4, $remaining));
+            if (!is_array($read) || ($read['ok'] ?? false) !== true) {
+                $error = (string) (($read['error'] ?? '') ?: 'read_failed');
+                // Un fallo de configuración/arranque del helper no se arregla
+                // reintentando: el llamador cae al read-back por BD.
+                if ($error !== 'read_timeout') {
+                    return null;
+                }
+                usleep(100_000);
+                continue;
+            }
+            $settings = is_array($read['settings'] ?? null) ? $read['settings'] : [];
+            if ($settings !== [] && self::settingsMatch($commands, $settings)) {
+                return $read;
+            }
+        }
+        return null;
+    }
+
+    public static function directConfirmTimeoutSeconds(): int
+    {
+        $raw = Config::get('RADAR_DIRECT_CONFIRM_TIMEOUT_SECONDS', '6') ?? '6';
+        $value = is_numeric($raw) ? (int) $raw : 6;
+        return max(1, min(20, $value));
     }
 
     private function stateTopic(array $device): string
@@ -455,50 +533,73 @@ final class ZigbeeRadarCalibrationService
             ];
         }
 
-        // Read-back por push: el radar reemite su configuración en cada reporte.
-        // Se acepta solo un evento NUEVO (id > beforeId) que refleje lo pedido.
+        // F125.4: primero se confirma por lectura directa del broker. Es
+        // independiente de que el spool haya persistido el evento, que es lo
+        // que bloqueaba apply/reset cuando el spool iba atrasado.
+        $directEnabled = Config::getBool('RADAR_DIRECT_CONFIRM_ENABLED', true);
+        $direct = $directEnabled ? $this->awaitDirectConfirmation($device, $commands) : null;
+
         $applied = false;
         $latest = null;
         $invalidReports = 0;
         $invalidReasonSeen = null;
         $consecutiveInvalid = 0;
-        for ($attempt = 0; $attempt < max(1, $waitAttempts); $attempt++) {
-            if ($attempt > 0) {
-                usleep(700_000);
-            }
-            $snapshot = $this->latestSnapshot($roomId);
-            if ($snapshot['id'] === null || $snapshot['id'] <= $beforeId) {
-                continue;
-            }
-            // F125.3: un reporte fuera de rango (p. ej. maximum_range=-334889.04
-            // en el broker dev) no confirma ni niega la orden. Se ignora y, si
-            // se repite, se corta la espera con un error accionable.
-            $snapshotInvalid = self::settingsInvalidReason($snapshot['settings']);
-            if ($snapshotInvalid !== null) {
-                $invalidReports++;
-                $invalidReasonSeen = $snapshotInvalid;
-                $consecutiveInvalid++;
-                if ($consecutiveInvalid >= 3) {
-                    break;
-                }
-                continue;
-            }
-            $consecutiveInvalid = 0;
-            $latest = $snapshot;
+        $confirmedBy = null;
+
+        if ($direct !== null) {
             $applied = true;
-            foreach ($commands as $key => $expected) {
-                $actual = $this->num($snapshot['settings'][$key] ?? null);
-                if ($actual === null || abs($actual - (float) $expected) > 0.001) {
-                    $applied = false;
+            $confirmedBy = 'direct_push';
+            $presence = $direct['presence'] ?? null;
+            $latest = [
+                'id' => null,
+                'value' => $presence === true ? 'PRESENT' : ($presence === false ? 'ABSENT' : null),
+                'last_at' => isset($direct['received_at']) && is_string($direct['received_at'])
+                    ? $direct['received_at'] : gmdate('Y-m-d H:i:s.v'),
+                'age_seconds' => 0,
+                'settings' => is_array($direct['settings'] ?? null) ? $direct['settings'] : [],
+                'report' => null,
+            ];
+        } else {
+            // Read-back por push: el radar reemite su configuración en cada reporte.
+            // Se acepta solo un evento NUEVO (id > beforeId) que refleje lo pedido.
+            $dbAttempts = $directEnabled ? min($waitAttempts, 5) : $waitAttempts;
+            for ($attempt = 0; $attempt < max(1, $dbAttempts); $attempt++) {
+                if ($attempt > 0) {
+                    usleep(700_000);
+                }
+                $snapshot = $this->latestSnapshot($roomId);
+                if ($snapshot['id'] === null || $snapshot['id'] <= $beforeId) {
+                    continue;
+                }
+                // F125.3: un reporte fuera de rango (p. ej. maximum_range=-334889.04
+                // en el broker dev) no confirma ni niega la orden. Se ignora y, si
+                // se repite, se corta la espera con un error accionable.
+                $snapshotInvalid = self::settingsInvalidReason($snapshot['settings']);
+                if ($snapshotInvalid !== null) {
+                    $invalidReports++;
+                    $invalidReasonSeen = $snapshotInvalid;
+                    $consecutiveInvalid++;
+                    if ($consecutiveInvalid >= 3) {
+                        break;
+                    }
+                    continue;
+                }
+                $consecutiveInvalid = 0;
+                $latest = $snapshot;
+                $applied = true;
+                foreach ($commands as $key => $expected) {
+                    $actual = $this->num($snapshot['settings'][$key] ?? null);
+                    if ($actual === null || abs($actual - (float) $expected) > 0.001) {
+                        $applied = false;
+                        break;
+                    }
+                }
+                if ($applied) {
+                    $confirmedBy = 'push';
                     break;
                 }
-            }
-            if ($applied) {
-                break;
             }
         }
-
-        $confirmedBy = $applied ? 'push' : null;
         if (!$applied && !$persist) {
             // F112: restaurar la base cuando el radar YA está en la base no debe
             // exigir un push nuevo. El ZY-M100 solo publica cambios, así que una
@@ -568,6 +669,26 @@ final class ZigbeeRadarCalibrationService
             $this->clearPending($device);
         }
         $status = $this->status($roomId, $device);
+        if ($direct !== null) {
+            // La confirmación directa es más fresca que el spool; el panel y
+            // el wizard deben recibir la configuración realmente confirmada.
+            $directSettings = is_array($direct['settings'] ?? null) ? $direct['settings'] : [];
+            $directAt = isset($direct['received_at']) && is_string($direct['received_at'])
+                ? $direct['received_at'] : gmdate('Y-m-d H:i:s.v');
+            $status['settings'] = $directSettings;
+            $status['settings_at'] = $directAt;
+            $status['settings_age_seconds'] = 0;
+            $status['stale'] = false;
+            $status['settings_valid'] = self::isValidSettings($directSettings);
+            $status['settings_invalid_reason'] = self::settingsInvalidReason($directSettings);
+            $status['reported_invalid'] = false;
+            $status['reported_invalid_reason'] = null;
+            $status['latest_reported_settings'] = $directSettings;
+            $status['using_valid_snapshot'] = true;
+            if (isset($status['device']) && is_array($status['device'])) {
+                $status['device']['online'] = true;
+            }
+        }
 
         return [
             'ok' => true,
@@ -643,6 +764,50 @@ final class ZigbeeRadarCalibrationService
             'settings' => $settings,
             'report' => $report,
         ];
+    }
+
+    /**
+     * Última lectura VÁLIDA dentro de la ventana de frescura. Se usa cuando el
+     * último push trae un valor imposible para no hacer parpadear el panel.
+     *
+     * @return array{id:?int,value:?string,last_at:?string,age_seconds:?int,
+     *               settings:array<string,mixed>,report:?array<string,mixed>}|null
+     */
+    private function latestValidSnapshot(int $roomId, int $maxAgeSeconds): ?array
+    {
+        $since = gmdate('Y-m-d H:i:s', time() - max(1, $maxAgeSeconds));
+        $stmt = $this->pdo->prepare(
+            "SELECT id, value, occurred_at, meta_json
+               FROM presence_events
+              WHERE room_id = :rid AND provider = 'ZIGBEE2MQTT' AND sensor = 'PRESENCE'
+                AND occurred_at >= :since
+              ORDER BY id DESC LIMIT 50"
+        );
+        $stmt->execute([':rid' => $roomId, ':since' => $since]);
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $meta = json_decode((string) ($row['meta_json'] ?? ''), true);
+            $settings = is_array($meta) && is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
+            if ($settings === [] || self::settingsInvalidReason($settings) !== null || !self::isValidSettings($settings)) {
+                continue;
+            }
+            $lastAt = (string) ($row['occurred_at'] ?? '');
+            $age = null;
+            if ($lastAt !== '') {
+                $ts = strtotime($lastAt . ' UTC');
+                if ($ts !== false) {
+                    $age = max(0, time() - $ts);
+                }
+            }
+            return [
+                'id' => (int) $row['id'],
+                'value' => (string) ($row['value'] ?? ''),
+                'last_at' => $lastAt === '' ? null : $lastAt,
+                'age_seconds' => $age,
+                'settings' => $settings,
+                'report' => is_array($meta['presence_report'] ?? null) ? $meta['presence_report'] : null,
+            ];
+        }
+        return null;
     }
 
     private function latestEventId(int $roomId): int

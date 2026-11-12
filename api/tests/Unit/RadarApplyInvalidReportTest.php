@@ -143,7 +143,9 @@ $pdo = new RadarInvalidReportPDO($meta, [invalidSnapshot(101), invalidSnapshot(1
 $published = 0;
 $service = new ZigbeeRadarCalibrationService(
     $pdo,
-    static function () use (&$published): array { $published++; return ['ok' => true, 'error' => null]; }
+    static function () use (&$published): array { $published++; return ['ok' => true, 'error' => null]; },
+    null,
+    static fn (array $device, int $timeout): array => ['ok' => false, 'error' => 'read_process_failed']
 );
 $device = ['id' => 1339, 'external_id' => '0xa4c138718a950dcf', 'meta' => $meta];
 $started = microtime(true);

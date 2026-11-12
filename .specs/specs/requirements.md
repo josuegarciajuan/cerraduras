@@ -14291,3 +14291,44 @@ dev, cambiar la calibración guardada, Tuya, migraciones o polling periódico.
 **Trazabilidad:** `RadarCalibrationConvergence`, `ZigbeeRadarCalibrationService`,
 `RadarStudioController`, `radar-studio.js`, `RadarApplyInvalidReportTest`,
 `RadarCalibrationConvergenceTest`, BLOCK 93B.
+
+## F125.4 — Spool Zigbee sin atraso, confirmación directa y panel estable (RF-394…RF-401)
+
+**Motivo:** el spool acumulaba cientos de miles de ficheros en `processed` y
+`counts()` hacía `glob()` sobre ellos en cada mensaje. El worker no seguía el
+ritmo del ingress: el radar llegaba a la BD con ~13 min de retraso y el panel
+`/sensores` alternaba entre `SIN DATOS`, `REPORTE INVÁLIDO` y
+`CONVERGIENDO`. `run/start` esperaba un push fresco y caducaba, haciendo
+fallar F95/F102 de forma intermitente.
+
+- **RF-394 (estado del spool barato):** el worker no escanea `processed` por
+  mensaje; usa conteos ligeros y un total persistido. El estado se escribe como
+  máximo una vez por segundo o al cerrar el lote.
+- **RF-395 (retención):** `processed` y `quarantine` se purgan por antigüedad
+  (`ZIGBEE_SPOOL_PROCESSED_RETENTION_DAYS` def. 2,
+  `ZIGBEE_SPOOL_QUARANTINE_RETENTION_DAYS` def. 14). La purga nunca toca
+  `incoming` ni `processing`.
+- **RF-396 (purga manual):** `bin/zigbee-spool-prune.php` permite dry-run y
+  `--apply`, por directorio y con días configurables.
+- **RF-397 (confirmación directa):** `apply()` y `resetToBaseline()` confirman
+  por lectura directa del topic de estado MQTT; si el broker no responde,
+  caen al read-back por BD. No dependen del backlog del spool.
+- **RF-398 (estado estable):** si el último push es inválido pero hay una
+  lectura válida dentro de la ventana de frescura, `status()` usa la válida y
+  expone `reported_invalid`/`reported_invalid_reason` como aviso secundario.
+- **RF-399 (sin válido reciente):** se mantiene `invalid_reported` de forma
+  estable; no se alterna con `mismatch`/`converging`.
+- **RF-400 (UI):** el panel muestra una sola calibración principal (OK,
+  convergiendo, inválido o sin datos) y, si aplica, el aviso de reporte
+  inválido aislado.
+- **RF-401 (runner):** F95/F102 hacen SKIP si el spool supera 60 s de retraso,
+  en lugar de FAIL ambiental.
+
+**Fuera de alcance:** corregir el converter/versión de Zigbee2MQTT del broker
+dev, Tuya, migraciones o polling periódico.
+
+**Trazabilidad:** `ZigbeeSpoolQueue`, `zigbee-spool-worker.php`,
+`zigbee-spool-prune.php`, `ZigbeeRadarCalibrationService`, `RadarLiveService`,
+`RadarStudioController`, `radar-studio.js`, `ZigbeeSpoolQueueTest`,
+`ZigbeeSpoolWorkerTest`, `RadarDirectConfirmationTest`,
+`RadarStatusStabilityTest`, BLOCK 93B/101.

@@ -108,14 +108,19 @@ final class RadarStudioController
             }
             $read = $this->service()->readDirect($device, $timeout);
             $reported = is_array($read['settings'] ?? null) ? $read['settings'] : [];
+            $directCalibration = RadarCalibrationConvergence::statusFor(
+                is_array($device['meta'] ?? null) ? $device['meta'] : [],
+                $reported
+            );
+            $directInvalidReason = ZigbeeRadarCalibrationService::settingsInvalidReason($reported);
+            $directCalibration['reported_invalid'] = $directInvalidReason !== null;
+            $directCalibration['reported_invalid_reason'] = $directInvalidReason;
+            $directCalibration['latest_reported_settings'] = $reported;
             return Response::json(200, [
                 'ok' => true,
                 'room_id' => $roomId,
                 'direct' => $read,
-                'calibration' => RadarCalibrationConvergence::statusFor(
-                    is_array($device['meta'] ?? null) ? $device['meta'] : [],
-                    $reported
-                ),
+                'calibration' => $directCalibration,
             ])->withHeader('Cache-Control', 'no-store');
         } catch (RuntimeException $e) {
             return $this->runtimeError($e);
@@ -1199,6 +1204,26 @@ final class RadarStudioController
         }
     }
 
+    /**
+     * F125.4: estado de calibración + diagnóstico del último reporte inválido.
+     *
+     * @param array<string,mixed> $device
+     * @param array<string,mixed> $status
+     * @param array<string,mixed> $settings
+     * @return array<string,mixed>
+     */
+    private function calibrationPayload(array $device, array $status, array $settings): array
+    {
+        $calibration = RadarCalibrationConvergence::statusFor(
+            is_array($device['meta'] ?? null) ? $device['meta'] : [],
+            $settings
+        );
+        $calibration['reported_invalid'] = (bool) ($status['reported_invalid'] ?? false);
+        $calibration['reported_invalid_reason'] = $status['reported_invalid_reason'] ?? null;
+        $calibration['latest_reported_settings'] = $status['latest_reported_settings'] ?? null;
+        return $calibration;
+    }
+
     private function scopePayload(int $roomId, int $window = 60): array
     {
         $window = max(10, min(300, $window));
@@ -1266,10 +1291,7 @@ final class RadarStudioController
                 'last_seen_at' => $device['last_seen_at'] ?? null,
             ],
             'saved' => $status['saved'] ?? null,
-            'calibration' => RadarCalibrationConvergence::statusFor(
-                is_array($device['meta'] ?? null) ? $device['meta'] : [],
-                $settings
-            ),
+            'calibration' => $this->calibrationPayload($device, $status, $settings),
             'baseline' => ZigbeeRadarCalibrationService::BASELINE,
             'scope' => $scope,
         ];
