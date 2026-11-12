@@ -1464,7 +1464,7 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Sin migración, sin Tuya y sin pollers nuevos.**
 - **Verificación**: `RadarLiveDistanceTest` (18),
   `RadarDistanceReportRepositoryTest` (11), `radar-scope.test.js` y BLOCK 99.
-  Regresión completa pendiente de ejecución.
+  Regresión: **1374 passed, 0 failed, 15 skipped**.
 
 ### F126 — Control remoto de habitaciones (RF-360…RF-372)
 
