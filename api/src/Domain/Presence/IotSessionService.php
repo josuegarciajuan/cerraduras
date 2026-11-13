@@ -957,6 +957,17 @@ final class IotSessionService
 
         $result = StandardOccupancyEngine::apply($session, $event, $activeStay, $roomType, $now);
 
+        if (in_array((string) ($result['reason'] ?? ''), ['stale', 'too_old'], true)) {
+            // Evento histórico recuperado: se audita pero no muta el estado.
+            $this->presenceEvents->markAudit(
+                $rawEvent->id,
+                false,
+                (string) $result['reason']
+            );
+            $result['session'] = $session;
+            return $result;
+        }
+
         if (($result['confirmed_entry'] ?? false) && $activeStay !== null) {
             // La consolidación usa la presencia ya actualizada por el motor.
             $this->consolidateEntry($session, $activeStay, $evtUtc, $room, true);

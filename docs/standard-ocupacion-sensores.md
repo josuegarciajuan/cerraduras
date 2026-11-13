@@ -72,6 +72,8 @@ La UI **no** decide presencia, ocupación, luz ni posición. Solo representa.
 | `STANDARD_LIGHT_OFF_DELAY_SECONDS` | 1 s | Retardo de OFF cancelable |
 | `STANDARD_EXIT_CYCLE_MAX_SECONDS` | 30 s | Ventana de ciclo de salida |
 | `RADAR_PRESENCE_STALE_SECONDS` | 30 s | Radar “sin datos” |
+| `STANDARD_EVENT_MAX_AGE_SECONDS` | 600 s | Descarta eventos históricos |
+| `ZIGBEE_SPOOL_MAX_EVENT_AGE_SECONDS` | 600 s | No aplica mensajes recuperados antiguos |
 
 La entrada se puede ajustar por tipo de sala. El vacío es deliberadamente más
 lento que la presencia.
