@@ -38,8 +38,8 @@ check('almacén/timbrado conserva gracia configurada', $specialConfigured['absen
 check('almacén/timbrado ignora la espera de entrada', $specialConfigured['entry_ms'] === 0);
 
 $normal = Policy::holds(true, false, null, null);
-check('sala normal: entrada por defecto 1,5 s', $normal['entry_ms'] === 1500);
-check('sala normal: ausencia por defecto 4 s', $normal['absent_ms'] === 4000);
+check('sala normal: entrada por defecto 0,5 s', $normal['entry_ms'] === 500);
+check('sala normal: ausencia por defecto 2 s', $normal['absent_ms'] === 2000);
 
 $normalOff = Policy::holds(true, false, '0', '0');
 check('sala normal: 0 desactiva la espera de entrada', $normalOff['entry_ms'] === 0);

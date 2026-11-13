@@ -19,6 +19,7 @@ namespace App\Domain\Presence;
  * last_presence_value:     F41: last applied presence value (PRESENT|ABSENT).
  * presence_pending_*:      F132: transición pendiente (PRESENT|ABSENT) y su plazo.
  * presence_outcome_json:   F132: último resultado operativo final para el panel.
+ * presence_episode_*:      F133: episodio DP1 abierto y DP9 que lo acreditó.
  *
  * See design.md §4.10, §8.2 and Fase 41 §2.2.
  */
@@ -58,6 +59,12 @@ final class IotSession
     /** @var array<string,mixed>|null */
     public ?array $presenceOutcome = null;
 
+    // F133: identidad del episodio de presencia y evidencia DP9 asociada.
+    public ?string $presenceEpisodeMarker = null;
+    public ?string $presenceEpisodeSession = null;
+    public ?string $presenceEpisodeStartedAt = null;
+    public ?string $presenceEpisodeDistanceMarker = null;
+
     public function __construct(
         int     $id,
         int     $roomId,
@@ -78,7 +85,11 @@ final class IotSession
         ?string $presencePendingDueAt = null,
         ?string $presencePendingMarker = null,
         ?string $presencePendingConfigKey = null,
-        ?array $presenceOutcome = null
+        ?array $presenceOutcome = null,
+        ?string $presenceEpisodeMarker = null,
+        ?string $presenceEpisodeSession = null,
+        ?string $presenceEpisodeStartedAt = null,
+        ?string $presenceEpisodeDistanceMarker = null
     ) {
         $this->id                  = $id;
         $this->roomId              = $roomId;
@@ -100,6 +111,10 @@ final class IotSession
         $this->presencePendingMarker = $presencePendingMarker;
         $this->presencePendingConfigKey = $presencePendingConfigKey;
         $this->presenceOutcome = $presenceOutcome;
+        $this->presenceEpisodeMarker = $presenceEpisodeMarker;
+        $this->presenceEpisodeSession = $presenceEpisodeSession;
+        $this->presenceEpisodeStartedAt = $presenceEpisodeStartedAt;
+        $this->presenceEpisodeDistanceMarker = $presenceEpisodeDistanceMarker;
     }
 
     /** @return array<string,mixed> */
@@ -121,6 +136,10 @@ final class IotSession
             'presence_pending_marker' => $this->presencePendingMarker,
             'presence_pending_config_key' => $this->presencePendingConfigKey,
             'presence_outcome_json' => $this->presenceOutcome,
+            'presence_episode_marker' => $this->presenceEpisodeMarker,
+            'presence_episode_session' => $this->presenceEpisodeSession,
+            'presence_episode_started_at' => $this->presenceEpisodeStartedAt,
+            'presence_episode_distance_marker' => $this->presenceEpisodeDistanceMarker,
         ];
     }
 }

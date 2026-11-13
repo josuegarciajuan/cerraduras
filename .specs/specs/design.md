@@ -27552,3 +27552,34 @@ publicar una entrada que ya fue contradicha.
 pendiente → bloqueo → aplicado/mantenido → señal cruda como respaldo. Un
 `pending_absent` con presencia efectiva `PRESENT` muestra «COMPROBANDO AUSENCIA»
 y explica que se mantiene la presencia anterior.
+
+
+### F133 — Evidencia DP1/DP9 correlacionada por episodio
+
+**Motivo.** F130 exigía DP9 en la misma trama. En la práctica el radar puede
+publicar el DP1 `PRESENT` antes que una DP9 positiva, o reutilizar en una trama
+combinada un marcador DP9 anterior al cambio de configuración. Eso producía
+esperas largas y conversiones a `ABSENT` con evidencia no correlacionada.
+
+**Episodio.** `iot_sessions` guarda `presence_episode_marker/session/started_at`
+y `presence_episode_distance_marker`. Un marcador DP1 nuevo abre episodio; un
+`ABSENT` o una conversión fuera de alcance lo cierran.
+
+**Correlación.** `RadarEvidenceCorrelation` (pura) selecciona la evidencia:
+la fila persistida por marcador manda sobre la trama actual; si no hay marcador
+en la trama, se usa la última DP9 positiva persistida desde el inicio del
+episodio y con la `config_key` vigente. Se exige misma sesión, frescura y
+ventana; un marcador ya usado no es evidencia nueva. El máximo se compara en
+centímetros.
+
+**Sin DP9.** Un `PRESENT` sin evidencia utilizable no acredita presencia, pero
+tampoco se convierte en ausencia: la señal sigue viva y el panel muestra
+«EL RADAR DETECTA · comprobando alcance». La frescura sí se refresca.
+
+**Pendientes.** El resolver de `exit-scan` revalida signo del último DP1,
+configuración del pendiente y, para una entrada, existencia de DP9 positiva del
+episodio. Usa milisegundos y no hace retroceder `lastPresenceEventAt`.
+
+**Tiempos.** Salas normales con override: entrada 0,5 s y ausencia 2 s por
+defecto (`RADAR_PRESENT_ENTRY_HOLD_SECONDS`, `RADAR_ABSENT_EDGE_GRACE_SECONDS`).
+Almacén y TIMBRADO conservan entrada inmediata y gracia configurada.

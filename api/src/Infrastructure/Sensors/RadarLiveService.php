@@ -150,6 +150,13 @@ final class RadarLiveService
                 'effective_presence' => $decision['effective_presence'] ?? null,
                 'source' => $decision['source'] ?? null,
                 'pending' => $decision['pending'] ?? null,
+                // F133: episodio y evidencia DP9 utilizada.
+                'episode' => $decision['episode'] ?? null,
+                'evidence_source' => $decision['evidence_source'] ?? null,
+                'evidence_reason' => $decision['evidence_reason'] ?? null,
+                'evidence_distance_m' => $decision['evidence_distance_m'] ?? null,
+                'evidence_marker' => $decision['evidence_marker'] ?? null,
+                'evidence_age_s' => $decision['evidence_age_s'] ?? null,
             ] : null,
             'presence_state' => (string) ($live['presence_state'] ?? 'UNKNOWN'),
             'range_gate' => $rangeGate,

@@ -39,8 +39,8 @@ final class PresenceTransitionPolicy
     public const REASON_NO_CONTEXT        = 'no_context';
     public const REASON_SUPERSEDED        = 'superseded';
 
-    public const DEFAULT_ENTRY_HOLD_SECONDS   = 1.5;
-    public const DEFAULT_ABSENT_GRACE_SECONDS = 4.0;
+    public const DEFAULT_ENTRY_HOLD_SECONDS   = 0.5;
+    public const DEFAULT_ABSENT_GRACE_SECONDS = 2.0;
     public const MAX_HOLD_SECONDS = 10.0;
 
     /**

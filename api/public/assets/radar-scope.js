@@ -161,7 +161,16 @@
       case 'candidate_absent':
         return 'La ausencia se está confirmando; no se ha cerrado la presencia.';
       case 'range_unverified':
-        return 'No hay una distancia nueva correlacionada con esta detección.';
+      case 'no_dp9':
+        return 'Aún no hay una distancia válida para este episodio.';
+      case 'zero_dp9':
+        return 'La distancia llegó a cero; se espera una lectura válida.';
+      case 'config_mismatch':
+        return 'La distancia no corresponde a la configuración actual del radar.';
+      case 'evidence_outside_episode':
+        return 'La distancia disponible es anterior a este episodio.';
+      case 'cached_evidence':
+        return 'La distancia es una lectura ya utilizada; se espera una nueva.';
       case 'range_exceeded':
         return 'El eco supera el alcance operativo configurado.';
       default:
@@ -210,9 +219,13 @@
       };
     }
     if (gateStatus === 'unverified') {
+      var waiting = visual.state === 'PRESENT';
       return {
-        state: 'UNVERIFIED', tone: 'warn', icon: '?', title: 'PRESENCIA NO VERIFICADA',
-        subtitle: 'El radar reporta presencia, pero no hay una distancia nueva correlacionada.',
+        state: 'AWAITING_EVIDENCE', tone: 'warn', icon: waiting ? '≈' : '?',
+        title: waiting ? 'EL RADAR DETECTA' : 'PRESENCIA NO VERIFICADA',
+        subtitle: waiting
+          ? 'Comprobando alcance · ' + reasonText(gate.reason)
+          : 'El radar reporta presencia, pero la evidencia no acredita el alcance.',
         ageSeconds: age, lastDistance: lastDistance
       };
     }

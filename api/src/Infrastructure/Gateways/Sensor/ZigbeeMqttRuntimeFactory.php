@@ -101,7 +101,8 @@ final class ZigbeeMqttRuntimeFactory
             $workerSessions,
             $recording,
             new RoomSensorStateRepository($pdo),
-            new RadarPresenceReportRepository($pdo)
+            new RadarPresenceReportRepository($pdo),
+            new RadarDistanceReportRepository($pdo)
         );
 
         return new ZigbeeMqttEventProcessor(

@@ -203,8 +203,12 @@ const unverified = RadarScope.detectionModel({
   presence_decision: { apply: false, discard_reason: 'range_unverified' },
   range_evaluation: { status: 'unverified', reason: 'no_dp9', distance_m: null, maximum_range_m: 1.95 },
 });
-check('F130 sin DP9 → UNVERIFIED', unverified.state === 'UNVERIFIED' && unverified.tone === 'warn');
-check('F130 sin DP9 → título', unverified.title === 'PRESENCIA NO VERIFICADA');
+check('F133 sin DP9 con señal PRESENT → EL RADAR DETECTA',
+  unverified.state === 'AWAITING_EVIDENCE' && unverified.tone === 'warn');
+check('F133 sin DP9 explica que comprueba alcance',
+  unverified.title === 'EL RADAR DETECTA' && unverified.subtitle.indexOf('Comprobando alcance') >= 0);
+check('F133 sin DP9 no afirma presencia confirmada',
+  unverified.subtitle.indexOf('confirmada') < 0);
 
 const notApplied = RadarScope.detectionModel({
   raw: { state: 'PRESENT', age_seconds: 1 },

@@ -10562,6 +10562,97 @@ else
 fi
 
 # =============================================================================
+# BLOCK 104 — F133: evidencia DP1/DP9 correlacionada por episodio
+# Trazabilidad: F133 (RF-415…RF-420) · contracts.md §F133
+# =============================================================================
+block "BLOCK 104 — F133: evidencia radar por episodio"
+
+for F133_FILE in \
+    src/Domain/Presence/RadarEvidenceCorrelation.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Domain/Sensors/RadarDistanceReportRepository.php \
+    public/assets/radar-scope.js \
+    migrations/0151_presence_episode_evidence.sql; do
+    if [ -f "$F133_FILE" ]; then
+        pass "F133: existe $F133_FILE"
+    else
+        fail "F133: $F133_FILE" "no encontrado"
+    fi
+done
+
+for F133_PHP in \
+    src/Domain/Presence/RadarEvidenceCorrelation.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Domain/Sensors/RadarDistanceReportRepository.php \
+    src/Domain/Presence/IotSessionServiceFactory.php \
+    bin/exit-scan.php; do
+    if php -l "$F133_PHP" >/tmp/f133-php.log 2>&1; then
+        pass "F133: sintaxis $(basename "$F133_PHP")"
+    else
+        fail "F133: sintaxis $(basename "$F133_PHP")" "$(tail -2 /tmp/f133-php.log | tr '\n' ' ')"
+    fi
+done
+
+F133_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'presence_episode_marker'" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F133_COL" -ge 1 ]; then
+    pass "F133: migración 0151 aplicada"
+else
+    fail "F133: migración 0151" "presence_episode_marker ausente"
+fi
+
+if php tests/Unit/RadarEvidenceCorrelationTest.php >/tmp/f133-corr.log 2>&1; then
+    pass "F133: unit RadarEvidenceCorrelation"
+else
+    fail "F133: unit RadarEvidenceCorrelation" "$(tail -3 /tmp/f133-corr.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/PresenceTransitionPolicyTest.php >/tmp/f133-policy.log 2>&1; then
+    pass "F133: unit PresenceTransitionPolicy"
+else
+    fail "F133: unit PresenceTransitionPolicy" "$(tail -3 /tmp/f133-policy.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/IotSessionServiceTest.php >/tmp/f133-iot.log 2>&1; then
+    pass "F133: unit IotSessionService"
+else
+    fail "F133: unit IotSessionService" "$(tail -3 /tmp/f133-iot.log | tr '\n' ' ')"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    if node tests/Unit/radar-scope.test.js >/tmp/f133-js.log 2>&1; then
+        pass "F133: unit radar-scope"
+    else
+        fail "F133: unit radar-scope" "$(tail -3 /tmp/f133-js.log | tr '\n' ' ')"
+    fi
+else
+    skip "F133: JS" "node no disponible"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F133_LIVE_CODE=$(curl -s -o /tmp/f133-live.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/live?room_id=201" 2>/dev/null)
+    F133_LIVE_OK=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f133-live.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+pd=d.get('presence_decision')
+ok = d.get('ok') is True and 'presence_decision' in d
+if ok and isinstance(pd, dict):
+    ok = 'episode' in pd or 'evidence_source' in pd or pd.get('outcome') is None
+print('ok' if ok else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F133_LIVE_CODE" = "200" ] && [ "$F133_LIVE_OK" = "ok" ]; then
+        pass "F133: /radar/live expone evidencia/episodio"
+    else
+        fail "F133: /radar/live evidencia" "http=$F133_LIVE_CODE json=$F133_LIVE_OK"
+    fi
+    rm -f /tmp/f133-live.json
+else
+    skip "F133: live HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

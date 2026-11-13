@@ -14,6 +14,7 @@ use App\Domain\Stays\Stay;
 use App\Domain\Stays\StayRepositoryInterface;
 use App\Domain\Stays\StayStateMachine;
 use App\Domain\Warehouse\WarehouseLightDecision;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Workers\WorkerSessionRepositoryInterface;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
@@ -64,6 +65,7 @@ final class IotSessionService
     private ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder;
     private ?RoomSensorStateRepository $sensorStates;
     private ?RadarPresenceReportRepository $presenceReports;
+    private ?RadarDistanceReportRepository $distanceReports;
 
     public function __construct(
         PresenceEventRepositoryInterface $presenceEvents,
@@ -80,7 +82,8 @@ final class IotSessionService
         ?WorkerSessionRepositoryInterface $workerSessionRepo = null,
         ?\App\Domain\Warehouse\WarehouseRecordingServiceInterface $warehouseRecorder = null,
         ?RoomSensorStateRepository $sensorStates = null,
-        ?RadarPresenceReportRepository $presenceReports = null
+        ?RadarPresenceReportRepository $presenceReports = null,
+        ?RadarDistanceReportRepository $distanceReports = null
     ) {
         $this->presenceEvents = $presenceEvents;
         $this->iotSessions    = $iotSessions;
@@ -97,6 +100,7 @@ final class IotSessionService
         $this->warehouseRecorder = $warehouseRecorder;
         $this->sensorStates = $sensorStates;
         $this->presenceReports = $presenceReports;
+        $this->distanceReports = $distanceReports;
     }
 
     /**
@@ -167,26 +171,38 @@ final class IotSessionService
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
 
-                // F130: barrera de alcance ANTES de cualquier decisión de
-                // presencia. El radar puede detectar más allá de
-                // `maximum_range`, pero operativamente solo acredita hasta ese
-                // límite. Se ejecuta con la sesión bloqueada porque puede
-                // convertir un PRESENT en ABSENT efectivo.
+                // F130/F133: admisibilidad de la evidencia ANTES de cualquier
+                // decisión de presencia. La DP9 puede llegar en otra trama del
+                // MISMO episodio DP1, pero nunca de otro dispositivo, otra
+                // configuración ni un episodio anterior.
                 $rangeGate = null;
                 $rangeConverted = false;
                 if ($processable
                     && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
                 ) {
-                    $rangeGate = RadarOperationalRangeDecision::evaluate(
-                        $this->framePresenceValue($event, $meta),
-                        $meta
-                    );
+                    $presenceValue = $this->framePresenceValue($event, $meta);
+                    if ($presenceValue === PresenceEvent::VALUE_PRESENT) {
+                        $this->syncPresenceEpisode($session, $meta, $evtUtc);
+                        $rangeGate = $this->evaluateEpisodeEvidence($session, $meta, $now, $evtUtc);
+                    } else {
+                        // F133: un ABSENT auténtico cierra el episodio. La
+                        // ausencia nunca se bloquea por falta de distancia.
+                        $this->clearPresenceEpisode($session);
+                        $rangeGate = RadarOperationalRangeDecision::evaluate(
+                            $presenceValue,
+                            $meta
+                        );
+                    }
 
                     if ($rangeGate['status'] === RadarOperationalRangeDecision::STATUS_UNVERIFIED) {
-                        // Un PRESENT sin DP9 nueva y correlacionada no acredita
-                        // presencia: se audita, pero no crea ocupación, no
-                        // refresca la frescura y no dispara efectos.
+                        // PRESENT sin DP9 usable en este episodio. No acredita
+                        // ocupación, pero tampoco se convierte en ausencia: la
+                        // señal DP1 sigue viva y el panel la muestra como
+                        // "detecta, comprobando alcance".
+                        if ($session->presencePendingState === PresenceEvent::VALUE_ABSENT) {
+                            $this->clearPending($session);
+                        }
                         $radarDecision = [
                             'mode' => $radarMode ?? 'range_gate',
                             'state' => RadarPresenceDecision::STATE_CANDIDATE_PRESENT,
@@ -195,15 +211,18 @@ final class IotSessionService
                             'discard_reason' => RadarOperationalRangeDecision::DISCARD_UNVERIFIED,
                             'stale' => false,
                             'range_gate' => $rangeGate,
+                            'episode' => $this->episodePayload($session),
                             'at' => $now->format('Y-m-d\TH:i:s.v\Z'),
                         ];
                         $this->presenceEvents->updateMetaJson(
                             $rawEvent->id,
                             ['radar_decision' => $radarDecision]
                         );
-                        // F132: un eco sin DP9 correlacionada también es un
-                        // resultado final; el panel debe distinguirlo de una
-                        // presencia aplicada.
+                        // La señal demuestra que el sensor sigue emitiendo: se
+                        // refresca la frescura sin tocar el estado operativo.
+                        if (!SensorEventDecision::isStale($event, $session)) {
+                            $session->lastPresenceEventAt = $evtUtc;
+                        }
                         $tagged = $this->tagOutcome($radarDecision, $session, $evtUtc);
                         $session->presenceOutcome = $this->outcomeFromDecision($tagged);
                         $this->iotSessions->updateState($session);
@@ -234,6 +253,7 @@ final class IotSessionService
                             'stale' => false,
                             'converted_from' => PresenceEvent::VALUE_PRESENT,
                             'range_gate' => $rangeGate,
+                            'episode' => $this->episodePayload($session),
                             'at' => $now->format('Y-m-d\TH:i:s.v\Z'),
                         ];
                         $this->presenceEvents->updateMetaJson(
@@ -468,6 +488,13 @@ final class IotSessionService
                     if (($radarDecision['raw'] ?? '') === '') {
                         $radarDecision['raw'] = $value;
                     }
+                    if ($rangeConverted) {
+                        // El eco exterior ya produjo una ausencia efectiva: el
+                        // episodio de presencia termina aquí.
+                        $this->clearPresenceEpisode($session);
+                        $radarDecision['value'] = PresenceEvent::VALUE_ABSENT;
+                    }
+                    $radarDecision['episode'] = $this->episodePayload($session);
                     $radarDecision = $this->tagOutcome($radarDecision, $session, $evtUtc);
                     $this->presenceEvents->updateMetaJson(
                         $rawEvent->id,
@@ -1049,6 +1076,216 @@ final class IotSessionService
     }
 
     /**
+     * F133: identifica el episodio DP1 abierto. Un marcador nuevo abre un
+     * episodio nuevo y descarta la DP9 usada por el anterior.
+     *
+     * @param array<string,mixed>|null $meta
+     */
+    private function syncPresenceEpisode(IotSession $session, ?array $meta, string $evtUtc): void
+    {
+        $report = is_array($meta['presence_report'] ?? null) ? $meta['presence_report'] : null;
+        $marker = $report !== null ? (string) ($report['marker'] ?? '') : '';
+        $sessionId = $report !== null ? (string) ($report['session_id'] ?? '') : '';
+
+        if ($marker !== '' && $marker !== $session->presenceEpisodeMarker) {
+            $session->presenceEpisodeMarker = $marker;
+            $session->presenceEpisodeSession = $sessionId !== '' ? $sessionId : null;
+            $session->presenceEpisodeStartedAt = $evtUtc;
+            $session->presenceEpisodeDistanceMarker = null;
+            return;
+        }
+        if ($session->presenceEpisodeStartedAt === null) {
+            // Sin marcador no se puede demostrar un DP1 nuevo, pero el
+            // instante del reporte permite acotar la evidencia correlacionable.
+            $session->presenceEpisodeStartedAt = $evtUtc;
+        }
+    }
+
+    private function clearPresenceEpisode(IotSession $session): void
+    {
+        $session->presenceEpisodeMarker = null;
+        $session->presenceEpisodeSession = null;
+        $session->presenceEpisodeStartedAt = null;
+        $session->presenceEpisodeDistanceMarker = null;
+    }
+
+    /** @return array{marker:?string,session:?string,started_at:?string,distance_marker:?string}|null */
+    private function episodePayload(IotSession $session): ?array
+    {
+        if ($session->presenceEpisodeMarker === null && $session->presenceEpisodeStartedAt === null) {
+            return null;
+        }
+        return [
+            'marker' => $session->presenceEpisodeMarker,
+            'session' => $session->presenceEpisodeSession,
+            'started_at' => $session->presenceEpisodeStartedAt,
+            'distance_marker' => $session->presenceEpisodeDistanceMarker,
+        ];
+    }
+
+    /**
+     * F133: evalúa si una DP9 (de esta trama o de otra del mismo episodio)
+     * acredita el PRESENT vigente.
+     *
+     * @param array<string,mixed>|null $meta
+     * @return array<string,mixed> gate compatible con RadarOperationalRangeDecision
+     */
+    private function evaluateEpisodeEvidence(
+        IotSession $session,
+        ?array $meta,
+        \DateTimeImmutable $now,
+        string $evtUtc
+    ): array {
+        $settings = is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
+        $frameReport = is_array($meta['distance_report'] ?? null) ? $meta['distance_report'] : null;
+        if ($frameReport !== null && (!isset($frameReport['received_at']) || $frameReport['received_at'] === '')) {
+            // El mapper siempre añade received_at; las tramas antiguas o los
+            // fixtures pueden omitirlo. El instante del frame es su origen.
+            $frameReport['received_at'] = $evtUtc;
+        }
+
+        // Compatibilidad: un dispositivo Zigbee de presencia sin configuración
+        // de radar conserva su comportamiento anterior (no hay alcance que
+        // aplicar).
+        if ($settings === [] && $frameReport === null) {
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_NOT_APPLICABLE,
+                RadarOperationalRangeDecision::REASON_NOT_RANGE_CAPABLE,
+                true,
+                false,
+                null,
+                null,
+                null,
+                null,
+                'not_range_capable'
+            );
+        }
+
+        // Una presencia ya acreditada no se degrada por tramas sin DP9 nueva
+        // ni por la repetición de la misma DP9. Una DP9 NUEVA sí se evalúa.
+        $frameMarker = (string) ($frameReport['marker'] ?? '');
+        if ($session->presenceState === IotSession::PRESENCE_PRESENT
+            && $session->presenceEpisodeDistanceMarker !== null
+            && ($frameMarker === '' || $frameMarker === $session->presenceEpisodeDistanceMarker)
+        ) {
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_IN_RANGE,
+                RadarOperationalRangeDecision::REASON_WITHIN_RANGE,
+                true,
+                false,
+                null,
+                null,
+                null,
+                $session->presenceEpisodeDistanceMarker,
+                'already_credited'
+            );
+        }
+
+        $persisted = null;
+        $latest = null;
+        if ($this->distanceReports !== null) {
+            if ($frameMarker !== '') {
+                $persisted = $this->distanceReports->findByMarker($session->roomId, $frameMarker);
+            }
+            if ($persisted === null) {
+                $sinceMs = $this->mysqlToMs($session->presenceEpisodeStartedAt);
+                if ($sinceMs === null) {
+                    $sinceMs = (int) $now->format('Uv') - 120000;
+                }
+                $since = gmdate('Y-m-d H:i:s', intdiv($sinceMs, 1000) - 2);
+                $latest = $this->distanceReports->latestPositiveForRoom(
+                    $session->roomId,
+                    $since,
+                    \App\Domain\Sensors\RadarDistanceReport::configKey($settings)
+                );
+            }
+        }
+
+        $window = (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_WINDOW_SECONDS', 120) ?? 120);
+        $maxAge = (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_MAX_AGE_SECONDS', 120) ?? 120);
+        $correlation = RadarEvidenceCorrelation::evaluate(
+            PresenceEvent::VALUE_PRESENT,
+            $session->presenceEpisodeMarker,
+            $session->presenceEpisodeSession,
+            $this->mysqlToMs($session->presenceEpisodeStartedAt),
+            $session->presenceEpisodeDistanceMarker,
+            $frameReport,
+            $persisted ?? $latest,
+            $settings,
+            (int) $now->format('Uv'),
+            max(1, $window) * 1000,
+            max(1, $maxAge) * 1000
+        );
+
+        if ($correlation['status'] === RadarEvidenceCorrelation::STATUS_USABLE) {
+            $session->presenceEpisodeDistanceMarker = $correlation['marker'];
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_IN_RANGE,
+                RadarOperationalRangeDecision::REASON_WITHIN_RANGE,
+                true,
+                false,
+                null,
+                $correlation['distance_m'],
+                $correlation['maximum_range_m'],
+                $correlation['marker'],
+                $persisted !== null ? 'persisted_episode' : 'episode'
+            );
+        }
+        if ($correlation['status'] === RadarEvidenceCorrelation::STATUS_OUT_OF_RANGE) {
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_OUT_OF_RANGE,
+                RadarOperationalRangeDecision::REASON_OUT_OF_RANGE,
+                false,
+                true,
+                RadarOperationalRangeDecision::DISCARD_OUT_OF_RANGE,
+                $correlation['distance_m'],
+                $correlation['maximum_range_m'],
+                $correlation['marker'],
+                'episode'
+            );
+        }
+
+        return $this->rangeGate(
+            RadarOperationalRangeDecision::STATUS_UNVERIFIED,
+            (string) $correlation['reason'],
+            false,
+            false,
+            RadarOperationalRangeDecision::DISCARD_UNVERIFIED,
+            $correlation['distance_m'],
+            $correlation['maximum_range_m'],
+            $correlation['marker'],
+            'episode'
+        );
+    }
+
+    /** @return array<string,mixed> */
+    private function rangeGate(
+        string $status,
+        string $reason,
+        bool $allowPresent,
+        bool $convertToAbsent,
+        ?string $discardReason,
+        ?float $distance,
+        ?float $maximum,
+        ?string $marker,
+        string $evidenceSource
+    ): array {
+        return [
+            'status' => $status,
+            'reason' => $reason,
+            'allow_present' => $allowPresent,
+            'convert_to_absent' => $convertToAbsent,
+            'discard_reason' => $discardReason,
+            'distance_m' => $distance !== null ? round($distance, 3) : null,
+            'maximum_range_m' => $maximum !== null ? round($maximum, 3) : null,
+            'distance_marker' => $marker,
+            'config_key' => null,
+            'precision_m' => RadarOperationalRangeDecision::PRECISION_M,
+            'evidence_source' => $evidenceSource,
+        ];
+    }
+
+    /**
      * F132: resuelve los tiempos de transición de la sala. Solo las salas
      * normales con override radar explícito usan entrada diferida/ausencia
      * sostenida; almacén y TIMBRADO conservan su comportamiento.
@@ -1180,10 +1417,11 @@ final class IotSessionService
         $decision['outcome'] = $decision['outcome']
             ?? PresenceTransitionPolicy::outcomeFor($reason, $applied, $inForce);
         $decision['outcome_reason'] = $reason;
-        $decision['value'] = $value !== '' ? $value : ($decision['value'] ?? null);
+        $decision['value'] = $decision['value'] ?? ($value !== '' ? $value : null);
         $decision['effective_presence'] = $session->presenceState;
         $decision['event_at'] = $evtUtc;
         $decision['pending'] = $this->pendingPayload($session);
+        $decision['episode'] = $decision['episode'] ?? $this->episodePayload($session);
         return $decision;
     }
 
@@ -1210,6 +1448,19 @@ final class IotSessionService
             'source' => $decision['source'] ?? null,
             'range_gate' => $decision['range_gate'] ?? null,
             'pending' => $decision['pending'] ?? null,
+            'episode' => $decision['episode'] ?? null,
+            'converted_from' => $decision['converted_from'] ?? null,
+            // F133: trazabilidad de la evidencia utilizada.
+            'evidence_source' => is_array($decision['range_gate'] ?? null)
+                ? ($decision['range_gate']['evidence_source'] ?? null) : null,
+            'evidence_reason' => is_array($decision['range_gate'] ?? null)
+                ? ($decision['range_gate']['reason'] ?? null) : null,
+            'evidence_distance_m' => is_array($decision['range_gate'] ?? null)
+                ? ($decision['range_gate']['distance_m'] ?? null) : null,
+            'evidence_marker' => is_array($decision['range_gate'] ?? null)
+                ? ($decision['range_gate']['distance_marker'] ?? null) : null,
+            'evidence_age_s' => is_array($decision['range_gate'] ?? null)
+                ? ($decision['range_gate']['age_seconds'] ?? null) : null,
         ];
     }
 
@@ -1235,35 +1486,33 @@ final class IotSessionService
                     $this->iotSessions->commit();
                     return ['result' => 'skipped', 'room_id' => $roomId];
                 }
+                $clock = Clock::nowUtc();
+                $nowMs = (int) $clock->format('Uv');
                 $dueMs = $this->mysqlToMs($session->presencePendingDueAt);
-                if ($dueMs === null || Clock::nowUtc()->getTimestamp() * 1000 < $dueMs) {
+                if ($dueMs === null || $nowMs < $dueMs) {
                     $this->iotSessions->commit();
                     return ['result' => 'pending', 'room_id' => $roomId];
                 }
 
-                // La evidencia auténtica más reciente debe seguir siendo la
-                // misma transición. Si llegó otra (p. ej. un PRESENT), el
-                // evento ya la habrá resuelto o la dejamos caducar.
-                // Solo invalida la espera una evidencia de SIGNO contrario. Un
-                // nuevo reporte del mismo valor (marker distinto) sigue siendo
-                // la misma transición física.
-                $latest = $this->presenceReports?->latestForRoom($roomId);
-                $superseded = $latest !== null
-                    && strtoupper((string) ($latest['value'] ?? '')) !== strtoupper((string) $pending);
-                if ($superseded) {
+                // F133: revalidar la evidencia completa antes de aplicar.
+                [$evidenceOk, $evidenceReason] = $this->revalidatePendingEvidence(
+                    $session,
+                    (string) $pending,
+                    $roomId
+                );
+                if (!$evidenceOk) {
                     $this->clearPending($session);
                     $session->presenceOutcome = [
                         'outcome' => 'maintained',
-                        'outcome_reason' => PresenceTransitionPolicy::REASON_SUPERSEDED,
+                        'outcome_reason' => $evidenceReason,
                         'effective_presence' => $session->presenceState,
-                        'decided_at' => Clock::nowUtc()->format('Y-m-d\TH:i:s.v\Z'),
+                        'episode' => $this->episodePayload($session),
+                        'decided_at' => $clock->format('Y-m-d\TH:i:s.v\Z'),
                     ];
                     $this->iotSessions->updateState($session);
                     $this->iotSessions->commit();
                     return ['result' => 'superseded', 'room_id' => $roomId];
                 }
-
-                $nowMs = Clock::nowUtc()->getTimestamp() * 1000;
                 $nowUtc = $this->mysqlUtcFromMs($nowMs);
                 if ($pending === PresenceEvent::VALUE_PRESENT) {
                     $session->presenceState = IotSession::PRESENCE_PRESENT;
@@ -1276,7 +1525,15 @@ final class IotSessionService
                     $session->presenceState = IotSession::PRESENCE_ABSENT;
                     $session->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
                 }
-                $session->lastPresenceEventAt = $session->presencePendingSince ?? $session->lastPresenceEventAt;
+                // Frescura monotónica: resolver un pendiente no puede hacer
+                // retroceder la marca del último reporte recibido.
+                $pendingSince = $session->presencePendingSince;
+                if ($pendingSince !== null
+                    && ($session->lastPresenceEventAt === null || $session->lastPresenceEventAt < $pendingSince)
+                ) {
+                    $session->lastPresenceEventAt = $pendingSince;
+                }
+                $resolvedEpisode = $this->episodePayload($session);
                 $this->clearPending($session);
                 $session->presenceOutcome = [
                     'state' => $pending === PresenceEvent::VALUE_PRESENT
@@ -1291,6 +1548,8 @@ final class IotSessionService
                     'decided_at' => Clock::nowUtc()->format('Y-m-d\TH:i:s.v\Z'),
                     'event_at' => $session->lastPresenceEventAt,
                     'source' => 'pending_resolver',
+                    'episode' => $resolvedEpisode,
+                    'pending' => null,
                 ];
                 $this->iotSessions->updateState($session);
                 $this->iotSessions->commit();
@@ -1319,6 +1578,45 @@ final class IotSessionService
             }
         }
         return ['result' => $result, 'room_id' => $roomId];
+    }
+
+    /**
+     * F133: una transición pendiente solo se aplica si la evidencia sigue
+     * siendo la misma: signo del último DP1, configuración y, para una entrada,
+     * una DP9 positiva del episodio. Sin datos no se inventa una transición.
+     *
+     * @return array{0:bool,1:?string}
+     */
+    private function revalidatePendingEvidence(IotSession $session, string $pending, int $roomId): array
+    {
+        $latest = $this->presenceReports?->latestForRoom($roomId);
+        if ($latest !== null) {
+            $latestValue = strtoupper((string) ($latest['value'] ?? ''));
+            if ($latestValue !== strtoupper($pending)) {
+                return [false, PresenceTransitionPolicy::REASON_SUPERSEDED];
+            }
+            $latestKey = (string) ($latest['config_key'] ?? '');
+            $pendingKey = (string) ($session->presencePendingConfigKey ?? '');
+            if ($pendingKey !== '' && $latestKey !== '' && !hash_equals($pendingKey, $latestKey)) {
+                return [false, 'config_changed'];
+            }
+        }
+
+        if (strtoupper($pending) === PresenceEvent::VALUE_PRESENT && $this->distanceReports !== null) {
+            $sinceMs = $this->mysqlToMs($session->presenceEpisodeStartedAt)
+                ?? $this->mysqlToMs($session->presencePendingSince);
+            $since = $sinceMs !== null
+                ? gmdate('Y-m-d H:i:s', intdiv($sinceMs, 1000) - 2)
+                : gmdate('Y-m-d H:i:s', time() - 120);
+            $configKey = $latest !== null && isset($latest['config_key'])
+                ? (string) $latest['config_key'] : null;
+            $distance = $this->distanceReports->latestPositiveForRoom($roomId, $since, $configKey ?: null);
+            if ($distance === null) {
+                return [false, RadarEvidenceCorrelation::REASON_NO_DP9];
+            }
+        }
+
+        return [true, null];
     }
 
     private function mysqlToMs(?string $value): ?int

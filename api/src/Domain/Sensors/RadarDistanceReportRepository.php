@@ -89,6 +89,45 @@ final class RadarDistanceReportRepository
     }
 
     /**
+     * F133: reporte DP9 por marcador, con la configuración ORIGINAL con la que
+     * se registró. Es la autoridad cuando una trama combinada reutiliza un
+     * marcador cacheado después de cambiar el perfil.
+     *
+     * @return array{id:int,device_id:int,room_id:string,marker:string,session_id:string,
+     *               report_counter:int,distance_m:float,origin:string,config_key:?string,received_at:string}|null
+     */
+    public function findByMarker(int $roomId, string $marker): ?array
+    {
+        if ($marker === '') {
+            return null;
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT id, device_id, room_id, marker, session_id, report_counter,
+                    distance_m, origin, config_key, received_at
+               FROM radar_distance_reports
+              WHERE room_id = :room_id AND marker = :marker
+              LIMIT 1'
+        );
+        $stmt->execute([':room_id' => $roomId, ':marker' => $marker]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int) $row['id'],
+            'device_id' => (int) $row['device_id'],
+            'room_id' => (int) $row['room_id'],
+            'marker' => (string) $row['marker'],
+            'session_id' => (string) $row['session_id'],
+            'report_counter' => (int) $row['report_counter'],
+            'distance_m' => (float) $row['distance_m'],
+            'origin' => (string) $row['origin'],
+            'config_key' => $row['config_key'] !== null ? (string) $row['config_key'] : null,
+            'received_at' => (string) $row['received_at'],
+        ];
+    }
+
+    /**
      * F125.1.6: última DP9 positiva dentro de la ventana de frescura.
      *
      * @return array{id:int,device_id:int,room_id:int,marker:string,session_id:string,
