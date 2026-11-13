@@ -250,6 +250,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F133 Evidencia DP1/DP9 correlacionada por episodio** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: DP9 entre tramas del mismo episodio, configuración original, pendientes revalidados y panel inmediato; prueba física pendiente** |
 | **F133.1 Respaldo DP1 sin distancia** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: presencia por DP1 en sala radar con alcance ≤3 m y gracia 2 s; episodio continuo; prueba física pendiente** |
 | **F134 Salud del pipeline Zigbee y aviso de ingesta** | **`ZigbeePipelineHealthTest`/`ZigbeeRuntimeWiringTest`/`PanelV21Test`/`radar-scope.test.js` + `health/deep`** | **Implementado: systemd+frescura, aviso en `/sensores`, `/dashboard` y `/panel`; regresión 1468/10/19 con 10 fallos ambientales por corrida de sensores concurrente** |
+| **F135 Radar door: presencia sin DP9 y UI sensor/política** | **`RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js` + `/radar/live`** | **Implementado: PROTO2 en `radar_door`, ventana de puerta 60 s, fallback DP1 con puerta, banner de sensor separado del badge de política** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1668,3 +1669,24 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   `PanelV21Test` (52) y `radar-scope.test.js` (78). La regresión completa dio
   1468/10/19; los 10 fallos fueron ambientales (corrida de sensores concurrente
   y perfil de radar), no de F134.
+
+### F135 — Radar door: presencia sin DP9 y UI sensor/política
+
+- **Motivo**: en una sala STANDARD el radar de producción (MCU 1.0.3) detectaba
+  `PRESENT` con DP9=0 y el sistema quedaba en `range_unverified`; además el
+  radar de desarrollo (MCU 3.0.3) usaba `radar_only`, no `radar_door`.
+- **Modo**: PROTO2 usa `presence_mode_override='radar_door'`; la ventana de
+  puerta de STANDARD queda en 60 s.
+- **Fallback**: en `radar_door`, si la puerta está corroborada y el radar no
+  publica DP9 utilizable, se acepta la presencia tras 1,5 s. Una DP9 positiva
+  fuera de alcance sigue convirtiendo a `ABSENT`. Configurable con
+  `RADAR_DOOR_DP1_FALLBACK_ENABLED` y
+  `RADAR_DOOR_DP1_FALLBACK_GRACE_SECONDS`.
+- **UI**: el banner principal muestra solo la señal del sensor (`TE DETECTA`,
+  `NO TE DETECTA`, `RADAR SIN REPORTES`); la aplicación operativa
+  (`APLICADA`, `BLOQUEADA POR POLÍTICA`, `COMPROBANDO ALCANCE`) va en un badge
+  separado.
+- **Hardware**: el radar de producción tiene MCU 1.0.3 frente a 3.0.3 en
+  desarrollo y no soporta OTA. Si sigue quedándose mudo, sustituir la unidad.
+- **Verificación**: `RadarEvidenceCorrelationTest` (33), `IotSessionServiceTest`
+  (60), `radar-scope.test.js` (46) y `RadarLiveDistanceTest` (19).

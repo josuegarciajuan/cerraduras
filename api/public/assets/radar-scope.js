@@ -165,6 +165,10 @@
         return 'Aún no hay una distancia válida para este episodio.';
       case 'zero_dp9':
         return 'La distancia llegó a cero; se espera una lectura válida.';
+      case 'dp1_without_dp9_door_corroborated':
+        return 'La puerta abierta corrobora la presencia; el radar no envía distancia.';
+      case 'dp1_without_distance':
+        return 'Presencia por DP1; el radar no envía una distancia utilizable.';
       case 'config_mismatch':
         return 'La distancia no corresponde a la configuración actual del radar.';
       case 'evidence_outside_episode':
@@ -200,22 +204,6 @@
       || state === 'stale' || state === 'unknown';
   }
 
-  function staleDetection(scope, age, lastDistance) {
-    if (pipelineDown(scope)) {
-      return {
-        state: 'PIPELINE_DOWN', tone: 'warn', icon: '⇄',
-        title: 'INGESTA ZIGBEE DETENIDA',
-        subtitle: 'El sensor puede estar conectado; no llegan sus reportes al sistema.',
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    return {
-      state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
-      subtitle: 'El radar no envía reportes recientes.',
-      ageSeconds: age, lastDistance: lastDistance
-    };
-  }
-
   function decisionAgeSeconds(scope, decision) {
     if (!decision) return null;
     if (decision.age_seconds != null) {
@@ -234,9 +222,9 @@
   }
 
   /**
-   * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
-   * F132: el resultado operativo final manda sobre la señal cruda; una
-   * transición pendiente nunca se presenta como "el radar te ve".
+   * F135: el banner principal representa SOLO la detección del sensor.
+   * La política operativa (aplicada/bloqueada/alcance) vive en
+   * operationalModel() y no debe hacer parpadear el color de este banner.
    */
   function detectionModel(scope) {
     var visual = presenceVisual(scope);
@@ -252,115 +240,26 @@
       ? 'distancia ' + lastDistance.toFixed(2) + ' m'
         + (distanceAge != null && distanceAge >= 5 ? ' · hace ' + Math.round(distanceAge) + ' s' : '')
       : 'distancia no disponible';
-    var decision = (scope && scope.presence_decision) || null;
-    var gate = rangeEvaluation(scope);
-    var gateStatus = gate && gate.status ? String(gate.status) : '';
 
-    // F134: si el radar no tiene datos y la ingesta está parada, el aviso de
-    // pipeline manda sobre cualquier decisión antigua de alcance.
-    if (visual.state === 'STALE' && pipelineDown(scope)) {
-      return staleDetection(scope, age, lastDistance);
-    }
-
-    // F134: una decisión operativa antigua no debe ocultar una detección bruta
-    // fresca. El radar puede estar viendo y midiendo mientras la última
-    // decisión persistida sigue siendo de una trama anterior (por ejemplo, con
-    // DP9=0). En ese caso manda la señal actual del radar.
-    var staleLimit = Number((scope && scope.stale_seconds) || 30);
-    var decisionAgeSec = decisionAgeSeconds(scope, decision);
-    var decisionStale = decisionAgeSec != null && decisionAgeSec > staleLimit;
-    if (decisionStale && visual.state === 'PRESENT') {
-      return {
-        state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
-        subtitle: 'Presencia detectada · ' + distanceText,
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    if (decisionStale) {
-      // La señal cruda manda: una decisión vieja no debe convertir un ABSENT
-      // fresco en "presencia no verificada" ni un MOTION en SIN DATOS.
-      decision = null;
-      gate = null;
-      gateStatus = '';
-    }
-
-    if (gateStatus === 'out_of_range') {
-      return {
-        state: 'FILTERED', tone: 'bad', icon: '⊘', title: 'FUERA DEL ALCANCE',
-        subtitle: 'Presencia descartada · eco bruto ' + formatM(gate.distance_m)
-          + ' · máximo ' + formatM(gate.maximum_range_m),
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    if (!decisionStale && gateStatus === 'unverified') {
-      var waiting = visual.state === 'PRESENT';
-      return {
-        state: 'AWAITING_EVIDENCE', tone: 'warn', icon: waiting ? '≈' : '?',
-        title: waiting ? 'EL RADAR DETECTA' : 'PRESENCIA NO VERIFICADA',
-        subtitle: waiting
-          ? 'Comprobando alcance · ' + reasonText(gate.reason)
-          : 'El radar reporta presencia, pero la evidencia no acredita el alcance.',
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    // F132: una decisión antigua no puede prevalecer sobre la falta de datos.
-    if (visual.state === 'STALE') {
-      return staleDetection(scope, age, lastDistance);
-    }
-    var outcome = outcomeOf(decision);
-    if (outcome === 'pending_present') {
-      return {
-        state: 'CONFIRMING', tone: 'warn', icon: '◔', title: 'CONFIRMANDO PRESENCIA',
-        subtitle: 'La detección se está confirmando antes de aplicarla.'
-          + pendingHint(decision),
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    if (outcome === 'pending_absent') {
-      var keepsPresence = String((decision && decision.effective_presence) || '').toUpperCase() === 'PRESENT';
-      return {
-        state: 'CHECKING_ABSENCE', tone: 'warn', icon: '◔', title: 'COMPROBANDO AUSENCIA',
-        subtitle: keepsPresence
-          ? 'Se mantiene la presencia anterior mientras se confirma la ausencia.'
-          : 'La ausencia se está confirmando antes de aplicarla.',
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    if (outcome === 'blocked') {
-      return {
-        state: 'NOT_APPLIED', tone: 'warn', icon: '!', title: 'DETECCIÓN NO APLICADA',
-        subtitle: reasonText(decision && decision.outcome_reason
-          ? decision.outcome_reason
-          : (decision && decision.discard_reason)),
-        ageSeconds: age, lastDistance: lastDistance
-      };
-    }
-    if (outcome === 'applied' || outcome === 'maintained'
-        || outcome === 'noop' || outcome === 'duplicate' || outcome === 'stale') {
-      var effective = String((decision && decision.effective_presence) || '').toUpperCase();
-      var rawValue = String((decision && (decision.value || decision.raw)) || '').toUpperCase();
-      if (effective === 'PRESENT' || (effective === '' && rawValue === 'PRESENT')) {
-        var byDp1 = decision && decision.evidence_source === 'dp1_only';
+    if (visual.state === 'STALE' || raw.stale === true) {
+      if (pipelineDown(scope)) {
         return {
-          state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
-          subtitle: byDp1
-            ? 'Presencia confirmada por DP1 · distancia no disponible'
-            : 'Presencia confirmada · ' + distanceText,
+          state: 'PIPELINE_DOWN', tone: 'warn', icon: '⇄',
+          title: 'INGESTA ZIGBEE DETENIDA',
+          subtitle: 'El sensor puede estar conectado; no llegan reportes al sistema.',
           ageSeconds: age, lastDistance: lastDistance
         };
       }
-      if (effective === 'ABSENT' || rawValue === 'ABSENT') {
-        return {
-          state: 'ABSENT', tone: 'bad', icon: '✕', title: 'NO TE DETECTA',
-          subtitle: 'Sin presencia ni movimiento reciente.',
-          ageSeconds: age, lastDistance: lastDistance
-        };
-      }
+      return {
+        state: 'NO_DATA', tone: 'dim', icon: '…', title: 'RADAR SIN REPORTES',
+        subtitle: 'El radar no envía reportes recientes.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
     }
     if (visual.state === 'PRESENT') {
       return {
         state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
-        subtitle: 'Presencia confirmada · ' + distanceText,
+        subtitle: 'Presencia detectada · ' + distanceText,
         ageSeconds: age, lastDistance: lastDistance
       };
     }
@@ -380,7 +279,77 @@
         ageSeconds: age, lastDistance: lastDistance
       };
     }
-    return staleDetection(scope, age, lastDistance);
+    return {
+      state: 'NO_DATA', tone: 'dim', icon: '…', title: 'SIN DATOS',
+      subtitle: 'Esperando al radar…',
+      ageSeconds: age, lastDistance: lastDistance
+    };
+  }
+
+  /**
+   * F135: modelo separado de la aplicación operativa. Explica qué hizo el
+   * sistema con la detección sin alterar el banner del sensor.
+   */
+  function operationalModel(scope) {
+    var decision = (scope && scope.presence_decision) || null;
+    var gate = rangeEvaluation(scope);
+    if (!decision && !gate) {
+      return {
+        state: 'NONE', tone: 'dim', title: 'SIN DECISIÓN',
+        detail: 'El radar aún no ha publicado una decisión operativa.'
+      };
+    }
+    var outcome = outcomeOf(decision);
+    var effective = String((decision && decision.effective_presence) || '').toUpperCase();
+    var applied = !!(decision && decision.apply === true);
+    var reason = (decision && (decision.outcome_reason || decision.discard_reason))
+      || (gate && gate.reason) || '';
+    var gateStatus = gate && gate.status ? String(gate.status) : '';
+    var age = decisionAgeSeconds(scope, decision);
+
+    if (applied || outcome === 'applied'
+        || (effective === 'PRESENT' && outcome === 'maintained')) {
+      return {
+        state: 'APPLIED', tone: 'ok', title: 'APLICADA',
+        detail: effective === 'PRESENT'
+          ? 'Presencia aplicada a la sesión.'
+          : 'Decisión aplicada.',
+        ageSeconds: age
+      };
+    }
+    if (outcome === 'blocked' || reason === 'no_context' || reason === 'uncorroborated') {
+      return {
+        state: 'BLOCKED', tone: 'warn', title: 'BLOQUEADA POR POLÍTICA',
+        detail: reasonText(reason),
+        ageSeconds: age
+      };
+    }
+    if (gateStatus === 'unverified' || outcome === 'unverified') {
+      return {
+        state: 'UNVERIFIED', tone: 'warn', title: 'COMPROBANDO ALCANCE',
+        detail: reasonText(reason),
+        ageSeconds: age
+      };
+    }
+    if (gateStatus === 'out_of_range' || outcome === 'out_of_range') {
+      return {
+        state: 'OUT_OF_RANGE', tone: 'bad', title: 'FUERA DE ALCANCE',
+        detail: reasonText(reason || 'range_exceeded'),
+        ageSeconds: age
+      };
+    }
+    if (effective === 'ABSENT' && outcome === 'maintained') {
+      return {
+        state: 'ABSENT', tone: 'dim', title: 'AUSENCIA MANTENIDA',
+        detail: 'La sesión sigue en ausencia.',
+        ageSeconds: age
+      };
+    }
+    return {
+      state: 'PENDING', tone: 'dim', title: 'NO APLICADA',
+      detail: reasonText(reason),
+      ageSeconds: age
+    };
   }
 
   function histogram(series, binM) {
@@ -525,6 +494,7 @@
     presenceVisual: presenceVisual,
     rangeEvaluation: rangeEvaluation,
     detectionModel: detectionModel,
+    operationalModel: operationalModel,
     outcomeOf: outcomeOf,
     reasonText: reasonText,
     histogram: histogram,

@@ -44,6 +44,7 @@ final class RadarEvidenceCorrelation
     public const REASON_CACHED          = 'marker_already_used';
     public const REASON_ABSENT          = 'absent';
     public const REASON_DP1_WITHOUT_DISTANCE = 'dp1_without_distance';
+    public const REASON_DOOR_DP1_WITHOUT_DISTANCE = 'dp1_without_dp9_door_corroborated';
 
     public const MIN_MAXIMUM_RANGE_M = 0.15;
     public const MAX_MAXIMUM_RANGE_M = 9.5;
@@ -184,6 +185,35 @@ final class RadarEvidenceCorrelation
         $maximum = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
             ? (float) $settings['maximum_range'] : null;
         if ($maximum === null || !is_finite($maximum) || $maximum <= 0.0 || $maximum > $maxRangeM) {
+            return false;
+        }
+        return ($nowMs - $episodeStartedAtMs) >= max(0, $graceMs);
+    }
+
+    /**
+     * F135: respaldo DP1 para `radar_door` cuando el radar no publica DP9
+     * utilizable. La puerta reciente es la corroboración física; la decisión
+     * de modo seguirá exigiendo continuidad. Una DP9 positiva fuera de
+     * alcance se evalúa antes y sigue vetando.
+     */
+    public static function doorFallbackEligible(
+        ?string $radarMode,
+        bool $doorCorroborated,
+        ?float $maximumRangeM,
+        ?int $episodeStartedAtMs,
+        int $nowMs,
+        bool $enabled = true,
+        int $graceMs = 1500
+    ): bool {
+        if (!$enabled || $radarMode !== 'radar_door' || !$doorCorroborated) {
+            return false;
+        }
+        if ($maximumRangeM === null || !is_finite($maximumRangeM)
+            || $maximumRangeM <= 0.0 || $maximumRangeM > self::MAX_MAXIMUM_RANGE_M
+        ) {
+            return false;
+        }
+        if ($episodeStartedAtMs === null) {
             return false;
         }
         return ($nowMs - $episodeStartedAtMs) >= max(0, $graceMs);

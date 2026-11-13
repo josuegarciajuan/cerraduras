@@ -542,6 +542,29 @@ El topic de estado de Zigbee2MQTT **no es retenido**: la lectura directa se
 suscribe y espera el siguiente mensaje (~1 s con el radar encendido). Si el
 radar está en silencio, devuelve `read_timeout` sin modificar nada.
 
+
+## F135 — `radar_door` y presencia sin DP9
+
+En una sala STANDARD el modo correcto es `radar_door`: la apertura de puerta
+reciente corrobora la presencia del radar. No usar `radar_only` (reservado a
+almacén/TIMBRADO).
+
+Si el radar publica `PRESENT` pero no una DP9 utilizable (0 o sin marcador),
+`RadarEvidenceCorrelation::doorFallbackEligible()` permite aplicar la presencia
+tras una gracia corta y con la puerta corroborada. Una DP9 positiva por encima
+de `maximum_range` sigue vetando y convierte a `ABSENT`.
+
+Variables:
+
+```dotenv
+RADAR_DOOR_DP1_FALLBACK_ENABLED=true
+RADAR_DOOR_DP1_FALLBACK_GRACE_SECONDS=1.5
+```
+
+La ventana de puerta se configura en `room_types.presence_door_window_seconds`
+(STANDARD: 60 s). El banner de `/sensores` muestra solo la detección del
+sensor; la aplicación operativa aparece en un badge separado.
+
 ## F130 — alcance operativo estricto
 
 El radar puede informar ecos por encima de `maximum_range` (reflexión o
