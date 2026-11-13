@@ -17372,3 +17372,20 @@ campos existentes:
 acredita por DP1 tras la gracia y sin distancia. `evidence_reason` vale
 `dp1_without_distance`. Los campos son aditivos y `apply` sigue indicando si la
 presencia se aplicó.
+
+### F137 — Apagado de luz en salas con política radar
+
+Cambios **aditivos**, sin modificar rutas ni formas de respuesta existentes:
+
+- `iot_sessions.light_off_at DATETIME(3) NULL` (migración `0152`): instante UTC
+  del OFF diferido. NULL = sin plazo.
+- `IotSession::toArray()` incluye `light_off_at` (diagnóstico; los consumidores
+  que no lo lean no cambian).
+- Configuración: `RADAR_ROOM_LIGHT_AUTOMATION` (bool, def. true) y
+  `RADAR_ROOM_LIGHT_OFF_DELAY_SECONDS` (int 0–10, def. 1). No hay endpoint
+  nuevo.
+- `exit-scan` escribe en su log `RADAR LIGHT OFF room=<id> ok=<0|1>` o
+  `RADAR LIGHT OFF cancelado room=<id> presence=<estado>`. No forma parte de
+  ningún contrato HTTP.
+- La automatización no aplica a `ALMACEN_BEBIDAS` ni `TIMBRADO`; esas salas
+  conservan `warehouse_state.light_off_at` y su flujo propio.

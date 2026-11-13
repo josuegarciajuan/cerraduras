@@ -12122,3 +12122,15 @@ pendientes.
 - [x] TSK-F133.1-03: episodio continuo por racha de `PRESENT`; el marcador no abre episodio.
 - [x] TSK-F133.1-04: panel indica presencia confirmada por DP1.
 - [x] TSK-F133.1-05: tests `RadarEvidenceCorrelationTest`, `IotSessionServiceTest` y `radar-scope.test.js`.
+
+### F137 — Apagado de luz en salas con política radar
+
+- [x] TSK-F137-01: `RadarRoomLightPolicy` pura (ciclo de puerta, OFF, cancelación).
+- [x] TSK-F137-02: migración aditiva `0152` (`iot_sessions.light_off_at`).
+- [x] TSK-F137-03: `IotSession`/`IotSessionRepository` hidratan y persisten el plazo.
+- [x] TSK-F137-04: `IotSessionService` programa/cancela en la transacción del estado.
+- [x] TSK-F137-05: `resolvePendingPresence()` de exit-scan también programa/cancela.
+- [x] TSK-F137-06: `exit-scan` ejecuta el OFF vencido y limpia el plazo.
+- [x] TSK-F137-07: configuración `RADAR_ROOM_LIGHT_*` documentada en `.env.example`.
+- [x] TSK-F137-08: units `RadarRoomLightPolicyTest` e `IotSessionServiceTest`.
+- [x] TSK-F137-09: BLOCK 105 del runner.

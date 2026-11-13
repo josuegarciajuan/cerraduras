@@ -27593,3 +27593,40 @@ servicio lo aplica solo cuando la correlación devuelve `no_distance` o
 `ABSENT`. El episodio DP1 es una racha continua de `PRESENT`: el marcador del
 conversor puede cambiar en cada publicación y **no** abre un episodio nuevo;
 solo `ABSENT` lo cierra.
+
+### F137 — Luz de sala radar ligada a la ocupación
+
+**Problema.** El OFF de luz estaba implementado en dos rutas que no cubren una
+sala `STANDARD` con radar y sin estancia: `ExitActionService` (exige `stay` y
+`entry_confirmed_at`) y la automatización de `ALMACEN_BEBIDAS`
+(`warehouse_state.light_off_at` + `exit-scan`). Una entrada con ficha abre la
+luz por F124 y, al quedar la sala vacía, nadie la apaga.
+
+**Decisión.** Se añade `RadarRoomLightPolicy`, una política pura que decide
+`cancel_off`, `schedule_off` o `none`:
+
+- `PROXIMITY OPEN` o `PRESENCE PRESENT` → cancela.
+- Sin ciclo de puerta (`last_open_at`/`last_close_at` válidos y cierre >= apertura)
+  → no programa.
+- `PRESENCE ABSENT` o `PROXIMITY CLOSED` con sesión `ABSENT` y ciclo → programa.
+
+**Persistencia y ejecución.** `IotSessionService` escribe
+`iot_sessions.light_off_at` dentro de la transacción del estado (columnas
+aditivas de la migración `0152`). El plazo se cancela en la misma transacción
+con `OPEN`/`PRESENT`. `exit-scan` ejecuta el OFF cuando vence, solo si
+`presence_state='ABSENT'`, y limpia el plazo. El comando va por
+`SwitchService::turnOff()` (Zigbee2MQTT), best-effort.
+
+**Ámbito.** Solo `rooms.presence_mode_override` no vacío, excluyendo
+`ALMACEN_BEBIDAS` y `TIMBRADO`. No se toca la regla de salida hotelera ni los
+contratos HTTP; `toArray()` expone `light_off_at` de forma aditiva para
+diagnóstico.
+
+**Configuración.** `RADAR_ROOM_LIGHT_AUTOMATION` (def. true) y
+`RADAR_ROOM_LIGHT_OFF_DELAY_SECONDS` (def. 1, acotado 0–10). Sin Tuya, sin
+polling y sin nuevas rutas.
+
+**Pruebas.** `RadarRoomLightPolicyTest` cubre la decisión y el ciclo de puerta;
+`IotSessionServiceTest` verifica que un `CLOSED` con `ABSENT` programa el plazo,
+que `OPEN` lo cancela y que sin ciclo no se programa. BLOCK 105 comprueba
+migración, cableado y units.

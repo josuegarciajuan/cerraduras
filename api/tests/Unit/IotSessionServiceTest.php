@@ -971,6 +971,94 @@ if ($f132Sess !== null && ($f132Sess->presenceOutcome['effective_presence'] ?? n
     bad('F132: effective_presence', 'got ' . json_encode($f132Sess->presenceOutcome ?? null));
 }
 
+// ============================================================================
+// F137 · luz de sala radar: OFF tras ciclo de puerta + ausencia
+// ============================================================================
+echo "\nF137 · apagado de luz de sala radar\n";
+
+function makeZigbeeDoor(int $roomId, string $value, string $occurredAt, string $srcId): array
+{
+    return [
+        'room_id' => $roomId,
+        'sensor' => PresenceEvent::SENSOR_PROXIMITY,
+        'value' => $value,
+        'provider' => PresenceEvent::PROVIDER_ZIGBEE2MQTT,
+        'occurred_at' => $occurredAt,
+        'source_event_id' => $srcId,
+        'meta' => ['source' => 'zigbee2mqtt', 'entity' => 'contact'],
+    ];
+}
+
+// Sala 8: STANDARD con override radar_door, ya vacía y con ciclo cerrado.
+$roomRepo->byId[8] = new Room(
+    8, 'PROTO2-T', 1, null, Room::STATUS_FREE, true, null, null, null, 'radar_door'
+);
+$iotRepo->sessions[8] = new IotSession(
+    0, 8, null,
+    IotSession::DOOR_CLOSED, IotSession::PRESENCE_ABSENT,
+    '2026-04-28 21:00:00.000', '2026-04-28 21:00:01.000',
+    '2026-04-28 21:00:01.000', null, '2026-04-28 21:00:01.000',
+    '2026-04-28 21:00:01.000', null,
+    IotSession::DOOR_CLOSED, PresenceEvent::VALUE_ABSENT
+);
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T21:00:02Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeeDoor(8, PresenceEvent::VALUE_CLOSED, '2026-04-28T21:00:02Z', 'f137-refresh-close'),
+    'corr-f137-refresh'
+);
+$f137 = $iotRepo->sessions[8];
+if ($f137 !== null && $f137->lightOffAt === '2026-04-28 21:00:03.000') {
+    ok('F137: CLOSED con sesión ABSENT programa el OFF diferido');
+} else {
+    bad('F137: debería programar light_off_at', var_export($f137->lightOffAt ?? null, true));
+}
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T21:00:04Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeeDoor(8, PresenceEvent::VALUE_OPEN, '2026-04-28T21:00:04Z', 'f137-open'),
+    'corr-f137-open'
+);
+$f137 = $iotRepo->sessions[8];
+if ($f137 !== null && $f137->lightOffAt === null) {
+    ok('F137: OPEN cancela el OFF pendiente');
+} else {
+    bad('F137: OPEN debería cancelar light_off_at', var_export($f137->lightOffAt ?? null, true));
+}
+
+Clock::freeze(new DateTimeImmutable('2026-04-28T21:00:05Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeeDoor(8, PresenceEvent::VALUE_CLOSED, '2026-04-28T21:00:05Z', 'f137-close-2'),
+    'corr-f137-close-2'
+);
+$f137 = $iotRepo->sessions[8];
+if ($f137 !== null && $f137->lightOffAt === '2026-04-28 21:00:06.000') {
+    ok('F137: un nuevo ciclo cerrado con ausencia vuelve a programar el OFF');
+} else {
+    bad('F137: debería reprogramar light_off_at', var_export($f137->lightOffAt ?? null, true));
+}
+
+// Sala 9: misma política pero sin ciclo de puerta → no se apaga.
+$roomRepo->byId[9] = new Room(
+    9, 'PROTO2-SIN', 1, null, Room::STATUS_FREE, true, null, null, null, 'radar_door'
+);
+$iotRepo->sessions[9] = new IotSession(
+    0, 9, null,
+    IotSession::DOOR_UNKNOWN, IotSession::PRESENCE_ABSENT,
+    null, null, '2026-04-28 21:10:00.000', null, '2026-04-28 21:10:00.000'
+);
+Clock::freeze(new DateTimeImmutable('2026-04-28T21:10:01Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeeDoor(9, PresenceEvent::VALUE_CLOSED, '2026-04-28T21:10:01Z', 'f137-no-cycle'),
+    'corr-f137-no-cycle'
+);
+$f137n = $iotRepo->sessions[9];
+if ($f137n !== null && $f137n->lightOffAt === null) {
+    ok('F137: sin ciclo de puerta no se programa el OFF');
+} else {
+    bad('F137: sin ciclo no debería programar light_off_at', var_export($f137n->lightOffAt ?? null, true));
+}
+
 Clock::unfreeze();
 
 echo "\nTotal: {$PASS} passed, {$FAIL} failed\n";

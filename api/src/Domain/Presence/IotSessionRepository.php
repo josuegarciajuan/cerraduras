@@ -25,7 +25,7 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
          presence_pending_state, presence_pending_since, presence_pending_due_at,
          presence_pending_marker, presence_pending_config_key, presence_outcome_json,
          presence_episode_marker, presence_episode_session,
-         presence_episode_started_at, presence_episode_distance_marker';
+         presence_episode_started_at, presence_episode_distance_marker, light_off_at';
 
     private PDO $pdo;
 
@@ -54,12 +54,12 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                  presence_pending_state, presence_pending_since, presence_pending_due_at,
                  presence_pending_marker, presence_pending_config_key, presence_outcome_json,
                  presence_episode_marker, presence_episode_session,
-                 presence_episode_started_at, presence_episode_distance_marker)
+                 presence_episode_started_at, presence_episode_distance_marker, light_off_at)
              VALUES
                 (:room, :stay, :door, :pres, :open, :close, :abs, :exit,
                  :ldea, :lpea, :ldv, :lpv,
                  :ppst, :ppsi, :ppdu, :ppmk, :ppck, :pout,
-                 :pemk, :pesn, :pest, :pedm)
+                 :pemk, :pesn, :pest, :pedm, :loa)
              ON DUPLICATE KEY UPDATE
                 stay_id                = VALUES(stay_id),
                 door_state             = VALUES(door_state),
@@ -81,7 +81,8 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_episode_marker          = VALUES(presence_episode_marker),
                 presence_episode_session         = VALUES(presence_episode_session),
                 presence_episode_started_at      = VALUES(presence_episode_started_at),
-                presence_episode_distance_marker = VALUES(presence_episode_distance_marker)'
+                presence_episode_distance_marker = VALUES(presence_episode_distance_marker),
+                light_off_at                         = VALUES(light_off_at)'
         )->execute([
             ':room'  => $session->roomId,
             ':stay'  => $session->stayId,
@@ -105,6 +106,7 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':pesn'  => $session->presenceEpisodeSession,
             ':pest'  => $session->presenceEpisodeStartedAt,
             ':pedm'  => $session->presenceEpisodeDistanceMarker,
+            ':loa'   => $session->lightOffAt,
         ]);
     }
 
@@ -179,6 +181,7 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_episode_session         = :pesn,
                 presence_episode_started_at      = :pest,
                 presence_episode_distance_marker = :pedm,
+                light_off_at                     = :loa,
                 updated_at             = UTC_TIMESTAMP(3)
              WHERE id = :id'
         )->execute([
@@ -204,6 +207,7 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':pesn'  => $session->presenceEpisodeSession,
             ':pest'  => $session->presenceEpisodeStartedAt,
             ':pedm'  => $session->presenceEpisodeDistanceMarker,
+            ':loa'   => $session->lightOffAt,
         ]);
     }
 
@@ -250,7 +254,8 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ($row['presence_episode_marker'] ?? null) === null ? null : (string) $row['presence_episode_marker'],
             ($row['presence_episode_session'] ?? null) === null ? null : (string) $row['presence_episode_session'],
             ($row['presence_episode_started_at'] ?? null) === null ? null : (string) $row['presence_episode_started_at'],
-            ($row['presence_episode_distance_marker'] ?? null) === null ? null : (string) $row['presence_episode_distance_marker']
+            ($row['presence_episode_distance_marker'] ?? null) === null ? null : (string) $row['presence_episode_distance_marker'],
+            ($row['light_off_at'] ?? null) === null ? null : (string) $row['light_off_at']
         );
     }
 

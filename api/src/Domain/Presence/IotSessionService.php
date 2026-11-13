@@ -450,6 +450,7 @@ final class IotSessionService
                         } elseif ($value === PresenceEvent::VALUE_CLOSED) {
                             $session->lastCloseAt = $evtUtc;
                         }
+                        $this->scheduleRadarRoomLight($room, $session, $sensor, $value, $now);
                         $this->iotSessions->updateState($session);
                         $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
                         $doorRefreshed = true;
@@ -537,6 +538,9 @@ final class IotSessionService
                     $session->presenceOutcome = $this->outcomeFromDecision($radarDecision);
                 }
 
+                // F137: programa o cancela el apagado diferido de luz. Se
+                // persiste en la misma transacción que el estado de la sesión.
+                $this->scheduleRadarRoomLight($room, $session, $sensor, $value, $now);
                 $this->iotSessions->updateState($session);
                 $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
                 $this->presenceEvents->markAudit($rawEvent->id, true, null, $effectiveValue);
@@ -758,6 +762,61 @@ final class IotSessionService
         } catch (\Throwable $e) {
             error_log('[IotSessionService] Warehouse light automation failed (best-effort): ' . $e->getMessage());
         }
+    }
+
+    /**
+     * F137: programa o cancela el apagado de luz de una sala normal con
+     * política radar explícita. No publica nada: solo escribe el plazo en
+     * `iot_sessions.light_off_at`; exit-scan lo ejecuta y lo limpia.
+     *
+     * El encendido se conserva en sus rutas actuales (apertura de puerta y
+     * credencial F124). El OFF exige un ciclo de puerta completado y ausencia,
+     * tal como describe la política pura RadarRoomLightPolicy.
+     */
+    private function scheduleRadarRoomLight(
+        Room $room,
+        IotSession $session,
+        string $sensor,
+        string $value,
+        \DateTimeImmutable $now
+    ): void {
+        if (!Config::getBool('RADAR_ROOM_LIGHT_AUTOMATION', true)) {
+            return;
+        }
+        if ($room->presenceModeOverride === null
+            || trim((string) $room->presenceModeOverride) === ''
+        ) {
+            return;
+        }
+        if ($this->isWarehouseRoom($room) || $this->isTimbradoRoom($room)) {
+            return;
+        }
+
+        $action = RadarRoomLightPolicy::decide(
+            $sensor,
+            $value,
+            $session->presenceState,
+            RadarRoomLightPolicy::hasDoorCycle($session->lastOpenAt, $session->lastCloseAt)
+        );
+
+        if ($action === RadarRoomLightPolicy::ACTION_CANCEL_OFF) {
+            $session->lightOffAt = null;
+            return;
+        }
+        if ($action !== RadarRoomLightPolicy::ACTION_SCHEDULE_OFF) {
+            return;
+        }
+        // Respeta un plazo ya programado: un CLOSED repetido no debe retrasarlo.
+        if ($session->lightOffAt !== null) {
+            return;
+        }
+
+        $delayRaw = Config::get('RADAR_ROOM_LIGHT_OFF_DELAY_SECONDS', '1');
+        $delay = is_numeric($delayRaw) ? (int) $delayRaw : 1;
+        $delay = max(0, min(10, $delay));
+        $session->lightOffAt = $delay === 0
+            ? $now->format('Y-m-d H:i:s.v')
+            : $now->modify('+' . $delay . ' seconds')->format('Y-m-d H:i:s.v');
     }
 
     /**
@@ -1830,6 +1889,13 @@ final class IotSessionService
                     'episode' => $resolvedEpisode,
                     'pending' => null,
                 ];
+                $this->scheduleRadarRoomLight(
+                    $room,
+                    $session,
+                    PresenceEvent::SENSOR_PRESENCE,
+                    (string) $pending,
+                    $clock
+                );
                 $this->iotSessions->updateState($session);
                 $this->iotSessions->commit();
                 $result = 'applied';

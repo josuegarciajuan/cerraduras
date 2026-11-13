@@ -251,6 +251,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F133.1 Respaldo DP1 sin distancia** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: presencia por DP1 en sala radar con alcance ≤3 m y gracia 2 s; episodio continuo; prueba física pendiente** |
 | **F134 Salud del pipeline Zigbee y aviso de ingesta** | **`ZigbeePipelineHealthTest`/`ZigbeeRuntimeWiringTest`/`PanelV21Test`/`radar-scope.test.js` + `health/deep`** | **Implementado: systemd+frescura, aviso en `/sensores`, `/dashboard` y `/panel`; regresión 1468/10/19 con 10 fallos ambientales por corrida de sensores concurrente** |
 | **F135 Radar door: presencia sin DP9 y UI sensor/política** | **`RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js` + `/radar/live`** | **Implementado: PROTO2 en `radar_door`, ventana de puerta 60 s, fallback DP1 con puerta, banner de sensor separado del badge de política** |
+| **F137 Apagado de luz en salas con política radar** | **`RadarRoomLightPolicyTest`/`IotSessionServiceTest` + BLOCK 105** | **Implementado: OFF diferido tras ciclo de puerta + ausencia, cancelable con OPEN/PRESENT; PROTO2/radar_door incluido; almacén y TIMBRADO intactos** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1690,3 +1691,27 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   desarrollo y no soporta OTA. Si sigue quedándose mudo, sustituir la unidad.
 - **Verificación**: `RadarEvidenceCorrelationTest` (33), `IotSessionServiceTest`
   (60), `radar-scope.test.js` (46) y `RadarLiveDistanceTest` (19).
+
+### F137 — Apagado de luz en salas con política radar
+
+- **Motivo**: PROTO2 es una sala `STANDARD` con `presence_mode_override='radar_door'`
+  y se entra con ficha/llave (sin estancia). La luz se encendía por F124, pero
+  no se apagaba: `ExitActionService` exige estancia y la automatización del
+  almacén solo aplica a `ALMACEN_BEBIDAS`.
+- **Política**: `RadarRoomLightPolicy` decide `cancel_off` con `OPEN`/`PRESENT`
+  y `schedule_off` con `ABSENT` (o `CLOSED` con sesión `ABSENT`) únicamente si
+  hay un ciclo de puerta completado (`last_close_at >= last_open_at`). Sin ciclo
+  no se apaga.
+- **Persistencia**: migración aditiva `0152` (`iot_sessions.light_off_at`).
+  `IotSessionService` programa/cancela el plazo en la misma transacción que el
+  estado; `resolvePendingPresence()` también lo hace.
+- **Ejecución**: `exit-scan` apaga al vencer si la sesión sigue `ABSENT` y limpia
+  el plazo (`RADAR LIGHT OFF room=...`). El comando va por `SwitchService`
+  (Zigbee2MQTT), best-effort. Sin Tuya ni polling.
+- **Ámbito**: solo salas con `presence_mode_override` no vacío, excluyendo
+  `ALMACEN_BEBIDAS` y `TIMBRADO`. El flujo hotelero con estancia no cambia.
+- **Configuración**: `RADAR_ROOM_LIGHT_AUTOMATION` (def. true) y
+  `RADAR_ROOM_LIGHT_OFF_DELAY_SECONDS` (def. 1, 0–10).
+- **Verificación**: `RadarRoomLightPolicyTest` (14),
+  `IotSessionServiceTest` (64, incluye F137) y BLOCK 105 del runner. Pendiente
+  la prueba física en PROTO2 entrando/saliendo con ficha.
