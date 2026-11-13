@@ -17373,6 +17373,26 @@ acredita por DP1 tras la gracia y sin distancia. `evidence_reason` vale
 `dp1_without_distance`. Los campos son aditivos y `apply` sigue indicando si la
 presencia se aplicó.
 
+### F136 — Vista de presencia compartida (aditivo)
+
+`GET /api/v1/rooms/{id}/live` y el evento SSE `state` añaden:
+
+- `presence_mode` (`string|null`) y `presence_mode_override` (`string|null`).
+- `presence_outcome` (`object|null`): resultado operativo decodificado de
+  `presence_outcome_json`, con `state`, `outcome`, `outcome_reason`,
+  `effective_presence`, `pending`, `episode`, `range_gate`, `decided_at`,
+  `age_seconds` y `stale`.
+- `presence_pending` (`object|null`) y `presence_episode` (`object|null`).
+- `radar` (`object`): `state` (`PRESENT|ABSENT|UNKNOWN`), `age_seconds`,
+  `stale` y `presence_report`.
+- `radar_stale` (`bool`), `radar_room` (`bool`).
+- `entry_window_seconds` y `exit_check_seconds` también en el SSE.
+
+`presence_decision` pasa a priorizar `presence_outcome` sobre el meta del último
+evento, manteniendo la forma anterior para compatibilidad. Los endpoints
+`/dashboard-api/sensores/v2/radar/{live,scope}` no cambian de forma. Sin
+migración.
+
 ### F137 — Apagado de luz en salas con política radar
 
 Cambios **aditivos**, sin modificar rutas ni formas de respuesta existentes:

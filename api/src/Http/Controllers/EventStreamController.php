@@ -9,6 +9,7 @@ use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\KeyEpisodePolicy;
 use App\Domain\Qr\QrWindows;
 use App\Domain\Sensors\RadarFreshness;
+use App\Infrastructure\Sensors\PresenceView;
 use App\Support\Qr\QrTokenizer;
 
 /**
@@ -244,6 +245,11 @@ final class EventStreamController
                     CASE WHEN s.last_presence_event_at IS NULL
                               OR s.last_presence_event_at < UTC_TIMESTAMP(3) - INTERVAL 30 SECOND
                          THEN '1' ELSE '0' END AS c22,
+                    -- F136: el resultado operativo y la transición pendiente
+                    -- también deben empujar un `state` (p. ej. cuando exit-scan
+                    -- aplica una entrada pendiente sin mensaje nuevo).
+                    COALESCE(s.presence_outcome_json, '') AS c23,
+                    COALESCE(s.presence_pending_state, '') AS c24,
                     (SELECT MAX(id) FROM key_access_events
                       WHERE room_id = r.id AND result = 'OK') AS c21,
                     COALESCE(r.status,             '') AS c6,
@@ -286,7 +292,13 @@ final class EventStreamController
     {
         try {
             // Room
-            $roomStmt = $this->pdo->prepare('SELECT id, code, status, cooldown_until, presence_check_seconds FROM rooms WHERE id = :rid');
+            $roomStmt = $this->pdo->prepare(
+                'SELECT r.id, r.code, r.status, r.cooldown_until, r.presence_check_seconds,
+                        rt.presence_entry_window_seconds, rt.exit_check_seconds
+                   FROM rooms r
+                   LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                  WHERE r.id = :rid'
+            );
             $roomStmt->execute([':rid' => $roomId]);
             $roomRow = $roomStmt->fetch(\PDO::FETCH_ASSOC);
 
@@ -345,6 +357,9 @@ final class EventStreamController
             $iotData['presence_stale'] = $presenceAge !== null && $presenceAge > $presenceStaleSeconds;
             $iotData['radar_stale'] = RadarFreshness::stale($iotData['last_presence_event_at'] ?? null);
 
+            // F136: misma vista única que /live y Radar Studio.
+            $presenceView = (new PresenceView($this->pdo))->build($roomId);
+
             // Active stay
             $stayStmt = $this->pdo->prepare(
                 "SELECT id, status, duracion_minutos, first_entry_at, entry_confirmed_at, exit_detected_at
@@ -382,6 +397,10 @@ final class EventStreamController
             // Exit deadline
             $exitDeadline = null;
             $gapSeconds   = $this->resolveGapSeconds($roomId, (int) ($roomRow['presence_check_seconds'] ?? 0));
+            // F136: el SSE debe llevar las mismas ventanas que /live para que el
+            // dashboard no caiga al fallback de 90 s.
+            $entryWindowSeconds = (int) ($roomRow['presence_entry_window_seconds'] ?? 90);
+            $exitCheckSeconds   = (int) ($roomRow['exit_check_seconds'] ?? ($gapSeconds + 10));
 
             // Bug 1 (RF-47.2.4): guarda de SALIDA desacoplada de `gap_seconds`.
             // Resolución: override de sala > global EXIT_ABSENCE_GUARD_SECONDS > 1.
@@ -463,10 +482,22 @@ final class EventStreamController
                 'gap_seconds'      => $gapSeconds,
                 // Bug 1 (RF-47.2.4): guarda de ausencia sostenida de la SALIDA.
                 'exit_guard_seconds' => $exitGuardSeconds,
+                // F136: ventanas equivalentes a /live (antes el SSE las omitía).
+                'entry_window_seconds' => $entryWindowSeconds,
+                'exit_check_seconds'   => $exitCheckSeconds,
                 'qr_status'        => $qrStatus,
                 'recent_events'    => $recentEvents,
                 'recent_presence'  => $recentPresence,
-                'presence_decision' => $this->freshRadarDecision($roomId),
+                // F136: el resultado operativo de la sesión manda sobre el meta.
+                'presence_decision' => $presenceView['presence_outcome'] ?? $this->freshRadarDecision($roomId),
+                'presence_mode' => $presenceView['presence_mode'],
+                'presence_mode_override' => $presenceView['presence_mode_override'],
+                'presence_outcome' => $presenceView['presence_outcome'],
+                'presence_pending' => $presenceView['pending'],
+                'presence_episode' => $presenceView['episode'],
+                'radar' => $presenceView['raw'],
+                'radar_stale' => $presenceView['radar_stale'],
+                'radar_room' => $presenceView['radar_room'],
                 'anomalies'        => $anomalies,
             ];
         } catch (\Throwable $e) {

@@ -27594,6 +27594,41 @@ servicio lo aplica solo cuando la correlación devuelve `no_distance` o
 conversor puede cambiar en cada publicación y **no** abre un episodio nuevo;
 solo `ABSENT` lo cierra.
 
+### F136 — Presencia radar única para todos los paneles
+
+**Motivo.** Radar Studio mostraba `TE DETECTA` con el DP1 crudo mientras el
+dashboard esperaba a `iot_sessions.presence_state`; además, el reset de ciclo
+limpiaba la presencia pero no el episodio DP1/DP9, por lo que el primer
+`PRESENT` tras un reset se descartaba como `marker_already_used` hasta que
+llegaba una DP9 nueva.
+
+**Reset.** `RoomCycleResetter` limpia `presence_pending_*`,
+`presence_outcome_json` y `presence_episode_*` junto con el resto de marcas del
+ciclo. El reset es global (solo estado transitorio) y no toca estancias, QR,
+deudas ni `rooms.status`.
+
+**Vista única.** `PresenceView` (Infrastructure/Sensors) construye una sola
+lectura de solo lectura con `raw` (DP1 + edad + stale radar), `presence_outcome`
+(decodificado de la sesión), `pending`, `episode`, `range_gate`, modo y
+`radar_room`. `RoomLiveController` y `EventStreamController` la exponen de forma
+aditiva; Radar Studio mantiene su contrato actual, que ya usa la sesión como
+fuente autoritativa.
+
+**Dashboard.** En salas con `presence_mode_override`, el indicador de detección
+usa `raw` + `radar_stale` (30 s). La ocupación y el monigote usan el resultado
+aplicado. La presencia aplicada cuenta como contexto de entrada para el
+monigote en estas salas. Los holds visuales hoteleros (cruce 1,8 s, cierre
+2,3 s) se reducen a 0,3 s/0,5 s solo en salas radar. Sin override se conserva el
+comportamiento F48.
+
+**SSE.** El fingerprint incluye `presence_outcome_json` y
+`presence_pending_state`; el payload incorpora las mismas ventanas
+(`entry_window_seconds`, `exit_check_seconds`) y la vista de presencia.
+
+**Trazabilidad.** `RoomCycleResetter`, `PresenceView`, `RoomLiveController`,
+`EventStreamController`, `dashboard.html`, `RoomCycleResetterTest`,
+`PresenceViewTest`, `croquis-logic.test.js` y regresión completa.
+
 ### F137 — Luz de sala radar ligada a la ocupación
 
 **Problema.** El OFF de luz estaba implementado en dos rutas que no cubren una

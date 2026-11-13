@@ -16,6 +16,7 @@ use App\Domain\Sensors\RadarFreshness;
 use App\Domain\Rooms\RoomRepositoryInterface;
 use App\Domain\Rooms\RoomTypeRepositoryInterface;
 use App\Domain\Stays\StayRepositoryInterface;
+use App\Infrastructure\Sensors\PresenceView;
 use App\Http\Request;
 use App\Http\Response;
 use App\Support\Clock;
@@ -105,6 +106,11 @@ final class RoomLiveController
         // F125.1.4: frescura específica del radar (30 s), separada del umbral
         // de negocio de la sala.
         $iotData['radar_stale'] = RadarFreshness::stale($iotData['last_presence_event_at'] ?? null);
+
+        // F136: vista única de presencia (misma que Radar Studio). El dashboard
+        // recibe la detección cruda y el resultado operativo autoritativo, sin
+        // depender del meta del último evento.
+        $presenceView = (new PresenceView($this->pdo))->build($roomId);
 
         // Active stay
         $activeStay = $this->stays->findActiveForRoom($roomId);
@@ -289,7 +295,18 @@ final class RoomLiveController
             // F93/RF-157.1: última decisión del radar Zigbee (candidato,
             // confirmado, stale) para que /dashboard muestre la misma
             // incertidumbre que /almacen. Aditivo; null sin radar Zigbee.
-            'presence_decision' => $this->freshRadarDecision($roomId),
+            // F136: el resultado operativo de la sesión manda sobre el meta del
+            // evento, igual que en Radar Studio.
+            'presence_decision' => $presenceView['presence_outcome'] ?? $this->freshRadarDecision($roomId),
+            // F136: vista única compartida con /sensores.
+            'presence_mode' => $presenceView['presence_mode'],
+            'presence_mode_override' => $presenceView['presence_mode_override'],
+            'presence_outcome' => $presenceView['presence_outcome'],
+            'presence_pending' => $presenceView['pending'],
+            'presence_episode' => $presenceView['episode'],
+            'radar' => $presenceView['raw'],
+            'radar_stale' => $presenceView['radar_stale'],
+            'radar_room' => $presenceView['radar_room'],
             'anomalies'        => $anomalies,
             'door_open_too_long' => $doorOpenTooLong,
             // F118.4: hora del servidor con ms para que todos los clientes usen

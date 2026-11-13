@@ -12123,6 +12123,16 @@ pendientes.
 - [x] TSK-F133.1-04: panel indica presencia confirmada por DP1.
 - [x] TSK-F133.1-05: tests `RadarEvidenceCorrelationTest`, `IotSessionServiceTest` y `radar-scope.test.js`.
 
+### F136 — Presencia radar única para todos los paneles
+
+- [x] TSK-F136-01: `RoomCycleResetter` limpia `presence_pending_*`, `presence_outcome_json` y `presence_episode_*`.
+- [x] TSK-F136-02: `PresenceView` con `raw` DP1, outcome, pending, episode y modo radar.
+- [x] TSK-F136-03: `/live` y SSE exponen la vista, ventanas y `presence_outcome` autoritativo.
+- [x] TSK-F136-04: fingerprint SSE incluye outcome y transición pendiente.
+- [x] TSK-F136-05: dashboard muestra detección inmediata en salas radar y mantiene ocupación por política.
+- [x] TSK-F136-06: holds visuales reducidos y `radar_stale` 30 s solo en salas radar.
+- [x] TSK-F136-07: tests `RoomCycleResetterTest`, `PresenceViewTest`, `croquis-logic.test.js` y regresión.
+
 ### F137 — Apagado de luz en salas con política radar
 
 - [x] TSK-F137-01: `RadarRoomLightPolicy` pura (ciclo de puerta, OFF, cancelación).

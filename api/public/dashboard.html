@@ -607,6 +607,7 @@
         <div class="row"><span class="label">🚪 Puerta</span><span class="value" id="s-door">...</span></div>
         <div class="row"><span class="label">🔋 Batería sensor</span><span class="value" id="s-battery">...</span></div>
         <div class="row"><span class="label">🧑 Presencia</span><span class="value" id="s-presence">...</span></div>
+        <div class="row" id="s-radar-row" style="display:none"><span class="label">📶 Radar</span><span class="value" id="s-radar">—</span></div>
         <div class="row"><span class="label">🔒 Cerradura</span><span class="value" id="s-lock">...</span></div>
         <div class="row"><span class="label">💡 Luz</span><span class="value" id="s-switch">...</span></div>
         <div class="row"><span class="label">⏳ Cooldown</span><span class="value" id="s-cooldown">—</span></div>
@@ -1270,14 +1271,26 @@ function buildMonigoteSnapshot(data, nowMs) {
   const doorAge = (typeof io.door_age_seconds === 'number')
     ? io.door_age_seconds : monigoteAgeSeconds(io.last_door_event_at, nowMs);
   // F118: si el backend ya calcula la frescura, se usa tal cual.
-  const presenceStale = (typeof io.presence_stale === 'boolean')
-    ? io.presence_stale
-    : (presenceState === 'PRESENT'
-        && (presenceAge === null || presenceAge > MONIGOTE_PRESENCE_STALE_SECONDS));
+  // F136: en una sala con política radar explícita la frescura la manda el
+  // radar (30 s), igual que en /sensores; el resto conserva el umbral de
+  // negocio (180 s).
+  const radarRoom = !!(data && data.presence_mode_override);
+  const radarRaw = (data && data.radar) || null;
+  const radarStale = radarRoom
+    && (io.radar_stale === true || (radarRaw && radarRaw.stale === true));
+  const presenceStale = radarRoom
+    ? radarStale
+    : ((typeof io.presence_stale === 'boolean')
+        ? io.presence_stale
+        : (presenceState === 'PRESENT'
+            && (presenceAge === null || presenceAge > MONIGOTE_PRESENCE_STALE_SECONDS)));
   const doorStale = (typeof io.door_stale === 'boolean')
     ? io.door_stale
     : (doorState === 'UNKNOWN'
         || doorAge === null || doorAge > MONIGOTE_DOOR_STALE_SECONDS);
+  // F136: el resultado operativo de la sesión es la fuente autoritativa; el
+  // meta del evento queda como compatibilidad.
+  const presenceDecision = (data && (data.presence_outcome || data.presence_decision)) || null;
   return {
     occupied: !!(stay && (stay.entry_confirmed_at || stay.status === 'OCCUPIED')),
     live: {
@@ -1290,7 +1303,8 @@ function buildMonigoteSnapshot(data, nowMs) {
       recent_presence: (data && data.recent_presence) || [],
       presence_stale: presenceStale,
       door_stale: doorStale,
-      radar_stale: io.radar_stale === true || (data && data.presence_decision && data.presence_decision.stale === true)
+      presence_decision: presenceDecision,
+      radar_stale: io.radar_stale === true || (presenceDecision && presenceDecision.stale === true)
     }
   };
 }
@@ -1374,22 +1388,35 @@ function updateMonigoteFromSensors(data) {
   updateKeyEpisode(payload);
   const hasActiveStay = !!(stay && (stay.status === 'RESERVED' || stay.status === 'OCCUPIED' || stay.status === 'OVERSTAY'));
   const hasKeyEpisode = _keyEpisode.phase !== 'idle';
+  // F136: en salas con política radar explícita la presencia aplicada cuenta
+  // como contexto de entrada (el radar manda, igual que en /sensores).
+  const radarRoom = !!(payload.presence_mode_override);
   const snapshot = buildMonigoteSnapshot(payload, now);
+  const radarDetects = radarRoom
+    && snapshot.live.presence_stale !== true
+    && (io.presence_state === 'PRESENT'
+        || (payload.radar && payload.radar.state === 'PRESENT'));
+  const hasEntryContext = hasActiveStay || hasKeyEpisode || radarDetects;
   const d = C.deriveCroquis(snapshot, now);
   const key = C.recentKeyAccess(payload.recent_events || [], now);
   const entryConfirmed = !!(
     (stay && stay.entry_confirmed_at) ||
     (_choreoEpisodes && _choreoEpisodes.entryConsolidatedAt > 0)
   );
-  const resolved = C.resolveDashboardMonigote({
+  let resolved = C.resolveDashboardMonigote({
     stateName: currentState,
     phase: d.phase,
     doorOpen: d.doorOpen,
     keyAccessActive: key.active,
     entryConfirmed: entryConfirmed,
-    hasEntryContext: hasActiveStay || hasKeyEpisode,
+    hasEntryContext: hasEntryContext,
     hasKeyEpisode: hasKeyEpisode,
     keyEpisodePhase: _keyEpisode.phase,
+    // F136: en radar no añadimos los holds visuales pensados para el flujo
+    // hotelero (cruce 1,8 s / cierre 2,3 s); la señal ya viene validada por la
+    // política y Radar Studio la muestra al instante.
+    crossingHoldMs: radarRoom ? 300 : undefined,
+    closeDecisionMs: radarRoom ? 500 : undefined,
     presenceState: io.presence_state || 'UNKNOWN',
     lastOpenAt: io.last_open_at || null,
     lastCloseAt: io.last_close_at || null,
@@ -1397,6 +1424,12 @@ function updateMonigoteFromSensors(data) {
     lastAbsentSince: io.last_absent_since || null,
     now: now
   });
+
+  // F136: con el radar mudo (>30 s) no se afirma dentro ni fuera: el monigote
+  // se queda en el umbral, igual que Radar Studio muestra "SIN DATOS".
+  if (radarRoom && snapshot.live.presence_stale && resolved !== 'state') {
+    resolved = 'WAITING';
+  }
 
   const stateDef = STATES[currentState] || STATES.ESPERANDO;
   const posKey = (resolved === 'state') ? stateDef.moni : resolved;
@@ -2979,9 +3012,53 @@ function updateSensorPanel(data) {
   // F93/RF-157.1: el panel muestra la incertidumbre del filtro radar en vez de
   // presentar un candidato como un hecho. `presence_state` sigue siendo la
   // ocupación efectiva (solo cambia con decisiones confirmadas).
-  const pd = data.presence_decision || null;
+  // F136: la fuente autoritativa es el resultado operativo de la sesión; el
+  // meta del evento queda como compatibilidad.
+  const radarRoom = !!data.presence_mode_override;
+  const radarRaw = data.radar || null;
+  const pd = data.presence_outcome || data.presence_decision || null;
   const pdState = pd && pd.state ? String(pd.state) : '';
-  const radarStale = io.radar_stale === true || (pd && pd.stale === true);
+  const radarStale = radarRoom
+    ? (radarRaw ? radarRaw.stale === true : true)
+    : (io.radar_stale === true || (pd && pd.stale === true));
+
+  // F136: indicador de detección inmediato equivalente a Radar Studio, solo
+  // en salas con política radar explícita. No cambia la ocupación efectiva.
+  const radarRow = document.getElementById('s-radar-row');
+  const radarEl = document.getElementById('s-radar');
+  if (radarRow) radarRow.style.display = radarRoom ? '' : 'none';
+  if (radarRoom && radarEl) {
+    const rawState = radarRaw && radarRaw.state ? String(radarRaw.state) : 'UNKNOWN';
+    const rawStale = radarRaw ? radarRaw.stale === true : true;
+    const outcome = pd && pd.outcome ? String(pd.outcome) : '';
+    const gate = pd && pd.range_gate && pd.range_gate.status ? String(pd.range_gate.status) : '';
+    let radarText;
+    let radarCls;
+    if (rawStale || rawState === 'UNKNOWN') {
+      radarText = 'SIN DATOS';
+      radarCls = 'val-orange';
+    } else if (rawState === 'PRESENT') {
+      if (outcome === 'applied' || outcome === 'maintained') {
+        radarText = 'DETECTA · APLICADA';
+        radarCls = 'val-green';
+      } else if (outcome === 'unverified' || gate === 'unverified') {
+        radarText = 'DETECTA · COMPROBANDO';
+        radarCls = 'val-cyan';
+      } else {
+        radarText = 'DETECTA';
+        radarCls = 'val-green';
+      }
+    } else {
+      radarText = 'NO DETECTA';
+      radarCls = 'val-red';
+    }
+    radarEl.textContent = radarText;
+    radarEl.className = 'value ' + radarCls;
+    radarEl.title = 'radar: ' + rawState
+      + (radarRaw && radarRaw.age_seconds != null ? ' · ' + radarRaw.age_seconds + ' s' : '')
+      + (outcome ? ' · ' + outcome : '');
+  }
+
   const presEl = document.getElementById('s-presence');
   let presText = presence;
   if (radarStale) {

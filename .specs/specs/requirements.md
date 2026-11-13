@@ -14512,6 +14512,27 @@ BLOCK 104.
   El resultado se audita con `evidence_source=dp1_only` y el panel indica
   «Presencia confirmada por DP1 · distancia no disponible». Sin Tuya ni polling.
 
+### F136 — Presencia radar única para todos los paneles (RF-422…RF-426)
+
+- **RF-422 (reset limpio):** el reset de ciclo (QR nuevo, reset de sala) limpiará
+  también `presence_pending_*`, `presence_outcome_json` y `presence_episode_*`
+  de `iot_sessions`. El primer `PRESENT` del ciclo nuevo no podrá reutilizar la
+  DP9 del ciclo anterior ni caer en `marker_already_used`.
+- **RF-423 (vista única):** `/dashboard` y Radar Studio consumirán la misma vista
+  de presencia: `raw` DP1 + frescura radar (30 s), `presence_outcome`
+  autoritativo de la sesión, `pending`, `episode` y `range_gate`. `/live`, el
+  SSE y `/radar/*` expondrán los mismos campos de forma aditiva.
+- **RF-424 (detección inmediata):** en salas con `rooms.presence_mode_override`
+  explícito, el dashboard mostrará un indicador de detección (`DETECTA`,
+  `DETECTA · COMPROBANDO`, `NO DETECTA`, `SIN DATOS`) al mismo ritmo que
+  `/sensores`, sin esperar a que la política aplique la presencia.
+- **RF-425 (ocupación por política):** la ocupación y el monigote seguirán el
+  resultado aplicado (`presence_state`/`presence_outcome`). La detección cruda
+  nunca se presentará como ocupación confirmada.
+- **RF-426 (sin regresión hotelera):** fuera de salas con override explícito se
+  conserva el flujo F48 y sus umbrales. Sin Tuya, sin polling nuevo y sin
+  migración destructiva.
+
 ### F137 — Apagado de luz en salas con política radar (RF-427…RF-432)
 
 **Motivo**: una sala `STANDARD` con política radar explícita (p. ej. PROTO2 con
