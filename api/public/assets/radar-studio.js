@@ -126,7 +126,8 @@
         range_evaluation: sc.range_evaluation || payload.range_evaluation || null,
         last_distance: sc.last_distance != null ? sc.last_distance : (payload.last_distance != null ? payload.last_distance : null),
         last_distance_age_s: sc.last_distance_age_s != null ? sc.last_distance_age_s : (payload.last_distance_age_s != null ? payload.last_distance_age_s : null),
-        server_ts: sc.server_ts || payload.server_ts || null
+        server_ts: sc.server_ts || payload.server_ts || null,
+        pipeline: payload.pipeline || sc.pipeline || null
       };
     }
     return payload;
@@ -527,6 +528,9 @@
     }
     if (sc.door_state) {
       chest.push('<span class="pill ' + (sc.door_state === 'OPEN' ? 'warn' : 'dim') + '">puerta ' + esc(sc.door_state) + '</span>');
+    }
+    if (sc.pipeline && sc.pipeline.enabled === true && sc.pipeline.healthy === false) {
+      chest.push('<span class="pill warn" title="' + esc(sc.pipeline.reason || '') + '">ingesta Zigbee detenida</span>');
     }
     host.innerHTML = chest.join('');
   }

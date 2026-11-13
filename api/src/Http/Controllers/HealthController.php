@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Db\PdoFactory;
+use App\Infrastructure\Sensors\ZigbeePipelineStatusService;
 use App\Support\Clock;
 use App\Support\Config;
 
@@ -18,6 +19,18 @@ use App\Support\Config;
  */
 final class HealthController
 {
+    private ?ZigbeePipelineStatusService $pipelines = null;
+
+    public function __construct(?ZigbeePipelineStatusService $pipelines = null)
+    {
+        $this->pipelines = $pipelines;
+    }
+
+    private function pipelineService(): ZigbeePipelineStatusService
+    {
+        return $this->pipelines ??= new ZigbeePipelineStatusService();
+    }
+
     public function show(Request $request): Response
     {
         $health = [
@@ -151,44 +164,51 @@ final class HealthController
             $allOk = false;
         }
 
-        // 5b. Zigbee local (F91/RF-149): estado de ingress y spool sin sondear
-        // hardware externo. Aditivo; no altera el contrato de los 5 workers.
+        // 5b. Zigbee local (F91/RF-149, F134): estado real de ingress y spool.
+        // A `connected:true` from an old status file is not evidence that the
+        // pipeline is alive; systemd state and freshness are evaluated too.
         try {
-            $ingressEnabled = Config::getBool('ZIGBEE_INGRESS_ENABLED', false);
-            $spoolEnabled = Config::getBool('ZIGBEE_SPOOL_ENABLED', false);
-            $apiDir = dirname(__DIR__, 3);
-            $readJson = static function (string $file): ?array {
-                if (!is_file($file)) {
-                    return null;
+            $pipelines = $this->pipelineService()->all();
+            $prod = $pipelines['prod'] ?? null;
+            $enabled = false;
+            $zigbeeStatus = 'disabled';
+            $warnings = [];
+            foreach ($pipelines as $profile => $pipeline) {
+                if (($pipeline['enabled'] ?? false) !== true) {
+                    continue;
                 }
-                $raw = @file_get_contents($file);
-                $decoded = is_string($raw) ? json_decode($raw, true) : null;
-                return is_array($decoded) ? $decoded : null;
-            };
-            $ingressFile = Config::get('ZIGBEE_INGRESS_STATUS_FILE', 'run/zigbee-ingress-status.json') ?? 'run/zigbee-ingress-status.json';
-            $spoolFile = Config::get('ZIGBEE_SPOOL_STATUS_FILE', 'run/zigbee-spool-status.json') ?? 'run/zigbee-spool-status.json';
-            if ($ingressFile[0] !== '/') { $ingressFile = $apiDir . '/' . $ingressFile; }
-            if ($spoolFile[0] !== '/') { $spoolFile = $apiDir . '/' . $spoolFile; }
-            $ingress = $readJson($ingressFile);
-            $spool = $readJson($spoolFile);
-            $connected = (bool) ($ingress['connected'] ?? false);
-            $pending = (int) (($spool['counts']['incoming'] ?? 0) + ($spool['counts']['processing'] ?? 0));
-            $quarantine = (int) ($spool['counts']['quarantine'] ?? 0);
-            $enabled = $ingressEnabled || $spoolEnabled;
-            $zigbeeStatus = !$enabled ? 'disabled' : (($connected && $quarantine === 0) ? 'ok' : 'warning');
+                $enabled = true;
+                if ($zigbeeStatus === 'disabled') {
+                    $zigbeeStatus = 'ok';
+                }
+                if (($pipeline['healthy'] ?? false) !== true) {
+                    $zigbeeStatus = 'warning';
+                    $warnings[] = $profile . ': ' . (string) ($pipeline['reason'] ?? 'unhealthy');
+                    $allOk = false;
+                }
+                if ((int) ($pipeline['quarantine'] ?? 0) > 0) {
+                    $zigbeeStatus = 'warning';
+                    $warnings[] = $profile . ': ' . (int) $pipeline['quarantine'] . ' en cuarentena';
+                }
+            }
             $checks['zigbee'] = [
                 'status' => $zigbeeStatus,
                 'enabled' => $enabled,
-                'ingress_enabled' => $ingressEnabled,
-                'spool_enabled' => $spoolEnabled,
-                'ingress_connected' => $connected,
-                'spool_pending' => $pending,
-                'spool_quarantine' => $quarantine,
-                'last_processed_at' => $spool['last_processed_at'] ?? null,
-                'updated_at' => $ingress['updated_at'] ?? null,
+                'ingress_enabled' => Config::getBool('ZIGBEE_INGRESS_ENABLED', false),
+                'spool_enabled' => Config::getBool('ZIGBEE_SPOOL_ENABLED', false),
+                'ingress_connected' => (bool) ($prod['connected'] ?? false),
+                'spool_pending' => (int) ($prod['pending'] ?? 0),
+                'spool_quarantine' => (int) ($prod['quarantine'] ?? 0),
+                'last_processed_at' => $prod['last_processed_at'] ?? null,
+                'updated_at' => $prod['status_updated_at'] ?? null,
+                'status_age_seconds' => $prod['status_age_seconds'] ?? null,
+                'last_event_age_seconds' => $prod['last_event_age_seconds'] ?? null,
+                'pipelines' => $pipelines,
+                'warnings' => $warnings,
             ];
         } catch (\Throwable $e) {
             $checks['zigbee'] = ['status' => 'error', 'message' => $e->getMessage()];
+            $allOk = false;
         }
 
         $httpStatus = 200;  // Always 200 — the 'status' field carries healthy/degraded

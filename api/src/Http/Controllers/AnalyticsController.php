@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Domain\Analytics\AccessMovementCollapser;
+use App\Infrastructure\Sensors\ZigbeePipelineStatusService;
 use App\Http\Request;
 use App\Http\Response;
 use App\Support\Config;
@@ -27,10 +28,17 @@ use PDO;
 final class AnalyticsController
 {
     private PDO $pdo;
+    private ?ZigbeePipelineStatusService $pipelines = null;
 
-    public function __construct(PDO $pdo)
+    public function __construct(PDO $pdo, ?ZigbeePipelineStatusService $pipelines = null)
     {
         $this->pdo = $pdo;
+        $this->pipelines = $pipelines;
+    }
+
+    private function pipelineService(): ZigbeePipelineStatusService
+    {
+        return $this->pipelines ??= new ZigbeePipelineStatusService();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -946,6 +954,7 @@ final class AnalyticsController
             'low_battery' => $lowBattery,
             'packs' => $packs,
             'firmware' => $firmware,
+            'pipelines' => $this->pipelineService()->all(),
         ]);
     }
 

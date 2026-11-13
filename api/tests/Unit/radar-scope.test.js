@@ -125,6 +125,32 @@ check('banner MOTION → ámbar', dmMotion.tone === 'warn' && dmMotion.title ===
 const dmStale = RadarScope.detectionModel({ raw: { state: 'PRESENT', stale: true }, stats: {} });
 check('banner STALE → gris', dmStale.tone === 'dim' && dmStale.title === 'SIN DATOS' && dmStale.icon === '…');
 
+// F134: un pipeline detenido explica la falta de datos; no es un sensor caído.
+const dmPipelineDown = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', stale: true, age_seconds: 9000 },
+  stats: {},
+  pipeline: { enabled: true, healthy: false, state: 'stopped', reason: 'service_inactive' },
+});
+check('F134: ingesta parada → aviso ámbar',
+  dmPipelineDown.state === 'PIPELINE_DOWN' && dmPipelineDown.tone === 'warn'
+  && dmPipelineDown.title === 'INGESTA ZIGBEE DETENIDA');
+check('F134: aviso de ingesta explica el sensor conectado',
+  dmPipelineDown.subtitle.indexOf('puede estar conectado') >= 0);
+const dmPipelineOk = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', stale: true, age_seconds: 9000 },
+  stats: {},
+  pipeline: { enabled: true, healthy: true, state: 'ok' },
+});
+check('F134: pipeline sano mantiene SIN DATOS del sensor',
+  dmPipelineOk.state === 'STALE' && dmPipelineOk.title === 'SIN DATOS');
+const dmPipelineDisabled = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', stale: true, age_seconds: 9000 },
+  stats: {},
+  pipeline: { enabled: false, healthy: false, state: 'disabled' },
+});
+check('F134: pipeline deshabilitado no genera aviso',
+  dmPipelineDisabled.state === 'STALE' && dmPipelineDisabled.title === 'SIN DATOS');
+
 const dmNull = RadarScope.detectionModel(null);
 check('banner sin scope → SIN DATOS', dmNull.tone === 'dim' && dmNull.title === 'SIN DATOS');
 

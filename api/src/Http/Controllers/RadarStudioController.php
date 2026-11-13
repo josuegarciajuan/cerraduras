@@ -15,6 +15,7 @@ use App\Http\Response;
 use App\Infrastructure\Sensors\RadarLiveService;
 use App\Infrastructure\Sensors\RadarStudioStore;
 use App\Infrastructure\Sensors\SensorContextBuilder;
+use App\Infrastructure\Sensors\ZigbeePipelineStatusService;
 use App\Infrastructure\Zigbee\RadarCalibrationConvergence;
 use App\Infrastructure\Zigbee\ZigbeeRadarCalibrationService;
 use PDO;
@@ -38,16 +39,27 @@ final class RadarStudioController
     private RadarStudioStore $store;
     /** @var callable(string,string):array{ok:bool,error:?string}|null */
     private $publisher;
+    private ?ZigbeePipelineStatusService $pipelines = null;
 
     /**
      * @param callable():PDO $pdoProvider
      * @param callable(string,string):array{ok:bool,error:?string}|null $publisher
      */
-    public function __construct(callable $pdoProvider, string $stateDir, ?callable $publisher = null)
-    {
+    public function __construct(
+        callable $pdoProvider,
+        string $stateDir,
+        ?callable $publisher = null,
+        ?ZigbeePipelineStatusService $pipelines = null
+    ) {
         $this->pdoProvider = $pdoProvider;
         $this->store = new RadarStudioStore($stateDir);
         $this->publisher = $publisher;
+        $this->pipelines = $pipelines;
+    }
+
+    private function pipelineService(): ZigbeePipelineStatusService
+    {
+        return $this->pipelines ??= new ZigbeePipelineStatusService();
     }
 
     // ── GET /dashboard-api/sensores/v2/radar/scope ────────────────────────
@@ -80,6 +92,10 @@ final class RadarStudioController
         }
         try {
             $payload = (new RadarLiveService($this->pdo()))->payload($roomId);
+            $device = $this->deviceForRoom($roomId);
+            $payload['pipeline'] = $device !== null
+                ? $this->pipelineService()->forDevice($device)
+                : $this->pipelineService()->forProfile('prod');
             return Response::json(200, $payload)->withHeader('Cache-Control', 'no-store');
         } catch (RuntimeException $e) {
             return $this->runtimeError($e);
@@ -1307,6 +1323,7 @@ final class RadarStudioController
             'calibration' => $this->calibrationPayload($device, $status, $settings),
             'baseline' => ZigbeeRadarCalibrationService::BASELINE,
             'scope' => $scope,
+            'pipeline' => $this->pipelineService()->forDevice($device),
         ];
     }
 

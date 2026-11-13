@@ -46,6 +46,12 @@ check('worker spool respeta el flag', str_contains($worker, "Config::getBool('ZI
 check('health/deep expone bloque zigbee', str_contains($health, "checks['zigbee']")
     && str_contains($health, 'ingress_connected')
     && str_contains($health, 'spool_pending'));
+check('health/deep evalúa frescura y pipelines', str_contains($health, 'pipelines')
+    && str_contains($health, 'status_age_seconds')
+    && str_contains($health, 'ZigbeePipelineStatusService'));
+check('política pura de salud del pipeline', is_file(__DIR__ . '/../../src/Domain/Sensors/ZigbeePipelineHealth.php'));
+check('lector de estado prod/dev', is_file(__DIR__ . '/../../src/Infrastructure/Sensors/ZigbeePipelineStatusReader.php'));
+check('servicio de estado del pipeline', is_file(__DIR__ . '/../../src/Infrastructure/Sensors/ZigbeePipelineStatusService.php'));
 check('readiness disponible', is_file(__DIR__ . '/../../bin/zigbee-readiness.php'));
 check('instalador de dependencias Node', is_file(__DIR__ . '/../../bin/zigbee-install-deps.sh'));
 check('sin poller Tuya', !is_file(__DIR__ . '/../../bin/tuya-presence-poller.js')
