@@ -143,6 +143,13 @@ const opMaintainedAbsent = RadarScope.operationalModel({
 check('ausencia mantenida → AUSENCIA MANTENIDA', opMaintainedAbsent.state === 'ABSENT' && opMaintainedAbsent.tone === 'dim');
 const opNone = RadarScope.operationalModel({});
 check('sin decisión → SIN DECISIÓN', opNone.state === 'NONE' && opNone.tone === 'dim');
+const opStale = RadarScope.operationalModel({
+  decision_age_seconds: 600,
+  stale_seconds: 30,
+  presence_decision: { outcome: 'unverified', effective_presence: 'ABSENT', event_at: '2020-01-01 00:00:00' },
+});
+check('decisión antigua → SIN DECISIÓN RECIENTE',
+  opStale.state === 'STALE' && opStale.title === 'SIN DECISIÓN RECIENTE');
 
 // ─── Histograma radial ───────────────────────────────────────────────────
 const hist = RadarScope.histogram([
