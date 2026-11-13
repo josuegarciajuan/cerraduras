@@ -45,6 +45,7 @@ if ($resetter === null) {
         'presence_episode_session',
         'presence_episode_started_at',
         'presence_episode_distance_marker',
+        'light_off_at',
     ];
     foreach ($columns as $column) {
         if (str_contains($resetter, $column . ' = NULL')) {

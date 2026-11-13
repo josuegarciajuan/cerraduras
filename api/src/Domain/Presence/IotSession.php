@@ -65,6 +65,9 @@ final class IotSession
     public ?string $presenceEpisodeStartedAt = null;
     public ?string $presenceEpisodeDistanceMarker = null;
 
+    // F137: instante UTC del apagado diferido de luz (NULL = sin plazo).
+    public ?string $lightOffAt = null;
+
     public function __construct(
         int     $id,
         int     $roomId,
@@ -89,7 +92,8 @@ final class IotSession
         ?string $presenceEpisodeMarker = null,
         ?string $presenceEpisodeSession = null,
         ?string $presenceEpisodeStartedAt = null,
-        ?string $presenceEpisodeDistanceMarker = null
+        ?string $presenceEpisodeDistanceMarker = null,
+        ?string $lightOffAt = null
     ) {
         $this->id                  = $id;
         $this->roomId              = $roomId;
@@ -115,6 +119,7 @@ final class IotSession
         $this->presenceEpisodeSession = $presenceEpisodeSession;
         $this->presenceEpisodeStartedAt = $presenceEpisodeStartedAt;
         $this->presenceEpisodeDistanceMarker = $presenceEpisodeDistanceMarker;
+        $this->lightOffAt = $lightOffAt;
     }
 
     /** @return array<string,mixed> */
@@ -140,6 +145,7 @@ final class IotSession
             'presence_episode_session' => $this->presenceEpisodeSession,
             'presence_episode_started_at' => $this->presenceEpisodeStartedAt,
             'presence_episode_distance_marker' => $this->presenceEpisodeDistanceMarker,
+            'light_off_at' => $this->lightOffAt,
         ];
     }
 }

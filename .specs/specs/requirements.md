@@ -14532,3 +14532,37 @@ BLOCK 104.
 - **RF-426 (sin regresión hotelera):** fuera de salas con override explícito se
   conserva el flujo F48 y sus umbrales. Sin Tuya, sin polling nuevo y sin
   migración destructiva.
+
+### F137 — Apagado de luz en salas con política radar (RF-427…RF-432)
+
+**Motivo**: una sala `STANDARD` con política radar explícita (p. ej. PROTO2 con
+`presence_mode_override='radar_door'`) no tiene estancia hotelera cuando se
+entra con ficha/llave. La luz se enciende por apertura o credencial (F124), pero
+ninguna ruta la apagaba: `ExitActionService` exige estancia y la automatización
+del almacén solo aplica a `ALMACEN_BEBIDAS`.
+
+- **RF-427 (ámbito):** la automatización aplica a salas con
+  `rooms.presence_mode_override` no vacío y tipo distinto de `ALMACEN_BEBIDAS` y
+  `TIMBRADO`. No cambia el flujo hotelero con estancia ni el almacén.
+- **RF-428 (disparo):** se programa el OFF cuando la sala queda vacía después de
+  un ciclo de puerta completado (`last_open_at` y `last_close_at`, con
+  `last_close_at >= last_open_at`) y:
+  - una presencia `ABSENT` aplicada, o
+  - un `PROXIMITY CLOSED` aplicado con la sesión en `ABSENT`.
+- **RF-429 (cancelación):** un `PROXIMITY OPEN` o una presencia `PRESENT`
+  aplicados cancelan el OFF pendiente. El retardo es configurable
+  (`RADAR_ROOM_LIGHT_OFF_DELAY_SECONDS`, def. 1 s, 0–10 s) para no parpadear.
+- **RF-430 (persistencia):** el plazo se guarda en `iot_sessions.light_off_at`
+  (migración aditiva `0152`) dentro de la misma transacción que el estado de la
+  sesión. `exit-scan` ejecuta el OFF si la sesión sigue `ABSENT` y limpia el
+  plazo; si llegó presencia, solo lo cancela. Sin polling ni llamadas a Tuya.
+- **RF-431 (seguridad y alcance):** la automatización es best-effort y
+  configurable (`RADAR_ROOM_LIGHT_AUTOMATION`, def. true). Un fallo del switch
+  no bloquea el pipeline de sensores. Almacén y TIMBRADO conservan su flujo.
+- **RF-432 (verificación):** unit `RadarRoomLightPolicyTest` e
+  `IotSessionServiceTest`, comprobación de migración/cableado en el runner
+  (BLOCK 105) y prueba física en una sala radar estándar.
+
+**Trazabilidad:** `RadarRoomLightPolicy`, `IotSessionService`, `IotSession`,
+`IotSessionRepository`, `exit-scan.php`, migración `0152`,
+`RadarRoomLightPolicyTest`, `IotSessionServiceTest`, BLOCK 105.

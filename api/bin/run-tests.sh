@@ -10653,6 +10653,62 @@ else
 fi
 
 # =============================================================================
+# BLOCK 105 — F137: apagado de luz en salas con política radar
+# Trazabilidad: F137 · requirements.md (F137) · design.md §F137
+# =============================================================================
+block "BLOCK 105 — F137: apagado de luz en salas radar"
+
+for F137_FILE in \
+    src/Domain/Presence/RadarRoomLightPolicy.php \
+    migrations/0152_room_light_off.sql; do
+    if [ -f "$F137_FILE" ]; then
+        pass "F137: existe $F137_FILE"
+    else
+        fail "F137: $F137_FILE" "no encontrado"
+    fi
+done
+
+for F137_PHP in \
+    src/Domain/Presence/RadarRoomLightPolicy.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Domain/Presence/IotSessionRepository.php \
+    src/Domain/Presence/IotSession.php \
+    bin/exit-scan.php; do
+    if php -l "$F137_PHP" >/tmp/f137-php.log 2>&1; then
+        pass "F137: sintaxis $(basename "$F137_PHP")"
+    else
+        fail "F137: sintaxis $(basename "$F137_PHP")" "$(tail -2 /tmp/f137-php.log | tr '\n' ' ')"
+    fi
+done
+
+if grep -q "RadarRoomLightPolicy" src/Domain/Presence/IotSessionService.php \
+   && grep -q "light_off_at" src/Domain/Presence/IotSessionRepository.php \
+   && grep -q "RADAR LIGHT OFF" bin/exit-scan.php; then
+    pass "F137: servicio, repositorio y exit-scan cableados"
+else
+    fail "F137: cableado" "falta RadarRoomLightPolicy/light_off_at/RADAR LIGHT OFF"
+fi
+
+F137_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'light_off_at'" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F137_COL" -ge 1 ]; then
+    pass "F137: migración 0152 aplicada"
+else
+    fail "F137: migración 0152" "light_off_at ausente"
+fi
+
+if php tests/Unit/RadarRoomLightPolicyTest.php >/tmp/f137-policy.log 2>&1; then
+    pass "F137: unit RadarRoomLightPolicy"
+else
+    fail "F137: unit RadarRoomLightPolicy" "$(tail -3 /tmp/f137-policy.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/IotSessionServiceTest.php >/tmp/f137-iot.log 2>&1; then
+    pass "F137: unit IotSessionService"
+else
+    fail "F137: unit IotSessionService" "$(tail -3 /tmp/f137-iot.log | tr '\n' ' ')"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

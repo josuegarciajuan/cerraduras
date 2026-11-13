@@ -162,6 +162,42 @@ while ($running) {
         echo "[exit-scan] [$ts] PENDING FATAL: " . $e->getMessage() . "\n";
     }
 
+    // F137: apagado diferido de luz en salas normales con política radar.
+    // IotSessionService escribe `iot_sessions.light_off_at` tras un ciclo de
+    // puerta con ausencia; aquí se ejecuta el OFF y se limpia el plazo. Un
+    // PRESENT/OPEN lo cancela antes de vencer y solo se limpia.
+    try {
+        if (\App\Support\Config::getBool('RADAR_ROOM_LIGHT_AUTOMATION', true)) {
+            $dueRadar = $pdo->query(
+                "SELECT s.room_id, s.presence_state
+                   FROM iot_sessions s
+                   JOIN rooms r ON r.id = s.room_id
+                   JOIN room_types rt ON rt.id = r.room_type_id
+                  WHERE s.light_off_at IS NOT NULL
+                    AND s.light_off_at <= UTC_TIMESTAMP(3)
+                    AND r.presence_mode_override IS NOT NULL
+                    AND r.presence_mode_override <> ''
+                    AND rt.code NOT IN ('ALMACEN_BEBIDAS','TIMBRADO')"
+            )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+            foreach ($dueRadar as $lightRow) {
+                $lightRoom = (int) $lightRow['room_id'];
+                $presence = (string) ($lightRow['presence_state'] ?? '');
+                if ($presence === 'ABSENT') {
+                    $result = $switchSvc->turnOff($lightRoom);
+                    echo "[exit-scan] [$ts] RADAR LIGHT OFF room={$lightRoom} ok=" . (($result['ok'] ?? false) ? '1' : '0') . "\n";
+                } else {
+                    echo "[exit-scan] [$ts] RADAR LIGHT OFF cancelado room={$lightRoom} presence={$presence}\n";
+                }
+                $pdo->prepare('UPDATE iot_sessions SET light_off_at=NULL WHERE room_id=:r')
+                    ->execute([':r' => $lightRoom]);
+            }
+        } else {
+            $pdo->exec('UPDATE iot_sessions SET light_off_at=NULL WHERE light_off_at IS NOT NULL');
+        }
+    } catch (\Throwable $e) {
+        echo "[exit-scan] [$ts] RADAR LIGHT ERROR: " . $e->getMessage() . "\n";
+    }
+
     // F114+: apagado diferido de la luz del almacén. Solo BD local; el
     // comando de luz se envía una vez vencido el plazo y si la sesión sigue
     // en ABSENT. Un PRESENT/OPEN cancela el plazo antes de que venza.

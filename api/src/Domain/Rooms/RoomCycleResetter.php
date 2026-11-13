@@ -44,7 +44,7 @@ final class RoomCycleResetter implements RoomCycleResetterInterface
                      presence_pending_config_key = NULL, presence_outcome_json = NULL,
                      presence_episode_marker = NULL, presence_episode_session = NULL,
                      presence_episode_started_at = NULL, presence_episode_distance_marker = NULL,
-                     updated_at = UTC_TIMESTAMP(3)"
+                     light_off_at = NULL, updated_at = UTC_TIMESTAMP(3)"
         )->execute([':rid' => $roomId]);
     }
 }
