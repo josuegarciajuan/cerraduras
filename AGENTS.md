@@ -1741,5 +1741,5 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   revalidar; `ExitRuleEvaluator` solo cierra si la sesión está
   `VACANT_CONFIRMED`; `ExitActionService` no apaga en STANDARD.
 - **Verificación**: `StandardOccupancyPolicyTest` (33),
-  `StandardOccupancyEngineTest` (10), comprobación de integración real con
+  `StandardOccupancyEngineTest` (12), comprobación de integración real con
   restauración de BD y regresión pendiente del runner completo.
