@@ -56,7 +56,10 @@ La UI **no** decide presencia, ocupación, luz ni posición. Solo representa.
 7. **Vacío** solo si: `ENTRY_VERIFY`/`EXIT_VERIFY`, DP1 ABSENT auténtico,
    continuidad del radar, ciclo de puerta/acceso y guarda cumplida.
 8. **Sin datos** → incertidumbre; se conserva ocupación y luz.
-9. **Switch sin confirmar** → se conserva la intención y se reintenta.
+9. **Switch sin confirmar** → se conserva la intención y se reintenta con
+   límite. `confirmed_off` exige telemetría posterior a la orden; un PUBACK es
+   `published_off_unconfirmed`. La bombilla muestra `?` si el reporte es
+   anterior al último comando.
 10. **Reset de ciclo** limpia ocupación, plazos, intención de luz y episodios.
 
 ## 5. Tiempos iniciales
