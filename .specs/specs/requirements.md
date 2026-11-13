@@ -14581,8 +14581,10 @@ del almacén solo aplica a `ALMACEN_BEBIDAS`.
   luz protegida. Vacío solo con DP1 ABSENT auténtico, continuidad, ciclo y
   guarda (`STANDARD_VACANCY_GUARD_SECONDS`, def. 10 s).
 - **RF-438 (luz):** `light_desired` persistido; OFF solo desde
-  `VACANT_CONFIRMED`; un fallo no borra la intención. La bombilla del dashboard
-  usa `switch_state` y, si falta, `last_command` con `?`.
+  `VACANT_CONFIRMED`; un fallo no borra la intención y se reintenta con límite.
+  `confirmed_off` exige telemetría posterior a la orden; un PUBACK es
+  `published_off_unconfirmed`. La bombilla usa `switch_state` y, si falta o está
+  obsoleta, `last_command` con `?`.
 - **RF-439 (UI observadora):** `/live` y SSE exponen `occupancy` y `light`; el
   monigote usa el estado del servidor. El GET de `/radar/wizard` no escribe; la
   evaluación va por POST. Se corrige el signo de `server_skew`.
