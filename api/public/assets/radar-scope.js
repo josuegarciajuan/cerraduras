@@ -239,6 +239,12 @@
     var gate = rangeEvaluation(scope);
     var gateStatus = gate && gate.status ? String(gate.status) : '';
 
+    // F134: si el radar no tiene datos y la ingesta está parada, el aviso de
+    // pipeline manda sobre cualquier decisión antigua de alcance.
+    if (visual.state === 'STALE' && pipelineDown(scope)) {
+      return staleDetection(scope, age, lastDistance);
+    }
+
     if (gateStatus === 'out_of_range') {
       return {
         state: 'FILTERED', tone: 'bad', icon: '⊘', title: 'FUERA DEL ALCANCE',
