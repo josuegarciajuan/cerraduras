@@ -252,6 +252,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F134 Salud del pipeline Zigbee y aviso de ingesta** | **`ZigbeePipelineHealthTest`/`ZigbeeRuntimeWiringTest`/`PanelV21Test`/`radar-scope.test.js` + `health/deep`** | **Implementado: systemd+frescura, aviso en `/sensores`, `/dashboard` y `/panel`; regresión 1468/10/19 con 10 fallos ambientales por corrida de sensores concurrente** |
 | **F135 Radar door: presencia sin DP9 y UI sensor/política** | **`RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js` + `/radar/live`** | **Implementado: PROTO2 en `radar_door`, ventana de puerta 60 s, fallback DP1 con puerta, banner de sensor separado del badge de política** |
 | **F137 Apagado de luz en salas con política radar** | **`RadarRoomLightPolicyTest`/`IotSessionServiceTest` + BLOCK 105** | **Implementado: OFF diferido tras ciclo de puerta + ausencia, cancelable con OPEN/PRESENT; PROTO2/radar_door incluido; almacén y TIMBRADO intactos** |
+| **F138 Ocupación única STANDARD + radar DP1 + luz fiel** | **`StandardOccupancyPolicyTest`/`StandardOccupancyEngineTest` + `croquis-logic.test.js`** | **Implementado: motor único para todas las STANDARD; DP1 principal, DP9 auxiliar; puerta abierta = umbral; sin OFF por silencio/DP9 exterior; bombilla = switch; GET de Radar Studio sin escritura en `/wizard`; migraciones 0153/0154** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1715,3 +1716,30 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarRoomLightPolicyTest` (14),
   `IotSessionServiceTest` (64, incluye F137) y BLOCK 105 del runner. Pendiente
   la prueba física en PROTO2 entrando/saliendo con ficha.
+
+### F138 — Ocupación única STANDARD, radar DP1 y luz fiel
+
+- **Ámbito**: todas las habitaciones `STANDARD` usan el mismo motor. No hay
+  rama “hotelera” separada. `ALMACEN_BEBIDAS` y `TIMBRADO` no cambian.
+- **Radar**: DP1 es la señal principal; DP9 es auxiliar y nunca crea ausencia.
+  El alcance DP4 se sigue escribiendo, pero no se considera una valla física
+  perfecta. Un DP9 exterior produce `RANGE_CHALLENGED`, no vacío.
+- **Estados**: `VACANT_CONFIRMED`, `ACCESS_PENDING`, `DOOR_OPEN`,
+  `ENTRY_VERIFY`, `OCCUPIED`, `EXIT_VERIFY`, `OCCUPANCY_UNCERTAIN`.
+- **Reglas**: puerta abierta = umbral; presencia cancela OFF; ausencia sin ciclo
+  de salida = incertidumbre y luz protegida; vacío solo con DP1 ABSENT auténtico,
+  continuidad, ciclo y guarda. Silencio/gap/stale = incertidumbre.
+- **Luz**: `light_desired` persistido; OFF solo desde `VACANT_CONFIRMED`;
+  reintento si falla; la bombilla del dashboard usa `switch_state` y, si falta,
+  `last_command` con `?`.
+- **Persistencia**: migración `0153` (columnas de ocupación en `iot_sessions`) y
+  `0154` (limpia `presence_mode_override` en STANDARD).
+- **UI**: `occupancy` y `light` viajan en `/live` y SSE; el monigote usa el
+  estado del servidor; se corrige el signo de `server_skew`; el GET de
+  `/radar/wizard` es observador y la evaluación va por POST.
+- **Recuperación**: `exit-scan` resuelve plazos STANDARD y ejecuta OFF tras
+  revalidar; `ExitRuleEvaluator` solo cierra si la sesión está
+  `VACANT_CONFIRMED`; `ExitActionService` no apaga en STANDARD.
+- **Verificación**: `StandardOccupancyPolicyTest` (33),
+  `StandardOccupancyEngineTest` (10), comprobación de integración real con
+  restauración de BD y regresión pendiente del runner completo.

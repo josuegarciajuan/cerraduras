@@ -171,6 +171,40 @@ final class IotSessionService
                 $this->iotSessions->beginTransaction();
                 $session = $this->iotSessions->lockByRoomId($roomId);
 
+                // F138: todas las STANDARD usan el motor único de ocupación.
+                // Las salas especiales (almacén/timbrado) conservan el flujo
+                // anterior. No hay una rama "hotelera" separada.
+                if ($roomType !== null && strtoupper($roomType->code) === 'STANDARD') {
+                    if (!$processable) {
+                        $this->presenceEvents->markAudit(
+                            $rawEvent->id,
+                            false,
+                            SensorEventDecision::DUPLICATE
+                        );
+                        $this->iotSessions->commit();
+                        return ['accepted' => false, 'derived_state' => []];
+                    }
+                    $standard = $this->applyStandardEvent(
+                        $room,
+                        $session,
+                        $event,
+                        $rawEvent,
+                        $now,
+                        $correlationId
+                    );
+                    $this->iotSessions->commit();
+
+                    $session = $standard['session'];
+                    $applied = (bool) $standard['applied'];
+                    $this->postStandardCommit($room, $session, $standard, $correlationId);
+                    // No debe ejecutarse el bloque común post-commit: el motor
+                    // STANDARD ya gestionó luz/salida. Evita dobles órdenes.
+                    return [
+                        'accepted' => $applied,
+                        'derived_state' => $session->toArray(),
+                    ];
+                }
+
                 // F130/F133: admisibilidad de la evidencia ANTES de cualquier
                 // decisión de presencia. La DP9 puede llegar en otra trama del
                 // MISMO episodio DP1, pero nunca de otro dispositivo, otra
@@ -896,6 +930,217 @@ final class IotSessionService
         }
 
         return ['accepted' => false, 'derived_state' => ['door_state' => $value], 'reason' => 'bootstrap'];
+    }
+
+    /**
+     * F138: aplica un evento a una STANDARD con el motor único.
+     *
+     * @param array<string,mixed> $event
+     * @return array<string,mixed>
+     */
+    private function applyStandardEvent(
+        Room $room,
+        IotSession $session,
+        array $event,
+        PresenceEvent $rawEvent,
+        \DateTimeImmutable $now,
+        string $correlationId
+    ): array {
+        $evtUtc = $this->isoToMysqlUtc((string) $event['occurred_at']);
+        $sensor = (string) $event['sensor'];
+        $value = (string) $event['value'];
+        $activeStay = $this->stays->lockActiveForRoom($room->id);
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        if ($roomType === null) {
+            throw new \RuntimeException('standard_room_type_missing');
+        }
+
+        $result = StandardOccupancyEngine::apply($session, $event, $activeStay, $roomType, $now);
+
+        if (($result['confirmed_entry'] ?? false) && $activeStay !== null) {
+            // La consolidación usa la presencia ya actualizada por el motor.
+            $this->consolidateEntry($session, $activeStay, $evtUtc, $room, true);
+        }
+        if ($sensor === PresenceEvent::SENSOR_PROXIMITY
+            && $value === PresenceEvent::VALUE_CLOSED
+        ) {
+            // Conserva el cierre de sesión de trabajador de F38.
+            $this->handleWorkerExitOnDoorClose($room, $session, $evtUtc, $correlationId, $now);
+        }
+
+        $this->iotSessions->updateState($session);
+        $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
+        $this->presenceEvents->markAudit(
+            $rawEvent->id,
+            (bool) ($result['applied'] ?? false),
+            (bool) ($result['applied'] ?? false)
+                ? null
+                : (string) ($result['reason'] ?? 'standard_noop')
+        );
+
+        $result['session'] = $session;
+        return $result;
+    }
+
+    /**
+     * Efectos externos del motor STANDARD, siempre fuera de la transacción.
+     *
+     * @param array<string,mixed> $result
+     */
+    private function postStandardCommit(
+        Room $room,
+        IotSession $session,
+        array $result,
+        string $correlationId
+    ): void {
+        $light = (string) ($result['light'] ?? StandardOccupancyEngine::LIGHT_NONE);
+        if ($this->switchService !== null
+            && ($light === StandardOccupancyEngine::LIGHT_ON
+                || $light === StandardOccupancyPolicy::LIGHT_CANCEL_OFF)
+        ) {
+            try {
+                $this->switchService->turnOn($room->id);
+                $session->lightLastResult = 'published_on';
+                $this->iotSessions->setLightResult($room->id, 'published_on');
+            } catch (\Throwable $e) {
+                $session->lightLastResult = 'on_failed';
+                $this->iotSessions->setLightResult($room->id, 'on_failed');
+                error_log('[IotSessionService] standard light ON failed: ' . $e->getMessage());
+            }
+        }
+
+        if ($this->exitActionService !== null
+            && (($result['confirmed_exit'] ?? false)
+                || ($session->occupancyState === StandardOccupancyPolicy::STATE_VACANT_CONFIRMED))
+        ) {
+            try {
+                $this->exitActionService->executeIfPending($room->id, $correlationId);
+            } catch (\Throwable $e) {
+                error_log('[IotSessionService] standard exit evaluation failed: ' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * F138: resuelve vencimientos STANDARD sin depender de un mensaje nuevo.
+     * Lo invoca exit-scan. No publica MQTT: devuelve la acción de luz.
+     *
+     * @return array<string,mixed>
+     */
+    public function resolveStandardDeadlines(int $roomId, string $correlationId): array
+    {
+        $room = $this->rooms->findById($roomId);
+        if ($room === null) {
+            return ['result' => 'skipped', 'reason' => 'room_not_found'];
+        }
+        $roomType = $this->roomTypes->findById($room->roomTypeId);
+        if ($roomType === null || strtoupper($roomType->code) !== 'STANDARD') {
+            return ['result' => 'skipped', 'reason' => 'not_standard'];
+        }
+
+        for ($attempt = 1; $attempt <= self::MAX_TX_RETRIES; $attempt++) {
+            try {
+                $this->iotSessions->beginTransaction();
+                $session = $this->iotSessions->lockByRoomId($roomId);
+                $activeStay = $this->stays->lockActiveForRoom($roomId);
+                $now = Clock::nowUtc();
+                $nowMs = (int) $now->format('Uv');
+                $entryDue = $this->mysqlToMs($session->entryDeadlineAt);
+                $vacancyDue = $this->mysqlToMs($session->vacancyDeadlineAt);
+                $uncertainSince = $this->mysqlToMs($session->uncertainSince);
+                $recentOpen = false;
+                $openMs = $this->mysqlToMs($session->lastOpenAt);
+                $entryWindow = max(5, min(300, (int) $roomType->presenceEntryWindowSeconds)) * 1000;
+                $recentOpen = $openMs !== null && ($nowMs - $openMs) <= $entryWindow;
+                $closeMs = $this->mysqlToMs($session->lastCloseAt);
+                $exitCycleMax = max(5, min(300, (int) (\App\Support\Config::get('STANDARD_EXIT_CYCLE_MAX_SECONDS') ?? 30))) * 1000;
+                $recentClose = $closeMs !== null && ($nowMs - $closeMs) <= $exitCycleMax;
+
+                $decision = StandardOccupancyPolicy::resolve([
+                    'state' => $session->occupancyState ?? StandardOccupancyPolicy::STATE_VACANT_CONFIRMED,
+                    'presence' => $session->presenceState,
+                    'door_state' => $session->doorState,
+                    'radar_health' => $session->radarHealth ?? StandardOccupancyPolicy::HEALTH_UNAVAILABLE,
+                    'now_ms' => $nowMs,
+                    'entry_deadline_ms' => $entryDue,
+                    'vacancy_deadline_ms' => $vacancyDue,
+                    'uncertain_since_ms' => $uncertainSince,
+                    'entry_confirmed' => $activeStay !== null && $activeStay->entryConfirmedAt !== null,
+                    'cycle_kind' => is_array($session->occupancyData)
+                        ? ($session->occupancyData['cycle_kind'] ?? null) : null,
+                    'active_stay' => $activeStay !== null,
+                    'access_context' => $activeStay !== null,
+                    'recent_open' => $recentOpen,
+                    'recent_close' => $recentClose,
+                ]);
+
+                $previousState = $session->occupancyState;
+                $session->occupancyState = (string) ($decision['state'] ?? $session->occupancyState);
+                $session->presenceState = (string) ($decision['presence'] ?? $session->presenceState);
+                $session->entryDeadlineAt = $this->standardMsToSql($decision['entry_deadline_ms'] ?? null);
+                $session->vacancyDeadlineAt = $this->standardMsToSql($decision['vacancy_deadline_ms'] ?? null);
+                $session->uncertainSince = $this->standardMsToSql($decision['uncertain_since_ms'] ?? null);
+
+                $light = (string) ($decision['light'] ?? StandardOccupancyEngine::LIGHT_NONE);
+                if ($light === StandardOccupancyPolicy::LIGHT_ON
+                    || $light === StandardOccupancyPolicy::LIGHT_CANCEL_OFF
+                ) {
+                    $session->lightDesired = 'ON';
+                    $session->lightOffAt = null;
+                } elseif ($light === StandardOccupancyPolicy::LIGHT_OFF) {
+                    $session->lightDesired = 'OFF';
+                    $delay = max(0, min(10, (int) (\App\Support\Config::get('STANDARD_LIGHT_OFF_DELAY_SECONDS') ?? 1)));
+                    $session->lightOffAt = $now->modify('+' . $delay . ' seconds')->format('Y-m-d H:i:s.v');
+                }
+
+                $session->occupancyData = array_merge(
+                    is_array($session->occupancyData) ? $session->occupancyData : [],
+                    ['reason' => $decision['reason'] ?? null, 'resolved_at' => $now->format('Y-m-d\TH:i:s.v\Z')]
+                );
+                $session->presenceOutcome = [
+                    'state' => $session->occupancyState,
+                    'occupancy_state' => $session->occupancyState,
+                    'reason' => $decision['reason'] ?? null,
+                    'outcome' => $session->occupancyState === StandardOccupancyPolicy::STATE_OCCUPIED
+                        ? 'applied'
+                        : ($session->occupancyState === StandardOccupancyPolicy::STATE_VACANT_CONFIRMED
+                            ? 'vacant' : 'protected'),
+                    'effective_presence' => $session->presenceState,
+                    'light' => $session->lightDesired,
+                    'radar_health' => $session->radarHealth,
+                    'decided_at' => $now->format('Y-m-d\TH:i:s.v\Z'),
+                    'source' => 'standard_occupancy_deadline',
+                ];
+                $this->iotSessions->updateState($session);
+                $this->iotSessions->commit();
+
+                if (($decision['confirmed_exit'] ?? false) && $this->exitActionService !== null) {
+                    try {
+                        $this->exitActionService->executeIfPending($roomId, $correlationId);
+                    } catch (\Throwable $e) {
+                        error_log('[IotSessionService] standard exit deadline failed: ' . $e->getMessage());
+                    }
+                }
+
+                return [
+                    'result' => $previousState !== $session->occupancyState ? 'applied' : 'maintained',
+                    'occupancy_state' => $session->occupancyState,
+                    'presence_state' => $session->presenceState,
+                    'light' => $light,
+                    'reason' => $decision['reason'] ?? null,
+                ];
+            } catch (PDOException $e) {
+                $this->safeRollback();
+                if (!$this->isRetryableDeadlock($e) || $attempt >= self::MAX_TX_RETRIES) {
+                    throw $e;
+                }
+                usleep(20_000 * $attempt + random_int(0, 10_000));
+            } catch (\Throwable $e) {
+                $this->safeRollback();
+                throw $e;
+            }
+        }
+        return ['result' => 'retry_exhausted'];
     }
 
     private function mutate(
@@ -1811,7 +2056,11 @@ final class IotSessionService
     public function resolvePendingPresence(int $roomId, string $correlationId): array
     {
         $room = $this->rooms->findById($roomId);
-        if ($room === null || $this->resolveRadarMode($room, $this->roomTypes->findById($room->roomTypeId)) === null) {
+        $roomType = $room !== null ? $this->roomTypes->findById($room->roomTypeId) : null;
+        if ($room === null
+            || ($roomType !== null && strtoupper($roomType->code) === 'STANDARD')
+            || $this->resolveRadarMode($room, $roomType) === null
+        ) {
             return ['result' => 'skipped', 'room_id' => $roomId];
         }
         $result = 'skipped';
@@ -1984,6 +2233,14 @@ final class IotSessionService
         $seconds = intdiv($ms, 1000);
         $millis = $ms % 1000;
         return gmdate('Y-m-d H:i:s', $seconds) . '.' . str_pad((string) $millis, 3, '0', STR_PAD_LEFT);
+    }
+
+    private function standardMsToSql(mixed $ms): ?string
+    {
+        if ($ms === null || $ms === '' || !is_numeric($ms)) {
+            return null;
+        }
+        return $this->mysqlUtcFromMs((int) $ms);
     }
 
     /**

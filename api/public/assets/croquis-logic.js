@@ -533,8 +533,24 @@
     return 'state';
   }
 
+  /**
+   * F138: posición del monigote cuando el servidor manda un estado de
+   * ocupación STANDARD. La UI no reinterpreta la señal cruda.
+   */
+  function resolveStandardMonigote(occupancyState, doorOpen) {
+    var state = String(occupancyState || '').toUpperCase();
+    if (state === 'VACANT_CONFIRMED') return 'OUTSIDE';
+    if (state === 'ACCESS_PENDING') return 'AT_QR';
+    if (state === 'DOOR_OPEN') return doorOpen ? 'CROSSING' : 'WAITING';
+    if (state === 'OCCUPIED') return doorOpen ? 'WAITING' : 'INSIDE';
+    if (state === 'ENTRY_VERIFY' || state === 'EXIT_VERIFY'
+        || state === 'OCCUPANCY_UNCERTAIN') return 'WAITING';
+    return 'state';
+  }
+
   return {
     deriveCroquis: deriveCroquis,
+    resolveStandardMonigote: resolveStandardMonigote,
     parseTime: parseTime,
     resolveDoor: resolveDoor,
     recentKeyAccess: recentKeyAccess,

@@ -17,6 +17,7 @@ const {
   deriveCroquis,
   recentKeyAccess,
   resolveDashboardMonigote,
+  resolveStandardMonigote,
   DOOR_PULSE_MS,
   KEY_ACCESS_WINDOW_MS,
   CROSSING_HOLD_MS,
@@ -630,6 +631,16 @@ const f136RadarStale = deriveCroquis({
 }, BASE);
 check('F136 radar stale → no acredita persona dentro', f136RadarStale.personInside === false);
 check('F136 radar stale → fase outside', f136RadarStale.phase === 'outside');
+
+// ─── 19. F138: posición desde el estado de ocupación del servidor ───────
+check('F138 OCCUPIED + puerta cerrada → INSIDE', resolveStandardMonigote('OCCUPIED', false) === 'INSIDE');
+check('F138 OCCUPIED + puerta abierta → WAITING (nunca INSIDE)', resolveStandardMonigote('OCCUPIED', true) === 'WAITING');
+check('F138 DOOR_OPEN → CROSSING', resolveStandardMonigote('DOOR_OPEN', true) === 'CROSSING');
+check('F138 ENTRY_VERIFY → WAITING', resolveStandardMonigote('ENTRY_VERIFY', false) === 'WAITING');
+check('F138 EXIT_VERIFY → WAITING', resolveStandardMonigote('EXIT_VERIFY', false) === 'WAITING');
+check('F138 OCCUPANCY_UNCERTAIN → WAITING', resolveStandardMonigote('OCCUPANCY_UNCERTAIN', false) === 'WAITING');
+check('F138 VACANT_CONFIRMED → OUTSIDE', resolveStandardMonigote('VACANT_CONFIRMED', false) === 'OUTSIDE');
+check('F138 ACCESS_PENDING → AT_QR', resolveStandardMonigote('ACCESS_PENDING', false) === 'AT_QR');
 
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' croquis-logic: ' + passed + ' passed, ' + failed + ' failed\n');
 if (failed > 0) process.exit(1);

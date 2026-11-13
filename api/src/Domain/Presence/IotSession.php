@@ -68,6 +68,17 @@ final class IotSession
     // F137: instante UTC del apagado diferido de luz (NULL = sin plazo).
     public ?string $lightOffAt = null;
 
+    // F138: motor único de ocupación STANDARD.
+    public ?string $occupancyState = null;
+    /** @var array<string,mixed>|null */
+    public ?array $occupancyData = null;
+    public ?string $entryDeadlineAt = null;
+    public ?string $vacancyDeadlineAt = null;
+    public ?string $lightDesired = null;
+    public ?string $lightLastResult = null;
+    public ?string $radarHealth = null;
+    public ?string $uncertainSince = null;
+
     public function __construct(
         int     $id,
         int     $roomId,
@@ -93,7 +104,15 @@ final class IotSession
         ?string $presenceEpisodeSession = null,
         ?string $presenceEpisodeStartedAt = null,
         ?string $presenceEpisodeDistanceMarker = null,
-        ?string $lightOffAt = null
+        ?string $lightOffAt = null,
+        ?string $occupancyState = null,
+        ?array $occupancyData = null,
+        ?string $entryDeadlineAt = null,
+        ?string $vacancyDeadlineAt = null,
+        ?string $lightDesired = null,
+        ?string $lightLastResult = null,
+        ?string $radarHealth = null,
+        ?string $uncertainSince = null
     ) {
         $this->id                  = $id;
         $this->roomId              = $roomId;
@@ -120,6 +139,14 @@ final class IotSession
         $this->presenceEpisodeStartedAt = $presenceEpisodeStartedAt;
         $this->presenceEpisodeDistanceMarker = $presenceEpisodeDistanceMarker;
         $this->lightOffAt = $lightOffAt;
+        $this->occupancyState = $occupancyState;
+        $this->occupancyData = $occupancyData;
+        $this->entryDeadlineAt = $entryDeadlineAt;
+        $this->vacancyDeadlineAt = $vacancyDeadlineAt;
+        $this->lightDesired = $lightDesired;
+        $this->lightLastResult = $lightLastResult;
+        $this->radarHealth = $radarHealth;
+        $this->uncertainSince = $uncertainSince;
     }
 
     /** @return array<string,mixed> */
@@ -146,6 +173,14 @@ final class IotSession
             'presence_episode_started_at' => $this->presenceEpisodeStartedAt,
             'presence_episode_distance_marker' => $this->presenceEpisodeDistanceMarker,
             'light_off_at' => $this->lightOffAt,
+            'occupancy_state' => $this->occupancyState,
+            'occupancy' => $this->occupancyData,
+            'entry_deadline_at' => $this->entryDeadlineAt,
+            'vacancy_deadline_at' => $this->vacancyDeadlineAt,
+            'light_desired' => $this->lightDesired,
+            'light_last_result' => $this->lightLastResult,
+            'radar_health' => $this->radarHealth,
+            'uncertain_since' => $this->uncertainSince,
         ];
     }
 }

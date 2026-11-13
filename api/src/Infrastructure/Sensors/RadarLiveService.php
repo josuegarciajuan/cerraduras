@@ -38,24 +38,21 @@ final class RadarLiveService
 
         $status = (new ZigbeeRadarCalibrationService($this->pdo))->status($roomId, $device);
         $settings = (array) ($status['settings'] ?? []);
-        $stale = (bool) ($status['stale'] ?? true);
-        $age = isset($status['settings_age_seconds']) && is_numeric($status['settings_age_seconds'])
-            ? (int) $status['settings_age_seconds'] : null;
+        // F138: la señal cruda y su frescura salen de la misma vista que el
+        // dashboard. No se reconstruye una presencia paralela desde settings.
+        $presenceView = (new PresenceView($this->pdo))->build($roomId);
+        $viewRaw = is_array($presenceView['raw'] ?? null) ? $presenceView['raw'] : [];
+        $stale = (bool) ($viewRaw['stale'] ?? ($status['stale'] ?? true));
+        $age = isset($viewRaw['age_seconds']) && is_numeric($viewRaw['age_seconds'])
+            ? (int) $viewRaw['age_seconds'] : null;
         $target = isset($settings['target_distance']) && is_numeric($settings['target_distance'])
             ? (float) $settings['target_distance'] : null;
         if ($target !== null && $target <= 0) {
             $target = null;
         }
 
-        $report = is_array($status['presence_report'] ?? null) ? $status['presence_report'] : null;
-        $state = strtoupper(trim((string) ($report['value'] ?? '')));
-        if (!in_array($state, ['PRESENT', 'ABSENT'], true)) {
-            $state = strtoupper(trim((string) ($status['effective_presence'] ?? '')));
-        }
-        if (!in_array($state, ['PRESENT', 'ABSENT'], true)) {
-            $state = 'UNKNOWN';
-        }
-        if ($stale) {
+        $state = strtoupper(trim((string) ($viewRaw['state'] ?? 'UNKNOWN')));
+        if (!in_array($state, ['PRESENT', 'ABSENT'], true) || $stale) {
             $state = 'UNKNOWN';
         }
 

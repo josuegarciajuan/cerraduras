@@ -14566,3 +14566,26 @@ del almacén solo aplica a `ALMACEN_BEBIDAS`.
 **Trazabilidad:** `RadarRoomLightPolicy`, `IotSessionService`, `IotSession`,
 `IotSessionRepository`, `exit-scan.php`, migración `0152`,
 `RadarRoomLightPolicyTest`, `IotSessionServiceTest`, BLOCK 105.
+
+### F138 — Ocupación única STANDARD, DP1 y luz fiel (RF-433…RF-440)
+
+- **RF-433 (motor único):** todas las `STANDARD` usan `StandardOccupancyPolicy`.
+  No hay una rama “hotelera” separada. `ALMACEN_BEBIDAS` y `TIMBRADO` no cambian.
+- **RF-434 (DP1 principal):** DP1 `PRESENT` es presencia plausible inmediata;
+  no exige DP9. Un heartbeat con el mismo valor no reinicia episodios ni plazos.
+- **RF-435 (DP9 auxiliar):** DP9 cero/ausente no crea ausencia; DP9 exterior se
+  registra como `RANGE_CHALLENGED` y no vacía una sala ocupada.
+- **RF-436 (puerta):** puerta abierta = `DOOR_OPEN` y monigote en el umbral.
+  Cierre con presencia = `OCCUPIED`; cierre sin presencia = `ENTRY_VERIFY`.
+- **RF-437 (ausencia segura):** ausencia sin ciclo de salida = incertidumbre y
+  luz protegida. Vacío solo con DP1 ABSENT auténtico, continuidad, ciclo y
+  guarda (`STANDARD_VACANCY_GUARD_SECONDS`, def. 10 s).
+- **RF-438 (luz):** `light_desired` persistido; OFF solo desde
+  `VACANT_CONFIRMED`; un fallo no borra la intención. La bombilla del dashboard
+  usa `switch_state` y, si falta, `last_command` con `?`.
+- **RF-439 (UI observadora):** `/live` y SSE exponen `occupancy` y `light`; el
+  monigote usa el estado del servidor. El GET de `/radar/wizard` no escribe; la
+  evaluación va por POST. Se corrige el signo de `server_skew`.
+- **RF-440 (verificación):** migraciones `0153`–`0155`,
+  `StandardOccupancyPolicyTest`, `StandardOccupancyEngineTest`,
+  `croquis-logic.test.js` y BLOCK 106 del runner.

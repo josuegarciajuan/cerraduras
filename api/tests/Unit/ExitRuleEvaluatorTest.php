@@ -49,6 +49,7 @@ final class FakeIotSessionRepoEval implements IotSessionRepositoryInterface
     public function lockByRoomId(int $roomId): IotSession { return $this->session; }
     public function updateState(IotSession $s): void { $this->session = $s; }
     public function markExitEvaluated(int $roomId, string $closeAtUtc): bool { return true; }
+    public function setLightResult(int $roomId, string $result): void {}
 }
 
 final class FakeStayRepoEval implements StayRepositoryInterface
