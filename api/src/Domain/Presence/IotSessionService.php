@@ -184,7 +184,7 @@ final class IotSessionService
                     $presenceValue = $this->framePresenceValue($event, $meta);
                     if ($presenceValue === PresenceEvent::VALUE_PRESENT) {
                         $this->syncPresenceEpisode($session, $meta, $evtUtc);
-                        $rangeGate = $this->evaluateEpisodeEvidence($session, $meta, $now, $evtUtc);
+                        $rangeGate = $this->evaluateEpisodeEvidence($room, $session, $meta, $now, $evtUtc);
                     } else {
                         // F133: un ABSENT auténtico cierra el episodio. La
                         // ausencia nunca se bloquea por falta de distancia.
@@ -1087,26 +1087,23 @@ final class IotSessionService
         $marker = $report !== null ? (string) ($report['marker'] ?? '') : '';
         $sessionId = $report !== null ? (string) ($report['session_id'] ?? '') : '';
 
-        // Una presencia ya efectiva es un episodio continuo: un marcador
-        // nuevo no lo reinicia (el radar puede republicar DP1). El episodio
-        // cambia solo tras ABSENT o cuando aún no hay ninguno.
-        if ($session->presenceState === IotSession::PRESENCE_PRESENT
-            && $session->presenceEpisodeMarker !== null
-        ) {
+        // Un episodio es una racha continua de PRESENT. El conversor puede
+        // emitir un marcador nuevo en cada publicación, así que el marcador NO
+        // identifica por sí solo un episodio nuevo. Solo un ABSENT lo cierra.
+        if ($session->presenceEpisodeStartedAt !== null) {
+            if ($marker !== '') {
+                $session->presenceEpisodeMarker = $marker;
+            }
+            if ($sessionId !== '') {
+                $session->presenceEpisodeSession = $sessionId;
+            }
             return;
         }
-        if ($marker !== '' && $marker !== $session->presenceEpisodeMarker) {
-            $session->presenceEpisodeMarker = $marker;
-            $session->presenceEpisodeSession = $sessionId !== '' ? $sessionId : null;
-            $session->presenceEpisodeStartedAt = $evtUtc;
-            $session->presenceEpisodeDistanceMarker = null;
-            return;
-        }
-        if ($session->presenceEpisodeStartedAt === null) {
-            // Sin marcador no se puede demostrar un DP1 nuevo, pero el
-            // instante del reporte permite acotar la evidencia correlacionable.
-            $session->presenceEpisodeStartedAt = $evtUtc;
-        }
+
+        $session->presenceEpisodeMarker = $marker !== '' ? $marker : null;
+        $session->presenceEpisodeSession = $sessionId !== '' ? $sessionId : null;
+        $session->presenceEpisodeStartedAt = $evtUtc;
+        $session->presenceEpisodeDistanceMarker = null;
     }
 
     private function clearPresenceEpisode(IotSession $session): void
@@ -1139,6 +1136,7 @@ final class IotSessionService
      * @return array<string,mixed> gate compatible con RadarOperationalRangeDecision
      */
     private function evaluateEpisodeEvidence(
+        Room $room,
         IotSession $session,
         ?array $meta,
         \DateTimeImmutable $now,
@@ -1295,6 +1293,29 @@ final class IotSessionService
             );
         }
 
+        // F133.1: el firmware puede informar PRESENT sin distancia (DP9=0). En
+        // una sala radar explícita y con alcance corto, tras mantener el
+        // episodio durante la gracia, se acredita por DP1. Una DP9 positiva
+        // fuera de alcance sigue teniendo prioridad y convierte a ausencia.
+        if (in_array($correlation['status'], [
+                RadarEvidenceCorrelation::STATUS_NO_DISTANCE,
+                RadarEvidenceCorrelation::STATUS_ZERO_DISTANCE,
+            ], true)
+            && $this->dp1OnlyFallbackEligible($room, $session, $settings, (int) $now->format('Uv'))
+        ) {
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_IN_RANGE,
+                RadarEvidenceCorrelation::REASON_DP1_WITHOUT_DISTANCE,
+                true,
+                false,
+                null,
+                null,
+                $correlation['maximum_range_m'],
+                $correlation['marker'],
+                'dp1_only'
+            );
+        }
+
         return $this->rangeGate(
             RadarOperationalRangeDecision::STATUS_UNVERIFIED,
             (string) $correlation['reason'],
@@ -1305,6 +1326,27 @@ final class IotSessionService
             $correlation['maximum_range_m'],
             $correlation['marker'],
             'episode'
+        );
+    }
+
+    /** F133.1: respaldo DP1 acotado a salas radar normales con alcance corto. */
+    private function dp1OnlyFallbackEligible(
+        Room $room,
+        IotSession $session,
+        array $settings,
+        int $nowMs
+    ): bool {
+        $maxRangeRaw = Config::get('RADAR_DP1_ONLY_MAX_RANGE_M', '3.0');
+        $graceRaw = Config::get('RADAR_DP1_ONLY_GRACE_SECONDS', '2.0');
+        return RadarEvidenceCorrelation::dp1OnlyEligible(
+            $room->presenceModeOverride !== null && $room->presenceModeOverride !== '',
+            $this->isWarehouseRoom($room) || $this->isTimbradoRoom($room),
+            $this->mysqlToMs($session->presenceEpisodeStartedAt),
+            $nowMs,
+            $settings,
+            Config::getBool('RADAR_DP1_ONLY_ENABLED', true),
+            is_numeric($maxRangeRaw) ? (float) $maxRangeRaw : 3.0,
+            (int) round((is_numeric($graceRaw) ? (float) $graceRaw : 2.0) * 1000)
         );
     }
 

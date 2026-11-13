@@ -43,6 +43,7 @@ final class RadarEvidenceCorrelation
     public const REASON_STALE           = 'evidence_outside_episode';
     public const REASON_CACHED          = 'marker_already_used';
     public const REASON_ABSENT          = 'absent';
+    public const REASON_DP1_WITHOUT_DISTANCE = 'dp1_without_distance';
 
     public const MIN_MAXIMUM_RANGE_M = 0.15;
     public const MAX_MAXIMUM_RANGE_M = 9.5;
@@ -152,6 +153,40 @@ final class RadarEvidenceCorrelation
             $reportSession,
             $ageMs
         );
+    }
+
+    /**
+     * F133.1 — respaldo acotado por DP1 cuando el radar detecta presencia pero
+     * no publica una distancia positiva (DP9 = 0 o ausente).
+     *
+     * Solo se permite:
+     *   - en una sala normal con política radar explícita, nunca almacén/TIMBRADO;
+     *   - con un alcance máximo corto (por defecto <= 3,0 m);
+     *   - tras mantener el mismo episodio DP1 durante la gracia indicada.
+     *
+     * No sustituye al límite de alcance: una DP9 positiva fuera del máximo
+     * sigue convirtiendo la presencia en ausencia efectiva. Es un respaldo para
+     * no quedar ciego cuando el firmware informa `PRESENT` sin distancia.
+     */
+    public static function dp1OnlyEligible(
+        bool $explicitRadarRoom,
+        bool $specialRoom,
+        ?int $episodeStartedAtMs,
+        int $nowMs,
+        array $settings,
+        bool $enabled = true,
+        float $maxRangeM = 3.0,
+        int $graceMs = 2000
+    ): bool {
+        if (!$enabled || !$explicitRadarRoom || $specialRoom || $episodeStartedAtMs === null) {
+            return false;
+        }
+        $maximum = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
+            ? (float) $settings['maximum_range'] : null;
+        if ($maximum === null || !is_finite($maximum) || $maximum <= 0.0 || $maximum > $maxRangeM) {
+            return false;
+        }
+        return ($nowMs - $episodeStartedAtMs) >= max(0, $graceMs);
     }
 
     /** @return array<string,mixed> */

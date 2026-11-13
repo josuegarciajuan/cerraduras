@@ -27583,3 +27583,13 @@ episodio. Usa milisegundos y no hace retroceder `lastPresenceEventAt`.
 **Tiempos.** Salas normales con override: entrada 0,5 s y ausencia 2 s por
 defecto (`RADAR_PRESENT_ENTRY_HOLD_SECONDS`, `RADAR_ABSENT_EDGE_GRACE_SECONDS`).
 Almacén y TIMBRADO conservan entrada inmediata y gracia configurada.
+
+#### F133.1 — Respaldo DP1 sin distancia
+
+`RadarEvidenceCorrelation::dp1OnlyEligible()` decide el respaldo: política radar
+explícita, sala no especial, alcance ≤ 3 m y episodio sostenido ≥ 2 s. El
+servicio lo aplica solo cuando la correlación devuelve `no_distance` o
+`zero_dp9`; una DP9 positiva fuera de alcance mantiene prioridad y convierte a
+`ABSENT`. El episodio DP1 es una racha continua de `PRESENT`: el marcador del
+conversor puede cambiar en cada publicación y **no** abre un episodio nuevo;
+solo `ABSENT` lo cierra.

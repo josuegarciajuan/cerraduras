@@ -12114,3 +12114,11 @@ pendientes.
 - [x] TSK-F133-08: panel inmediato «EL RADAR DETECTA · comprobando alcance».
 - [x] TSK-F133-09: defaults 0,5 s / 2 s para salas con override.
 - [x] TSK-F133-10: unit `RadarEvidenceCorrelationTest` y BLOCK 104.
+
+#### F133.1 — Respaldo DP1 sin distancia
+
+- [x] TSK-F133.1-01: `dp1OnlyEligible()` con límites de sala, alcance y gracia.
+- [x] TSK-F133.1-02: integración en `evaluateEpisodeEvidence` solo para `no_distance`/`zero_dp9`.
+- [x] TSK-F133.1-03: episodio continuo por racha de `PRESENT`; el marcador no abre episodio.
+- [x] TSK-F133.1-04: panel indica presencia confirmada por DP1.
+- [x] TSK-F133.1-05: tests `RadarEvidenceCorrelationTest`, `IotSessionServiceTest` y `radar-scope.test.js`.
