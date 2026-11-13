@@ -146,6 +146,21 @@ const dmPipelineDownOldGate = RadarScope.detectionModel({
 check('F134: ingesta parada prevalece sobre una decisión antigua',
   dmPipelineDownOldGate.state === 'PIPELINE_DOWN'
   && dmPipelineDownOldGate.title === 'INGESTA ZIGBEE DETENIDA');
+const dmStaleDecisionFreshPresence = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 2 },
+  stats: { motion_recent: true, last_distance: 2.76, last_distance_age_s: 2 },
+  server_ts: '2026-11-13T10:55:40.000Z',
+  presence_decision: {
+    event_at: '2026-11-13 10:53:03.991',
+    range_gate: { status: 'unverified', reason: 'zero_dp9' },
+  },
+  range_evaluation: { status: 'unverified', reason: 'zero_dp9' },
+});
+check('F134 decisión antigua no oculta detección fresca',
+  dmStaleDecisionFreshPresence.title === 'TE DETECTA'
+  && dmStaleDecisionFreshPresence.tone === 'ok'
+  && dmStaleDecisionFreshPresence.subtitle.indexOf('2.76 m') >= 0);
+
 const dmPipelineOk = RadarScope.detectionModel({
   raw: { state: 'PRESENT', stale: true, age_seconds: 9000 },
   stats: {},
