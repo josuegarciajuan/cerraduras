@@ -183,6 +183,13 @@
   .detect-title{font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.1}
   .detect-sub{font-size:13px;color:var(--text-mid);margin-top:3px}
   .detect-age{font-family:var(--mono);font-size:12px;color:var(--text-mid);white-space:nowrap}
+  .detect-policy{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px;margin:-4px 0 10px;background:var(--surface2);font-size:12px;color:var(--text-mid)}
+  .detect-policy.ok{border-color:var(--pass);color:var(--pass)}
+  .detect-policy.warn{border-color:var(--warn);color:var(--warn)}
+  .detect-policy.bad{border-color:var(--fail);color:var(--fail)}
+  .detect-policy strong{font-size:12px;letter-spacing:.02em}
+  .detect-policy .policy-detail{opacity:.85}
   .detect-banner.ok{border-color:var(--pass);background:rgba(0,230,118,.10)}
   .detect-banner.ok .detect-icon{border-color:var(--pass);color:var(--pass);background:rgba(0,230,118,.14);animation:detectPulse 1.4s ease-in-out infinite}
   .detect-banner.warn{border-color:var(--warn);background:rgba(255,145,0,.10)}
@@ -264,6 +271,7 @@
         </div>
         <div class="detect-age" id="detectAge">—</div>
       </div>
+      <div id="detectPolicy" class="detect-policy dim" role="status" aria-live="polite"></div>
       <div id="calibrationBox" class="calibration-box hidden" role="status" aria-live="polite">
         <div class="calibration-head">
           <span id="calibrationTitle">Calibración del radar</span>
@@ -396,7 +404,7 @@
 
 <script src="assets/sensor-wizard-v2.js?v=20261111-f12515"></script>
 <script src="assets/radar-wizard.js?v=20261111-f12515"></script>
-<script src="assets/radar-scope.js?v=20261113-f134"></script>
-<script src="assets/radar-studio.js?v=20261113-f134"></script>
+<script src="assets/radar-scope.js?v=20261113-f135"></script>
+<script src="assets/radar-studio.js?v=20261113-f135"></script>
 </body>
 </html>

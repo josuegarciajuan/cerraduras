@@ -104,6 +104,7 @@ final class RadarLiveService
         // "presencia confirmada" si el dominio no la aplicó.
         $decision = $ctx->presenceOutcome($roomId) ?? $this->latestRadarDecision($roomId);
         $rangeGate = is_array($decision['range_gate'] ?? null) ? $decision['range_gate'] : null;
+        $decisionAge = $this->decisionAgeSeconds($decision);
 
         return [
             'ok' => true,
@@ -135,6 +136,18 @@ final class RadarLiveService
             'presence_mode' => $this->presenceMode($roomId),
             'presence_stale' => (bool) ($live['presence_stale'] ?? false),
             'stale_seconds' => (int) ($status['stale_seconds'] ?? RadarFreshness::staleSeconds()),
+            'decision_age_seconds' => $decisionAge,
+            'sensor' => [
+                'silent' => $stale,
+                'last_seen_age_seconds' => $age,
+                'lqi' => $device['lqi'] ?? null,
+            ],
+            'policy' => [
+                'mode' => $this->presenceMode($roomId),
+                'fallback_door_dp1' => (bool) (getenv('RADAR_DOOR_DP1_FALLBACK_ENABLED') !== false
+                    ? filter_var(getenv('RADAR_DOOR_DP1_FALLBACK_ENABLED'), FILTER_VALIDATE_BOOLEAN)
+                    : true),
+            ],
             'calibration' => $calibration,
             'presence_decision' => $decision !== null ? [
                 'state' => $decision['state'] ?? null,
@@ -188,6 +201,20 @@ final class RadarLiveService
         $meta = json_decode((string) $raw, true);
         return is_array($meta) && is_array($meta['radar_decision'] ?? null)
             ? $meta['radar_decision'] : null;
+    }
+
+    private function decisionAgeSeconds(?array $decision): ?int
+    {
+        if ($decision === null) {
+            return null;
+        }
+        $raw = $decision['event_at'] ?? ($decision['decided_at'] ?? ($decision['at'] ?? null));
+        if (!is_string($raw) || trim($raw) === '') {
+            return null;
+        }
+        $normalized = rtrim(str_replace('T', ' ', trim($raw)), 'Z');
+        $ts = strtotime($normalized . ' UTC');
+        return $ts === false ? null : max(0, time() - $ts);
     }
 
     private function presenceMode(int $roomId): ?string

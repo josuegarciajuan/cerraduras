@@ -91,6 +91,10 @@ same('umbral mínimo se acota a 5 segundos', $clampedMin['distance_m'], null);
 $liveSource = file_get_contents(__DIR__ . '/../../src/Infrastructure/Sensors/RadarLiveService.php') ?: '';
 same('F134: /radar/live expone event_at de la decisión',
     str_contains($liveSource, "'event_at' =>"), true);
+same('F135: /radar/live expone edad de la decisión',
+    str_contains($liveSource, "'decision_age_seconds' =>"), true);
+same('F135: /radar/live expone estado de silencio del sensor',
+    str_contains($liveSource, "'silent' =>"), true);
 
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);

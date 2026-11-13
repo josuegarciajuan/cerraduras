@@ -505,6 +505,20 @@
     if (sub) sub.textContent = model.subtitle || '';
     var age = $('detectAge');
     if (age) age.textContent = model.ageSeconds != null ? 'hace ' + Math.round(model.ageSeconds) + ' s' : '—';
+    renderOperational(sc);
+  }
+
+  function renderOperational(sc) {
+    var host = $('detectPolicy');
+    if (!host) return;
+    var model = (window.RadarScope && window.RadarScope.operationalModel)
+      ? window.RadarScope.operationalModel(sc)
+      : { tone: 'dim', state: 'NONE', title: 'SIN DECISIÓN', detail: 'Sin decisión operativa.' };
+    host.className = 'detect-policy ' + (model.tone || 'dim');
+    var dot = model.tone === 'ok' ? 'ok' : model.tone === 'warn' ? 'warn' : model.tone === 'bad' ? 'bad' : 'dim';
+    host.innerHTML = '<span class="dot ' + dot + '"></span>'
+      + '<strong>' + esc(model.title || 'SIN DECISIÓN') + '</strong>'
+      + '<span class="policy-detail">' + esc(model.detail || '') + '</span>';
   }
 
   function renderChips(sc) {

@@ -134,5 +134,25 @@ check('desactivado → no elegible',
 check('sin inicio de episodio → no elegible',
     C::dp1OnlyEligible(true, false, null, $nowF, $short) === false);
 
+// ── F135: respaldo DP1 en radar_door ─────────────────────────────────────
+check('radar_door con puerta corroborada y DP9 ausente → elegible',
+    C::doorFallbackEligible('radar_door', true, 5.55, $startF, $nowF) === true);
+check('radar_door sin corroboración de puerta → no elegible',
+    C::doorFallbackEligible('radar_door', false, 5.55, $startF, $nowF) === false);
+check('radar_only no usa el respaldo de puerta',
+    C::doorFallbackEligible('radar_only', true, 5.55, $startF, $nowF) === false);
+check('camera_fusion no usa el respaldo de puerta',
+    C::doorFallbackEligible('camera_fusion', true, 5.55, $startF, $nowF) === false);
+check('alcance inválido → no elegible',
+    C::doorFallbackEligible('radar_door', true, null, $startF, $nowF) === false);
+check('alcance fuera de límites → no elegible',
+    C::doorFallbackEligible('radar_door', true, 12.0, $startF, $nowF) === false);
+check('dentro de la gracia → no elegible',
+    C::doorFallbackEligible('radar_door', true, 5.55, $nowF - 500, $nowF) === false);
+check('respaldo desactivado → no elegible',
+    C::doorFallbackEligible('radar_door', true, 5.55, $startF, $nowF, false) === false);
+check('sin inicio de episodio → no elegible',
+    C::doorFallbackEligible('radar_door', true, 5.55, null, $nowF) === false);
+
 echo "\nTotal: {$pass} passed, {$fail} failed\n";
 exit($fail === 0 ? 0 : 1);

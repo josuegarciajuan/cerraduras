@@ -184,7 +184,16 @@ final class IotSessionService
                     $presenceValue = $this->framePresenceValue($event, $meta);
                     if ($presenceValue === PresenceEvent::VALUE_PRESENT) {
                         $this->syncPresenceEpisode($session, $meta, $evtUtc);
-                        $rangeGate = $this->evaluateEpisodeEvidence($room, $session, $meta, $now, $evtUtc);
+                        $doorCorroborated = $this->radarDoorCorroborated($roomType, $session, $now);
+                        $rangeGate = $this->evaluateEpisodeEvidence(
+                            $room,
+                            $session,
+                            $meta,
+                            $now,
+                            $evtUtc,
+                            $radarMode,
+                            $doorCorroborated
+                        );
                     } else {
                         // F133: un ABSENT auténtico cierra el episodio. La
                         // ausencia nunca se bloquea por falta de distancia.
@@ -1165,7 +1174,9 @@ final class IotSessionService
         IotSession $session,
         ?array $meta,
         \DateTimeImmutable $now,
-        string $evtUtc
+        string $evtUtc,
+        ?string $radarMode = null,
+        bool $doorCorroborated = false
     ): array {
         $settings = is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
         $frameReport = is_array($meta['distance_report'] ?? null) ? $meta['distance_report'] : null;
@@ -1335,22 +1346,38 @@ final class IotSessionService
         // una sala radar explícita y con alcance corto, tras mantener el
         // episodio durante la gracia, se acredita por DP1. Una DP9 positiva
         // fuera de alcance sigue teniendo prioridad y convierte a ausencia.
+        $dp1Fallback = $this->dp1OnlyFallbackEligible(
+            $room,
+            $session,
+            $settings,
+            (int) $now->format('Uv')
+        );
+        $doorFallback = $this->radarDoorFallbackEligible(
+            $room,
+            $session,
+            $settings,
+            (int) $now->format('Uv'),
+            $radarMode,
+            $doorCorroborated
+        );
         if (in_array($correlation['status'], [
                 RadarEvidenceCorrelation::STATUS_NO_DISTANCE,
                 RadarEvidenceCorrelation::STATUS_ZERO_DISTANCE,
             ], true)
-            && $this->dp1OnlyFallbackEligible($room, $session, $settings, (int) $now->format('Uv'))
+            && ($dp1Fallback || $doorFallback)
         ) {
             return $this->rangeGate(
                 RadarOperationalRangeDecision::STATUS_IN_RANGE,
-                RadarEvidenceCorrelation::REASON_DP1_WITHOUT_DISTANCE,
+                $doorFallback
+                    ? RadarEvidenceCorrelation::REASON_DOOR_DP1_WITHOUT_DISTANCE
+                    : RadarEvidenceCorrelation::REASON_DP1_WITHOUT_DISTANCE,
                 true,
                 false,
                 null,
                 null,
                 $correlation['maximum_range_m'],
                 $correlation['marker'],
-                'dp1_only'
+                $doorFallback ? 'dp1_door' : 'dp1_only'
             );
         }
 
@@ -1431,6 +1458,62 @@ final class IotSessionService
             'at' => $at,
             'diagnostic' => true,
         ];
+    }
+
+    /**
+     * F135: en `radar_door` la apertura de puerta es la corroboración física.
+     * Si el radar no publica DP9 (o publica 0), no se bloquea la presencia:
+     * la decisión de modo (`RadarPresenceDecision`) seguirá exigiendo puerta
+     * reciente y continuidad. Una DP9 positiva fuera de alcance sigue vetando
+     * antes de llegar aquí.
+     */
+    private function radarDoorFallbackEligible(
+        Room $room,
+        IotSession $session,
+        array $settings,
+        int $nowMs,
+        ?string $radarMode,
+        bool $doorCorroborated
+    ): bool {
+        if ($radarMode !== RadarPresenceDecision::MODE_RADAR_DOOR
+            || !$doorCorroborated
+            || !Config::getBool('RADAR_DOOR_DP1_FALLBACK_ENABLED', true)
+        ) {
+            return false;
+        }
+        if ($this->isWarehouseRoom($room) || $this->isTimbradoRoom($room)) {
+            return false;
+        }
+        $maximum = isset($settings['maximum_range']) && is_numeric($settings['maximum_range'])
+            ? (float) $settings['maximum_range'] : null;
+        $graceRaw = Config::get('RADAR_DOOR_DP1_FALLBACK_GRACE_SECONDS', '1.5');
+        $graceMs = (int) round((is_numeric($graceRaw) ? (float) $graceRaw : 1.5) * 1000);
+        return RadarEvidenceCorrelation::doorFallbackEligible(
+            $radarMode,
+            $doorCorroborated,
+            $maximum,
+            $this->mysqlToMs($session->presenceEpisodeStartedAt),
+            $nowMs,
+            Config::getBool('RADAR_DOOR_DP1_FALLBACK_ENABLED', true),
+            $graceMs
+        );
+    }
+
+    /** F134: última apertura de puerta aplicada dentro de la ventana del tipo. */
+    private function radarDoorCorroborated(
+        ?RoomType $roomType,
+        IotSession $session,
+        \DateTimeImmutable $now
+    ): bool {
+        if ($roomType === null || $session->lastOpenAt === null) {
+            return false;
+        }
+        $lastOpen = strtotime($session->lastOpenAt . ' UTC');
+        if ($lastOpen === false) {
+            return false;
+        }
+        $window = max(1, (int) $roomType->presenceDoorWindowSeconds);
+        return ($now->getTimestamp() - $lastOpen) <= $window;
     }
 
     /** F133.1: respaldo DP1 acotado a salas radar normales con alcance corto. */
