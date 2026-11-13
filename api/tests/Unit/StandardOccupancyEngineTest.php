@@ -119,5 +119,36 @@ StandardOccupancyEngine::apply(
 check('heartbeat en vacío → luz OFF deseada', $s2->lightDesired === 'OFF');
 check('heartbeat en vacío → OFF programado', $s2->lightOffAt !== null);
 
+// F138: un evento histórico no reescribe estado ni frescura.
+$s3 = session();
+$s3->occupancyState = StandardOccupancyPolicy::STATE_OCCUPIED;
+$s3->presenceState = IotSession::PRESENCE_PRESENT;
+$s3->lastPresenceEventAt = '2026-11-13 16:10:00.000';
+$staleEvent = event(PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-11-13T16:00:00Z');
+$staleEvent['meta'] = ['presence_report' => ['value' => 'ABSENT', 'marker' => 'p1|test|old|ABSENT|push']];
+$r = StandardOccupancyEngine::apply(
+    $s3,
+    $staleEvent,
+    null,
+    $rt,
+    new DateTimeImmutable('2026-11-13T16:10:01Z', new DateTimeZone('UTC'))
+);
+check('evento anterior → stale', ($r['reason'] ?? '') === 'stale');
+check('evento anterior no cambia ocupación', $s3->occupancyState === StandardOccupancyPolicy::STATE_OCCUPIED);
+check('evento anterior no cambia presencia', $s3->presenceState === IotSession::PRESENCE_PRESENT);
+
+$s4 = session();
+$tooOld = event(PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-11-13T14:00:00Z');
+$tooOld['meta'] = ['presence_report' => ['value' => 'ABSENT', 'marker' => 'p1|test|old2|ABSENT|push']];
+$r = StandardOccupancyEngine::apply(
+    $s4,
+    $tooOld,
+    null,
+    $rt,
+    new DateTimeImmutable('2026-11-13T16:10:00Z', new DateTimeZone('UTC'))
+);
+check('evento demasiado antiguo → too_old', ($r['reason'] ?? '') === 'too_old');
+check('evento demasiado antiguo no cambia estado', $s4->occupancyState === null);
+
 echo "\nTotal: {$pass} passed, {$fail} failed\n";
 exit($fail === 0 ? 0 : 1);

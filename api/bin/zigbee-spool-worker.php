@@ -188,6 +188,7 @@ function processPending(
 ): int {
     $files = $queue->pendingFiles();
     $handled = 0;
+    $maxEventAge = max(0, (int) (Config::get('ZIGBEE_SPOOL_MAX_EVENT_AGE_SECONDS', '600') ?? 600));
     foreach (array_slice($files, 0, $limit) as $file) {
         $claimed = $queue->claim($file);
         if ($claimed === null) {
@@ -204,6 +205,25 @@ function processPending(
             logLine("quarantine {$name}: {$error}");
             writeStatus($statusFile, $counters, $queue);
             continue;
+        }
+
+        // F138: un claim recuperado puede ser histórico. No se aplica a estado
+        // vivo si supera la antigüedad máxima; se conserva como descartado.
+        if ($maxEventAge > 0) {
+            try {
+                $received = new DateTimeImmutable((string) ($record['received_at'] ?? 'now'));
+                $age = time() - $received->getTimestamp();
+                if ($age > $maxEventAge) {
+                    $counters['discarded']++;
+                    logLine("discard {$name}: too_old age={$age}s");
+                    $queue->complete($name);
+                    writeStatus($statusFile, $counters, $queue);
+                    continue;
+                }
+            } catch (Throwable $e) {
+                // Si la fecha es inválida, el validador ya debería haberlo
+                // rechazado; se deja seguir para no perder el mensaje.
+            }
         }
 
         try {

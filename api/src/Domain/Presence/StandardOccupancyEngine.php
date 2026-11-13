@@ -43,6 +43,20 @@ final class StandardOccupancyEngine
         $presenceGuard = self::envInt('STANDARD_PRESENCE_GUARD_MS', 400, 0, 3000);
         $vacancyGuard = self::envInt('STANDARD_VACANCY_GUARD_SECONDS', 10, 1, 120) * 1000;
 
+        // F138: un mensaje recuperado del spool puede ser histórico. Nunca
+        // debe reescribir la frescura ni la ocupación actual.
+        $lastAt = $sensor === PresenceEvent::SENSOR_PRESENCE
+            ? $session->lastPresenceEventAt
+            : $session->lastDoorEventAt;
+        $lastMs = self::toMs($lastAt);
+        if ($lastMs !== null && $evtMs < $lastMs) {
+            return self::staleResult($session, 'stale');
+        }
+        $maxAge = self::envInt('STANDARD_EVENT_MAX_AGE_SECONDS', 600, 60, 3600) * 1000;
+        if ($maxAge > 0 && ($nowMs - $evtMs) > $maxAge) {
+            return self::staleResult($session, 'too_old');
+        }
+
         $currentState = $session->occupancyState;
         if ($currentState === null || $currentState === '') {
             if ($session->doorState === IotSession::DOOR_OPEN) {
@@ -207,6 +221,22 @@ final class StandardOccupancyEngine
             'confirmed_entry' => (bool) ($decision['confirmed_entry'] ?? false),
             'confirmed_exit' => (bool) ($decision['confirmed_exit'] ?? false),
             'radar_health' => $health,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private static function staleResult(IotSession $session, string $reason): array
+    {
+        return [
+            'applied' => false,
+            'state_changed' => false,
+            'occupancy_state' => $session->occupancyState,
+            'presence_state' => $session->presenceState,
+            'light' => self::LIGHT_NONE,
+            'reason' => $reason,
+            'confirmed_entry' => false,
+            'confirmed_exit' => false,
+            'radar_health' => $session->radarHealth,
         ];
     }
 
