@@ -102,5 +102,22 @@ check('ABSENT sin ciclo de salida → UNCERTAIN', $s->occupancyState === Standar
 check('ABSENT sin ciclo → luz protegida ON', $s->lightDesired === 'ON');
 check('ABSENT sin ciclo → no hay OFF programado', $s->lightOffAt === null);
 
+// F138: heartbeat de una sala vacía con radar sano apaga la luz.
+$s2 = session();
+$s2->occupancyState = StandardOccupancyPolicy::STATE_VACANT_CONFIRMED;
+$s2->presenceState = IotSession::PRESENCE_ABSENT;
+$s2->lightDesired = 'ON';
+$heartbeat = event(PresenceEvent::SENSOR_PRESENCE, PresenceEvent::VALUE_ABSENT, '2026-11-13T16:01:00Z');
+$heartbeat['meta'] = ['presence_report' => ['value' => 'ABSENT', 'marker' => 'p1|test|1|ABSENT|push']];
+StandardOccupancyEngine::apply(
+    $s2,
+    $heartbeat,
+    null,
+    $rt,
+    new DateTimeImmutable('2026-11-13T16:01:00Z', new DateTimeZone('UTC'))
+);
+check('heartbeat en vacío → luz OFF deseada', $s2->lightDesired === 'OFF');
+check('heartbeat en vacío → OFF programado', $s2->lightOffAt !== null);
+
 echo "\nTotal: {$pass} passed, {$fail} failed\n";
 exit($fail === 0 ? 0 : 1);

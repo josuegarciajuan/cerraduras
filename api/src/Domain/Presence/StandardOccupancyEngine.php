@@ -142,6 +142,16 @@ final class StandardOccupancyEngine
             $session->lightDesired = 'OFF';
             $delay = self::envInt('STANDARD_LIGHT_OFF_DELAY_SECONDS', 1, 0, 10);
             $session->lightOffAt = $now->modify('+' . $delay . ' seconds')->format('Y-m-d H:i:s.v');
+        } elseif ($light === self::LIGHT_NONE
+            && $session->occupancyState === StandardOccupancyPolicy::STATE_VACANT_CONFIRMED
+            && $health === StandardOccupancyPolicy::HEALTH_OK
+            && $session->lightDesired !== 'OFF'
+        ) {
+            // Un heartbeat de una sala ya vacía no debe dejar la luz encendida
+            // indefinidamente. Solo ocurre con radar sano y estado vacío.
+            $session->lightDesired = 'OFF';
+            $delay = self::envInt('STANDARD_LIGHT_OFF_DELAY_SECONDS', 1, 0, 10);
+            $session->lightOffAt = $now->modify('+' . $delay . ' seconds')->format('Y-m-d H:i:s.v');
         }
 
         $session->occupancyData = array_merge(
