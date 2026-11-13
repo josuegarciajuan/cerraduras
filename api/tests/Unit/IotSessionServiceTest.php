@@ -893,6 +893,21 @@ if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSE
     bad('F130: ABSENT no debe bloquearse', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
 }
 
+// F133: una presencia ya efectiva no se degrada por una trama sin DP9 nueva.
+$presRepo->nextDuplicate = false;
+Clock::freeze(new DateTimeImmutable('2026-04-28T18:10:20Z', new DateTimeZone('UTC')));
+$iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_PRESENT;
+$iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_PRESENT;
+$iotRepo->sessions[5]->presenceEpisodeMarker = 'p1|sess|keep|PRESENT|push';
+$iotRepo->sessions[5]->presenceEpisodeStartedAt = '2026-04-28 18:10:01.000';
+if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_PRESENT
+    && ($iotRepo->sessions[5]->presenceEpisodeMarker ?? null) === 'p1|sess|keep|PRESENT|push'
+) {
+    ok('F133: presencia efectiva sin DP9 nueva se mantiene y conserva el episodio');
+} else {
+    bad('F133: la presencia efectiva no debe degradarse ni reiniciar el episodio');
+}
+
 // ============================================================================
 // F132 · una política radar explícita no se contradice con el filtro hotelero
 // ============================================================================

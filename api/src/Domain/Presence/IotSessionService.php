@@ -1087,6 +1087,14 @@ final class IotSessionService
         $marker = $report !== null ? (string) ($report['marker'] ?? '') : '';
         $sessionId = $report !== null ? (string) ($report['session_id'] ?? '') : '';
 
+        // Una presencia ya efectiva es un episodio continuo: un marcador
+        // nuevo no lo reinicia (el radar puede republicar DP1). El episodio
+        // cambia solo tras ABSENT o cuando aún no hay ninguno.
+        if ($session->presenceState === IotSession::PRESENCE_PRESENT
+            && $session->presenceEpisodeMarker !== null
+        ) {
+            return;
+        }
         if ($marker !== '' && $marker !== $session->presenceEpisodeMarker) {
             $session->presenceEpisodeMarker = $marker;
             $session->presenceEpisodeSession = $sessionId !== '' ? $sessionId : null;
@@ -1139,9 +1147,71 @@ final class IotSessionService
         $settings = is_array($meta['settings'] ?? null) ? $meta['settings'] : [];
         $frameReport = is_array($meta['distance_report'] ?? null) ? $meta['distance_report'] : null;
         if ($frameReport !== null && (!isset($frameReport['received_at']) || $frameReport['received_at'] === '')) {
-            // El mapper siempre añade received_at; las tramas antiguas o los
-            // fixtures pueden omitirlo. El instante del frame es su origen.
             $frameReport['received_at'] = $evtUtc;
+        }
+        $frameMarker = (string) ($frameReport['marker'] ?? '');
+
+        // Una presencia YA efectiva solo puede cambiar con una DP9 nueva y
+        // fuera de alcance. Una trama sin DP9, una DP9 repetida o una evidencia
+        // no utilizable no la degradan: el episodio es continuo.
+        if ($session->presenceState === IotSession::PRESENCE_PRESENT) {
+            if ($settings === [] || $frameReport === null
+                || $frameMarker === '' || $frameMarker === $session->presenceEpisodeDistanceMarker
+            ) {
+                return $this->rangeGate(
+                    RadarOperationalRangeDecision::STATUS_IN_RANGE,
+                    'presence_already_effective',
+                    true,
+                    false,
+                    null,
+                    null,
+                    null,
+                    $session->presenceEpisodeDistanceMarker,
+                    'already_effective'
+                );
+            }
+            $persisted = $this->distanceReports?->findByMarker($session->roomId, $frameMarker);
+            $nowMs = (int) $now->format('Uv');
+            $correlation = RadarEvidenceCorrelation::evaluate(
+                PresenceEvent::VALUE_PRESENT,
+                $session->presenceEpisodeMarker,
+                $session->presenceEpisodeSession,
+                $this->mysqlToMs($session->presenceEpisodeStartedAt),
+                $session->presenceEpisodeDistanceMarker,
+                $frameReport,
+                $persisted,
+                $settings,
+                $nowMs,
+                max(1, (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_WINDOW_SECONDS', 120) ?? 120)) * 1000,
+                max(1, (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_MAX_AGE_SECONDS', 120) ?? 120)) * 1000
+            );
+            if ($correlation['status'] === RadarEvidenceCorrelation::STATUS_OUT_OF_RANGE) {
+                return $this->rangeGate(
+                    RadarOperationalRangeDecision::STATUS_OUT_OF_RANGE,
+                    RadarOperationalRangeDecision::REASON_OUT_OF_RANGE,
+                    false,
+                    true,
+                    RadarOperationalRangeDecision::DISCARD_OUT_OF_RANGE,
+                    $correlation['distance_m'],
+                    $correlation['maximum_range_m'],
+                    $correlation['marker'],
+                    'episode'
+                );
+            }
+            if ($correlation['status'] === RadarEvidenceCorrelation::STATUS_USABLE) {
+                $session->presenceEpisodeDistanceMarker = $correlation['marker'];
+            }
+            return $this->rangeGate(
+                RadarOperationalRangeDecision::STATUS_IN_RANGE,
+                'presence_already_effective',
+                true,
+                false,
+                null,
+                $correlation['distance_m'],
+                $correlation['maximum_range_m'],
+                $correlation['marker'],
+                'already_effective'
+            );
         }
 
         // Compatibilidad: un dispositivo Zigbee de presencia sin configuración
@@ -1158,26 +1228,6 @@ final class IotSessionService
                 null,
                 null,
                 'not_range_capable'
-            );
-        }
-
-        // Una presencia ya acreditada no se degrada por tramas sin DP9 nueva
-        // ni por la repetición de la misma DP9. Una DP9 NUEVA sí se evalúa.
-        $frameMarker = (string) ($frameReport['marker'] ?? '');
-        if ($session->presenceState === IotSession::PRESENCE_PRESENT
-            && $session->presenceEpisodeDistanceMarker !== null
-            && ($frameMarker === '' || $frameMarker === $session->presenceEpisodeDistanceMarker)
-        ) {
-            return $this->rangeGate(
-                RadarOperationalRangeDecision::STATUS_IN_RANGE,
-                RadarOperationalRangeDecision::REASON_WITHIN_RANGE,
-                true,
-                false,
-                null,
-                null,
-                null,
-                $session->presenceEpisodeDistanceMarker,
-                'already_credited'
             );
         }
 
