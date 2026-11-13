@@ -75,6 +75,38 @@ final class ZigbeeSpoolQueue
     }
 
     /**
+     * F138: recupera claims abandonados por un crash del worker.
+     *
+     * Un fichero reclamado a `processing` no vuelve a `incoming` por sí solo.
+     * Si su mtime supera el umbral, se devuelve a la cola para no perder el
+     * mensaje confirmado al broker. El umbral evita mover un fichero que otro
+     * worker está procesando ahora.
+     */
+    public function recoverStaleClaims(int $olderThanSeconds = 300): int
+    {
+        $cutoff = time() - max(1, $olderThanSeconds);
+        $files = glob($this->path('processing') . '/*.json') ?: [];
+        $recovered = 0;
+        foreach ($files as $src) {
+            $mtime = @filemtime($src);
+            if ($mtime === false || $mtime > $cutoff) {
+                continue;
+            }
+            $base = basename($src);
+            $dst = $this->path('incoming') . DIRECTORY_SEPARATOR . $base;
+            if (file_exists($dst)) {
+                $dst = $this->path('incoming') . DIRECTORY_SEPARATOR
+                    . pathinfo($base, PATHINFO_FILENAME)
+                    . '-recovered-' . time() . '.json';
+            }
+            if (@rename($src, $dst)) {
+                $recovered++;
+            }
+        }
+        return $recovered;
+    }
+
+    /**
      * Requeue a failed record with attempts+1. Never drops it silently.
      *
      * @param array<string,mixed> $record

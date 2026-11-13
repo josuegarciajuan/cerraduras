@@ -10723,7 +10723,8 @@ for _f138_file in \
     migrations/0154_standard_clear_presence_modes.sql \
     migrations/0155_standard_entry_window.sql \
     tests/Unit/StandardOccupancyPolicyTest.php \
-    tests/Unit/StandardOccupancyEngineTest.php; do
+    tests/Unit/StandardOccupancyEngineTest.php \
+    tests/Unit/ZigbeeSpoolRecoveryTest.php; do
     if [ -f "$_f138_file" ]; then
         pass "F138: existe $_f138_file"
     else
@@ -10757,6 +10758,12 @@ if php tests/Unit/StandardOccupancyEngineTest.php >/tmp/f138-engine.log 2>&1; th
     pass "F138: unit StandardOccupancyEngine"
 else
     fail "F138: unit StandardOccupancyEngine" "$(tail -3 /tmp/f138-engine.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/ZigbeeSpoolRecoveryTest.php >/tmp/f138-spool-recovery.log 2>&1; then
+    pass "F138: recuperación de claims del spool"
+else
+    fail "F138: recuperación de claims del spool" "$(tail -3 /tmp/f138-spool-recovery.log | tr '\n' ' ')"
 fi
 
 F138_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'occupancy_state'" 2>/dev/null | wc -l | tr -d ' ')
