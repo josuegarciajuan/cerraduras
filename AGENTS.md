@@ -1730,8 +1730,9 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   de salida = incertidumbre y luz protegida; vacío solo con DP1 ABSENT auténtico,
   continuidad, ciclo y guarda. Silencio/gap/stale = incertidumbre.
 - **Luz**: `light_desired` persistido; OFF solo desde `VACANT_CONFIRMED`;
-  reintento si falla; la bombilla del dashboard usa `switch_state` y, si falta,
-  `last_command` con `?`.
+  reintento acotado; `confirmed_off` exige telemetría posterior a la orden, un
+  PUBACK es `published_off_unconfirmed`; la bombilla usa `switch_state` y, si
+  falta o está obsoleta, `last_command` con `?`.
 - **Persistencia**: migración `0153` (columnas de ocupación en `iot_sessions`) y
   `0154` (limpia `presence_mode_override` en STANDARD).
 - **UI**: `occupancy` y `light` viajan en `/live` y SSE; el monigote usa el
