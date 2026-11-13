@@ -377,8 +377,12 @@ while ($running) {
     }
 
     sleep($tickInterval);
-    // Reconnect if the DB connection was lost (MySQL restart, timeout, etc.)
-    PdoFactory::ping();
+    // Si la conexión se perdió, los repositorios ya apuntan a un PDO muerto.
+    // Es más seguro salir y dejar que worker-loop/systemd arranque limpio.
+    if (!PdoFactory::ping()) {
+        echo "[exit-scan] DB connection lost; exiting for clean restart\n";
+        exit(1);
+    }
 }
 
 echo "[exit-scan] Shutdown complete.\n";

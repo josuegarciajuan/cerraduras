@@ -277,6 +277,15 @@ function processPending(
 $processedRetentionDays = max(0, (int) (Config::get('ZIGBEE_SPOOL_PROCESSED_RETENTION_DAYS', '2') ?? 2));
 $quarantineRetentionDays = max(0, (int) (Config::get('ZIGBEE_SPOOL_QUARANTINE_RETENTION_DAYS', '14') ?? 14));
 
+// F138: un crash puede dejar un mensaje reclamado en `processing`. Al arrancar
+// se recupera si es antiguo; así no se pierde un evento ya confirmado al broker.
+$recoverSeconds = max(30, (int) (Config::get('ZIGBEE_SPOOL_RECOVER_SECONDS', '300') ?? 300));
+$recovered = $queue->recoverStaleClaims($recoverSeconds);
+if ($recovered > 0) {
+    logLine("recovered {$recovered} stale processing claim(s)");
+    writeStatus($statusFile, $counters, $queue);
+}
+
 if ($watch) {
     logLine('watching spool ' . $spoolDir);
     pruneSpool($queue, $processedRetentionDays, $quarantineRetentionDays);
