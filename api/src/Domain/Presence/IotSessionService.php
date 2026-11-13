@@ -1155,7 +1155,7 @@ final class IotSessionService
         // fuera de alcance. Una trama sin DP9, una DP9 repetida o una evidencia
         // no utilizable no la degradan: el episodio es continuo.
         if ($session->presenceState === IotSession::PRESENCE_PRESENT) {
-            if ($this->distanceReports === null || $settings === [] || $frameReport === null
+            if ($settings === [] || $frameReport === null
                 || $frameMarker === '' || $frameMarker === $session->presenceEpisodeDistanceMarker
             ) {
                 return $this->rangeGate(
@@ -1170,7 +1170,7 @@ final class IotSessionService
                     'already_effective'
                 );
             }
-            $persisted = $this->distanceReports->findByMarker($session->roomId, $frameMarker);
+            $persisted = $this->distanceReports?->findByMarker($session->roomId, $frameMarker);
             $nowMs = (int) $now->format('Uv');
             $correlation = RadarEvidenceCorrelation::evaluate(
                 PresenceEvent::VALUE_PRESENT,
