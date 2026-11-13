@@ -247,6 +247,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F129 Registro de eventos del panel** | **BLOCK 100 + `PanelEventsTest`** | **Implementado: cronología unificada de sensores, accesos y luz en `/panel` con filtros, CSV y live tail; validación visual pendiente** |
 | **F131 Fichas EM con número decimal impreso** | **BLOCK 69 + `CredentialFormatTest`/`NfcCardFormatTest`** | **Implementado: alta por 10 dígitos, lectura decimal/hexadecimal y compatibilidad con la ficha heredada `EM-00EFA5BB`; regresión 1458/0/14** |
 | **F132 Presencia radar veraz y transiciones estables** | **BLOCK 103 + `PresenceTransitionPolicyTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: política única, resultado final, entrada/ausencia pendientes y resolución por `exit-scan`; prueba física pendiente** |
+| **F133 Evidencia DP1/DP9 correlacionada por episodio** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: DP9 entre tramas del mismo episodio, configuración original, pendientes revalidados y panel inmediato; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1602,3 +1603,28 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
   `presence_outcome_json`).
 - **Verificación**: `PresenceTransitionPolicyTest`, `IotSessionServiceTest`,
   `radar-scope.test.js` y BLOCK 103. Prueba física pendiente en DEVELOPMENTROOM.
+
+
+### F133 — Evidencia DP1/DP9 correlacionada por episodio (RF-415…RF-420)
+
+- **Motivo**: F130 exigía DP9 en la misma trama. El radar puede publicar DP1
+  `PRESENT` antes de una DP9 positiva, o reutilizar un marcador anterior al
+  cambio de perfil; eso producía esperas largas y conversiones a `ABSENT` con
+  evidencia no correlacionada.
+- **Episodio**: `iot_sessions.presence_episode_*` identifica el DP1 vigente y la
+  DP9 que lo acreditó. Un marcador nuevo abre episodio; `ABSENT` lo cierra.
+- **Correlación**: `RadarEvidenceCorrelation` acepta DP9 de otra trama solo del
+  mismo dispositivo, sesión y configuración, posterior al inicio del episodio y
+  dentro de `RADAR_EPISODE_EVIDENCE_WINDOW_SECONDS`/
+  `RADAR_EPISODE_EVIDENCE_MAX_AGE_SECONDS`. La fila persistida conserva la
+  configuración original.
+- **Sin DP9**: el `PRESENT` no acredita ocupación, tampoco se convierte en
+  ausencia; el panel muestra «EL RADAR DETECTA · comprobando alcance».
+- **Pendientes**: `exit-scan` revalida signo, configuración y DP9; usa ms y no
+  hace retroceder la frescura.
+- **Tiempos por defecto** en sala normal con override: entrada 0,5 s y ausencia
+  2 s. Almacén/TIMBRADO sin cambios.
+- **Migración**: `0151` (identidad del episodio).
+- **Verificación**: `RadarEvidenceCorrelationTest`, `PresenceTransitionPolicyTest`,
+  `IotSessionServiceTest`, `radar-scope.test.js` y BLOCK 104. Prueba física
+  pendiente en DEVELOPMENTROOM.

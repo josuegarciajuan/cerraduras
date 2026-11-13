@@ -23,7 +23,9 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
          last_open_at, last_close_at, last_absent_since, exit_evaluated_at, updated_at,
          last_door_event_at, last_presence_event_at, last_door_value, last_presence_value,
          presence_pending_state, presence_pending_since, presence_pending_due_at,
-         presence_pending_marker, presence_pending_config_key, presence_outcome_json';
+         presence_pending_marker, presence_pending_config_key, presence_outcome_json,
+         presence_episode_marker, presence_episode_session,
+         presence_episode_started_at, presence_episode_distance_marker';
 
     private PDO $pdo;
 
@@ -50,11 +52,14 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                  last_open_at, last_close_at, last_absent_since, exit_evaluated_at,
                  last_door_event_at, last_presence_event_at, last_door_value, last_presence_value,
                  presence_pending_state, presence_pending_since, presence_pending_due_at,
-                 presence_pending_marker, presence_pending_config_key, presence_outcome_json)
+                 presence_pending_marker, presence_pending_config_key, presence_outcome_json,
+                 presence_episode_marker, presence_episode_session,
+                 presence_episode_started_at, presence_episode_distance_marker)
              VALUES
                 (:room, :stay, :door, :pres, :open, :close, :abs, :exit,
                  :ldea, :lpea, :ldv, :lpv,
-                 :ppst, :ppsi, :ppdu, :ppmk, :ppck, :pout)
+                 :ppst, :ppsi, :ppdu, :ppmk, :ppck, :pout,
+                 :pemk, :pesn, :pest, :pedm)
              ON DUPLICATE KEY UPDATE
                 stay_id                = VALUES(stay_id),
                 door_state             = VALUES(door_state),
@@ -72,7 +77,11 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_pending_due_at     = VALUES(presence_pending_due_at),
                 presence_pending_marker     = VALUES(presence_pending_marker),
                 presence_pending_config_key = VALUES(presence_pending_config_key),
-                presence_outcome_json       = VALUES(presence_outcome_json)'
+                presence_outcome_json       = VALUES(presence_outcome_json),
+                presence_episode_marker          = VALUES(presence_episode_marker),
+                presence_episode_session         = VALUES(presence_episode_session),
+                presence_episode_started_at      = VALUES(presence_episode_started_at),
+                presence_episode_distance_marker = VALUES(presence_episode_distance_marker)'
         )->execute([
             ':room'  => $session->roomId,
             ':stay'  => $session->stayId,
@@ -92,6 +101,10 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':ppmk'  => $session->presencePendingMarker,
             ':ppck'  => $session->presencePendingConfigKey,
             ':pout'  => $this->encodeOutcome($session->presenceOutcome),
+            ':pemk'  => $session->presenceEpisodeMarker,
+            ':pesn'  => $session->presenceEpisodeSession,
+            ':pest'  => $session->presenceEpisodeStartedAt,
+            ':pedm'  => $session->presenceEpisodeDistanceMarker,
         ]);
     }
 
@@ -162,6 +175,10 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_pending_marker     = :ppmk,
                 presence_pending_config_key = :ppck,
                 presence_outcome_json       = :pout,
+                presence_episode_marker          = :pemk,
+                presence_episode_session         = :pesn,
+                presence_episode_started_at      = :pest,
+                presence_episode_distance_marker = :pedm,
                 updated_at             = UTC_TIMESTAMP(3)
              WHERE id = :id'
         )->execute([
@@ -183,6 +200,10 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':ppmk'  => $session->presencePendingMarker,
             ':ppck'  => $session->presencePendingConfigKey,
             ':pout'  => $this->encodeOutcome($session->presenceOutcome),
+            ':pemk'  => $session->presenceEpisodeMarker,
+            ':pesn'  => $session->presenceEpisodeSession,
+            ':pest'  => $session->presenceEpisodeStartedAt,
+            ':pedm'  => $session->presenceEpisodeDistanceMarker,
         ]);
     }
 
@@ -225,7 +246,11 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ($row['presence_pending_due_at'] ?? null) === null ? null : (string) $row['presence_pending_due_at'],
             ($row['presence_pending_marker'] ?? null) === null ? null : (string) $row['presence_pending_marker'],
             ($row['presence_pending_config_key'] ?? null) === null ? null : (string) $row['presence_pending_config_key'],
-            $this->decodeOutcome($row['presence_outcome_json'] ?? null)
+            $this->decodeOutcome($row['presence_outcome_json'] ?? null),
+            ($row['presence_episode_marker'] ?? null) === null ? null : (string) $row['presence_episode_marker'],
+            ($row['presence_episode_session'] ?? null) === null ? null : (string) $row['presence_episode_session'],
+            ($row['presence_episode_started_at'] ?? null) === null ? null : (string) $row['presence_episode_started_at'],
+            ($row['presence_episode_distance_marker'] ?? null) === null ? null : (string) $row['presence_episode_distance_marker']
         );
     }
 

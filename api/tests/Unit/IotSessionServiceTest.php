@@ -819,6 +819,11 @@ if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_PRES
 } else {
     bad('F130: dentro del alcance debería aplicar', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
 }
+if (($iotRepo->sessions[5]->presenceEpisodeMarker ?? null) !== null) {
+    ok('F133: el episodio DP1 queda identificado');
+} else {
+    bad('F133: debería abrir un episodio DP1');
+}
 
 // PRESENT fuera del alcance estando dentro → pasa a ABSENT.
 $iotRepo->sessions[5]->presenceState = IotSession::PRESENCE_PRESENT;
@@ -832,6 +837,11 @@ if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSE
     ok('F130: PRESENT 2.64 m con máximo 1.95 → ABSENT efectivo');
 } else {
     bad('F130: fuera del alcance debería convertir a ABSENT', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+if (($iotRepo->sessions[5]->presenceEpisodeMarker ?? null) === null) {
+    ok('F133: la conversión fuera de alcance cierra el episodio');
+} else {
+    bad('F133: el episodio debería cerrarse al convertir a ABSENT');
 }
 
 // Nueva ventana de entrada; PRESENT sin DP9 → no acredita (sigue ABSENT).

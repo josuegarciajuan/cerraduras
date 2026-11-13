@@ -14462,3 +14462,38 @@ leyendo DP1/DP9 brutos.
 `radar-scope.js`, `bin/exit-scan.php`, migración `0150`,
 `PresenceTransitionPolicyTest`, `IotSessionServiceTest`, `radar-scope.test.js`,
 BLOCK 103.
+
+
+### F133 — Evidencia DP1/DP9 correlacionada por episodio (RF-415…RF-420)
+
+- **RF-415 (episodio):** un `PRESENT` auténtico abre un episodio identificado por
+  su marcador DP1, sesión e instante. Un marcador nuevo abre un episodio nuevo y
+  descarta la DP9 usada por el anterior. Un `ABSENT` auténtico lo cierra.
+- **RF-416 (correlación):** una DP9 positiva puede acreditar el `PRESENT` del
+  mismo episodio aunque llegue en otra trama, siempre que sea del mismo
+  dispositivo, sala y configuración, no anterior al episodio, esté dentro de
+  `RADAR_EPISODE_EVIDENCE_WINDOW_SECONDS`/`..._MAX_AGE_SECONDS` y no haya sido
+  usada ya para ese episodio. Se prohíbe mezclar dispositivos, configuraciones o
+  episodios distintos.
+- **RF-417 (configuración original):** cuando una trama combinada reutiliza un
+  marcador DP9, prevalece la fila persistida con su configuración original. Una
+  distancia de otro perfil no acredita ni convierte la presencia.
+- **RF-418 (límite operativo):** se mantiene F130: comparación en centímetros,
+  igual al máximo admite, un centímetro por encima no acredita presencia y una
+  DP9 del episodio fuera de alcance produce ausencia efectiva. `ABSENT` auténtico
+  nunca se bloquea por falta de distancia.
+- **RF-419 (pendientes):** una transición pendiente solo se aplica si el último
+  DP1 sigue siendo del mismo signo y configuración y, para una entrada, existe
+  una DP9 positiva del episodio. El vencimiento usa milisegundos y la frescura
+  no puede retroceder. Sin evidencia válida se invalida y se audita el motivo.
+- **RF-420 (veracidad y latencia percibida):** el panel muestra de inmediato
+  «EL RADAR DETECTA · comprobando alcance» cuando hay DP1 fresco pero la DP9 aún
+  no acredita el episodio, sin presentarlo como ocupación confirmada. Los
+  defaults de entrada y ausencia para salas con override pasan a 0,5 s y 2 s,
+  configurables. Sin Tuya, sin polling y sin cambios en almacén/TIMBRADO.
+
+**Trazabilidad:** `RadarEvidenceCorrelation`, `IotSessionService`,
+`RadarDistanceReportRepository`, `IotSession`, migración `0151`,
+`RadarLiveService`, `radar-scope.js`, `exit-scan.php`, `RadarEvidenceCorrelationTest`,
+`PresenceTransitionPolicyTest`, `IotSessionServiceTest`, `radar-scope.test.js`,
+BLOCK 104.

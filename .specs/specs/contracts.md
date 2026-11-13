@@ -17338,3 +17338,30 @@ campos existentes:
   aplicado.
 - La fuente autoritativa es `iot_sessions.presence_outcome_json`; si no existe,
   se conserva la lectura del meta del último evento.
+
+
+### F133 — Episodio y evidencia DP9 (aditivo)
+
+`/radar/live` y `/radar/scope` añaden dentro de `presence_decision`:
+
+```json
+"episode": {
+  "marker": "p1|session|2510|PRESENT|push",
+  "session": "session",
+  "started_at": "2026-11-13 08:11:39.967",
+  "distance_marker": "v1|session|44436|1.110|push"
+},
+"evidence_source": "persisted_episode",
+"evidence_reason": "episode_evidence_in_range",
+"evidence_distance_m": 1.11,
+"evidence_marker": "v1|session|44436|1.110|push",
+"evidence_age_s": 0.4
+```
+
+- `evidence_source` ∈ `episode|persisted_episode|already_credited|not_range_capable`.
+- Cuando la DP9 no acredita el episodio, `evidence_reason` explica el motivo
+  (`no_dp9`, `zero_dp9`, `config_mismatch`, `session_mismatch`,
+  `evidence_outside_episode`, `cached_evidence`, `distance_above_maximum_range`).
+- Los campos son aditivos; los consumidores antiguos que solo lean
+  `apply`/`discard_reason` conservan su comportamiento.
+- `presence_outcome_json` incorpora `episode`, `evidence_*` y `converted_from`.

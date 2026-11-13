@@ -30,6 +30,7 @@ use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSessionRepository;
 use App\Domain\Presence\IotSessionService;
 use App\Domain\Presence\PresenceEventRepository;
+use App\Domain\Sensors\RadarDistanceReportRepository;
 use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomTypeRepository;
@@ -133,7 +134,8 @@ while ($running) {
                 null,
                 null,
                 null,
-                new RadarPresenceReportRepository($pdo)
+                new RadarPresenceReportRepository($pdo),
+                new RadarDistanceReportRepository($pdo)
             );
             foreach ($pendingRows as $pendingRow) {
                 $pendingRoom = (int) $pendingRow['room_id'];

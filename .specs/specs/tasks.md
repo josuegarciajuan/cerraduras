@@ -12100,3 +12100,17 @@ pendientes.
 - [x] TSK-F132-08: `radar-scope.js` con mensajes veraces y compatibilidad legacy.
 - [x] TSK-F132-09: units `PresenceTransitionPolicyTest`, `IotSessionServiceTest` y `radar-scope.test.js`.
 - [x] TSK-F132-10: BLOCK 103 del runner.
+
+
+### F133 — Evidencia DP1/DP9 correlacionada por episodio
+
+- [x] TSK-F133-01: `RadarEvidenceCorrelation` pura (episodio, configuración, frescura, centímetros).
+- [x] TSK-F133-02: migración aditiva `0151` (identidad del episodio DP1).
+- [x] TSK-F133-03: `IotSession`/`IotSessionRepository` persisten el episodio.
+- [x] TSK-F133-04: `findByMarker()` conserva la configuración original de DP9.
+- [x] TSK-F133-05: `IotSessionService` correlaciona DP9 entre tramas del mismo episodio.
+- [x] TSK-F133-06: pendientes revalidan signo, configuración y DP9; reloj en ms; frescura monotónica.
+- [x] TSK-F133-07: `/radar/live` expone episodio y evidencia utilizada.
+- [x] TSK-F133-08: panel inmediato «EL RADAR DETECTA · comprobando alcance».
+- [x] TSK-F133-09: defaults 0,5 s / 2 s para salas con override.
+- [x] TSK-F133-10: unit `RadarEvidenceCorrelationTest` y BLOCK 104.
