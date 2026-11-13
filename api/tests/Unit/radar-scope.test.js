@@ -161,6 +161,20 @@ check('F134 decisión antigua no oculta detección fresca',
   && dmStaleDecisionFreshPresence.tone === 'ok'
   && dmStaleDecisionFreshPresence.subtitle.indexOf('2.76 m') >= 0);
 
+const dmStaleDecisionAbsent = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', age_seconds: 1 },
+  stats: { motion_recent: false, last_distance: 2.48, last_distance_age_s: 5 },
+  server_ts: '2026-11-13T10:59:00.000Z',
+  presence_decision: {
+    event_at: '2026-11-13 10:53:03.991',
+    range_gate: { status: 'unverified', reason: 'zero_dp9' },
+  },
+  range_evaluation: { status: 'unverified', reason: 'zero_dp9' },
+});
+check('F134 decisión antigua no convierte ABSENT en presencia',
+  dmStaleDecisionAbsent.state === 'ABSENT'
+  && dmStaleDecisionAbsent.title === 'NO TE DETECTA');
+
 const dmPipelineOk = RadarScope.detectionModel({
   raw: { state: 'PRESENT', stale: true, age_seconds: 9000 },
   stats: {},
