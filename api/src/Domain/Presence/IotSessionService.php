@@ -493,6 +493,17 @@ final class IotSessionService
                         // episodio de presencia termina aquí.
                         $this->clearPresenceEpisode($session);
                         $radarDecision['value'] = PresenceEvent::VALUE_ABSENT;
+                    } elseif ($value === PresenceEvent::VALUE_PRESENT) {
+                        // F134: la evidencia DP9 se marca como usada cuando la
+                        // presencia se aplica, no antes. Así un descarte por
+                        // política no invalida las siguientes tramas del mismo
+                        // episodio.
+                        $gate = is_array($radarDecision['range_gate'] ?? null)
+                            ? $radarDecision['range_gate'] : [];
+                        $gateMarker = $gate['distance_marker'] ?? null;
+                        if (is_string($gateMarker) && $gateMarker !== '') {
+                            $session->presenceEpisodeDistanceMarker = $gateMarker;
+                        }
                     }
                     $radarDecision['episode'] = $this->episodePayload($session);
                     $radarDecision = $this->tagOutcome($radarDecision, $session, $evtUtc);
@@ -1235,7 +1246,16 @@ final class IotSessionService
             if ($frameMarker !== '') {
                 $persisted = $this->distanceReports->findByMarker($session->roomId, $frameMarker);
             }
-            if ($persisted === null) {
+            // F133/F134: una DP9 con distancia 0 no debe ser la única
+            // evidencia del episodio. Si la trama actual o la fila persistida
+            // no aportan una distancia positiva, se busca la última DP9
+            // positiva del mismo episodio antes de declarar el alcance como
+            // no verificado.
+            $frameDistance = self::reportDistance($frameReport);
+            $persistedDistance = self::reportDistance($persisted);
+            if ($frameDistance === null || $frameDistance <= 0.0
+                || ($persistedDistance !== null && $persistedDistance <= 0.0)
+            ) {
                 $sinceMs = $this->mysqlToMs($session->presenceEpisodeStartedAt);
                 if ($sinceMs === null) {
                     $sinceMs = (int) $now->format('Uv') - 120000;
@@ -1251,6 +1271,7 @@ final class IotSessionService
 
         $window = (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_WINDOW_SECONDS', 120) ?? 120);
         $maxAge = (int) (Config::getInt('RADAR_EPISODE_EVIDENCE_MAX_AGE_SECONDS', 120) ?? 120);
+        $evidenceReport = self::selectEpisodeReport($frameReport, $persisted, $latest);
         $correlation = RadarEvidenceCorrelation::evaluate(
             PresenceEvent::VALUE_PRESENT,
             $session->presenceEpisodeMarker,
@@ -1258,7 +1279,7 @@ final class IotSessionService
             $this->mysqlToMs($session->presenceEpisodeStartedAt),
             $session->presenceEpisodeDistanceMarker,
             $frameReport,
-            $persisted ?? $latest,
+            $evidenceReport,
             $settings,
             (int) $now->format('Uv'),
             max(1, $window) * 1000,
@@ -1266,7 +1287,10 @@ final class IotSessionService
         );
 
         if ($correlation['status'] === RadarEvidenceCorrelation::STATUS_USABLE) {
-            $session->presenceEpisodeDistanceMarker = $correlation['marker'];
+            // El marcador se consume SOLO cuando la presencia se aplica (ver
+            // bloque de mutate). Si la política de la sala descarta el
+            // PRESENT después, la siguiente DP9 positiva sigue siendo válida
+            // y el panel no queda atrapado en "comprobando alcance".
             return $this->rangeGate(
                 RadarOperationalRangeDecision::STATUS_IN_RANGE,
                 RadarOperationalRangeDecision::REASON_WITHIN_RANGE,
@@ -1327,6 +1351,37 @@ final class IotSessionService
             $correlation['marker'],
             'episode'
         );
+    }
+
+    /** @param array<string,mixed>|null $report */
+    private static function reportDistance(?array $report): ?float
+    {
+        if (!is_array($report) || !isset($report['distance_m']) || !is_numeric($report['distance_m'])) {
+            return null;
+        }
+        $distance = (float) $report['distance_m'];
+        return is_finite($distance) ? $distance : null;
+    }
+
+    /**
+     * Elige la evidencia DP9 del episodio: prioriza una fila persistida con
+     * distancia positiva, luego la DP9 de la trama y por último la última DP9
+     * positiva del episodio. Una distancia 0 nunca gana a una positiva.
+     *
+     * @param array<string,mixed>|null $frame
+     * @param array<string,mixed>|null $persisted
+     * @param array<string,mixed>|null $latest
+     * @return array<string,mixed>|null
+     */
+    private static function selectEpisodeReport(?array $frame, ?array $persisted, ?array $latest): ?array
+    {
+        foreach ([$persisted, $frame, $latest] as $candidate) {
+            $distance = self::reportDistance($candidate);
+            if ($distance !== null && $distance > 0.0) {
+                return $candidate;
+            }
+        }
+        return $persisted ?? $frame ?? $latest;
     }
 
     /** F133.1: respaldo DP1 acotado a salas radar normales con alcance corto. */
