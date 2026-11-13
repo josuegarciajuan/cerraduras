@@ -216,6 +216,23 @@
     };
   }
 
+  function decisionAgeSeconds(scope, decision) {
+    if (!decision) return null;
+    if (decision.age_seconds != null) {
+      var direct = Number(decision.age_seconds);
+      if (isFinite(direct) && direct >= 0) return direct;
+    }
+    var raw = decision.decided_at || decision.event_at;
+    if (!raw) return null;
+    var normalized = String(raw).trim().replace(' ', 'T');
+    if (!/[zZ]$|[+-]\d\d:?\d\d$/.test(normalized)) normalized += 'Z';
+    var ts = Date.parse(normalized);
+    if (!isFinite(ts)) return null;
+    var now = scope && scope.server_ts ? Date.parse(scope.server_ts) : Date.now();
+    if (!isFinite(now)) now = Date.now();
+    return Math.max(0, (now - ts) / 1000);
+  }
+
   /**
    * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
    * F132: el resultado operativo final manda sobre la señal cruda; una
@@ -245,6 +262,21 @@
       return staleDetection(scope, age, lastDistance);
     }
 
+    // F134: una decisión operativa antigua no debe ocultar una detección bruta
+    // fresca. El radar puede estar viendo y midiendo mientras la última
+    // decisión persistida sigue siendo de una trama anterior (por ejemplo, con
+    // DP9=0). En ese caso manda la señal actual del radar.
+    var staleLimit = Number((scope && scope.stale_seconds) || 30);
+    var decisionAgeSec = decisionAgeSeconds(scope, decision);
+    var decisionStale = decisionAgeSec != null && decisionAgeSec > staleLimit;
+    if (decisionStale && visual.state === 'PRESENT') {
+      return {
+        state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
+        subtitle: 'Presencia detectada · ' + distanceText,
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+
     if (gateStatus === 'out_of_range') {
       return {
         state: 'FILTERED', tone: 'bad', icon: '⊘', title: 'FUERA DEL ALCANCE',
@@ -265,9 +297,7 @@
       };
     }
     // F132: una decisión antigua no puede prevalecer sobre la falta de datos.
-    var decisionAge = decision && decision.age_seconds != null ? Number(decision.age_seconds) : null;
-    var staleLimit = Number((scope && scope.stale_seconds) || 30);
-    if (visual.state === 'STALE' || (decisionAge != null && isFinite(decisionAge) && decisionAge > staleLimit)) {
+    if (visual.state === 'STALE' || decisionStale) {
       return staleDetection(scope, age, lastDistance);
     }
     var outcome = outcomeOf(decision);
