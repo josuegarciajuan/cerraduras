@@ -131,9 +131,57 @@
   }
 
   /**
+   * F132: normaliza el resultado operativo final. Acepta payloads nuevos
+   * (`outcome`) y antiguos (`apply` + `discard_reason`).
+   */
+  function outcomeOf(decision) {
+    if (!decision) return null;
+    var outcome = String(decision.outcome || '').toLowerCase();
+    if (outcome) return outcome;
+    if (decision.apply === true) return 'applied';
+    var reason = String(decision.discard_reason || '');
+    if (reason === 'candidate_absent') return 'pending_absent';
+    if (reason === 'entry_pending') return 'pending_present';
+    if (reason === '' || reason === 'noop' || reason === 'refresh'
+        || reason === 'duplicate' || reason === 'stale') return 'noop';
+    return 'blocked';
+  }
+
+  /** Explicación humana del motivo operativo; el código queda en diagnóstico. */
+  function reasonText(reason) {
+    switch (String(reason || '')) {
+      case 'no_context':
+        return 'La política de esta habitación no permite aplicar la presencia.';
+      case 'uncorroborated':
+        return 'Falta corroboración física (puerta o cámara).';
+      case 'candidate':
+        return 'Esperando evidencia suficiente para confirmar la presencia.';
+      case 'entry_pending':
+        return 'La detección se está confirmando antes de aplicarla.';
+      case 'candidate_absent':
+        return 'La ausencia se está confirmando; no se ha cerrado la presencia.';
+      case 'range_unverified':
+        return 'No hay una distancia nueva correlacionada con esta detección.';
+      case 'range_exceeded':
+        return 'El eco supera el alcance operativo configurado.';
+      default:
+        return 'La decisión operativa no se aplicó.';
+    }
+  }
+
+  function pendingHint(decision) {
+    var pending = decision && decision.pending;
+    if (!pending || !pending.due_at) return '';
+    var due = Date.parse(String(pending.due_at).replace(' ', 'T') + 'Z');
+    if (!isFinite(due)) return '';
+    var seconds = Math.max(0, Math.ceil((due - Date.now()) / 1000));
+    return seconds > 0 ? ' Listo en ~' + seconds + ' s.' : '';
+  }
+
+  /**
    * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
-   * Verde = TE DETECTA; ámbar = movimiento sin presencia; rojo = NO TE DETECTA;
-   * gris = SIN DATOS. F130: fuera de alcance o sin DP9 no es "confirmada".
+   * F132: el resultado operativo final manda sobre la señal cruda; una
+   * transición pendiente nunca se presenta como "el radar te ve".
    */
   function detectionModel(scope) {
     var visual = presenceVisual(scope);
@@ -168,15 +216,62 @@
         ageSeconds: age, lastDistance: lastDistance
       };
     }
-    var passiveReasons = { noop: 1, duplicate: 1, stale: 1, refresh: 1 };
-    if (decision && decision.apply === false && decision.discard_reason
-        && !passiveReasons[decision.discard_reason]) {
+    // F132: una decisión antigua no puede prevalecer sobre la falta de datos.
+    var decisionAge = decision && decision.age_seconds != null ? Number(decision.age_seconds) : null;
+    var staleLimit = Number((scope && scope.stale_seconds) || 30);
+    if (visual.state === 'STALE' || (decisionAge != null && isFinite(decisionAge) && decisionAge > staleLimit)) {
       return {
-        state: 'NOT_APPLIED', tone: 'warn', icon: '!', title: 'PRESENCIA NO APLICADA',
-        subtitle: 'El radar te ve, pero la decisión operativa no se aplicó ('
-          + decision.discard_reason + ').',
+        state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
+        subtitle: 'El radar no envía reportes recientes.',
         ageSeconds: age, lastDistance: lastDistance
       };
+    }
+    var outcome = outcomeOf(decision);
+    if (outcome === 'pending_present') {
+      return {
+        state: 'CONFIRMING', tone: 'warn', icon: '◔', title: 'CONFIRMANDO PRESENCIA',
+        subtitle: 'La detección se está confirmando antes de aplicarla.'
+          + pendingHint(decision),
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (outcome === 'pending_absent') {
+      var keepsPresence = String((decision && decision.effective_presence) || '').toUpperCase() === 'PRESENT';
+      return {
+        state: 'CHECKING_ABSENCE', tone: 'warn', icon: '◔', title: 'COMPROBANDO AUSENCIA',
+        subtitle: keepsPresence
+          ? 'Se mantiene la presencia anterior mientras se confirma la ausencia.'
+          : 'La ausencia se está confirmando antes de aplicarla.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (outcome === 'blocked') {
+      return {
+        state: 'NOT_APPLIED', tone: 'warn', icon: '!', title: 'DETECCIÓN NO APLICADA',
+        subtitle: reasonText(decision && decision.outcome_reason
+          ? decision.outcome_reason
+          : (decision && decision.discard_reason)),
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    if (outcome === 'applied' || outcome === 'maintained'
+        || outcome === 'noop' || outcome === 'duplicate' || outcome === 'stale') {
+      var effective = String((decision && decision.effective_presence) || '').toUpperCase();
+      var rawValue = String((decision && (decision.value || decision.raw)) || '').toUpperCase();
+      if (effective === 'PRESENT' || (effective === '' && rawValue === 'PRESENT')) {
+        return {
+          state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
+          subtitle: 'Presencia confirmada · ' + distanceText,
+          ageSeconds: age, lastDistance: lastDistance
+        };
+      }
+      if (effective === 'ABSENT' || rawValue === 'ABSENT') {
+        return {
+          state: 'ABSENT', tone: 'bad', icon: '✕', title: 'NO TE DETECTA',
+          subtitle: 'Sin presencia ni movimiento reciente.',
+          ageSeconds: age, lastDistance: lastDistance
+        };
+      }
     }
     if (visual.state === 'PRESENT') {
       return {
@@ -350,6 +445,8 @@
     presenceVisual: presenceVisual,
     rangeEvaluation: rangeEvaluation,
     detectionModel: detectionModel,
+    outcomeOf: outcomeOf,
+    reasonText: reasonText,
     histogram: histogram,
     buildSvg: buildSvg
   };

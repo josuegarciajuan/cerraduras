@@ -439,7 +439,9 @@ final class SensorContextBuilder
      */
     private function freshRadarDecision(int $roomId): ?array
     {
-        $decision = $this->latestRadarDecision($roomId);
+        // F132: la fuente autoritativa es el resultado operativo persistido en
+        // la sesión. El meta del evento queda como compatibilidad.
+        $decision = $this->presenceOutcome($roomId) ?? $this->latestRadarDecision($roomId);
         if ($decision === null) {
             return null;
         }
@@ -449,6 +451,25 @@ final class SensorContextBuilder
         $decision['age_seconds'] = $age;
         $decision['stale'] = RadarFreshness::decisionStale($decision);
         return $decision;
+    }
+
+    /**
+     * F132: último resultado operativo final de la presencia (solo lectura).
+     *
+     * @return array<string,mixed>|null
+     */
+    public function presenceOutcome(int $roomId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT presence_outcome_json FROM iot_sessions WHERE room_id = :rid LIMIT 1'
+        );
+        $stmt->execute([':rid' => $roomId]);
+        $raw = $stmt->fetchColumn();
+        if ($raw === false || $raw === null || trim((string) $raw) === '') {
+            return null;
+        }
+        $decoded = json_decode((string) $raw, true);
+        return is_array($decoded) ? $decoded : null;
     }
 
     /**

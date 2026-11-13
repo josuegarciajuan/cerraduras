@@ -102,7 +102,7 @@ final class RadarLiveService
         // F130: decisión operativa y barrera de alcance del último frame. El
         // eco bruto sigue exponiéndose aparte; el cliente no debe rotular
         // "presencia confirmada" si el dominio no la aplicó.
-        $decision = $this->latestRadarDecision($roomId);
+        $decision = $ctx->presenceOutcome($roomId) ?? $this->latestRadarDecision($roomId);
         $rangeGate = is_array($decision['range_gate'] ?? null) ? $decision['range_gate'] : null;
 
         return [
@@ -140,9 +140,18 @@ final class RadarLiveService
                 'state' => $decision['state'] ?? null,
                 'apply' => $decision['apply'] ?? null,
                 'discard_reason' => $decision['discard_reason'] ?? null,
-                'at' => $decision['at'] ?? null,
+                'at' => $decision['at'] ?? ($decision['decided_at'] ?? null),
+                'decided_at' => $decision['decided_at'] ?? null,
                 'converted_from' => $decision['converted_from'] ?? null,
+                // F132: resultado operativo final y transición pendiente.
+                'outcome' => $decision['outcome'] ?? null,
+                'outcome_reason' => $decision['outcome_reason'] ?? null,
+                'value' => $decision['value'] ?? ($decision['raw'] ?? null),
+                'effective_presence' => $decision['effective_presence'] ?? null,
+                'source' => $decision['source'] ?? null,
+                'pending' => $decision['pending'] ?? null,
             ] : null,
+            'presence_state' => (string) ($live['presence_state'] ?? 'UNKNOWN'),
             'range_gate' => $rangeGate,
             'range_evaluation' => $rangeGate,
         ];

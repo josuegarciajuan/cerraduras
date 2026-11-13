@@ -17302,3 +17302,39 @@ columna vigente). El diagnóstico de `/radar/scope` añade
 Los campos previos (`raw`, `last_distance`, `series`, `settings`) no cambian.
 Un `PRESENT` fuera de alcance se refleja como `ABSENT` en `presence_state`,
 pero el DP9 bruto permanece en `series`/`radar_distance_reports`.
+
+### F132 — Resultado operativo final de presencia (aditivo)
+
+`GET /dashboard-api/sensores/v2/radar/live` y `/radar/scope` añaden, sin romper
+campos existentes:
+
+```json
+"presence_decision": {
+  "state": "CANDIDATE_ABSENT",
+  "apply": false,
+  "discard_reason": "candidate_absent",
+  "outcome": "pending_absent",
+  "outcome_reason": "candidate_absent",
+  "value": "ABSENT",
+  "effective_presence": "PRESENT",
+  "decided_at": "2026-11-13T10:00:00.000Z",
+  "source": "dp1_edge",
+  "pending": {
+    "state": "ABSENT",
+    "since": "2026-11-13 10:00:00.000",
+    "due_at": "2026-11-13 10:00:04.000",
+    "marker": "..."
+  }
+},
+"presence_state": "PRESENT"
+```
+
+- `outcome` ∈ `applied|maintained|pending_present|pending_absent|blocked|
+  unverified|out_of_range|noop|duplicate|stale`.
+- `effective_presence` es el estado de `iot_sessions.presence_state` tras el
+  procesamiento (o el vigente mientras la transición está pendiente).
+- Los clientes antiguos que solo lean `apply`/`discard_reason` mantienen su
+  comportamiento; un `apply=false` con `candidate_absent` sigue siendo no
+  aplicado.
+- La fuente autoritativa es `iot_sessions.presence_outcome_json`; si no existe,
+  se conserva la lectura del meta del último evento.

@@ -201,6 +201,12 @@ final class IotSessionService
                             $rawEvent->id,
                             ['radar_decision' => $radarDecision]
                         );
+                        // F132: un eco sin DP9 correlacionada también es un
+                        // resultado final; el panel debe distinguirlo de una
+                        // presencia aplicada.
+                        $tagged = $this->tagOutcome($radarDecision, $session, $evtUtc);
+                        $session->presenceOutcome = $this->outcomeFromDecision($tagged);
+                        $this->iotSessions->updateState($session);
                         $this->presenceEvents->markAudit(
                             $rawEvent->id,
                             false,
@@ -272,6 +278,16 @@ final class IotSessionService
                         }
                     }
                     if ($radarDecision !== null) {
+                        // F132: transición pendiente (entrada/ausencia) antes de
+                        // publicar cualquier resultado. Solo aplica a salas con
+                        // override radar explícito; almacén y TIMBRADO conservan
+                        // su comportamiento.
+                        if ($edgeDecision !== null) {
+                            $radarDecision = $this->applyPendingPolicy(
+                                $room, $session, $radarDecision, $evtUtc, $meta
+                            );
+                        }
+                        $radarDecision = $this->tagOutcome($radarDecision, $session, $evtUtc);
                         $this->presenceEvents->updateMetaJson(
                             $rawEvent->id,
                             ['radar_decision' => $radarDecision]
@@ -292,8 +308,12 @@ final class IotSessionService
                                 && $session->lastPresenceEventAt !== $evtUtc
                             ) {
                                 $session->lastPresenceEventAt = $evtUtc;
-                                $this->iotSessions->updateState($session);
                             }
+                            // F132: el resultado final se persiste también sin
+                            // aplicar, para que el panel no confunda una
+                            // detección con una decisión operativa.
+                            $session->presenceOutcome = $this->outcomeFromDecision($radarDecision);
+                            $this->iotSessions->updateState($session);
                             $this->presenceEvents->markAudit(
                                 $rawEvent->id,
                                 false,
@@ -321,6 +341,15 @@ final class IotSessionService
                 ) {
                     $timbradoPresence = $this->isTimbradoRoom($room);
                     $warehousePresence = $this->isWarehouseRoom($room) || $timbradoPresence;
+                    // F132: una política radar explícita ya ha decidido la
+                    // admisibilidad. El filtro hotelero de F48 no debe volver a
+                    // contradecirla (antes podía confirmar PRESENT y descartarlo
+                    // después como `no_context`).
+                    if ($radarMode !== null) {
+                        $entryWindowActive = true;
+                        $insideNoExitCycle = true;
+                        $physicalEvidence = true;
+                    }
                     if ($timbradoPresence) {
                         // F117: en la oficina el radar es la única autoridad de
                         // presencia; no hay estancia hotelera ni fusión de cámara.
@@ -333,7 +362,9 @@ final class IotSessionService
                             $this->warehousePresenceContext($room, $session, $now);
                         // F88 (RF-123.3): cámara (INTERIOR) o puerta recientes.
                         $physicalEvidence = $this->warehousePhysicalEvidence($room, $session, $now);
-                    } else {
+                    } elseif ($radarMode === null) {
+                        // F48 hotelero: solo cuando la sala no ha activado una
+                        // política radar explícita.
                         [$entryWindowActive, $insideNoExitCycle] =
                             $this->presenceContext($room, $session, $now);
                     }
@@ -393,6 +424,27 @@ final class IotSessionService
                         $session->lastPresenceEventAt = $evtUtc;
                         $this->iotSessions->updateState($session);
                     }
+                    // F132: un rechazo posterior (política de la sala,
+                    // deduplicación, atraso) también es un resultado final. Se
+                    // registra para que el panel no publique la decisión
+                    // intermedia como si se hubiera aplicado.
+                    if ($radarDecision !== null
+                        && $sensor === PresenceEvent::SENSOR_PRESENCE
+                    ) {
+                        $radarDecision['discard_reason'] = $decision;
+                        $radarDecision['apply'] = false;
+                        $radarDecision['confirmed'] = false;
+                        // Recalcular el resultado con el motivo FINAL: el
+                        // intermedio pudo haber sido `applied`.
+                        unset($radarDecision['outcome']);
+                        $radarDecision = $this->tagOutcome($radarDecision, $session, $evtUtc);
+                        $this->presenceEvents->updateMetaJson(
+                            $rawEvent->id,
+                            ['radar_decision' => $radarDecision]
+                        );
+                        $session->presenceOutcome = $this->outcomeFromDecision($radarDecision);
+                        $this->iotSessions->updateState($session);
+                    }
                     $this->presenceEvents->markAudit($rawEvent->id, false, $decision);
                     $this->iotSessions->commit();
                     break;
@@ -402,6 +454,27 @@ final class IotSessionService
                 $session->stayId = $activeStay !== null ? $activeStay->id : null;
 
                 $this->mutate($room, $session, $event, $evtUtc, $activeStay, $correlationId, $now);
+
+                // F132: la presencia aplicada cancela cualquier transición
+                // pendiente y publica el resultado operativo final.
+                if ($radarDecision !== null
+                    && $sensor === PresenceEvent::SENSOR_PRESENCE
+                    && in_array($value, [PresenceEvent::VALUE_PRESENT, PresenceEvent::VALUE_ABSENT], true)
+                ) {
+                    $this->clearPending($session);
+                    $radarDecision['apply'] = true;
+                    $radarDecision['confirmed'] = true;
+                    $radarDecision['discard_reason'] = null;
+                    if (($radarDecision['raw'] ?? '') === '') {
+                        $radarDecision['raw'] = $value;
+                    }
+                    $radarDecision = $this->tagOutcome($radarDecision, $session, $evtUtc);
+                    $this->presenceEvents->updateMetaJson(
+                        $rawEvent->id,
+                        ['radar_decision' => $radarDecision]
+                    );
+                    $session->presenceOutcome = $this->outcomeFromDecision($radarDecision);
+                }
 
                 $this->iotSessions->updateState($session);
                 $this->recordPhysicalSensorState($rawEvent, $sensor, $value);
@@ -903,8 +976,9 @@ final class IotSessionService
         ?array $meta,
         \DateTimeImmutable $frameTime
     ): ?array {
+        $explicitRadar = $room->presenceModeOverride !== null && $room->presenceModeOverride !== '';
         if ($this->presenceReports === null
-            || (!$this->isWarehouseRoom($room) && !$this->isTimbradoRoom($room))
+            || (!$this->isWarehouseRoom($room) && !$this->isTimbradoRoom($room) && !$explicitRadar)
         ) {
             return null;
         }
@@ -923,8 +997,10 @@ final class IotSessionService
             return null;
         }
 
-        $graceRaw = Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS', '0.0') ?? '0.0';
-        $graceMs = (int) round(max(0.0, min(10.0, (float) $graceRaw)) * 1000);
+        // F132: la gracia de ausencia depende de la política de la sala. Las
+        // salas normales con override usan una espera sostenida; almacén y
+        // TIMBRADO conservan la gracia configurada (por defecto 0).
+        $graceMs = $this->transitionHolds($room)['absent_ms'];
         $presentMaxAge = (int) (Config::getInt('RADAR_PRESENT_EDGE_MAX_AGE_SECONDS', 120) ?? 120);
         $presentMaxAgeMs = max(1000, min(600000, $presentMaxAge * 1000));
 
@@ -970,6 +1046,301 @@ final class IotSessionService
         } catch (\Throwable $e) {
             return $fallback;
         }
+    }
+
+    /**
+     * F132: resuelve los tiempos de transición de la sala. Solo las salas
+     * normales con override radar explícito usan entrada diferida/ausencia
+     * sostenida; almacén y TIMBRADO conservan su comportamiento.
+     *
+     * @return array{entry_ms:int,absent_ms:int}
+     */
+    private function transitionHolds(Room $room): array
+    {
+        return PresenceTransitionPolicy::holds(
+            $room->presenceModeOverride !== null && $room->presenceModeOverride !== '',
+            $this->isWarehouseRoom($room) || $this->isTimbradoRoom($room),
+            Config::get('RADAR_PRESENT_ENTRY_HOLD_SECONDS'),
+            Config::get('RADAR_ABSENT_EDGE_GRACE_SECONDS')
+        );
+    }
+
+    /**
+     * F132: una transición pendiente no publica estado operativo. PRESENT abre
+     * una espera corta de entrada; ABSENT sostenido abre la espera de salida.
+     * Una evidencia contraria cancela la espera y, si su plazo ya venció, se
+     * aplica en esta misma trama.
+     *
+     * @param array<string,mixed> $decision
+     * @param array<string,mixed>|null $meta
+     * @return array<string,mixed>
+     */
+    private function applyPendingPolicy(
+        Room $room,
+        IotSession $session,
+        array $decision,
+        string $evtUtc,
+        ?array $meta
+    ): array {
+        $holds = $this->transitionHolds($room);
+        $value = strtoupper(trim((string) ($decision['raw'] ?? '')));
+        $nowMs = $this->mysqlToMs($evtUtc);
+        if ($nowMs === null) {
+            return $decision;
+        }
+        $transition = PresenceTransitionPolicy::transition(
+            $value,
+            $session->presenceState,
+            $session->presencePendingState,
+            $this->mysqlToMs($session->presencePendingDueAt),
+            $nowMs,
+            $holds
+        );
+        switch ($transition['action']) {
+            case 'ignore':
+                return $decision;
+
+            case 'apply':
+                $this->clearPending($session);
+                $decision['apply'] = true;
+                $decision['confirmed'] = true;
+                $decision['state'] = $transition['state'];
+                $decision['discard_reason'] = null;
+                $decision['outcome'] = $transition['outcome'];
+                return $decision;
+
+            case 'maintain':
+                $this->clearPending($session);
+                $decision['apply'] = false;
+                $decision['confirmed'] = false;
+                $decision['state'] = $transition['state'];
+                $decision['discard_reason'] = $transition['reason'];
+                $decision['outcome'] = $transition['outcome'];
+                return $decision;
+
+            case 'pending':
+            default:
+                $report = is_array($meta['presence_report'] ?? null) ? $meta['presence_report'] : [];
+                $samePending = $session->presencePendingState === $value
+                    && $session->presencePendingDueAt !== null;
+                if (!$samePending) {
+                    $session->presencePendingSince = $evtUtc;
+                    $session->presencePendingMarker = (string) ($report['marker'] ?? '') ?: null;
+                    $session->presencePendingConfigKey = (string) ($report['config_key'] ?? '') ?: null;
+                }
+                $session->presencePendingState = $value;
+                if ($transition['due_at_ms'] !== null) {
+                    $session->presencePendingDueAt = $this->mysqlUtcFromMs($transition['due_at_ms']);
+                }
+                $decision['apply'] = false;
+                $decision['confirmed'] = false;
+                $decision['state'] = $transition['state'];
+                $decision['discard_reason'] = $transition['reason'];
+                $decision['outcome'] = $transition['outcome'];
+                $decision['pending'] = $this->pendingPayload($session);
+                return $decision;
+        }
+    }
+
+    private function clearPending(IotSession $session): void
+    {
+        $session->presencePendingState = null;
+        $session->presencePendingSince = null;
+        $session->presencePendingDueAt = null;
+        $session->presencePendingMarker = null;
+        $session->presencePendingConfigKey = null;
+    }
+
+    /** @return array{state:string,since:?string,due_at:?string,marker:?string}|null */
+    private function pendingPayload(IotSession $session): ?array
+    {
+        if ($session->presencePendingState === null) {
+            return null;
+        }
+        return [
+            'state' => $session->presencePendingState,
+            'since' => $session->presencePendingSince,
+            'due_at' => $session->presencePendingDueAt,
+            'marker' => $session->presencePendingMarker,
+        ];
+    }
+
+    /**
+     * F132: añade el resultado final y el estado efectivo a una decisión radar.
+     *
+     * @param array<string,mixed> $decision
+     * @return array<string,mixed>
+     */
+    private function tagOutcome(array $decision, IotSession $session, string $evtUtc): array
+    {
+        $applied = ($decision['apply'] ?? false) === true;
+        $reason = isset($decision['discard_reason']) ? (string) $decision['discard_reason'] : null;
+        $value = strtoupper(trim((string) ($decision['raw'] ?? '')));
+        $inForce = $value !== '' && $session->presenceState === $value;
+        $decision['outcome'] = $decision['outcome']
+            ?? PresenceTransitionPolicy::outcomeFor($reason, $applied, $inForce);
+        $decision['outcome_reason'] = $reason;
+        $decision['value'] = $value !== '' ? $value : ($decision['value'] ?? null);
+        $decision['effective_presence'] = $session->presenceState;
+        $decision['event_at'] = $evtUtc;
+        $decision['pending'] = $this->pendingPayload($session);
+        return $decision;
+    }
+
+    /**
+     * @param array<string,mixed> $decision
+     * @return array<string,mixed>
+     */
+    private function outcomeFromDecision(array $decision): array
+    {
+        return [
+            'state' => $decision['state'] ?? null,
+            'raw' => $decision['raw'] ?? null,
+            'value' => $decision['value'] ?? ($decision['raw'] ?? null),
+            'apply' => ($decision['apply'] ?? false) === true,
+            'outcome' => $decision['outcome'] ?? null,
+            'outcome_reason' => $decision['outcome_reason'] ?? null,
+            'effective_presence' => $decision['effective_presence'] ?? null,
+            'mode' => $decision['mode'] ?? null,
+            'operational_mode' => $decision['operational_mode'] ?? null,
+            'discard_reason' => $decision['discard_reason'] ?? null,
+            'decided_at' => $decision['decided_at'] ?? null,
+            'event_at' => $decision['event_at'] ?? null,
+            'marker' => $decision['marker'] ?? null,
+            'source' => $decision['source'] ?? null,
+            'range_gate' => $decision['range_gate'] ?? null,
+            'pending' => $decision['pending'] ?? null,
+        ];
+    }
+
+    /**
+     * F132: confirma una transición pendiente sin esperar a un nuevo reporte.
+     * La llama el worker local `exit-scan` (sin consultar el dispositivo).
+     *
+     * @return array{result:string,room_id:int}
+     */
+    public function resolvePendingPresence(int $roomId, string $correlationId): array
+    {
+        $room = $this->rooms->findById($roomId);
+        if ($room === null || $this->resolveRadarMode($room, $this->roomTypes->findById($room->roomTypeId)) === null) {
+            return ['result' => 'skipped', 'room_id' => $roomId];
+        }
+        $result = 'skipped';
+        for ($attempt = 1; $attempt <= self::MAX_TX_RETRIES; $attempt++) {
+            try {
+                $this->iotSessions->beginTransaction();
+                $session = $this->iotSessions->lockByRoomId($roomId);
+                $pending = $session->presencePendingState;
+                if ($pending === null || $session->presencePendingDueAt === null) {
+                    $this->iotSessions->commit();
+                    return ['result' => 'skipped', 'room_id' => $roomId];
+                }
+                $dueMs = $this->mysqlToMs($session->presencePendingDueAt);
+                if ($dueMs === null || Clock::nowUtc()->getTimestamp() * 1000 < $dueMs) {
+                    $this->iotSessions->commit();
+                    return ['result' => 'pending', 'room_id' => $roomId];
+                }
+
+                // La evidencia auténtica más reciente debe seguir siendo la
+                // misma transición. Si llegó otra (p. ej. un PRESENT), el
+                // evento ya la habrá resuelto o la dejamos caducar.
+                // Solo invalida la espera una evidencia de SIGNO contrario. Un
+                // nuevo reporte del mismo valor (marker distinto) sigue siendo
+                // la misma transición física.
+                $latest = $this->presenceReports?->latestForRoom($roomId);
+                $superseded = $latest !== null
+                    && strtoupper((string) ($latest['value'] ?? '')) !== strtoupper((string) $pending);
+                if ($superseded) {
+                    $this->clearPending($session);
+                    $session->presenceOutcome = [
+                        'outcome' => 'maintained',
+                        'outcome_reason' => PresenceTransitionPolicy::REASON_SUPERSEDED,
+                        'effective_presence' => $session->presenceState,
+                        'decided_at' => Clock::nowUtc()->format('Y-m-d\TH:i:s.v\Z'),
+                    ];
+                    $this->iotSessions->updateState($session);
+                    $this->iotSessions->commit();
+                    return ['result' => 'superseded', 'room_id' => $roomId];
+                }
+
+                $nowMs = Clock::nowUtc()->getTimestamp() * 1000;
+                $nowUtc = $this->mysqlUtcFromMs($nowMs);
+                if ($pending === PresenceEvent::VALUE_PRESENT) {
+                    $session->presenceState = IotSession::PRESENCE_PRESENT;
+                    $session->lastPresenceValue = PresenceEvent::VALUE_PRESENT;
+                    $session->lastAbsentSince = null;
+                } else {
+                    if ($session->presenceState !== IotSession::PRESENCE_ABSENT) {
+                        $session->lastAbsentSince = $session->presencePendingSince ?? $nowUtc;
+                    }
+                    $session->presenceState = IotSession::PRESENCE_ABSENT;
+                    $session->lastPresenceValue = PresenceEvent::VALUE_ABSENT;
+                }
+                $session->lastPresenceEventAt = $session->presencePendingSince ?? $session->lastPresenceEventAt;
+                $this->clearPending($session);
+                $session->presenceOutcome = [
+                    'state' => $pending === PresenceEvent::VALUE_PRESENT
+                        ? RadarPresenceDecision::STATE_PRESENT_CONFIRMED
+                        : RadarPresenceDecision::STATE_ABSENT_CONFIRMED,
+                    'raw' => $pending,
+                    'value' => $pending,
+                    'apply' => true,
+                    'outcome' => PresenceTransitionPolicy::OUTCOME_APPLIED,
+                    'outcome_reason' => null,
+                    'effective_presence' => $session->presenceState,
+                    'decided_at' => Clock::nowUtc()->format('Y-m-d\TH:i:s.v\Z'),
+                    'event_at' => $session->lastPresenceEventAt,
+                    'source' => 'pending_resolver',
+                ];
+                $this->iotSessions->updateState($session);
+                $this->iotSessions->commit();
+                $result = 'applied';
+                break;
+            } catch (PDOException $e) {
+                $this->safeRollback();
+                if (!$this->isRetryableDeadlock($e) || $attempt >= self::MAX_TX_RETRIES) {
+                    throw $e;
+                }
+                usleep(20_000 * $attempt + random_int(0, 10_000));
+            } catch (\Throwable $e) {
+                $this->safeRollback();
+                throw $e;
+            }
+        }
+
+        // Efectos post-commit, nunca bajo el lock.
+        if ($result === 'applied' && $session !== null) {
+            if ($this->exitActionService !== null) {
+                try {
+                    $this->exitActionService->executeIfPending($roomId, $correlationId);
+                } catch (\Throwable $e) {
+                    error_log('[IotSessionService] pending exit evaluation failed: ' . $e->getMessage());
+                }
+            }
+        }
+        return ['result' => $result, 'room_id' => $roomId];
+    }
+
+    private function mysqlToMs(?string $value): ?int
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+        $date = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s.u', $value, new \DateTimeZone('UTC'));
+        if ($date === false) {
+            $date = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, new \DateTimeZone('UTC'));
+        }
+        if ($date === false) {
+            return null;
+        }
+        return $date->getTimestamp() * 1000 + intdiv((int) $date->format('u'), 1000);
+    }
+
+    private function mysqlUtcFromMs(int $ms): string
+    {
+        $seconds = intdiv($ms, 1000);
+        $millis = $ms % 1000;
+        return gmdate('Y-m-d H:i:s', $seconds) . '.' . str_pad((string) $millis, 3, '0', STR_PAD_LEFT);
     }
 
     /**

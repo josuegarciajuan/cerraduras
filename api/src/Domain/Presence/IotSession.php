@@ -17,6 +17,8 @@ namespace App\Domain\Presence;
  * last_presence_event_at:  F41: occurred_at of the last applied presence event.
  * last_door_value:         F41: last applied door value (OPEN|CLOSED).
  * last_presence_value:     F41: last applied presence value (PRESENT|ABSENT).
+ * presence_pending_*:      F132: transición pendiente (PRESENT|ABSENT) y su plazo.
+ * presence_outcome_json:   F132: último resultado operativo final para el panel.
  *
  * See design.md §4.10, §8.2 and Fase 41 §2.2.
  */
@@ -47,6 +49,15 @@ final class IotSession
     public ?string $lastDoorValue;
     public ?string $lastPresenceValue;
 
+    // F132: transición pendiente y resultado operativo final.
+    public ?string $presencePendingState = null;
+    public ?string $presencePendingSince = null;
+    public ?string $presencePendingDueAt = null;
+    public ?string $presencePendingMarker = null;
+    public ?string $presencePendingConfigKey = null;
+    /** @var array<string,mixed>|null */
+    public ?array $presenceOutcome = null;
+
     public function __construct(
         int     $id,
         int     $roomId,
@@ -61,7 +72,13 @@ final class IotSession
         ?string $lastDoorEventAt = null,
         ?string $lastPresenceEventAt = null,
         ?string $lastDoorValue = null,
-        ?string $lastPresenceValue = null
+        ?string $lastPresenceValue = null,
+        ?string $presencePendingState = null,
+        ?string $presencePendingSince = null,
+        ?string $presencePendingDueAt = null,
+        ?string $presencePendingMarker = null,
+        ?string $presencePendingConfigKey = null,
+        ?array $presenceOutcome = null
     ) {
         $this->id                  = $id;
         $this->roomId              = $roomId;
@@ -77,6 +94,12 @@ final class IotSession
         $this->lastPresenceEventAt = $lastPresenceEventAt;
         $this->lastDoorValue       = $lastDoorValue;
         $this->lastPresenceValue   = $lastPresenceValue;
+        $this->presencePendingState = $presencePendingState;
+        $this->presencePendingSince = $presencePendingSince;
+        $this->presencePendingDueAt = $presencePendingDueAt;
+        $this->presencePendingMarker = $presencePendingMarker;
+        $this->presencePendingConfigKey = $presencePendingConfigKey;
+        $this->presenceOutcome = $presenceOutcome;
     }
 
     /** @return array<string,mixed> */
@@ -92,6 +115,12 @@ final class IotSession
             'last_presence_event_at' => $this->lastPresenceEventAt,
             'last_door_value'        => $this->lastDoorValue,
             'last_presence_value'    => $this->lastPresenceValue,
+            'presence_pending_state' => $this->presencePendingState,
+            'presence_pending_since' => $this->presencePendingSince,
+            'presence_pending_due_at' => $this->presencePendingDueAt,
+            'presence_pending_marker' => $this->presencePendingMarker,
+            'presence_pending_config_key' => $this->presencePendingConfigKey,
+            'presence_outcome_json' => $this->presenceOutcome,
         ];
     }
 }
