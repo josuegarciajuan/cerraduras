@@ -272,9 +272,12 @@
       var effective = String((decision && decision.effective_presence) || '').toUpperCase();
       var rawValue = String((decision && (decision.value || decision.raw)) || '').toUpperCase();
       if (effective === 'PRESENT' || (effective === '' && rawValue === 'PRESENT')) {
+        var byDp1 = decision && decision.evidence_source === 'dp1_only';
         return {
           state: 'PRESENT', tone: 'ok', icon: '✓', title: 'TE DETECTA',
-          subtitle: 'Presencia confirmada · ' + distanceText,
+          subtitle: byDp1
+            ? 'Presencia confirmada por DP1 · distancia no disponible'
+            : 'Presencia confirmada · ' + distanceText,
           ageSeconds: age, lastDistance: lastDistance
         };
       }

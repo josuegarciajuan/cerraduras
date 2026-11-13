@@ -14497,3 +14497,17 @@ BLOCK 103.
 `RadarLiveService`, `radar-scope.js`, `exit-scan.php`, `RadarEvidenceCorrelationTest`,
 `PresenceTransitionPolicyTest`, `IotSessionServiceTest`, `radar-scope.test.js`,
 BLOCK 104.
+
+#### F133.1 — Respaldo acotado por DP1 sin distancia (RF-421)
+
+- **RF-421:** cuando un radar configurado informa `PRESENT` de forma continua
+  pero no publica una DP9 positiva (valor 0 o ausente), una sala **normal con
+  política radar explícita** puede acreditar presencia por DP1 si:
+  - el alcance máximo configurado es **≤ 3 m** (`RADAR_DP1_ONLY_MAX_RANGE_M`);
+  - el mismo episodio DP1 se mantiene al menos `RADAR_DP1_ONLY_GRACE_SECONDS`
+    (def. 2 s);
+  - no existe una DP9 del episodio fuera de alcance (esa tiene prioridad y
+    convierte a ausencia efectiva).
+  Almacén y TIMBRADO quedan excluidos; conservan su corroboración específica.
+  El resultado se audita con `evidence_source=dp1_only` y el panel indica
+  «Presencia confirmada por DP1 · distancia no disponible». Sin Tuya ni polling.

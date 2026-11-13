@@ -113,5 +113,26 @@ $frameCached = report(1.32, '2026-11-13T10:00:09.000', 'sess', $oldKey, 'v1|sess
 $preferPersisted = C::evaluate('PRESENT', 'p1', 'sess', $episodeStart, null, $frameCached, $persisted, $settings, $now);
 check('la configuración persistida prevalece', $preferPersisted['status'] === C::STATUS_USABLE);
 
+// ── F133.1: respaldo DP1 sin distancia ───────────────────────────────────
+$short = ['maximum_range' => 2.10];
+$nowF = 100000;
+$startF = $nowF - 3000;
+check('DP1 sin DP9 tras la gracia y alcance corto → elegible',
+    C::dp1OnlyEligible(true, false, $startF, $nowF, $short) === true);
+check('sin política radar explícita → no elegible',
+    C::dp1OnlyEligible(false, false, $startF, $nowF, $short) === false);
+check('almacén/TIMBRADO → no elegible',
+    C::dp1OnlyEligible(true, true, $startF, $nowF, $short) === false);
+check('alcance largo (>3 m) → no elegible',
+    C::dp1OnlyEligible(true, false, $startF, $nowF, ['maximum_range' => 4.20]) === false);
+check('alcance exacto 3 m → elegible',
+    C::dp1OnlyEligible(true, false, $startF, $nowF, ['maximum_range' => 3.00]) === true);
+check('dentro de la gracia → no elegible',
+    C::dp1OnlyEligible(true, false, $nowF - 1000, $nowF, $short) === false);
+check('desactivado → no elegible',
+    C::dp1OnlyEligible(true, false, $startF, $nowF, $short, false) === false);
+check('sin inicio de episodio → no elegible',
+    C::dp1OnlyEligible(true, false, null, $nowF, $short) === false);
+
 echo "\nTotal: {$pass} passed, {$fail} failed\n";
 exit($fail === 0 ? 0 : 1);

@@ -284,6 +284,18 @@ check('F132 bloqueo por política → DETECCIÓN NO APLICADA',
   blocked.state === 'NOT_APPLIED' && blocked.title === 'DETECCIÓN NO APLICADA');
 check('F132 bloqueo explica la política', blocked.subtitle.indexOf('política') >= 0);
 
+const dp1Only = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  presence_decision: {
+    outcome: 'applied', effective_presence: 'PRESENT', value: 'PRESENT',
+    evidence_source: 'dp1_only',
+  },
+});
+check('F133.1 respaldo DP1 → TE DETECTA sin distancia',
+  dp1Only.title === 'TE DETECTA' && dp1Only.subtitle.indexOf('DP1') >= 0
+  && dp1Only.subtitle.indexOf('distancia no disponible') >= 0);
+
 const appliedAbsent = RadarScope.detectionModel({
   raw: { state: 'ABSENT', age_seconds: 1 },
   stats: { motion_recent: false },

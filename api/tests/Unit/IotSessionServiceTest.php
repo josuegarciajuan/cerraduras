@@ -901,11 +901,33 @@ $iotRepo->sessions[5]->lastPresenceValue = PresenceEvent::VALUE_PRESENT;
 $iotRepo->sessions[5]->presenceEpisodeMarker = 'p1|sess|keep|PRESENT|push';
 $iotRepo->sessions[5]->presenceEpisodeStartedAt = '2026-04-28 18:10:01.000';
 if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_PRESENT
-    && ($iotRepo->sessions[5]->presenceEpisodeMarker ?? null) === 'p1|sess|keep|PRESENT|push'
+    && ($iotRepo->sessions[5]->presenceEpisodeStartedAt ?? null) === '2026-04-28 18:10:01.000'
 ) {
     ok('F133: presencia efectiva sin DP9 nueva se mantiene y conserva el episodio');
 } else {
     bad('F133: la presencia efectiva no debe degradarse ni reiniciar el episodio');
+}
+
+// F133.1: respaldo DP1 cuando el radar detecta sin distancia (DP9=0).
+$presRepo->nextDuplicate = false;
+$roomRepo->byId[7] = new Room(7, '107', 1, null, Room::STATUS_OCCUPIED, true, null, null, null, 'radar_only');
+foreach ([0, 3, 7] as $offset) {
+    Clock::freeze(new DateTimeImmutable('2026-04-28T20:00:0' . $offset . 'Z', new DateTimeZone('UTC')));
+    $svc->processEvent(
+        makeRadarFrame(7, PresenceEvent::VALUE_PRESENT, '2026-04-28T20:00:0' . $offset . 'Z', 'f133-dp1-' . $offset, 1.40, false),
+        'corr-f133-dp1-' . $offset
+    );
+}
+$dp1Sess = $iotRepo->sessions[7] ?? null;
+if ($dp1Sess !== null && $dp1Sess->presenceState === IotSession::PRESENCE_PRESENT) {
+    ok('F133.1: PRESENT sin DP9 en sala radar corta → aplica por DP1');
+} else {
+    bad('F133.1: el respaldo DP1 debería aplicar', 'got ' . ($dp1Sess->presenceState ?? 'null'));
+}
+if ($dp1Sess !== null && ($dp1Sess->presenceOutcome['evidence_source'] ?? null) === 'dp1_only') {
+    ok('F133.1: el resultado declara evidencia dp1_only');
+} else {
+    bad('F133.1: evidencia dp1_only', json_encode($dp1Sess->presenceOutcome ?? null));
 }
 
 // ============================================================================

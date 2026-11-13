@@ -248,6 +248,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F131 Fichas EM con número decimal impreso** | **BLOCK 69 + `CredentialFormatTest`/`NfcCardFormatTest`** | **Implementado: alta por 10 dígitos, lectura decimal/hexadecimal y compatibilidad con la ficha heredada `EM-00EFA5BB`; regresión 1458/0/14** |
 | **F132 Presencia radar veraz y transiciones estables** | **BLOCK 103 + `PresenceTransitionPolicyTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: política única, resultado final, entrada/ausencia pendientes y resolución por `exit-scan`; prueba física pendiente** |
 | **F133 Evidencia DP1/DP9 correlacionada por episodio** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: DP9 entre tramas del mismo episodio, configuración original, pendientes revalidados y panel inmediato; prueba física pendiente** |
+| **F133.1 Respaldo DP1 sin distancia** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: presencia por DP1 en sala radar con alcance ≤3 m y gracia 2 s; episodio continuo; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1628,3 +1629,18 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Verificación**: `RadarEvidenceCorrelationTest`, `PresenceTransitionPolicyTest`,
   `IotSessionServiceTest`, `radar-scope.test.js` y BLOCK 104. Prueba física
   pendiente en DEVELOPMENTROOM.
+
+
+#### F133.1 — Respaldo DP1 sin distancia (RF-421)
+
+- **Motivo**: el radar puede informar `PRESENT` con DP9=0 (sin distancia). F130
+  no acreditaba presencia y el panel quedaba en «comprobando alcance».
+- **Respaldo**: solo en sala normal con `presence_mode_override`, alcance
+  máximo ≤3 m, episodio DP1 sostenido ≥2 s y sin DP9 fuera de alcance.
+  Configurable con `RADAR_DP1_ONLY_ENABLED`, `RADAR_DP1_ONLY_MAX_RANGE_M`,
+  `RADAR_DP1_ONLY_GRACE_SECONDS`.
+- **Episodio**: una racha continua de `PRESENT`; el marcador del conversor puede
+  cambiar en cada publicación y no abre episodio nuevo. Solo `ABSENT` lo cierra.
+- **Evidencia**: `evidence_source=dp1_only`, `evidence_reason=dp1_without_distance`.
+  Una DP9 positiva fuera de alcance sigue convirtiendo a `ABSENT`.
+- **Alcance**: almacén y TIMBRADO excluidos; sin Tuya ni polling.

@@ -17365,3 +17365,10 @@ campos existentes:
 - Los campos son aditivos; los consumidores antiguos que solo lean
   `apply`/`discard_reason` conservan su comportamiento.
 - `presence_outcome_json` incorpora `episode`, `evidence_*` y `converted_from`.
+
+#### F133.1 — Evidencia `dp1_only`
+
+`presence_decision.evidence_source` admite `dp1_only` cuando la presencia se
+acredita por DP1 tras la gracia y sin distancia. `evidence_reason` vale
+`dp1_without_distance`. Los campos son aditivos y `apply` sigue indicando si la
+presencia se aplicó.
