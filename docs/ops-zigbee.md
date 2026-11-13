@@ -121,6 +121,20 @@ php api/bin/zigbee-readiness.php
 curl -s http://127.0.0.1:8080/api/v1/health/deep | jq .checks.zigbee
 ```
 
+`checks.zigbee.pipelines` distingue `prod` y `dev`. Un pipeline habilitado con
+la unidad systemd parada aparece como `stopped` y degrada `health/deep`; un
+`connected:true` de un fichero de estado viejo ya no se toma como prueba de que
+la ingesta sigue viva.
+
+Si el radar aparece `stale` pero el pipeline está parado, `/sensores` muestra
+«INGESTA ZIGBEE DETENIDA» y `/dashboard`/`/panel` avisan de que el sensor puede
+estar conectado. En ese caso revisar:
+
+```bash
+systemctl status cerraduras-zigbee-ingress cerraduras-zigbee-spool
+systemctl status cerraduras-zigbee-ingress-dev cerraduras-zigbee-spool-dev
+```
+
 ## Cambio de nombres en Zigbee2MQTT
 
 Renombrar (sin re-emparejar) a:

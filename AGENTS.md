@@ -249,6 +249,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F132 Presencia radar veraz y transiciones estables** | **BLOCK 103 + `PresenceTransitionPolicyTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: política única, resultado final, entrada/ausencia pendientes y resolución por `exit-scan`; prueba física pendiente** |
 | **F133 Evidencia DP1/DP9 correlacionada por episodio** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: DP9 entre tramas del mismo episodio, configuración original, pendientes revalidados y panel inmediato; prueba física pendiente** |
 | **F133.1 Respaldo DP1 sin distancia** | **BLOCK 104 + `RadarEvidenceCorrelationTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: presencia por DP1 en sala radar con alcance ≤3 m y gracia 2 s; episodio continuo; prueba física pendiente** |
+| **F134 Salud del pipeline Zigbee y aviso de ingesta** | **`ZigbeePipelineHealthTest`/`ZigbeeRuntimeWiringTest`/`PanelV21Test`/`radar-scope.test.js` + `health/deep`** | **Implementado: systemd+frescura, aviso en `/sensores`, `/dashboard` y `/panel`; regresión 1468/10/19 con 10 fallos ambientales por corrida de sensores concurrente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1644,3 +1645,26 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **Evidencia**: `evidence_source=dp1_only`, `evidence_reason=dp1_without_distance`.
   Una DP9 positiva fuera de alcance sigue convirtiendo a `ABSENT`.
 - **Alcance**: almacén y TIMBRADO excluidos; sin Tuya ni polling.
+
+### F134 — Salud del pipeline Zigbee y aviso de ingesta
+
+- **Motivo**: PROTO2 mostraba el sensor de presencia como desconectado aunque el
+  radar seguía publicando en el broker. `cerraduras-zigbee-ingress` y
+  `cerraduras-zigbee-spool` estaban parados desde las 08:54:54 y el health
+  seguía diciendo `ok` porque confiaba en un `connected:true` viejo.
+- **Política**: `ZigbeePipelineHealth` combina systemd, `connected`, frescura de
+  `updated_at`/`last_received_at`/`last_processed_at`, cola pendiente y
+  cuarentena. Distingue `ok`, `stopped`, `disconnected`, `stale`, `unknown` y
+  `disabled`.
+- **Endpoints**: `/api/v1/health/deep` expone `checks.zigbee.pipelines.{prod,dev}`;
+  `device-status`, `radar/live`, `radar/scope` y `analytics/devices` añaden un
+  bloque `pipeline` aditivo. El perfil se resuelve por `meta.mqtt_profile`.
+- **UI**: si el pipeline está caído y el radar no tiene datos, `/sensores` muestra
+  «INGESTA ZIGBEE DETENIDA» en ámbar en vez de «NO TE DETECTA»; `/dashboard` y
+  `/panel` avisan de que el sensor puede estar conectado.
+- **Sin Tuya ni polling**: solo lectura de ficheros de estado y `systemctl
+  is-active`.
+- **Verificación**: `ZigbeePipelineHealthTest` (29), `ZigbeeRuntimeWiringTest`,
+  `PanelV21Test` (52) y `radar-scope.test.js` (78). La regresión completa dio
+  1468/10/19; los 10 fallos fueron ambientales (corrida de sensores concurrente
+  y perfil de radar), no de F134.
