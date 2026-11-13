@@ -3072,12 +3072,14 @@ print('OK' if stay.get('entry_confirmed_at') else 'FAIL ec=' + str(stay.get('ent
 
     # ── 33.9 SSE: evento de latido ping (contrato §4, RF-49.1) ──────────────
     # Ventana amplia (15 s) + reintento con conexión nueva: el establecimiento
-    # del stream o un servidor ocupado pueden retrasar el ping (~5 s).
+    # del stream o un servidor ocupado pueden retrasar el ping (~5 s). El
+    # payload del primer `state` puede superar 8 KB (vista de presencia F136);
+    # se captura más para no cortar antes del primer ping.
     F41_SSE=""
     F41_SSE_TRY=0
     while [ "$F41_SSE_TRY" -lt 2 ]; do
         F41_SSE_TRY=$((F41_SSE_TRY + 1))
-        F41_SSE=$(curl -sN --max-time 15 "${API_BASE}/dashboard-api/event-stream?room_id=$F41_ROOM" 2>/dev/null | head -c 8000)
+        F41_SSE=$(curl -sN --max-time 15 "${API_BASE}/dashboard-api/event-stream?room_id=$F41_ROOM" 2>/dev/null | head -c 50000)
         echo "$F41_SSE" | grep -q '^event: ping' && break
         echo "$F41_SSE" | grep -q '^event: connected' || break
     done
