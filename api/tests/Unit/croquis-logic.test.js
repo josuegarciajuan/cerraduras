@@ -607,6 +607,30 @@ check('module exports F118 helpers',
   typeof recentKeyAccess === 'function' && typeof resolveDashboardMonigote === 'function');
 check('DOOR_PULSE_MS definido', DOOR_PULSE_MS === 1200);
 
+// ─── 18. F136: holds de radar y frescura radar ─────────────────────────
+const f136CloseDefault = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, presenceState: 'PRESENT', lastCloseAt: t(-600), now: BASE,
+});
+check('F136 cierre 0,6 s con hold hotelero → WAITING', f136CloseDefault === 'WAITING');
+
+const f136CloseRadar = resolveDashboardMonigote({
+  stateName: 'ESPERANDO', phase: 'inside', doorOpen: false, keyAccessActive: false,
+  hasEntryContext: true, presenceState: 'PRESENT', lastCloseAt: t(-600), now: BASE,
+  closeDecisionMs: 500,
+});
+check('F136 radar: cierre 0,6 s con hold 0,5 s ya decide', f136CloseRadar !== 'WAITING');
+
+const f136RadarStale = deriveCroquis({
+  occupied: false,
+  live: {
+    door_state: 'CLOSED', presence_state: 'PRESENT', switch_state: 'OFF',
+    presence_stale: true, radar_stale: true, recent_presence: [],
+  },
+}, BASE);
+check('F136 radar stale → no acredita persona dentro', f136RadarStale.personInside === false);
+check('F136 radar stale → fase outside', f136RadarStale.phase === 'outside');
+
 console.log('\n' + (failed === 0 ? '\u2705' : '\u274c') + ' croquis-logic: ' + passed + ' passed, ' + failed + ' failed\n');
 if (failed > 0) process.exit(1);
 process.exit(0);
