@@ -65,6 +65,12 @@ $exitAction   = new ExitActionService(
 $tickInterval = 1; // Bug 1: 1 s para que la salida no sume hasta 5 s al guard de 3 s
 $running = true;
 
+// F133: sin async signals, pcntl_signal registra el handler pero no lo
+// despacha dentro de sleep(); systemd agotaba el timeout y dejaba huérfanos.
+if (function_exists('pcntl_async_signals')) {
+    pcntl_async_signals(true);
+}
+
 // Graceful shutdown (Fase 2 — T2.8): finish current tick before exiting
 pcntl_signal(SIGTERM, function () use (&$running) {
     echo "[exit-scan] SIGTERM received — finishing current tick...\n";
