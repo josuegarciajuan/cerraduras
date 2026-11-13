@@ -88,5 +88,9 @@ $clampedMin = RadarLiveDistance::choose(0.0, null, null, [
 ], 0, $now);
 same('umbral mínimo se acota a 5 segundos', $clampedMin['distance_m'], null);
 
+$liveSource = file_get_contents(__DIR__ . '/../../src/Infrastructure/Sensors/RadarLiveService.php') ?: '';
+same('F134: /radar/live expone event_at de la decisión',
+    str_contains($liveSource, "'event_at' =>"), true);
+
 echo "\nTotal: {$P} passed, {$F} failed\n";
 exit($F === 0 ? 0 : 1);
