@@ -977,10 +977,14 @@ function renderSensorSvg() {
   // "hay estancia y puerta/presencia".
   const reportedSwitch = String(sw.state || '').toUpperCase();
   const commandedSwitch = String(sw.last_command || '').toUpperCase();
+  const stateAtMs = sw.state_at ? Date.parse(sw.state_at) : 0;
+  const commandedAtMs = sw.commanded_at ? Date.parse(sw.commanded_at) : 0;
+  const reportedFresh = stateAtMs > 0 && (commandedAtMs === 0 || stateAtMs >= commandedAtMs);
   const bulbShouldBeOn = reportedSwitch === 'ON'
     || (reportedSwitch !== 'ON' && reportedSwitch !== 'OFF' && commandedSwitch === 'ON');
-  const bulbEstimated = reportedSwitch !== 'ON' && reportedSwitch !== 'OFF'
-    && (commandedSwitch === 'ON' || commandedSwitch === 'OFF');
+  const bulbEstimated = (reportedSwitch === 'ON' || reportedSwitch === 'OFF')
+    ? (commandedAtMs > 0 && !reportedFresh)
+    : (commandedSwitch === 'ON' || commandedSwitch === 'OFF');
 
   if (bulbShouldBeOn) {
     bulbGlass.setAttribute('fill','#ffd740');
@@ -995,7 +999,7 @@ function renderSensorSvg() {
     bulbGlow.setAttribute('opacity','0');
     bulbGlow.style.animation = 'none';
     bulbSymbol.setAttribute('fill','rgba(255,255,255,0.3)');
-    bulbSymbol.textContent = '💡';
+    bulbSymbol.textContent = bulbEstimated ? '💡?' : '💡';
   }
 
   // ── Presence cone ──
@@ -3124,15 +3128,19 @@ function updateSensorPanel(data) {
   const swEl = document.getElementById('s-switch');
   const sw = data.switch_state || {};
   const hasSwitch = sw.id;
+  const swStateAt = sw.state_at ? Date.parse(sw.state_at) : 0;
+  const swCmdAt = sw.commanded_at ? Date.parse(sw.commanded_at) : 0;
+  const swFresh = swStateAt > 0 && (swCmdAt === 0 || swStateAt >= swCmdAt);
   const switchOn = (sw.state === 'ON' || sw.state === 'OFF')
     ? sw.state === 'ON'
     : sw.last_command === 'ON';
-  swEl.textContent = hasSwitch ? (switchOn ? 'ON' : 'OFF') : 'No instalado';
+  const switchLabel = (switchOn ? 'ON' : 'OFF') + (swFresh || !swCmdAt ? '' : '?');
+  swEl.textContent = hasSwitch ? switchLabel : 'No instalado';
   swEl.className = 'value ' + (hasSwitch ? (switchOn ? 'val-yellow' : 'val-red') : 'val-orange');
   const rcLight = document.getElementById('rc-light-state');
   if (rcLight) {
     rcLight.textContent = hasSwitch
-      ? ('💡 ' + (sw.state && sw.state !== 'UNKNOWN' ? sw.state : (switchOn ? 'ON' : 'OFF')))
+      ? ('💡 ' + (sw.state && sw.state !== 'UNKNOWN' ? (String(sw.state) + (swFresh || !swCmdAt ? '' : '?')) : switchLabel))
       : '💡 Sin luz';
   }
 
