@@ -276,6 +276,13 @@
         ageSeconds: age, lastDistance: lastDistance
       };
     }
+    if (decisionStale) {
+      // La señal cruda manda: una decisión vieja no debe convertir un ABSENT
+      // fresco en "presencia no verificada" ni un MOTION en SIN DATOS.
+      decision = null;
+      gate = null;
+      gateStatus = '';
+    }
 
     if (gateStatus === 'out_of_range') {
       return {
@@ -285,7 +292,7 @@
         ageSeconds: age, lastDistance: lastDistance
       };
     }
-    if (gateStatus === 'unverified') {
+    if (!decisionStale && gateStatus === 'unverified') {
       var waiting = visual.state === 'PRESENT';
       return {
         state: 'AWAITING_EVIDENCE', tone: 'warn', icon: waiting ? '≈' : '?',
@@ -297,7 +304,7 @@
       };
     }
     // F132: una decisión antigua no puede prevalecer sobre la falta de datos.
-    if (visual.state === 'STALE' || decisionStale) {
+    if (visual.state === 'STALE') {
       return staleDetection(scope, age, lastDistance);
     }
     var outcome = outcomeOf(decision);
