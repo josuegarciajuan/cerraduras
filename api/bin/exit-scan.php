@@ -28,7 +28,9 @@ use App\Domain\Locks\AccessEventRepository;
 use App\Domain\Presence\ExitActionService;
 use App\Domain\Presence\ExitRuleEvaluator;
 use App\Domain\Presence\IotSessionRepository;
+use App\Domain\Presence\IotSessionService;
 use App\Domain\Presence\PresenceEventRepository;
+use App\Domain\Sensors\RadarPresenceReportRepository;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomTypeRepository;
 use App\Domain\Stays\StayRepository;
@@ -103,6 +105,53 @@ while ($running) {
         }
     } catch (\Throwable $e) {
         echo "[exit-scan] [$ts] FATAL: " . $e->getMessage() . "\n";
+    }
+
+    // F132: resolver transiciones de presencia pendientes (entrada/ausencia)
+    // cuyo plazo ya venció. No consulta el dispositivo: revalida la evidencia
+    // persistida y aplica el estado con el mismo bloqueo que la ingesta.
+    try {
+        $pendingRows = $pdo->query(
+            "SELECT room_id FROM iot_sessions
+              WHERE presence_pending_state IS NOT NULL
+                AND presence_pending_due_at IS NOT NULL
+                AND presence_pending_due_at <= UTC_TIMESTAMP(3)"
+        )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        if ($pendingRows !== []) {
+            $pendingService = new IotSessionService(
+                new PresenceEventRepository($pdo),
+                $iotSessionRepo,
+                $roomRepo,
+                $roomTypeRepo,
+                $stayRepo,
+                $stateMachine,
+                $accessEventRepo,
+                $exitEval,
+                null,
+                $exitAction,
+                null,
+                null,
+                null,
+                null,
+                new RadarPresenceReportRepository($pdo)
+            );
+            foreach ($pendingRows as $pendingRow) {
+                $pendingRoom = (int) $pendingRow['room_id'];
+                try {
+                    $resolved = $pendingService->resolvePendingPresence(
+                        $pendingRoom,
+                        'exit-scan-pending-' . uniqid()
+                    );
+                    if (($resolved['result'] ?? '') === 'applied') {
+                        echo "[exit-scan] [$ts] PRESENCE PENDING aplicado room={$pendingRoom}\n";
+                    }
+                } catch (\Throwable $e) {
+                    echo "[exit-scan] [$ts] PENDING ERROR room={$pendingRoom}: " . $e->getMessage() . "\n";
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        echo "[exit-scan] [$ts] PENDING FATAL: " . $e->getMessage() . "\n";
     }
 
     // F114+: apagado diferido de la luz del almacén. Solo BD local; el

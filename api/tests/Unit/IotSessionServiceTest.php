@@ -79,7 +79,32 @@ final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
     public function markAudit(int $id, bool $applied, ?string $discardReason, ?string $effectiveValue = null): void {}
 
     public function listForRoom(int $roomId, int $limit = 20, bool $appliedOnly = false): array { return []; }
-    public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array { return []; }
+    public function listForRoomSince(int $roomId, \DateTimeImmutable $since, int $limit = 5000): array
+    {
+        $sinceTs = $since->getTimestamp();
+        $out = [];
+        foreach ($this->events as $e) {
+            if ((int) $e['roomId'] !== $roomId) {
+                continue;
+            }
+            $ts = strtotime((string) $e['occurredAt'] . ' UTC');
+            if ($ts === false || $ts < $sinceTs) {
+                continue;
+            }
+            $out[] = new \App\Domain\Presence\PresenceEvent(
+                (int) ($e['id'] ?? 0),
+                $roomId,
+                (string) $e['sensor'],
+                (string) $e['value'],
+                (string) $e['provider'],
+                (string) $e['occurredAt'],
+                (string) $e['occurredAt'],
+                $e['sourceEventId'] ?? null,
+                null
+            );
+        }
+        return array_slice($out, 0, $limit);
+    }
     public function updateMetaJson(int $id, array $delta): void {}
 }
 
@@ -856,6 +881,47 @@ if (($iotRepo->sessions[5]->presenceState ?? null) === IotSession::PRESENCE_ABSE
     ok('F130: ABSENT con eco exterior sigue ABSENT');
 } else {
     bad('F130: ABSENT no debe bloquearse', 'got ' . ($iotRepo->sessions[5]->presenceState ?? 'null'));
+}
+
+// ============================================================================
+// F132 · una política radar explícita no se contradice con el filtro hotelero
+// ============================================================================
+echo "\nF132 · política radar explícita sin estancia\n";
+
+// Sala 6: STANDARD con override explícito radar_only, sin estancia ni apertura.
+$roomRepo->byId[6] = new Room(
+    6, '106', 1, null, Room::STATUS_OCCUPIED, true, null, null, null, 'radar_only'
+);
+Clock::freeze(new DateTimeImmutable('2026-04-28T19:00:00Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeePresence(6, PresenceEvent::VALUE_PRESENT, '2026-04-28T19:00:00Z', 'f132-a'),
+    'corr-f132-a'
+);
+Clock::freeze(new DateTimeImmutable('2026-04-28T19:00:03Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeePresence(6, PresenceEvent::VALUE_PRESENT, '2026-04-28T19:00:03Z', 'f132-b'),
+    'corr-f132-b'
+);
+Clock::freeze(new DateTimeImmutable('2026-04-28T19:00:07Z', new DateTimeZone('UTC')));
+$svc->processEvent(
+    makeZigbeePresence(6, PresenceEvent::VALUE_PRESENT, '2026-04-28T19:00:07Z', 'f132-c'),
+    'corr-f132-c'
+);
+$f132Sess = $iotRepo->sessions[6] ?? null;
+if ($f132Sess !== null && $f132Sess->presenceState === IotSession::PRESENCE_PRESENT) {
+    ok('F132: radar_only aplica sin estancia ni apertura');
+} else {
+    bad('F132: radar_only debería aplicar', 'got ' . ($f132Sess->presenceState ?? 'null'));
+}
+if ($f132Sess !== null && ($f132Sess->presenceOutcome['outcome'] ?? null) === 'applied') {
+    ok('F132: el resultado final se publica como applied');
+} else {
+    bad('F132: outcome aplicado', 'got ' . json_encode($f132Sess->presenceOutcome ?? null));
+}
+if ($f132Sess !== null && ($f132Sess->presenceOutcome['effective_presence'] ?? null) === 'PRESENT') {
+    ok('F132: effective_presence refleja la sesión');
+} else {
+    bad('F132: effective_presence', 'got ' . json_encode($f132Sess->presenceOutcome ?? null));
 }
 
 Clock::unfreeze();

@@ -212,7 +212,8 @@ const notApplied = RadarScope.detectionModel({
   presence_decision: { apply: false, discard_reason: 'uncorroborated' },
 });
 check('F130 no aplicada → NOT_APPLIED', notApplied.state === 'NOT_APPLIED');
-check('F130 no aplicada expone motivo', notApplied.subtitle.indexOf('uncorroborated') >= 0);
+check('F130 no aplicada expone motivo legible', notApplied.subtitle.indexOf('corroboración') >= 0);
+check('F132 no aplicada no dice que el radar te ve', notApplied.subtitle.indexOf('radar te ve') < 0);
 
 const noop = RadarScope.detectionModel({
   raw: { state: 'PRESENT', age_seconds: 1 },
@@ -246,6 +247,60 @@ const svgOut = RadarScope.buildSvg({
 check('F130 SVG no pinta glow verde fuera de alcance', svgOut.indexOf('scope-presence') < 0);
 check('F130 SVG marca el bloqueo', svgOut.indexOf('scope-range-blocked') >= 0);
 check('F130 SVG etiqueta eco fuera', svgOut.indexOf('fuera') >= 0);
+
+// ─── F132: resultado operativo final ─────────────────────────────────────
+const pendingAbsent = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', age_seconds: 1 },
+  stats: { motion_recent: false },
+  presence_decision: {
+    outcome: 'pending_absent', outcome_reason: 'candidate_absent',
+    effective_presence: 'PRESENT', pending: { state: 'ABSENT', due_at: '2026-11-13 10:00:04.000' },
+  },
+});
+check('F132 candidate_absent → COMPROBANDO AUSENCIA',
+  pendingAbsent.state === 'CHECKING_ABSENCE' && pendingAbsent.title === 'COMPROBANDO AUSENCIA');
+check('F132 candidate_absent no dice «el radar te ve»', pendingAbsent.subtitle.indexOf('radar te ve') < 0);
+check('F132 candidate_absent mantiene la presencia anterior',
+  pendingAbsent.subtitle.indexOf('mantiene la presencia') >= 0);
+
+const pendingPresent = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  presence_decision: { outcome: 'pending_present', outcome_reason: 'entry_pending', effective_presence: 'ABSENT' },
+});
+check('F132 entrada pendiente → CONFIRMANDO PRESENCIA',
+  pendingPresent.state === 'CONFIRMING' && pendingPresent.title === 'CONFIRMANDO PRESENCIA');
+
+const blocked = RadarScope.detectionModel({
+  raw: { state: 'PRESENT', age_seconds: 1 },
+  stats: { motion_recent: true },
+  presence_decision: { outcome: 'blocked', outcome_reason: 'no_context', effective_presence: 'ABSENT' },
+});
+check('F132 bloqueo por política → DETECCIÓN NO APLICADA',
+  blocked.state === 'NOT_APPLIED' && blocked.title === 'DETECCIÓN NO APLICADA');
+check('F132 bloqueo explica la política', blocked.subtitle.indexOf('política') >= 0);
+
+const appliedAbsent = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', age_seconds: 1 },
+  stats: { motion_recent: false },
+  presence_decision: { outcome: 'applied', effective_presence: 'ABSENT', value: 'ABSENT' },
+});
+check('F132 ausencia aplicada → NO TE DETECTA',
+  appliedAbsent.state === 'ABSENT' && appliedAbsent.title === 'NO TE DETECTA');
+
+const staleWins = RadarScope.detectionModel({
+  raw: { state: 'UNKNOWN', age_seconds: 120, stale: true },
+  stats: { motion_recent: false },
+  stale_seconds: 30,
+  presence_decision: { outcome: 'applied', effective_presence: 'PRESENT' },
+});
+check('F132 SIN DATOS prevalece sobre una decisión antigua',
+  staleWins.state === 'STALE' && staleWins.title === 'SIN DATOS');
+
+check('F132 outcomeOf reconoce el resultado final',
+  RadarScope.outcomeOf({ outcome: 'pending_absent' }) === 'pending_absent'
+  && RadarScope.outcomeOf({ apply: true }) === 'applied'
+  && RadarScope.outcomeOf({ apply: false, discard_reason: 'candidate_absent' }) === 'pending_absent');
 
 // ─── Resumen ─────────────────────────────────────────────────────────────
 console.log('\nTotal: ' + passed + ' passed, ' + failed + ' failed');

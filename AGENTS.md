@@ -246,6 +246,7 @@ hasta el momento (regresión completa). Debe ejecutarse:
 | **F128 Control de sala por código real** | **BLOCK 96 + `F128ByCodeRoutesTest`** | **Implementado: status/luz/unlock/reset por `rooms.code` reutilizando el controlador** |
 | **F129 Registro de eventos del panel** | **BLOCK 100 + `PanelEventsTest`** | **Implementado: cronología unificada de sensores, accesos y luz en `/panel` con filtros, CSV y live tail; validación visual pendiente** |
 | **F131 Fichas EM con número decimal impreso** | **BLOCK 69 + `CredentialFormatTest`/`NfcCardFormatTest`** | **Implementado: alta por 10 dígitos, lectura decimal/hexadecimal y compatibilidad con la ficha heredada `EM-00EFA5BB`; regresión 1458/0/14** |
+| **F132 Presencia radar veraz y transiciones estables** | **BLOCK 103 + `PresenceTransitionPolicyTest`/`IotSessionServiceTest`/`radar-scope.test.js`** | **Implementado: política única, resultado final, entrada/ausencia pendientes y resolución por `exit-scan`; prueba física pendiente** |
 
 ### F100 — Actualización remota de firmware (OTA)
 
@@ -1578,3 +1579,26 @@ Arranque rápido: `bash /root/cerraduras/start-all.sh`
 - **UI**: `/panel` pide únicamente «Número impreso de la ficha» y envía el mismo
   valor como `number` y `code`.
 - **Verificación**: `CredentialFormatTest`, `NfcCardFormatTest` y BLOCK 69.
+
+
+### F132 — Presencia radar veraz y transiciones estables (RF-409…RF-414)
+
+- **Motivo**: el panel mostraba «El radar te ve, pero la decisión operativa no se
+  aplicó (candidate_absent)» con el radar reportando `ABSENT`; además una sala con
+  `presence_mode_override=radar_only` podía confirmar `PRESENT` y descartarlo
+  después como `no_context`.
+- **Política única**: con una política radar explícita, F48 no vuelve a filtrar
+  la presencia. Sin override se conserva el flujo hotelero.
+- **Resultado final**: `iot_sessions.presence_outcome_json` guarda `outcome`,
+  `outcome_reason`, `effective_presence`, `pending` y `range_gate`;
+  `/radar/live` y `/radar/scope` lo exponen. `candidate_absent` se pinta como
+  «COMPROBANDO AUSENCIA», nunca como «el radar te ve».
+- **Transiciones**: en sala normal con override, entrada 1,5 s
+  (`RADAR_PRESENT_ENTRY_HOLD_SECONDS`) y ausencia sostenida 4 s
+  (`RADAR_ABSENT_EDGE_GRACE_SECONDS`). Almacén/TIMBRADO conservan 0.
+- **Sin mensajes nuevos**: `exit-scan` resuelve las transiciones vencidas con la
+  evidencia persistida, bajo lock e idempotencia; no consulta el dispositivo.
+- **Migración**: `0150` (columnas aditivas `presence_pending_*` y
+  `presence_outcome_json`).
+- **Verificación**: `PresenceTransitionPolicyTest`, `IotSessionServiceTest`,
+  `radar-scope.test.js` y BLOCK 103. Prueba física pendiente en DEVELOPMENTROOM.

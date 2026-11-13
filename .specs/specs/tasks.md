@@ -12087,3 +12087,16 @@ pendientes.
 - [x] TSK-F130-05: `range_gate` en `radar/live`, SSE, `scope` y diagnóstico de alcance.
 - [x] TSK-F130-06: Radar Studio muestra fuera de alcance / no verificado / no aplicado.
 - [x] TSK-F130-07: `RadarOperationalRangeDecisionTest` (37) y casos F130 en `radar-scope.test.js`.
+
+### F132 — Presencia radar veraz y transiciones estables
+
+- [x] TSK-F132-01: `PresenceTransitionPolicy` pura (holds, transición, resultado).
+- [x] TSK-F132-02: migración aditiva `0150` (`presence_pending_*`, `presence_outcome_json`).
+- [x] TSK-F132-03: `IotSession`/`IotSessionRepository` hidratan y persisten la transición.
+- [x] TSK-F132-04: `IotSessionService` usa borde DP1 en salas con override y evita `no_context`.
+- [x] TSK-F132-05: resultado final persistido también en rechazos y eco sin DP9.
+- [x] TSK-F132-06: `resolvePendingPresence()` idempotente invocado por `exit-scan`.
+- [x] TSK-F132-07: `RadarLiveService`/`RadarStudioController` exponen el resultado final.
+- [x] TSK-F132-08: `radar-scope.js` con mensajes veraces y compatibilidad legacy.
+- [x] TSK-F132-09: units `PresenceTransitionPolicyTest`, `IotSessionServiceTest` y `radar-scope.test.js`.
+- [x] TSK-F132-10: BLOCK 103 del runner.

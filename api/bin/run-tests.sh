@@ -10478,6 +10478,90 @@ else
 fi
 
 # =============================================================================
+# BLOCK 103 — F132: presencia radar veraz y transiciones estables
+# Trazabilidad: F132 (RF-409…RF-414) · contracts.md §F132
+# =============================================================================
+block "BLOCK 103 — F132: presencia radar veraz"
+
+for F132_FILE in \
+    src/Domain/Presence/PresenceTransitionPolicy.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Infrastructure/Sensors/SensorContextBuilder.php \
+    public/assets/radar-scope.js \
+    migrations/0150_presence_transition_state.sql; do
+    if [ -f "$F132_FILE" ]; then
+        pass "F132: existe $F132_FILE"
+    else
+        fail "F132: $F132_FILE" "no encontrado"
+    fi
+done
+
+for F132_PHP in \
+    src/Domain/Presence/PresenceTransitionPolicy.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Infrastructure/Sensors/RadarLiveService.php \
+    src/Infrastructure/Sensors/SensorContextBuilder.php \
+    bin/exit-scan.php; do
+    if php -l "$F132_PHP" >/tmp/f132-php.log 2>&1; then
+        pass "F132: sintaxis $(basename "$F132_PHP")"
+    else
+        fail "F132: sintaxis $(basename "$F132_PHP")" "$(tail -2 /tmp/f132-php.log | tr '\n' ' ')"
+    fi
+done
+
+F132_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'presence_outcome_json'" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F132_COL" -ge 1 ]; then
+    pass "F132: migración 0150 aplicada"
+else
+    fail "F132: migración 0150" "presence_outcome_json ausente"
+fi
+
+if php tests/Unit/PresenceTransitionPolicyTest.php >/tmp/f132-policy.log 2>&1; then
+    pass "F132: unit PresenceTransitionPolicy"
+else
+    fail "F132: unit PresenceTransitionPolicy" "$(tail -3 /tmp/f132-policy.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/IotSessionServiceTest.php >/tmp/f132-iot.log 2>&1; then
+    pass "F132: unit IotSessionService"
+else
+    fail "F132: unit IotSessionService" "$(tail -3 /tmp/f132-iot.log | tr '\n' ' ')"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    if node tests/Unit/radar-scope.test.js >/tmp/f132-js.log 2>&1; then
+        pass "F132: unit radar-scope"
+    else
+        fail "F132: unit radar-scope" "$(tail -3 /tmp/f132-js.log | tr '\n' ' ')"
+    fi
+else
+    skip "F132: JS" "node no disponible"
+fi
+
+if [ "$SERVER_UP" = true ]; then
+    F132_LIVE_CODE=$(curl -s -o /tmp/f132-live.json -w '%{http_code}' --max-time 10 "$API_BASE/dashboard-api/sensores/v2/radar/live?room_id=201" 2>/dev/null)
+    F132_LIVE_OK=$(python3 -c "
+import json
+try:
+    d=json.load(open('/tmp/f132-live.json'))
+except Exception:
+    print('bad_json'); raise SystemExit
+pd=d.get('presence_decision')
+ok = d.get('ok') is True and isinstance(pd, dict) and 'outcome' in pd and 'effective_presence' in pd
+print('ok' if ok else 'bad_shape')
+" 2>/dev/null)
+    if [ "$F132_LIVE_CODE" = "200" ] && [ "$F132_LIVE_OK" = "ok" ]; then
+        pass "F132: /radar/live expone resultado final"
+    else
+        fail "F132: /radar/live resultado final" "http=$F132_LIVE_CODE json=$F132_LIVE_OK"
+    fi
+    rm -f /tmp/f132-live.json
+else
+    skip "F132: live HTTP" "servidor no disponible"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

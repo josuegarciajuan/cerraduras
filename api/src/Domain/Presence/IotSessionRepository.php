@@ -21,7 +21,9 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
     private const STATE_COLUMNS =
         'id, room_id, stay_id, door_state, presence_state,
          last_open_at, last_close_at, last_absent_since, exit_evaluated_at, updated_at,
-         last_door_event_at, last_presence_event_at, last_door_value, last_presence_value';
+         last_door_event_at, last_presence_event_at, last_door_value, last_presence_value,
+         presence_pending_state, presence_pending_since, presence_pending_due_at,
+         presence_pending_marker, presence_pending_config_key, presence_outcome_json';
 
     private PDO $pdo;
 
@@ -46,10 +48,13 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             'INSERT INTO iot_sessions
                 (room_id, stay_id, door_state, presence_state,
                  last_open_at, last_close_at, last_absent_since, exit_evaluated_at,
-                 last_door_event_at, last_presence_event_at, last_door_value, last_presence_value)
+                 last_door_event_at, last_presence_event_at, last_door_value, last_presence_value,
+                 presence_pending_state, presence_pending_since, presence_pending_due_at,
+                 presence_pending_marker, presence_pending_config_key, presence_outcome_json)
              VALUES
                 (:room, :stay, :door, :pres, :open, :close, :abs, :exit,
-                 :ldea, :lpea, :ldv, :lpv)
+                 :ldea, :lpea, :ldv, :lpv,
+                 :ppst, :ppsi, :ppdu, :ppmk, :ppck, :pout)
              ON DUPLICATE KEY UPDATE
                 stay_id                = VALUES(stay_id),
                 door_state             = VALUES(door_state),
@@ -61,7 +66,13 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 last_door_event_at     = VALUES(last_door_event_at),
                 last_presence_event_at = VALUES(last_presence_event_at),
                 last_door_value        = VALUES(last_door_value),
-                last_presence_value    = VALUES(last_presence_value)'
+                last_presence_value    = VALUES(last_presence_value),
+                presence_pending_state      = VALUES(presence_pending_state),
+                presence_pending_since      = VALUES(presence_pending_since),
+                presence_pending_due_at     = VALUES(presence_pending_due_at),
+                presence_pending_marker     = VALUES(presence_pending_marker),
+                presence_pending_config_key = VALUES(presence_pending_config_key),
+                presence_outcome_json       = VALUES(presence_outcome_json)'
         )->execute([
             ':room'  => $session->roomId,
             ':stay'  => $session->stayId,
@@ -75,6 +86,12 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':lpea'  => $session->lastPresenceEventAt,
             ':ldv'   => $session->lastDoorValue,
             ':lpv'   => $session->lastPresenceValue,
+            ':ppst'  => $session->presencePendingState,
+            ':ppsi'  => $session->presencePendingSince,
+            ':ppdu'  => $session->presencePendingDueAt,
+            ':ppmk'  => $session->presencePendingMarker,
+            ':ppck'  => $session->presencePendingConfigKey,
+            ':pout'  => $this->encodeOutcome($session->presenceOutcome),
         ]);
     }
 
@@ -139,6 +156,12 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 last_presence_event_at = :lpea,
                 last_door_value        = :ldv,
                 last_presence_value    = :lpv,
+                presence_pending_state      = :ppst,
+                presence_pending_since      = :ppsi,
+                presence_pending_due_at     = :ppdu,
+                presence_pending_marker     = :ppmk,
+                presence_pending_config_key = :ppck,
+                presence_outcome_json       = :pout,
                 updated_at             = UTC_TIMESTAMP(3)
              WHERE id = :id'
         )->execute([
@@ -154,6 +177,12 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':lpea'  => $session->lastPresenceEventAt,
             ':ldv'   => $session->lastDoorValue,
             ':lpv'   => $session->lastPresenceValue,
+            ':ppst'  => $session->presencePendingState,
+            ':ppsi'  => $session->presencePendingSince,
+            ':ppdu'  => $session->presencePendingDueAt,
+            ':ppmk'  => $session->presencePendingMarker,
+            ':ppck'  => $session->presencePendingConfigKey,
+            ':pout'  => $this->encodeOutcome($session->presenceOutcome),
         ]);
     }
 
@@ -190,7 +219,33 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             $row['last_door_event_at']     === null ? null : (string) $row['last_door_event_at'],
             $row['last_presence_event_at'] === null ? null : (string) $row['last_presence_event_at'],
             $row['last_door_value']        === null ? null : (string) $row['last_door_value'],
-            $row['last_presence_value']    === null ? null : (string) $row['last_presence_value']
+            $row['last_presence_value']    === null ? null : (string) $row['last_presence_value'],
+            ($row['presence_pending_state'] ?? null) === null ? null : (string) $row['presence_pending_state'],
+            ($row['presence_pending_since'] ?? null) === null ? null : (string) $row['presence_pending_since'],
+            ($row['presence_pending_due_at'] ?? null) === null ? null : (string) $row['presence_pending_due_at'],
+            ($row['presence_pending_marker'] ?? null) === null ? null : (string) $row['presence_pending_marker'],
+            ($row['presence_pending_config_key'] ?? null) === null ? null : (string) $row['presence_pending_config_key'],
+            $this->decodeOutcome($row['presence_outcome_json'] ?? null)
         );
+    }
+
+    /** @param array<string,mixed>|null $outcome */
+    private function encodeOutcome(?array $outcome): ?string
+    {
+        if ($outcome === null) {
+            return null;
+        }
+        $json = json_encode($outcome, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return $json === false ? null : $json;
+    }
+
+    /** @return array<string,mixed>|null */
+    private function decodeOutcome(mixed $value): ?array
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : null;
     }
 }

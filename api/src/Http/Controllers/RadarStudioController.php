@@ -1279,8 +1279,10 @@ final class RadarStudioController
                 'active_operation' => $state,
             ]
         );
-        // F130: decisión operativa y evaluación de alcance del último frame.
-        $decision = $this->latestRadarDecision($roomId);
+        // F130/F132: decisión operativa final y evaluación de alcance. La
+        // sesión es la fuente autoritativa; el meta del evento queda como
+        // compatibilidad con datos anteriores a la migración 0150.
+        $decision = $ctx->presenceOutcome($roomId) ?? $this->latestRadarDecision($roomId);
         $rangeGate = is_array($decision['range_gate'] ?? null) ? $decision['range_gate'] : null;
         $scope['presence_decision'] = $decision;
         $scope['range_gate'] = $rangeGate;

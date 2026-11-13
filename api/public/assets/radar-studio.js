@@ -122,6 +122,10 @@
         presence_mode: sc.presence_mode || null,
         door_state: sc.door_state || null,
         stale_seconds: sc.stale_seconds || 30,
+        presence_decision: sc.presence_decision || payload.presence_decision || null,
+        range_evaluation: sc.range_evaluation || payload.range_evaluation || null,
+        last_distance: sc.last_distance != null ? sc.last_distance : (payload.last_distance != null ? payload.last_distance : null),
+        last_distance_age_s: sc.last_distance_age_s != null ? sc.last_distance_age_s : (payload.last_distance_age_s != null ? payload.last_distance_age_s : null),
         server_ts: sc.server_ts || payload.server_ts || null
       };
     }

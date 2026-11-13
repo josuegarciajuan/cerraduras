@@ -14426,3 +14426,39 @@ leyendo DP1/DP9 brutos.
 **Trazabilidad:** `RadarOperationalRangeDecision`, `IotSessionService`,
 `RadarLiveService`, `RadarScope`, `radar-scope.js`, `radar-studio.js`,
 `RadarOperationalRangeDecisionTest`, `radar-scope.test.js`, BLOCK 102.
+
+### F132 — Presencia radar veraz y transiciones estables (RF-409…RF-414)
+
+- **RF-409 (política única):** cuando una sala tiene una política radar explícita
+  (`rooms.presence_mode_override`), esa política es la única autoridad de
+  admisibilidad. El filtro hotelero de F48 no puede volver a descartar como
+  `no_context` una presencia que la decisión radar ya confirmó. Sin override se
+  conserva el comportamiento hotelero actual.
+- **RF-410 (resultado final):** todo evento de presencia publica un resultado
+  operativo final con su motivo, modo efectivo y estado de presencia resultante.
+  Una decisión intermedia confirmada que después no se aplica debe reportarse
+  como bloqueada, nunca como aplicada.
+- **RF-411 (transición pendiente):** en una sala normal con override explícito,
+  una detección admisible se mantiene `RADAR_PRESENT_ENTRY_HOLD_SECONDS`
+  (def. 1,5 s) antes de publicarse. Una ausencia auténtica se sostiene
+  `RADAR_ABSENT_EDGE_GRACE_SECONDS` (def. 4 s en sala normal; 0 en almacén y
+  TIMBRADO) antes de cerrar la presencia. Una evidencia contraria cancela la
+  transición.
+- **RF-412 (resolución sin mensajes):** una transición pendiente vence aunque el
+  sensor no vuelva a publicar. El worker local `exit-scan` revalida la evidencia
+  persistida y aplica el estado con el mismo bloqueo e idempotencia que la
+  ingesta; no consulta el dispositivo ni crea pollers.
+- **RF-413 (panel):** el panel distingue presencia aplicada, entrada pendiente,
+  ausencia pendiente (manteniendo la presencia anterior) y detección bloqueada.
+  `candidate_absent` nunca se presenta como «el radar te ve». El código técnico
+  queda en el diagnóstico, no en el mensaje principal.
+- **RF-414 (compatibilidad):** se conservan F130 (alcance operativo estricto),
+  los contratos existentes y el comportamiento de almacén/TIMBRADO. Las columnas
+  y campos nuevos son aditivos; un payload antiguo sin `outcome` sigue
+  interpretándose por `apply` + `discard_reason`. Sin Tuya ni polling nuevo.
+
+**Trazabilidad:** `PresenceTransitionPolicy`, `IotSessionService`,
+`RadarLiveService`, `SensorContextBuilder`, `RadarStudioController`,
+`radar-scope.js`, `bin/exit-scan.php`, migración `0150`,
+`PresenceTransitionPolicyTest`, `IotSessionServiceTest`, `radar-scope.test.js`,
+BLOCK 103.

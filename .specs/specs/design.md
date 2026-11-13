@@ -27512,3 +27512,43 @@ epsilon adicional.
 confirmada” cuando el dominio no la aplicó: muestra `FUERA DEL ALCANCE`,
 `PRESENCIA NO VERIFICADA` o `PRESENCIA NO APLICADA`. El SVG conserva los ecos
 exteriores con trazo ámbar discontinuo y sin glow verde.
+
+### F132 — Presencia radar veraz y transiciones estables
+
+**Motivo.** El panel mostraba «El radar te ve, pero la decisión operativa no se
+aplicó (candidate_absent)» cuando el radar estaba reportando `ABSENT`. Además,
+una sala con `presence_mode_override=radar_only` podía confirmar `PRESENT` en la
+decisión radar y descartarlo después como `no_context` por el filtro hotelero.
+
+**Modelo en capas.**
+
+1. `PresenceTransitionPolicy` (pura): resuelve los tiempos por sala y decide
+   `apply|pending|maintain|ignore` para la evidencia ya validada.
+2. `IotSessionService`: aplica la política dentro de la transacción, con la
+   sesión bloqueada, y persiste el resultado final en `iot_sessions`.
+3. `bin/exit-scan.php`: resuelve transiciones vencidas sin nuevos mensajes.
+4. `RadarLiveService` / `RadarStudioController`: publican el resultado final.
+5. `radar-scope.js`: traduce el resultado a mensajes humanos.
+
+**Modos.** Solo una sala normal con `rooms.presence_mode_override` explícito usa
+entrada diferida (1,5 s) y ausencia sostenida (4 s). Almacén y TIMBRADO
+conservan entrada inmediata y la gracia configurada (0 por defecto), por lo que
+F114/F117 no cambian.
+
+**Resultado final.** Se guarda en `iot_sessions.presence_outcome_json` con
+`outcome` (`applied`, `maintained`, `pending_present`, `pending_absent`,
+`blocked`, `unverified`, `out_of_range`, `noop`, `duplicate`, `stale`),
+`outcome_reason`, `effective_presence`, `value`, `mode`, `pending` y
+`range_gate`. El meta del evento sigue escribiéndose para auditoría y
+compatibilidad.
+
+**Transición pendiente.** `presence_pending_state/since/due_at/marker/config_key`
+se escriben en la misma transacción. El worker solo confirma si la evidencia
+auténtica más reciente sigue siendo la misma; si llegó otra, la descarta como
+`superseded`. Esto evita cerrar presencia con una ausencia obsoleta y evita
+publicar una entrada que ya fue contradicha.
+
+**Panel.** La prioridad es: alcance (`out_of_range`/`unverified`) → transición
+pendiente → bloqueo → aplicado/mantenido → señal cruda como respaldo. Un
+`pending_absent` con presencia efectiva `PRESENT` muestra «COMPROBANDO AUSENCIA»
+y explica que se mantiene la presencia anterior.
