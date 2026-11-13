@@ -305,7 +305,17 @@
     var reason = (decision && (decision.outcome_reason || decision.discard_reason))
       || (gate && gate.reason) || '';
     var gateStatus = gate && gate.status ? String(gate.status) : '';
-    var age = decisionAgeSeconds(scope, decision);
+    var age = scope && scope.decision_age_seconds != null
+      ? Number(scope.decision_age_seconds)
+      : decisionAgeSeconds(scope, decision);
+    var staleLimit = Number((scope && scope.stale_seconds) || 30);
+    if (age != null && isFinite(age) && age > staleLimit) {
+      return {
+        state: 'STALE', tone: 'dim', title: 'SIN DECISIÓN RECIENTE',
+        detail: 'La última decisión operativa es antigua; el radar no reporta.',
+        ageSeconds: age
+      };
+    }
 
     if (applied || outcome === 'applied'
         || (effective === 'PRESENT' && outcome === 'maintained')) {
