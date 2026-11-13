@@ -140,8 +140,9 @@ final class RadarLiveService
                 'state' => $decision['state'] ?? null,
                 'apply' => $decision['apply'] ?? null,
                 'discard_reason' => $decision['discard_reason'] ?? null,
-                'at' => $decision['at'] ?? ($decision['decided_at'] ?? null),
+                'at' => $decision['at'] ?? ($decision['decided_at'] ?? ($decision['event_at'] ?? null)),
                 'decided_at' => $decision['decided_at'] ?? null,
+                'event_at' => $decision['event_at'] ?? ($decision['at'] ?? ($decision['decided_at'] ?? null)),
                 'converted_from' => $decision['converted_from'] ?? null,
                 // F132: resultado operativo final y transición pendiente.
                 'outcome' => $decision['outcome'] ?? null,
