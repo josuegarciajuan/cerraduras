@@ -136,6 +136,16 @@ check('F134: ingesta parada → aviso ámbar',
   && dmPipelineDown.title === 'INGESTA ZIGBEE DETENIDA');
 check('F134: aviso de ingesta explica el sensor conectado',
   dmPipelineDown.subtitle.indexOf('puede estar conectado') >= 0);
+const dmPipelineDownOldGate = RadarScope.detectionModel({
+  raw: { state: 'ABSENT', stale: true, age_seconds: 9000 },
+  stats: {},
+  presence_decision: { range_gate: { status: 'unverified', reason: 'no_dp9' }, age_seconds: 9000 },
+  range_evaluation: { status: 'unverified', reason: 'no_dp9' },
+  pipeline: { enabled: true, healthy: false, state: 'stopped' },
+});
+check('F134: ingesta parada prevalece sobre una decisión antigua',
+  dmPipelineDownOldGate.state === 'PIPELINE_DOWN'
+  && dmPipelineDownOldGate.title === 'INGESTA ZIGBEE DETENIDA');
 const dmPipelineOk = RadarScope.detectionModel({
   raw: { state: 'PRESENT', stale: true, age_seconds: 9000 },
   stats: {},
