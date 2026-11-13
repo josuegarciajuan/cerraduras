@@ -231,18 +231,69 @@ while ($running) {
                         $result = $switchSvc->turnOff($standardRoom);
                         $ok = (bool) ($result['ok'] ?? false);
                         $paused = (string) ($result['error'] ?? '') === 'automation_paused';
+
+                        // PUBACK no es confirmación física. Solo se marca
+                        // confirmed_off si la telemetría es posterior a la orden
+                        // y reporta OFF. Si no, se reintenta con límite.
+                        $devStmt = $pdo->prepare(
+                            "SELECT d.meta_json
+                               FROM devices d JOIN rooms r ON r.pack_id = d.pack_id
+                              WHERE r.id = :room AND d.kind = 'SWITCH'
+                              LIMIT 1"
+                        );
+                        $devStmt->execute([':room' => $standardRoom]);
+                        $metaRaw = $devStmt->fetchColumn();
+                        $meta = is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : [];
+                        $reported = strtoupper((string) ($meta['switch_state'] ?? 'UNKNOWN'));
+                        $stateAt = $meta['switch_state_at'] ?? null;
+                        $cmdAt = $meta['commanded_at'] ?? null;
+                        $fresh = false;
+                        if (is_string($stateAt) && is_string($cmdAt)) {
+                            $stateTs = strtotime($stateAt);
+                            $cmdTs = strtotime($cmdAt);
+                            $fresh = $stateTs !== false && $cmdTs !== false && $stateTs >= $cmdTs;
+                        }
+                        $freshOff = $fresh && $reported === 'OFF';
+
+                        $sessStmt = $pdo->prepare('SELECT occupancy_json FROM iot_sessions WHERE room_id = :room LIMIT 1');
+                        $sessStmt->execute([':room' => $standardRoom]);
+                        $occRaw = $sessStmt->fetchColumn();
+                        $occ = is_string($occRaw) ? (json_decode($occRaw, true) ?: []) : [];
+                        $attempts = (int) ($occ['light_off_attempts'] ?? 0);
+
+                        if ($paused) {
+                            $label = 'paused';
+                            $nextOff = null;
+                            $attempts = 0;
+                        } elseif ($ok && $freshOff) {
+                            $label = 'confirmed_off';
+                            $nextOff = null;
+                            $attempts = 0;
+                        } elseif ($ok) {
+                            $attempts++;
+                            $label = $attempts >= 3 ? 'off_unconfirmed' : 'published_off_unconfirmed';
+                            $nextOff = $attempts >= 3 ? null : gmdate('Y-m-d H:i:s', time() + 30) . '.000';
+                        } else {
+                            $attempts++;
+                            $label = $attempts >= 3 ? 'off_failed' : 'off_failed_retry';
+                            $nextOff = $attempts >= 3 ? null : gmdate('Y-m-d H:i:s', time() + 5) . '.000';
+                        }
+
                         $pdo->prepare(
-                            'UPDATE iot_sessions
+                            "UPDATE iot_sessions
                                 SET light_last_result = :r,
                                     light_off_at = :off,
+                                    occupancy_json = JSON_SET(COALESCE(occupancy_json, JSON_OBJECT()), '$.light_off_attempts', :att),
                                     updated_at = UTC_TIMESTAMP(3)
-                              WHERE room_id = :room'
+                              WHERE room_id = :room"
                         )->execute([
-                            ':r' => $ok ? 'confirmed_off' : ($paused ? 'paused' : 'off_failed'),
-                            ':off' => ($ok || $paused) ? null : gmdate('Y-m-d H:i:s', time() + 5) . '.000',
+                            ':r' => $label,
+                            ':off' => $nextOff,
+                            ':att' => $attempts,
                             ':room' => $standardRoom,
                         ]);
-                        echo "[exit-scan] [$ts] STANDARD LIGHT OFF room={$standardRoom} ok=" . ($ok ? '1' : '0') . "\n";
+                        echo "[exit-scan] [$ts] STANDARD LIGHT OFF room={$standardRoom} ok=" . ($ok ? '1' : '0')
+                            . " reported={$reported} fresh=" . ($fresh ? '1' : '0') . " result={$label}\n";
                     }
                 } catch (\Throwable $e) {
                     echo "[exit-scan] [$ts] STANDARD DEADLINE ERROR room={$standardRoom}: " . $e->getMessage() . "\n";
