@@ -188,6 +188,35 @@
   }
 
   /**
+   * F134: el pipeline Zigbee puede estar parado aunque el sensor siga
+   * conectado. En ese caso no se puede concluir "sensor desconectado".
+   */
+  function pipelineDown(scope) {
+    var pipeline = scope && scope.pipeline;
+    if (!pipeline || pipeline.enabled !== true) return false;
+    if (pipeline.healthy === false) return true;
+    var state = String(pipeline.state || '').toLowerCase();
+    return state === 'stopped' || state === 'disconnected'
+      || state === 'stale' || state === 'unknown';
+  }
+
+  function staleDetection(scope, age, lastDistance) {
+    if (pipelineDown(scope)) {
+      return {
+        state: 'PIPELINE_DOWN', tone: 'warn', icon: '⇄',
+        title: 'INGESTA ZIGBEE DETENIDA',
+        subtitle: 'El sensor puede estar conectado; no llegan sus reportes al sistema.',
+        ageSeconds: age, lastDistance: lastDistance
+      };
+    }
+    return {
+      state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
+      subtitle: 'El radar no envía reportes recientes.',
+      ageSeconds: age, lastDistance: lastDistance
+    };
+  }
+
+  /**
    * Modelo del banner grande de detección. Es puro y testeable: no toca DOM.
    * F132: el resultado operativo final manda sobre la señal cruda; una
    * transición pendiente nunca se presenta como "el radar te ve".
@@ -233,11 +262,7 @@
     var decisionAge = decision && decision.age_seconds != null ? Number(decision.age_seconds) : null;
     var staleLimit = Number((scope && scope.stale_seconds) || 30);
     if (visual.state === 'STALE' || (decisionAge != null && isFinite(decisionAge) && decisionAge > staleLimit)) {
-      return {
-        state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
-        subtitle: 'El radar no envía reportes recientes.',
-        ageSeconds: age, lastDistance: lastDistance
-      };
+      return staleDetection(scope, age, lastDistance);
     }
     var outcome = outcomeOf(decision);
     if (outcome === 'pending_present') {
@@ -312,11 +337,7 @@
         ageSeconds: age, lastDistance: lastDistance
       };
     }
-    return {
-      state: 'STALE', tone: 'dim', icon: '…', title: 'SIN DATOS',
-      subtitle: 'El radar no envía reportes recientes.',
-      ageSeconds: age, lastDistance: lastDistance
-    };
+    return staleDetection(scope, age, lastDistance);
   }
 
   function histogram(series, binM) {

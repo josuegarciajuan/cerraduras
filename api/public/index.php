@@ -38,6 +38,7 @@ use App\Domain\Qr\QrIssueService;
 use App\Domain\Qr\QrValidateService;
 use App\Infrastructure\Gateways\Lock\LockGatewayFactory;
 use App\Infrastructure\Gateways\Sensor\SimulatedSensorIngress;
+use App\Infrastructure\Sensors\ZigbeePipelineStatusService;
 use App\Domain\Rooms\RoomRepository;
 use App\Domain\Rooms\RoomService;
 use App\Domain\Rooms\RoomStateService;
@@ -1594,6 +1595,20 @@ $router->get(
             else { $unknownCount++; }
         }
 
+        // F134: estado del pipeline Zigbee que sirve a esta sala. Un sensor
+        // Zigbee con `stale` no está desconectado si la ingesta está parada.
+        $pipelineProfile = 'prod';
+        foreach ($devices as $deviceRow) {
+            if (($deviceRow['transport'] ?? '') !== 'ZIGBEE2MQTT') {
+                continue;
+            }
+            $deviceMeta = is_array($deviceRow['meta'] ?? null) ? $deviceRow['meta'] : [];
+            $profile = $deviceMeta['mqtt_profile'] ?? 'prod';
+            $pipelineProfile = is_string($profile) && $profile !== '' ? $profile : 'prod';
+            break;
+        }
+        $pipeline = (new ZigbeePipelineStatusService())->forProfile($pipelineProfile);
+
         return \App\Http\Response::json(200, [
             'room_id' => $roomId,
             'pack_id' => $pack['pack_id'],
@@ -1604,6 +1619,7 @@ $router->get(
             'unknown' => $unknownCount,
             'total' => count($devices),
             'devices' => $devices,
+            'pipeline' => $pipeline,
         ]);
     }
 );

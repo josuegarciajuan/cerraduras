@@ -82,6 +82,10 @@ c(str_contains($v2, 'whRoomId') && str_contains($v2, 'loadWarehouseLogsV2'), 'fi
 c(str_contains($v2, 'openWarehouseVisit'), 'drawer de visita con grabaciones');
 c(str_contains($v2, 'Grabaciones'), 'desglose de grabaciones');
 
+// ── Salud del pipeline Zigbee (F134) ─────────────────────────────────────
+c(str_contains($analytics, "'pipelines' => \$this->pipelineService()->all()"), 'analytics devices expone pipelines');
+c(str_contains($v2, 'Ingesta Zigbee detenida'), 'panel avisa de ingesta Zigbee detenida');
+
 // ── Migraciones / fixture / Formularios ──────────────────────────────────
 c(is_file(__DIR__ . '/../../migrations/0146_room_type_normal_to_standard.sql'), 'migración 0146 presente');
 $mig = src('migrations/0146_room_type_normal_to_standard.sql');

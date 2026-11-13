@@ -922,7 +922,17 @@
       var packRows = (d.packs || []).map(function (p) {
         return '<tr><td><b>' + F.escape(p.name) + '</b><div class="small muted">' + F.escape(p.code) + '</div></td><td>' + (p.room_code || '—') + '</td><td>' + p.devices + '</td></tr>';
       });
-      return '<div class="kpi-grid">'
+      var pipelines = d.pipelines || {};
+      var downProfiles = Object.keys(pipelines).filter(function (k) {
+        var p = pipelines[k];
+        return p && p.enabled !== false && p.healthy === false;
+      });
+      var pipelineAlert = downProfiles.length
+        ? '<div class="alert"><span>⚠️</span><span><b>Ingesta Zigbee detenida</b> ('
+          + downProfiles.map(function (k) { return F.escape(k); }).join(', ')
+          + '). El sensor puede estar conectado; revisa ingress/spool.</span></div>'
+        : '';
+      return pipelineAlert + '<div class="kpi-grid">'
         + this.v2Kpi('Dispositivos', s.total || 0, 'inventario', '#2563eb', '🔌')
         + this.v2Kpi('Online', s.online || 0, 'verificados', '#16a34a', '🟢')
         + this.v2Kpi('Offline', s.offline || 0, 'revisar', '#dc2626', '🔴')

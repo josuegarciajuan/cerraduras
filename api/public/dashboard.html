@@ -675,6 +675,7 @@ let _isHidden = false;     // Page Visibility API — pause heavy polling when t
 let _lastMiramePoll = 0;
 let _lastDeviceFetch = 0;
 let _deviceCache = null;  // shared between pack indicator & devices panel
+let _zigbeePipeline = null; // F134: pipeline Zigbee de la sala actual
 let _lastQrConsumed = false;
 let _qrConsumedAt = 0;    // client-clock timestamp (skew-immune QR detection)
 let _sensorsEverSeen = false;    // true once /live returns real (non-UNKNOWN) sensor data
@@ -698,7 +699,18 @@ function devViaLabel(d) {
   if (ESP32_KINDS.indexOf(d && d.kind) >= 0) return 'ESP32';
   return 'sin transporte';
 }
+function zigbeePipelineDown() {
+  return !!(_zigbeePipeline && _zigbeePipeline.enabled !== false && _zigbeePipeline.healthy === false);
+}
+function pipelineNoticeHtml() {
+  if (!zigbeePipelineDown()) return '';
+  const reason = _zigbeePipeline.reason ? ' (' + _zigbeePipeline.reason + ')' : '';
+  return '<div class="dev-row" style="border:1px solid rgba(255,145,0,.35);background:rgba(255,145,0,.06);color:var(--orange);border-radius:8px;padding:6px 8px;margin-bottom:6px">'
+    + '<span>⚠️ Ingesta Zigbee detenida' + reason + '</span>'
+    + '<span style="font-size:0.65rem">el sensor puede estar conectado; revisa ingress/spool</span></div>';
+}
 function devUnknownLabel(d) {
+  if (devIsZigbee(d) && zigbeePipelineDown()) return 'ingesta Zigbee detenida';
   const reason = d && d.liveness_reason ? String(d.liveness_reason) : '';
   const labels = {
     stale: 'sin señal reciente',
@@ -2177,6 +2189,7 @@ async function updatePackIndicator() {
     const res = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`);
     if (!res.ok || !room.pack_id) return;
     const ds = await res.json();
+    _zigbeePipeline = ds.pipeline || null;
     const online   = ds.online || 0;
     const offline  = ds.offline || 0;
     const unknown  = ds.unknown || 0;
@@ -2208,6 +2221,7 @@ async function autoPingDevicesIfRoomHasPack(roomId) {
   try {
     const dsRes = await fetch(`/dashboard-api/device-status?room_id=${roomId}`);
     const ds = await dsRes.json();
+    _zigbeePipeline = ds.pipeline || null;
     if (!ds.devices || ds.devices.length === 0) return;
     const deviceIds = ds.devices.map(d => d.id);
     // Ping all devices
@@ -2276,6 +2290,7 @@ function onRoomSelect() {
   if (_offlinePollTimer) { clearInterval(_offlinePollTimer); _offlinePollTimer = null; }
   _offlineDeviceIds.clear();
   _deviceCache = null;
+  _zigbeePipeline = null;
   // Reset throttle guards so independent timers fetch immediately for the new room
   _lastDeviceFetch = 0;
   _lastMiramePoll = 0;
@@ -2776,6 +2791,7 @@ function startDevicePolling() {
         .then(ds => {
           if ((ds.room_id || 0) !== currentRoomId) return;
           _deviceCache = ds;
+          _zigbeePipeline = ds.pipeline || null;
           updateDevicesPanelFromCache(ds);
           updatePackIndicatorFromCache(ds);
           manageOfflineDevicePoll(ds);
@@ -3229,6 +3245,7 @@ function updateDevicesPanel(data) {
   fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`)
     .then(r => r.json())
     .then(result => {
+      _zigbeePipeline = result.pipeline || null;
       const devices = result.devices || [];
       if (!devices || devices.length === 0) {
         el.innerHTML = '<span style="color:var(--text-dim)">Sin dispositivos</span>';
@@ -3238,7 +3255,7 @@ function updateDevicesPanel(data) {
       const packLabel = result.pack_name || 'Sin pack';
       const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
       const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
-      el.innerHTML = devices.map(d => {
+      el.innerHTML = pipelineNoticeHtml() + devices.map(d => {
         const name = espDisplayName(d, kindName);
         const idShort = (d.external_id||'').substring(0,6);
         const st = devStateOf(d);
@@ -3277,6 +3294,7 @@ function updateDevicesPanel(data) {
 
 function updateDevicesPanelFromCache(result) {
   const el = document.getElementById('devices-content');
+  _zigbeePipeline = result.pipeline || _zigbeePipeline;
   const devices = result.devices || [];
   if (!devices || devices.length === 0) {
     el.innerHTML = '<span style="color:var(--text-dim)">Sin dispositivos</span>';
@@ -3286,7 +3304,7 @@ function updateDevicesPanelFromCache(result) {
   const packLabel = result.pack_name || 'Sin pack';
   const packColor = result.pack_name ? 'var(--cyan)' : 'var(--text-dim)';
   const kindName = k => ({RPI:'ESP32',LOCK:'Cerradura',PROXIMITY:'Sensor Puerta',PRESENCE:'Sensor Presencia',SWITCH:'Luz',SCANNER:'Lector QR',CAMERA:'Cámara'}[k]||k);
-  el.innerHTML = devices.map(d => {
+  el.innerHTML = pipelineNoticeHtml() + devices.map(d => {
     const name = espDisplayName(d, kindName);
     const idShort = (d.external_id||'').substring(0,6);
     const st = devStateOf(d);
@@ -3364,6 +3382,7 @@ async function refreshDeviceStatus() {
     // Get all devices for the current room
     const dsResp = await fetch(`/dashboard-api/device-status?room_id=${currentRoomId}`);
     const ds = await dsResp.json();
+    _zigbeePipeline = ds.pipeline || null;
     const devices = ds.devices || [];
 
     if (devices.length === 0) {
