@@ -268,8 +268,10 @@ final class IotSessionService
                 // concurrentes no construyan su evidencia sobre una fotografía
                 // inconsistente. El histórico está acotado por tiempo, no por un
                 // número arbitrario de filas.
+                $hasVerifiedRange = is_array($rangeGate)
+                    && ($rangeGate['status'] ?? '') === RadarOperationalRangeDecision::STATUS_IN_RANGE;
                 if ($processable
-                    && $radarMode !== null
+                    && ($radarMode !== null || $hasVerifiedRange)
                     && !$rangeConverted
                     && $provider === PresenceEvent::PROVIDER_ZIGBEE2MQTT
                     && $sensor === PresenceEvent::SENSOR_PRESENCE
@@ -277,10 +279,20 @@ final class IotSessionService
                     // F114+: el DP 1 es la transición autoritativa. PRESENT
                     // aplica en el primer frame con ese borde; ABSENT espera
                     // una gracia corta. No se cuentan frames cacheados.
-                    $edgeDecision = $this->computePresenceEdgeDecision($room, $session, $meta, $frameTime);
-                    $radarDecision = $edgeDecision ?? $this->computeRadarDecision(
-                        $room, $roomType, $radarMode, $session, $now
-                    );
+                    $edgeDecision = $radarMode !== null
+                        ? $this->computePresenceEdgeDecision($room, $session, $meta, $frameTime)
+                        : null;
+                    $radarDecision = $edgeDecision;
+                    if ($radarDecision === null) {
+                        $radarDecision = $radarMode !== null
+                            ? $this->computeRadarDecision($room, $roomType, $radarMode, $session, $now)
+                            : self::rangeGateDecision(
+                                (string) $session->presenceState,
+                                $this->episodePayload($session),
+                                (array) $rangeGate,
+                                $now->format('Y-m-d\TH:i:s.v\Z')
+                            );
+                    }
                     if ($radarDecision !== null
                         && is_array($rangeGate)
                         && ($rangeGate['status'] ?? '') === RadarOperationalRangeDecision::STATUS_IN_RANGE
@@ -297,7 +309,9 @@ final class IotSessionService
                             $value = $edgeValue;
                         }
                     }
-                    if ($radarDecision !== null) {
+                    if ($radarDecision !== null
+                        && ($radarDecision['diagnostic'] ?? false) !== true
+                    ) {
                         // F132: transición pendiente (entrada/ausencia) antes de
                         // publicar cualquier resultado. Solo aplica a salas con
                         // override radar explícito; almacén y TIMBRADO conservan
@@ -1382,6 +1396,41 @@ final class IotSessionService
             }
         }
         return $persisted ?? $frame ?? $latest;
+    }
+
+    /**
+     * F134: decisión diagnóstica para una sala sin política radar explícita
+     * cuando la evidencia DP9 ya está dentro del alcance. No aplica presencia
+     * por sí sola: el flujo normal decide y actualiza el resultado final. Sirve
+     * para que `presence_outcome_json` no se quede clavado en una decisión
+     * antigua (`range_unverified`/`marker_already_used`) mientras la sesión ya
+     * está en PRESENT.
+     *
+     * @param array<string,mixed> $rangeGate
+     * @param array<string,mixed>|null $episode
+     * @return array<string,mixed>
+     */
+    private static function rangeGateDecision(
+        string $presenceState,
+        ?array $episode,
+        array $rangeGate,
+        string $at
+    ): array {
+        $confirmed = strtoupper($presenceState) === IotSession::PRESENCE_PRESENT;
+        return [
+            'mode' => 'range_gate',
+            'state' => $confirmed
+                ? RadarPresenceDecision::STATE_PRESENT_CONFIRMED
+                : RadarPresenceDecision::STATE_CANDIDATE_PRESENT,
+            'raw' => PresenceEvent::VALUE_PRESENT,
+            'apply' => false,
+            'discard_reason' => null,
+            'stale' => false,
+            'range_gate' => $rangeGate,
+            'episode' => $episode,
+            'at' => $at,
+            'diagnostic' => true,
+        ];
     }
 
     /** F133.1: respaldo DP1 acotado a salas radar normales con alcance corto. */
