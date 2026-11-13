@@ -6,7 +6,7 @@
 <title>Cerraduras — Test Room</title>
 <script src="/assets/qrcode.min.js"></script>
 <script src="/assets/choreography.js"></script>
-<script src="/assets/croquis-logic.js"></script>
+<script src="/assets/croquis-logic.js?v=20261113-f138"></script>
 <script src="/assets/cal-walktest.js"></script>
 <script src="/assets/room-selector.js"></script>
 <style>
@@ -928,7 +928,7 @@ function renderSensorSvg() {
   // Se conserva el pulso anti-colapso derivado de PROXIMITY OPEN real (FIX #3).
   // `resolveDoorOpen` es la regla pura testeada en tests/Unit/choreography.test.js;
   // el fallback cubre una caché antigua de choreography.js en el navegador.
-  const nowMsDoor = Date.now();
+  const nowMsDoor = serverNow();
   const doorOpen = (typeof Choreography !== 'undefined' && Choreography.resolveDoorOpen)
     ? Choreography.resolveDoorOpen(realDoor, _doorPulseUntil, nowMsDoor)
     : ((realDoor === 'OPEN') || (nowMsDoor < _doorPulseUntil));
@@ -972,10 +972,15 @@ function renderSensorSvg() {
   const bulbGlass = document.getElementById('bulb-glass');
   const bulbGlow = document.getElementById('bulb-glow');
   const bulbSymbol = document.getElementById('bulb-symbol');
-  // Bulb is ON when door is physically open (guest entering/exiting) or
-  // when presence is confirmed inside the room. This ties the SVG bulb
-  // to real sensor state, not to the last commanded switch action.
-  const bulbShouldBeOn = stay && (doorOpen || presence === 'PRESENT');
+  // F138: la bombilla representa la luz del switch. Si no hay telemetría,
+  // usa el último comando y lo marca como estimado. Nunca la deduce de
+  // "hay estancia y puerta/presencia".
+  const reportedSwitch = String(sw.state || '').toUpperCase();
+  const commandedSwitch = String(sw.last_command || '').toUpperCase();
+  const bulbShouldBeOn = reportedSwitch === 'ON'
+    || (reportedSwitch !== 'ON' && reportedSwitch !== 'OFF' && commandedSwitch === 'ON');
+  const bulbEstimated = reportedSwitch !== 'ON' && reportedSwitch !== 'OFF'
+    && (commandedSwitch === 'ON' || commandedSwitch === 'OFF');
 
   if (bulbShouldBeOn) {
     bulbGlass.setAttribute('fill','#ffd740');
@@ -983,7 +988,7 @@ function renderSensorSvg() {
     bulbGlow.setAttribute('opacity','1');
     bulbGlow.style.animation = 'fade-in-glow 0.5s ease';
     bulbSymbol.setAttribute('fill','rgba(0,0,0,0.6)');
-    bulbSymbol.textContent = '💡';
+    bulbSymbol.textContent = bulbEstimated ? '💡?' : '💡';
   } else {
     bulbGlass.setAttribute('fill','#444');
     bulbGlass.setAttribute('filter','none');
@@ -1403,32 +1408,44 @@ function updateMonigoteFromSensors(data) {
     (stay && stay.entry_confirmed_at) ||
     (_choreoEpisodes && _choreoEpisodes.entryConsolidatedAt > 0)
   );
-  let resolved = C.resolveDashboardMonigote({
-    stateName: currentState,
-    phase: d.phase,
-    doorOpen: d.doorOpen,
-    keyAccessActive: key.active,
-    entryConfirmed: entryConfirmed,
-    hasEntryContext: hasEntryContext,
-    hasKeyEpisode: hasKeyEpisode,
-    keyEpisodePhase: _keyEpisode.phase,
-    // F136: en radar no añadimos los holds visuales pensados para el flujo
-    // hotelero (cruce 1,8 s / cierre 2,3 s); la señal ya viene validada por la
-    // política y Radar Studio la muestra al instante.
-    crossingHoldMs: radarRoom ? 300 : undefined,
-    closeDecisionMs: radarRoom ? 500 : undefined,
-    presenceState: io.presence_state || 'UNKNOWN',
-    lastOpenAt: io.last_open_at || null,
-    lastCloseAt: io.last_close_at || null,
-    lastPresenceAt: io.last_presence_event_at || null,
-    lastAbsentSince: io.last_absent_since || null,
-    now: now
-  });
 
-  // F136: con el radar mudo (>30 s) no se afirma dentro ni fuera: el monigote
-  // se queda en el umbral, igual que Radar Studio muestra "SIN DATOS".
-  if (radarRoom && snapshot.live.presence_stale && resolved !== 'state') {
-    resolved = 'WAITING';
+  // F138: el servidor es la autoridad de ocupación. Si manda occupancy,
+  // el cliente no reinterpreta la señal cruda.
+  const occupancy = payload.occupancy || {};
+  const occState = String(occupancy.state || io.occupancy_state || '');
+  let resolved;
+  if (occState !== '') {
+    resolved = C.resolveStandardMonigote
+      ? C.resolveStandardMonigote(occState, d.doorOpen)
+      : 'WAITING';
+
+    if ((occupancy.radar_health === 'stale' || payload.radar_stale)
+        && occState === 'OCCUPIED') {
+      resolved = 'WAITING';
+    }
+  } else {
+    resolved = C.resolveDashboardMonigote({
+      stateName: currentState,
+      phase: d.phase,
+      doorOpen: d.doorOpen,
+      keyAccessActive: key.active,
+      entryConfirmed: entryConfirmed,
+      hasEntryContext: hasEntryContext,
+      hasKeyEpisode: hasKeyEpisode,
+      keyEpisodePhase: _keyEpisode.phase,
+      crossingHoldMs: radarRoom ? 300 : undefined,
+      closeDecisionMs: radarRoom ? 500 : undefined,
+      presenceState: io.presence_state || 'UNKNOWN',
+      lastOpenAt: io.last_open_at || null,
+      lastCloseAt: io.last_close_at || null,
+      lastPresenceAt: io.last_presence_event_at || null,
+      lastAbsentSince: io.last_absent_since || null,
+      now: now
+    });
+
+    if (radarRoom && snapshot.live.presence_stale && resolved !== 'state') {
+      resolved = 'WAITING';
+    }
   }
 
   const stateDef = STATES[currentState] || STATES.ESPERANDO;
@@ -2348,8 +2365,7 @@ function onRoomSelect() {
   connectSSE();
   // Also trigger fast initial poll as a safety net (SSE may take a moment to connect)
   setTimeout(() => { if (!_sseConnected) startPollingFallback(); }, 2000);
-  // Auto-ping devices if room has a pack
-  autoPingDevicesIfRoomHasPack(currentRoomId);
+  // F138: la UI no muta dispositivos al cargar. La comprobación es manual.
   // F126: estado remoto (luz/cerradura/capacidades) de la sala seleccionada.
   refreshRoomControls();
 }
@@ -2411,7 +2427,8 @@ function processLiveData(data) {
   // F118.4: base temporal común del servidor (SSE y polling) para holds/ventanas.
   if (data && data.server_ts) {
     const st = Date.parse(data.server_ts);
-    if (isFinite(st)) _serverSkewMs = Date.now() - st;
+    // El reloj del servidor manda: serverNow() = Date.now() + skew.
+    if (isFinite(st)) _serverSkewMs = st - Date.now();
   }
   // F28: store raw data for sensor-driven SVG rendering (door, bulb)
   lastLiveData = data;
@@ -3014,13 +3031,28 @@ function updateSensorPanel(data) {
   // ocupación efectiva (solo cambia con decisiones confirmadas).
   // F136: la fuente autoritativa es el resultado operativo de la sesión; el
   // meta del evento queda como compatibilidad.
-  const radarRoom = !!data.presence_mode_override;
+  const occupancy = data.occupancy || {};
+  const occState = String(occupancy.state || io.occupancy_state || '');
+  const standardOccupancy = occState !== '';
+  const radarRoom = !!data.presence_mode_override || standardOccupancy;
   const radarRaw = data.radar || null;
-  const pd = data.presence_outcome || data.presence_decision || null;
+  const pd = standardOccupancy
+    ? {
+        state: occState === 'OCCUPIED' ? 'PRESENT_CONFIRMED'
+          : occState === 'VACANT_CONFIRMED' ? 'ABSENT_CONFIRMED'
+            : 'CANDIDATE_PRESENT',
+        outcome: occState === 'OCCUPIED' ? 'applied'
+          : occState === 'VACANT_CONFIRMED' ? 'vacant' : 'protected',
+        occupancy_state: occState,
+        radar_health: occupancy.radar_health || io.radar_health || null,
+      }
+    : (data.presence_outcome || data.presence_decision || null);
   const pdState = pd && pd.state ? String(pd.state) : '';
-  const radarStale = radarRoom
-    ? (radarRaw ? radarRaw.stale === true : true)
-    : (io.radar_stale === true || (pd && pd.stale === true));
+  const radarStale = standardOccupancy
+    ? (radarRaw ? radarRaw.stale === true : (occupancy.radar_health === 'stale'))
+    : (radarRoom
+        ? (radarRaw ? radarRaw.stale === true : true)
+        : (io.radar_stale === true || (pd && pd.stale === true)));
 
   // F136: indicador de detección inmediato equivalente a Radar Studio, solo
   // en salas con política radar explícita. No cambia la ocupación efectiva.
@@ -3067,12 +3099,16 @@ function updateSensorPanel(data) {
   else if (pdState === 'PRESENT_CONFIRMED') presText = 'PRESENT';
   else if (pdState === 'CANDIDATE_ABSENT') presText = 'ABSENT?';
   else if (pdState === 'ABSENT_CONFIRMED') presText = 'ABSENT';
+  const presenceForClass = standardOccupancy
+    ? (pdState === 'PRESENT_CONFIRMED' ? 'PRESENT'
+        : pdState === 'ABSENT_CONFIRMED' ? 'ABSENT' : 'UNKNOWN')
+    : presence;
   presEl.textContent = presText;
   presEl.className = 'value ' + (radarStale
     ? 'val-orange'
     : (pdState === 'CANDIDATE_PRESENT' || pdState === 'CANDIDATE_ABSENT'
         ? 'val-cyan'
-        : (presence==='PRESENT'?'val-orange':presence==='ABSENT'?'val-red':'val-orange')));
+        : (presenceForClass==='PRESENT'?'val-orange':presenceForClass==='ABSENT'?'val-red':'val-orange')));
   presEl.title = pd
     ? ('radar: ' + (radarStale ? 'SIN DATOS' : pdState)
         + (pd.age_seconds != null ? ' · ' + pd.age_seconds + ' s' : '')
@@ -3704,8 +3740,7 @@ async function init() {
     Promise.all([fetchRooms(), fetchMirame()]).then(() => {
       const sel = document.getElementById('room-selector');
       if (sel && sel.options.length > 0) sel.value = currentRoomId;
-      // Auto-ping devices on page load if the selected room has a pack
-      autoPingDevicesIfRoomHasPack(currentRoomId);
+      // F138: sin auto-ping al cargar; solo el botón manual muta dispositivos.
       refreshRoomControls();
     }).catch(() => {});
   } catch (e) {

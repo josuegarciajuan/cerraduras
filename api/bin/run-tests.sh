@@ -10711,6 +10711,75 @@ else
 fi
 
 # =============================================================================
+# BLOCK 106 — F138: ocupación única STANDARD
+# Trazabilidad: RF-433..RF-440
+# =============================================================================
+block "BLOCK 106 — F138: ocupación única STANDARD"
+
+for _f138_file in \
+    src/Domain/Presence/StandardOccupancyPolicy.php \
+    src/Domain/Presence/StandardOccupancyEngine.php \
+    migrations/0153_standard_occupancy.sql \
+    migrations/0154_standard_clear_presence_modes.sql \
+    migrations/0155_standard_entry_window.sql \
+    tests/Unit/StandardOccupancyPolicyTest.php \
+    tests/Unit/StandardOccupancyEngineTest.php; do
+    if [ -f "$_f138_file" ]; then
+        pass "F138: existe $_f138_file"
+    else
+        fail "F138: falta $_f138_file"
+    fi
+done
+
+for _f138_php in \
+    src/Domain/Presence/StandardOccupancyPolicy.php \
+    src/Domain/Presence/StandardOccupancyEngine.php \
+    src/Domain/Presence/IotSessionService.php \
+    src/Domain/Presence/IotSessionRepository.php \
+    src/Domain/Presence/ExitRuleEvaluator.php \
+    src/Domain/Presence/ExitActionService.php \
+    src/Http/Controllers/RoomLiveController.php \
+    src/Http/Controllers/EventStreamController.php; do
+    if php -l "$_f138_php" >/dev/null 2>&1; then
+        pass "F138: sintaxis $_f138_php"
+    else
+        fail "F138: sintaxis $_f138_php"
+    fi
+done
+
+if php tests/Unit/StandardOccupancyPolicyTest.php >/tmp/f138-policy.log 2>&1; then
+    pass "F138: unit StandardOccupancyPolicy"
+else
+    fail "F138: unit StandardOccupancyPolicy" "$(tail -3 /tmp/f138-policy.log | tr '\n' ' ')"
+fi
+
+if php tests/Unit/StandardOccupancyEngineTest.php >/tmp/f138-engine.log 2>&1; then
+    pass "F138: unit StandardOccupancyEngine"
+else
+    fail "F138: unit StandardOccupancyEngine" "$(tail -3 /tmp/f138-engine.log | tr '\n' ' ')"
+fi
+
+F138_COL=$($MYSQL -sN -e "SHOW COLUMNS FROM iot_sessions LIKE 'occupancy_state'" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$F138_COL" -ge 1 ]; then
+    pass "F138: migración 0153 aplicada"
+else
+    fail "F138: migración 0153" "occupancy_state ausente"
+fi
+
+F138_OVR=$($MYSQL -sN -e "SELECT COUNT(*) FROM rooms r JOIN room_types rt ON rt.id=r.room_type_id WHERE rt.code='STANDARD' AND r.presence_mode_override IS NOT NULL" 2>/dev/null)
+if [ "$F138_OVR" = "0" ]; then
+    pass "F138: STANDARD sin presence_mode_override"
+else
+    fail "F138: STANDARD sin presence_mode_override" "quedan $F138_OVR"
+fi
+
+if node tests/Unit/croquis-logic.test.js >/tmp/f138-croquis.log 2>&1; then
+    pass "F138: croquis usa estado de ocupación del servidor"
+else
+    fail "F138: croquis usa estado de ocupación del servidor" "$(tail -3 /tmp/f138-croquis.log | tr '\n' ' ')"
+fi
+
+# =============================================================================
 # POST-FLIGHT F118 — restaurar la calibración del radar
 # =============================================================================
 _restore_radar_profile

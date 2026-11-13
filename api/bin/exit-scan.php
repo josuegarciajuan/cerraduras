@@ -119,10 +119,13 @@ while ($running) {
     // persistida y aplica el estado con el mismo bloqueo que la ingesta.
     try {
         $pendingRows = $pdo->query(
-            "SELECT room_id FROM iot_sessions
-              WHERE presence_pending_state IS NOT NULL
-                AND presence_pending_due_at IS NOT NULL
-                AND presence_pending_due_at <= UTC_TIMESTAMP(3)"
+            "SELECT s.room_id FROM iot_sessions s
+               JOIN rooms r ON r.id = s.room_id
+               JOIN room_types rt ON rt.id = r.room_type_id
+              WHERE s.presence_pending_state IS NOT NULL
+                AND s.presence_pending_due_at IS NOT NULL
+                AND s.presence_pending_due_at <= UTC_TIMESTAMP(3)
+                AND rt.code <> 'STANDARD'"
         )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         if ($pendingRows !== []) {
             $pendingService = new IotSessionService(
@@ -162,6 +165,94 @@ while ($running) {
         echo "[exit-scan] [$ts] PENDING FATAL: " . $e->getMessage() . "\n";
     }
 
+    // F138: vencimientos del motor único de ocupación STANDARD.
+    try {
+        $standardDue = $pdo->query(
+            "SELECT s.room_id, s.occupancy_state, s.light_desired
+               FROM iot_sessions s
+               JOIN rooms r ON r.id = s.room_id
+               JOIN room_types rt ON rt.id = r.room_type_id
+              WHERE rt.code = 'STANDARD'
+                AND s.occupancy_state IS NOT NULL
+                AND (
+                  (s.entry_deadline_at IS NOT NULL AND s.entry_deadline_at <= UTC_TIMESTAMP(3))
+                  OR (s.vacancy_deadline_at IS NOT NULL AND s.vacancy_deadline_at <= UTC_TIMESTAMP(3))
+                  OR (s.light_off_at IS NOT NULL AND s.light_off_at <= UTC_TIMESTAMP(3)
+                      AND s.light_desired = 'OFF')
+                )"
+        )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+        if ($standardDue !== []) {
+            $standardService = new IotSessionService(
+                new PresenceEventRepository($pdo),
+                $iotSessionRepo,
+                $roomRepo,
+                $roomTypeRepo,
+                $stayRepo,
+                $stateMachine,
+                $accessEventRepo,
+                $exitEval,
+                $switchSvc,
+                $exitAction,
+                null,
+                null,
+                null,
+                null,
+                new RadarPresenceReportRepository($pdo),
+                new RadarDistanceReportRepository($pdo)
+            );
+            foreach ($standardDue as $standardRow) {
+                $standardRoom = (int) $standardRow['room_id'];
+                try {
+                    $resolved = $standardService->resolveStandardDeadlines(
+                        $standardRoom,
+                        'exit-scan-standard-' . uniqid()
+                    );
+                    $state = (string) ($resolved['occupancy_state'] ?? '');
+                    $light = (string) ($resolved['light'] ?? '');
+                    if ($state === 'VACANT_CONFIRMED' && $light === 'off') {
+                        // Reclamo atómico: si llegó OPEN/PRESENT y la sesión
+                        // dejó de estar vacía, no se publica el OFF.
+                        $claim = $pdo->prepare(
+                            "UPDATE iot_sessions
+                                SET light_off_at = NULL,
+                                    light_last_result = 'publishing_off',
+                                    updated_at = UTC_TIMESTAMP(3)
+                              WHERE room_id = :room
+                                AND occupancy_state = 'VACANT_CONFIRMED'
+                                AND light_desired = 'OFF'"
+                        );
+                        $claim->execute([':room' => $standardRoom]);
+                        if ($claim->rowCount() === 0) {
+                            echo "[exit-scan] [$ts] STANDARD LIGHT OFF cancelado room={$standardRoom} (estado cambió)\n";
+                            continue;
+                        }
+
+                        $result = $switchSvc->turnOff($standardRoom);
+                        $ok = (bool) ($result['ok'] ?? false);
+                        $paused = (string) ($result['error'] ?? '') === 'automation_paused';
+                        $pdo->prepare(
+                            'UPDATE iot_sessions
+                                SET light_last_result = :r,
+                                    light_off_at = :off,
+                                    updated_at = UTC_TIMESTAMP(3)
+                              WHERE room_id = :room'
+                        )->execute([
+                            ':r' => $ok ? 'confirmed_off' : ($paused ? 'paused' : 'off_failed'),
+                            ':off' => ($ok || $paused) ? null : gmdate('Y-m-d H:i:s', time() + 5) . '.000',
+                            ':room' => $standardRoom,
+                        ]);
+                        echo "[exit-scan] [$ts] STANDARD LIGHT OFF room={$standardRoom} ok=" . ($ok ? '1' : '0') . "\n";
+                    }
+                } catch (\Throwable $e) {
+                    echo "[exit-scan] [$ts] STANDARD DEADLINE ERROR room={$standardRoom}: " . $e->getMessage() . "\n";
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        echo "[exit-scan] [$ts] STANDARD DEADLINE FATAL: " . $e->getMessage() . "\n";
+    }
+
     // F137: apagado diferido de luz en salas normales con política radar.
     // IotSessionService escribe `iot_sessions.light_off_at` tras un ciclo de
     // puerta con ausencia; aquí se ejecuta el OFF y se limpia el plazo. Un
@@ -175,9 +266,9 @@ while ($running) {
                    JOIN room_types rt ON rt.id = r.room_type_id
                   WHERE s.light_off_at IS NOT NULL
                     AND s.light_off_at <= UTC_TIMESTAMP(3)
-                    AND r.presence_mode_override IS NOT NULL
-                    AND r.presence_mode_override <> ''
-                    AND rt.code NOT IN ('ALMACEN_BEBIDAS','TIMBRADO')"
+                     AND r.presence_mode_override IS NOT NULL
+                     AND r.presence_mode_override <> ''
+                     AND rt.code NOT IN ('ALMACEN_BEBIDAS','TIMBRADO','STANDARD')"
             )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
             foreach ($dueRadar as $lightRow) {
                 $lightRoom = (int) $lightRow['room_id'];

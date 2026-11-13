@@ -150,6 +150,7 @@ final class FakeIotSessionRepo implements IotSessionRepositoryInterface
         }
         return true;
     }
+    public function setLightResult(int $roomId, string $result): void {}
 }
 
 final class FakeRoomRepoF8 implements RoomRepositoryInterface
@@ -258,7 +259,11 @@ $smRepo    = new FakeStayRepoF8(); // separate copy for StayStateMachine
 $whSpy     = new FakeWarehouseRecorder(); // F81: espía del motor del almacén
 
 // Room 1, RoomType 1 (exit_gap=5s, cooldown=10s)
-$rt = new RoomType(1,'STANDARD','Standard', 5, 5, 10, 30);
+// F138: las pruebas históricas de F48/F130/F132/F137 se conservan para el
+// camino especial/legacy. El motor STANDARD se cubre en
+// StandardOccupancyPolicyTest, StandardOccupancyEngineTest y la comprobación
+// de integración F138. No se usa 'STANDARD' aquí para no mezclar políticas.
+$rt = new RoomType(1,'LEGACY','Legacy', 5, 5, 10, 30);
 $rtRepo->byId[1] = $rt;
 $roomRepo->byId[1] = new Room(1, '101', 1, null, Room::STATUS_OCCUPIED, true, null);
 

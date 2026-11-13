@@ -236,8 +236,11 @@ final class ExitActionService
             error_log('[ExitActionService] Failed to set room FREE: ' . $e->getMessage());
         }
 
-        // f) Turn off room light via Smart Switch (best-effort)
-        if ($this->switchService !== null) {
+        // f) Turn off room light via Smart Switch (best-effort).
+        // F138: en STANDARD el OFF lo ejecuta exit-scan desde el estado
+        // VACANT_CONFIRMED y su guarda; aquí solo se cierra la estancia. Así no
+        // se apaga antes de tiempo ni se duplica la orden.
+        if ($this->switchService !== null && $session->occupancyState === null) {
             try {
                 $this->switchService->turnOff($room->id);
             } catch (\Throwable $e) {

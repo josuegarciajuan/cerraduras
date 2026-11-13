@@ -44,4 +44,7 @@ interface IotSessionRepositoryInterface
      * worker already marked this door cycle (design.md §3.3).
      */
     public function markExitEvaluated(int $roomId, string $closeAtUtc): bool;
+
+    /** F138: guarda el resultado de la última publicación de luz. */
+    public function setLightResult(int $roomId, string $result): void;
 }

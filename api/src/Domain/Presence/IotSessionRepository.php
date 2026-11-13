@@ -25,7 +25,9 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
          presence_pending_state, presence_pending_since, presence_pending_due_at,
          presence_pending_marker, presence_pending_config_key, presence_outcome_json,
          presence_episode_marker, presence_episode_session,
-         presence_episode_started_at, presence_episode_distance_marker, light_off_at';
+         presence_episode_started_at, presence_episode_distance_marker, light_off_at,
+         occupancy_state, occupancy_json, entry_deadline_at, vacancy_deadline_at,
+         light_desired, light_last_result, radar_health, uncertain_since';
 
     private PDO $pdo;
 
@@ -54,12 +56,15 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                  presence_pending_state, presence_pending_since, presence_pending_due_at,
                  presence_pending_marker, presence_pending_config_key, presence_outcome_json,
                  presence_episode_marker, presence_episode_session,
-                 presence_episode_started_at, presence_episode_distance_marker, light_off_at)
+                 presence_episode_started_at, presence_episode_distance_marker, light_off_at,
+                 occupancy_state, occupancy_json, entry_deadline_at, vacancy_deadline_at,
+                 light_desired, light_last_result, radar_health, uncertain_since)
              VALUES
                 (:room, :stay, :door, :pres, :open, :close, :abs, :exit,
                  :ldea, :lpea, :ldv, :lpv,
                  :ppst, :ppsi, :ppdu, :ppmk, :ppck, :pout,
-                 :pemk, :pesn, :pest, :pedm, :loa)
+                 :pemk, :pesn, :pest, :pedm, :loa,
+                 :ost, :ojson, :edue, :vdue, :ldes, :llres, :rhealth, :usince)
              ON DUPLICATE KEY UPDATE
                 stay_id                = VALUES(stay_id),
                 door_state             = VALUES(door_state),
@@ -82,7 +87,15 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_episode_session         = VALUES(presence_episode_session),
                 presence_episode_started_at      = VALUES(presence_episode_started_at),
                 presence_episode_distance_marker = VALUES(presence_episode_distance_marker),
-                light_off_at                         = VALUES(light_off_at)'
+                light_off_at                         = VALUES(light_off_at),
+                occupancy_state                      = VALUES(occupancy_state),
+                occupancy_json                       = VALUES(occupancy_json),
+                entry_deadline_at                    = VALUES(entry_deadline_at),
+                vacancy_deadline_at                  = VALUES(vacancy_deadline_at),
+                light_desired                        = VALUES(light_desired),
+                light_last_result                    = VALUES(light_last_result),
+                radar_health                         = VALUES(radar_health),
+                uncertain_since                      = VALUES(uncertain_since)'
         )->execute([
             ':room'  => $session->roomId,
             ':stay'  => $session->stayId,
@@ -107,6 +120,14 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':pest'  => $session->presenceEpisodeStartedAt,
             ':pedm'  => $session->presenceEpisodeDistanceMarker,
             ':loa'   => $session->lightOffAt,
+            ':ost'   => $session->occupancyState,
+            ':ojson' => $this->encodeOutcome($session->occupancyData),
+            ':edue'  => $session->entryDeadlineAt,
+            ':vdue'  => $session->vacancyDeadlineAt,
+            ':ldes'  => $session->lightDesired,
+            ':llres' => $session->lightLastResult,
+            ':rhealth' => $session->radarHealth,
+            ':usince' => $session->uncertainSince,
         ]);
     }
 
@@ -182,6 +203,14 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
                 presence_episode_started_at      = :pest,
                 presence_episode_distance_marker = :pedm,
                 light_off_at                     = :loa,
+                occupancy_state                  = :ost,
+                occupancy_json                   = :ojson,
+                entry_deadline_at                = :edue,
+                vacancy_deadline_at              = :vdue,
+                light_desired                    = :ldes,
+                light_last_result                = :llres,
+                radar_health                     = :rhealth,
+                uncertain_since                  = :usince,
                 updated_at             = UTC_TIMESTAMP(3)
              WHERE id = :id'
         )->execute([
@@ -208,6 +237,14 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':pest'  => $session->presenceEpisodeStartedAt,
             ':pedm'  => $session->presenceEpisodeDistanceMarker,
             ':loa'   => $session->lightOffAt,
+            ':ost'   => $session->occupancyState,
+            ':ojson' => $this->encodeOutcome($session->occupancyData),
+            ':edue'  => $session->entryDeadlineAt,
+            ':vdue'  => $session->vacancyDeadlineAt,
+            ':ldes'  => $session->lightDesired,
+            ':llres' => $session->lightLastResult,
+            ':rhealth' => $session->radarHealth,
+            ':usince' => $session->uncertainSince,
         ]);
     }
 
@@ -225,6 +262,15 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ':close' => $closeAtUtc,
         ]);
         return $stmt->rowCount() > 0;
+    }
+
+    public function setLightResult(int $roomId, string $result): void
+    {
+        $this->pdo->prepare(
+            'UPDATE iot_sessions
+                SET light_last_result = :result, updated_at = UTC_TIMESTAMP(3)
+              WHERE room_id = :rid'
+        )->execute([':result' => $result, ':rid' => $roomId]);
     }
 
     /** @param array<string,mixed> $row */
@@ -255,7 +301,15 @@ final class IotSessionRepository implements IotSessionRepositoryInterface
             ($row['presence_episode_session'] ?? null) === null ? null : (string) $row['presence_episode_session'],
             ($row['presence_episode_started_at'] ?? null) === null ? null : (string) $row['presence_episode_started_at'],
             ($row['presence_episode_distance_marker'] ?? null) === null ? null : (string) $row['presence_episode_distance_marker'],
-            ($row['light_off_at'] ?? null) === null ? null : (string) $row['light_off_at']
+            ($row['light_off_at'] ?? null) === null ? null : (string) $row['light_off_at'],
+            ($row['occupancy_state'] ?? null) === null ? null : (string) $row['occupancy_state'],
+            $this->decodeOutcome($row['occupancy_json'] ?? null),
+            ($row['entry_deadline_at'] ?? null) === null ? null : (string) $row['entry_deadline_at'],
+            ($row['vacancy_deadline_at'] ?? null) === null ? null : (string) $row['vacancy_deadline_at'],
+            ($row['light_desired'] ?? null) === null ? null : (string) $row['light_desired'],
+            ($row['light_last_result'] ?? null) === null ? null : (string) $row['light_last_result'],
+            ($row['radar_health'] ?? null) === null ? null : (string) $row['radar_health'],
+            ($row['uncertain_since'] ?? null) === null ? null : (string) $row['uncertain_since']
         );
     }
 

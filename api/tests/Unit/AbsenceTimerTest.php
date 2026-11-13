@@ -89,6 +89,7 @@ final class FakeIotSessionRepo implements IotSessionRepositoryInterface
         }
         return true;
     }
+    public function setLightResult(int $roomId, string $result): void {}
 }
 
 final class FakePresenceEventRepo implements PresenceEventRepositoryInterface
@@ -218,7 +219,8 @@ $stayRepo = new FakeStayRepo();
 
 // Room with presence_check_seconds=30 and room_type gap=15
 $roomRepo->room = new Room(1, '101', 1, null, 'OCCUPIED', null, null, null, 30);
-$rtRepo->roomType = new RoomType(1, 'STANDARD', '', 5, 15, 20, 30);
+// F138: este test cubre el camino legacy; STANDARD usa el motor único.
+$rtRepo->roomType = new RoomType(1, 'LEGACY', '', 5, 15, 20, 30);
 
 // Minimal ExitRuleEvaluator (real logic, fake repos)
 $fakeSessionRepo = new class implements IotSessionRepositoryInterface {
@@ -232,6 +234,7 @@ $fakeSessionRepo = new class implements IotSessionRepositoryInterface {
     public function lockByRoomId(int $roomId): IotSession { return $this->s; }
     public function updateState(IotSession $session): void { $this->s = $session; }
     public function markExitEvaluated(int $roomId, string $closeAtUtc): bool { return true; }
+    public function setLightResult(int $roomId, string $result): void {}
 };
 $exitEval = new ExitRuleEvaluator($fakeSessionRepo, $roomRepo, $rtRepo, $stayRepo);
 

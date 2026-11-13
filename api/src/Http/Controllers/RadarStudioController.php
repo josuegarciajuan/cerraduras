@@ -924,17 +924,9 @@ final class RadarStudioController
         $configKey = RadarDistanceReport::configKey($settings);
         $now = $this->nowIso();
 
-        if ($state !== null) {
-            $alreadyChanged = ($state['status'] ?? '') === RadarGuidedCalibration::STATUS_CONFIG_CHANGED;
-            if (!$alreadyChanged && ($state['config_key'] ?? null) !== $configKey) {
-                $state = RadarGuidedCalibration::markConfigChanged($state, $settings, $now);
-                $this->store->saveWizard($roomId, $state);
-            } elseif (($state['status'] ?? '') === RadarGuidedCalibration::STATUS_RUNNING) {
-                $ctx = $this->wizardContext($roomId, $settings, $status);
-                $state = $this->evaluateWizard($roomId, $device, $state, $ctx, $now);
-                $this->store->saveWizard($roomId, $state);
-            }
-        }
+        // F138: GET observador. La evaluación/avance del wizard se hace por
+        // POST explícito (`action=evaluate`) o por un ejecutor de servidor.
+        // Abrir o refrescar la pestaña ya no guarda estado ni calibración.
 
         $scope = $this->scopePayload($roomId, 60);
         $view = RadarGuidedCalibration::view($state);
@@ -1124,6 +1116,22 @@ final class RadarStudioController
             $this->store->saveWizard($roomId, $state);
             return $this->wizardResponse($roomId, $device, $state);
         }
+        if ($action === 'evaluate') {
+            if ($state === null) {
+                return $this->wizardResponse($roomId, $device, null);
+            }
+            $alreadyChanged = ($state['status'] ?? '') === RadarGuidedCalibration::STATUS_CONFIG_CHANGED;
+            if (!$alreadyChanged && ($state['config_key'] ?? null) !== $configKey) {
+                $state = RadarGuidedCalibration::markConfigChanged($state, $settings, $now);
+                $this->store->saveWizard($roomId, $state);
+            } elseif (($state['status'] ?? '') === RadarGuidedCalibration::STATUS_RUNNING) {
+                $ctx = $this->wizardContext($roomId, $settings, $status);
+                $state = $this->evaluateWizard($roomId, $device, $state, $ctx, $now);
+                $this->store->saveWizard($roomId, $state);
+            }
+            return $this->wizardResponse($roomId, $device, $state);
+        }
+
         if ($state === null) {
             return Response::json(409, [
                 'ok' => false,

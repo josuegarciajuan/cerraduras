@@ -211,6 +211,15 @@ final class ExitRuleEvaluator
         int        $noPresenceAfterCloseSeconds = 0,
         int        $maxVerifySeconds = 0
     ): bool {
+        // F138: en STANDARD el motor de ocupación es la autoridad. La regla
+        // antigua solo puede cerrar cuando la sesión ya está VACANT_CONFIRMED.
+        // En salas especiales occupancyState es NULL y se conserva el flujo.
+        if ($session->occupancyState !== null
+            && $session->occupancyState !== StandardOccupancyPolicy::STATE_VACANT_CONFIRMED
+        ) {
+            return false;
+        }
+
         // (a) Entry must have been confirmed by the backend.
         if ($stay === null || $stay->entryConfirmedAt === null) {
             return false;

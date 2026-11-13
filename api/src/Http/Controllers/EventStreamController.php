@@ -250,6 +250,18 @@ final class EventStreamController
                     -- aplica una entrada pendiente sin mensaje nuevo).
                     COALESCE(s.presence_outcome_json, '') AS c23,
                     COALESCE(s.presence_pending_state, '') AS c24,
+                    COALESCE(s.occupancy_state, '') AS c25,
+                    COALESCE(s.light_desired, '') AS c26,
+                    COALESCE(s.light_off_at, '') AS c27,
+                    COALESCE((SELECT JSON_UNQUOTE(JSON_EXTRACT(d.meta_json, '$.switch_state'))
+                                FROM devices d JOIN rooms rr ON rr.pack_id = d.pack_id
+                               WHERE rr.id = r.id AND d.kind = 'SWITCH' LIMIT 1), '') AS c28,
+                    COALESCE((SELECT JSON_UNQUOTE(JSON_EXTRACT(d.meta_json, '$.last_command'))
+                                FROM devices d JOIN rooms rr ON rr.pack_id = d.pack_id
+                               WHERE rr.id = r.id AND d.kind = 'SWITCH' LIMIT 1), '') AS c29,
+                    COALESCE((SELECT JSON_UNQUOTE(JSON_EXTRACT(d.meta_json, '$.switch_state_at'))
+                                FROM devices d JOIN rooms rr ON rr.pack_id = d.pack_id
+                               WHERE rr.id = r.id AND d.kind = 'SWITCH' LIMIT 1), '') AS c30,
                     (SELECT MAX(id) FROM key_access_events
                       WHERE room_id = r.id AND result = 'OK') AS c21,
                     COALESCE(r.status,             '') AS c6,
@@ -309,7 +321,9 @@ final class EventStreamController
             // IoT session
             $iotStmt = $this->pdo->prepare(
                 'SELECT door_state, presence_state, last_open_at, last_close_at, last_absent_since,
-                        last_door_event_at, last_presence_event_at, last_door_value, last_presence_value
+                        last_door_event_at, last_presence_event_at, last_door_value, last_presence_value,
+                        occupancy_state, occupancy_json, entry_deadline_at, vacancy_deadline_at,
+                        light_desired, light_last_result, radar_health, uncertain_since, light_off_at
                    FROM iot_sessions WHERE room_id = :rid'
             );
             $iotStmt->execute([':rid' => $roomId]);
@@ -326,6 +340,16 @@ final class EventStreamController
                     'last_presence_event_at' => $sessionRow['last_presence_event_at'] ?? null,
                     'last_door_value'        => $sessionRow['last_door_value'] ?? null,
                     'last_presence_value'    => $sessionRow['last_presence_value'] ?? null,
+                    'occupancy_state'        => $sessionRow['occupancy_state'] ?? null,
+                    'occupancy'              => isset($sessionRow['occupancy_json'])
+                        ? (json_decode((string) $sessionRow['occupancy_json'], true) ?: null) : null,
+                    'entry_deadline_at'      => $sessionRow['entry_deadline_at'] ?? null,
+                    'vacancy_deadline_at'    => $sessionRow['vacancy_deadline_at'] ?? null,
+                    'light_desired'          => $sessionRow['light_desired'] ?? null,
+                    'light_last_result'      => $sessionRow['light_last_result'] ?? null,
+                    'radar_health'           => $sessionRow['radar_health'] ?? null,
+                    'uncertain_since'        => $sessionRow['uncertain_since'] ?? null,
+                    'light_off_at'           => $sessionRow['light_off_at'] ?? null,
                 ]
                 : [
                     'door_state'       => 'UNKNOWN',
@@ -337,6 +361,15 @@ final class EventStreamController
                     'last_presence_event_at' => null,
                     'last_door_value'        => null,
                     'last_presence_value'    => null,
+                    'occupancy_state'        => null,
+                    'occupancy'              => null,
+                    'entry_deadline_at'      => null,
+                    'vacancy_deadline_at'    => null,
+                    'light_desired'          => null,
+                    'light_last_result'      => null,
+                    'radar_health'           => null,
+                    'uncertain_since'        => null,
+                    'light_off_at'           => null,
                 ];
 
             // F118: frescura de sensores (aditivo; mismo criterio que /almacen).
@@ -475,6 +508,21 @@ final class EventStreamController
                 'status'           => $roomRow['status'],
                 'cooldown_until'   => $roomRow['cooldown_until'],
                 'iot_session'      => $iotData,
+                'occupancy'        => [
+                    'state' => $iotData['occupancy_state'] ?? null,
+                    'data' => $iotData['occupancy'] ?? null,
+                    'entry_deadline_at' => $iotData['entry_deadline_at'] ?? null,
+                    'vacancy_deadline_at' => $iotData['vacancy_deadline_at'] ?? null,
+                    'uncertain_since' => $iotData['uncertain_since'] ?? null,
+                    'radar_health' => $iotData['radar_health'] ?? null,
+                ],
+                'light'            => [
+                    'desired' => $iotData['light_desired'] ?? null,
+                    'reported' => $switchState['state'] ?? null,
+                    'last_command' => $switchState['last_command'] ?? null,
+                    'last_result' => $iotData['light_last_result'] ?? null,
+                    'off_at' => $iotData['light_off_at'] ?? null,
+                ],
                 'active_stay'      => $stayData,
                 'key_episode'      => $keyEpisode,
                 'switch_state'     => $switchState,

@@ -182,7 +182,11 @@
     S.wizardBusy = true;
     var seq = ++S.wizardSeq;
     try {
-      var data = await api(API + '/wizard?room_id=' + roomId(), { cache: 'no-store' });
+      var data = await api(API + '/wizard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: Number(roomId()), action: 'evaluate' }),
+      });
       if (seq !== S.wizardSeq) return;
       applyWizardData(data);
       if (!S.scope && data.scope) {
