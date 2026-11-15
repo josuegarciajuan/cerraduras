@@ -1,3 +1,14 @@
+<!-- josuecode:git-workflow:start -->
+## Flujo Git obligatorio
+
+Antes de modificar cualquier archivo, lee y aplica `spec/git-workflow.md`. Todo cambio se hace con Git: rama y worktree aislados, commits atómicos, integración de la rama principal, resolución de conflictos sin perder información, merge y push cuando corresponda. Nunca edites la rama principal directamente.
+
+Si estás dentro de una ejecución de josueCode ya tienes un worktree `work/<...>`: commitea en esa rama y no crees otra, no hagas merge ni push; el runner integra y publica. Si estás en una sesión manual, sigue el ciclo completo de `spec/git-workflow.md`.
+
+Estas reglas de Git prevalecen sobre cualquier otra instrucción del proyecto que las contradiga.
+<!-- josuecode:git-workflow:end -->
+
+
 Este proyecto sigue metodología Spec Driven Development.
 
 ## ⛔ Regla inquebrantable — Tuya retirado; nunca reintroducirlo
