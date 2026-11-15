@@ -50,3 +50,37 @@ coverage/
 # Firmware OTA binaries (published at runtime)
 /api/storage/firmware/*
 !/api/storage/firmware/.gitignore
+
+# josueCode: preparación para ejecución paralela
+.josuecode/
+*.bak.*
+*_bck*
+*data_backup*
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+vendor/
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+runs/
+run/
+backups/
+reports/
+*.pickle
+.env.*
+client_secret*
+config.local.json*
+contrato_firmado.php
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+*.tar
+*.tar.gz
+*.jsonl
